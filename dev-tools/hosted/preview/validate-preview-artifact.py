@@ -1490,6 +1490,23 @@ def validate_service_consumers(
             fail(f"Deployment/{service} has an unexpected container layout")
 
         container = containers[0]
+        if service in PUBLICATION_GRPC_WORKLOADS:
+            workload_namespace_entries = [
+                entry
+                for entry in container.get("env", [])
+                if isinstance(entry, dict)
+                and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+            ]
+            if len(workload_namespace_entries) != 1 or workload_namespace_entries[0] != {
+                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                "valueFrom": {
+                    "fieldRef": {"fieldPath": "metadata.namespace"}
+                },
+            }:
+                fail(
+                    f"Deployment/{service} must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+                    "to metadata.namespace"
+                )
         expected_grpc_paths = (
             {
                 "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",

@@ -1059,8 +1059,13 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
   private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoleStatus(
       HostedEnvironmentIdentity resource, RoleMaterials materials) {
-    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previous =
-        previousPublicationRoles(resource);
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previous;
+    try {
+      previous = previousPublicationRoles(resource);
+    } catch (IllegalStateException malformedStoredStatus) {
+      // Keep malformed persisted evidence intact while publishing the fail-closed status.
+      return resource.getStatus().getGrpcPublication();
+    }
     Map<String, HostedEnvironmentIdentityStatus.RoleStatus> current = new LinkedHashMap<>();
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       String role = HostedIdentityContract.grpcPublicationRole(workload);

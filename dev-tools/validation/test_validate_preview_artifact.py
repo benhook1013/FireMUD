@@ -56,6 +56,14 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                                 "name": "game-design-service",
                                 "env": [
                                     {
+                                        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                                        "valueFrom": {
+                                            "fieldRef": {
+                                                "fieldPath": "metadata.namespace"
+                                            }
+                                        },
+                                    },
+                                    {
                                         "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
                                         "value": "/tls/tls.crt",
                                     },
@@ -99,6 +107,74 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
             },
         }
 
+    def test_publication_grpc_consumer_accepts_pod_namespace_field_ref(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"game-design-service"}):
+            self.validator.validate_service_consumers(
+                [self._publication_grpc_deployment()], "pr-42"
+            )
+
+    def test_publication_grpc_consumer_rejects_invalid_namespace_binding(self):
+        invalid_envs = (
+            ("missing", None),
+            (
+                "duplicate",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {
+                        "fieldRef": {"fieldPath": "metadata.namespace"}
+                    },
+                },
+            ),
+            (
+                "literal",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "value": "pr-42",
+                },
+            ),
+            (
+                "wrong field path",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+                },
+            ),
+            (
+                "conflicting value",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "value": "pr-42",
+                    "valueFrom": {
+                        "fieldRef": {"fieldPath": "metadata.namespace"}
+                    },
+                },
+            ),
+        )
+        for name, invalid_entry in invalid_envs:
+            with self.subTest(name=name):
+                document = self._publication_grpc_deployment()
+                env = document["spec"]["template"]["spec"]["containers"][0]["env"]
+                if name == "missing":
+                    env[:] = [
+                        entry
+                        for entry in env
+                        if entry["name"] != "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+                    ]
+                elif name == "duplicate":
+                    env.append(invalid_entry)
+                else:
+                    env[0] = invalid_entry
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"game-design-service"}
+                    ),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE to metadata.namespace",
+                    ),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def test_publication_grpc_consumers_reject_shared_client_identity_fallbacks(self):
         cases = (
             (
@@ -112,7 +188,7 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 "client certificate path",
                 lambda document: document["spec"]["template"]["spec"]["containers"][
                     0
-                ]["env"][0].update({"value": "/tls/client.crt"}),
+                ]["env"][1].update({"value": "/tls/client.crt"}),
                 "must configure FIREMUD_GRPC_CERT_CHAIN_PATH as /tls/tls.crt",
             ),
         )

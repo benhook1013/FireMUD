@@ -1572,6 +1572,41 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void malformedGrpcPublicationHistoryRemainsFailClosedAndIsPreservedInBlockedStatus() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> malformedPublication =
+        Map.of(role, new HostedEnvironmentIdentityStatus.RoleStatus());
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    priorStatus.setGrpcPublication(malformedPublication);
+    fixture.resource.setStatus(priorStatus);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(fixture.resource, role));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertEquals(1, blocked.getGrpcPublication().size());
+    assertTrue(blocked.getGrpcPublication().containsKey(role));
+    assertNull(blocked.getGrpcPublication().get(role).getSourceGeneration());
+  }
+
+  @Test
   void everyManagedTransportRoleRequiresIndependentLeafKeyMaterial() {
     var ingress = material(1, 1, "1".repeat(64), "ingress");
     var telnet = material(1, 1, "2".repeat(64), "telnet");

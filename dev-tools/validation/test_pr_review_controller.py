@@ -253,6 +253,27 @@ class ControllerTests(unittest.TestCase):
                 checkpoint="allocated-dry", validation="checks green", reason="premature",
             )
 
+    def test_allocation_ancestry_lookup_failure_is_invalid_without_breaking_status_or_target_selection(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        original_is_ancestor = controller.git.is_ancestor
+
+        def fail_corrected_head_lookup(ancestor, descendant):
+            if (ancestor, descendant) == (HEAD_1, HEAD_2):
+                raise ControllerError("git fetch failed")
+            return original_is_ancestor(ancestor, descendant)
+
+        with patch.object(controller.git, "is_ancestor", side_effect=fail_corrected_head_lookup):
+            allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+            self.assertEqual(allocation["status"], "INVALID")
+            self.assertIn("could not verify corrected-head ancestry", allocation["reason"])
+            with self.assertRaises(ControllerError):
+                controller.resolve_hosted_target()
+
     def test_productive_result_requires_corrected_head_before_handoff(self):
         evidence = {(1, "hosted"): [self.allocation_evidence()]}
         controller = self.grant_allocation(evidence=evidence)
@@ -1101,6 +1122,45 @@ class ControllerTests(unittest.TestCase):
             }
         )
         self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+    def test_legacy_transition_write_fails_closed_when_transition_list_changes_concurrently(self):
+        legacy = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "cli"): [legacy]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+        original = controller.store.update
+        first = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="capture a transition for the concurrent writer fixture",
+        )["transition"]
+        transition = controller._state().legacy_transitions[-1]
+        original(lambda current: dataclasses.replace(current, legacy_transitions=()))
+
+        def concurrent_update(mutate):
+            original(lambda current: dataclasses.replace(current, legacy_transitions=(transition,)))
+            return original(mutate)
+
+        with (
+            patch.object(controller.store, "update", side_effect=concurrent_update),
+            self.assertRaisesRegex(ControllerError, "legacy transitions changed concurrently"),
+        ):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_1,
+                reason="do not overwrite a transition added after the snapshot",
+            )
+
+        self.assertEqual(len(controller._state().legacy_transitions), 1)
+        self.assertEqual(controller._state().legacy_transitions[0].to_dict(), first)
 
     def test_legacy_transition_fails_closed_for_active_actionable_or_spoofed_records(self):
         scenarios = {

@@ -1266,12 +1266,15 @@ class ReviewController:
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
                 "recorded": False,
             }
-        updated = self.store.update(
-            lambda current_state: dataclasses.replace(
+        def append_transition(current_state: ReviewState) -> ReviewState:
+            if current_state.legacy_transitions != state.legacy_transitions:
+                raise ControllerError("legacy transitions changed concurrently; reread before deciding")
+            return dataclasses.replace(
                 current_state,
                 legacy_transitions=current_state.legacy_transitions + (transition,),
             )
-        )
+
+        updated = self.store.update(append_transition)
         return {
             "transition": transition.to_dict(),
             "retirement": {
@@ -1440,8 +1443,18 @@ class ReviewController:
         accepted = _field(review, "accepted")
         if type(accepted) is not int or accepted < 0:
             return result("INVALID", "completed review has an invalid accepted-finding count")
-        if current.child_head != allocation.head and not self.git.is_ancestor(allocation.head, current.child_head):
-            return result("INVALID", "the corrected head does not descend from the reviewed head", checkpoint, accepted)
+        if current.child_head != allocation.head:
+            try:
+                descends_from_reviewed_head = self.git.is_ancestor(allocation.head, current.child_head)
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                return result(
+                    "INVALID",
+                    "could not verify corrected-head ancestry; renew or cancel the allocation",
+                    checkpoint,
+                    accepted,
+                )
+            if not descends_from_reviewed_head:
+                return result("INVALID", "the corrected head does not descend from the reviewed head", checkpoint, accepted)
         if any(
             _field(item, flag) is True
             for item in history
