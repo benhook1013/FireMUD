@@ -511,8 +511,25 @@ if [[ "$*" == *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs"* ]]; then
     echo "simulated active workflow lookup used a branch-tip filter or omitted event/pagination" >&2
     exit 90
   fi
+  active_status=""
+  for argument in "$@"; do
+    case "$argument" in
+      status=*) active_status="${argument#status=}" ;;
+    esac
+  done
+  case "$active_status" in
+    in_progress|queued|requested|waiting|pending) ;;
+    *)
+      echo "simulated active workflow lookup omitted a single supported status filter" >&2
+      exit 90
+      ;;
+  esac
   case "${GH_SCENARIO:-}" in
     active-workflow-delayed-gate|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple)
+      if [[ "$active_status" != "in_progress" ]]; then
+        printf '[{"workflow_runs":[]} ]\n'
+        exit 0
+      fi
       display_title="CI — Validation pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
       [[ "${GH_SCENARIO}" == "active-workflow-wrong-base" ]] && display_title="CI — Validation pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
       run_head_sha="${HEAD_SHA}"
@@ -965,6 +982,12 @@ grep -Fq 'retry_error_text="${job_error}"' <<<"$action_script" || {
   echo "required-gate action must capture retryable API error text at the failure site" >&2
   exit 1
 }
+for active_status in in_progress queued requested waiting pending; do
+  grep -Fq "$active_status" <<<"$action_script" || {
+    echo "required-gate action must scope active workflow lookup to $active_status runs" >&2
+    exit 1
+  }
+done
 retry_branch="$(awk '/^  if \[\[ "\$\{job_lookup_retryable\}" == "true" \]\]; then$/{capture=1} capture{print} capture && /^  fi$/{exit}' <<<"$action_script")"
 # shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
 grep -Fq '[[ -z "${retry_error_text}" ]] || printf' <<<"$retry_branch" || {

@@ -103,27 +103,45 @@ extend_for_active_substantive_run() {
 find_active_substantive_workflow() {
   active_substantive_workflow=false
   uncertain_substantive_workflow=false
-  : >"${api_error_file}"
-  set +e
-  active_workflow_runs_json="$(gh api --method GET \
-    "/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs" \
-    -f event=pull_request \
-    -f per_page=100 \
-    --paginate \
-    --slurp \
-    2>"${api_error_file}")"
-  active_workflow_runs_status=$?
-  set -e
-  if [[ "${active_workflow_runs_status}" -ne 0 ]]; then
-    active_workflow_runs_error="$(<"${api_error_file}")"
-    if is_retryable_gh_failure "${active_workflow_runs_status}" "${active_workflow_runs_error}"; then
-      echo "Retryable GitHub API failure while checking for an active substantive ${EXPECTED_WORKFLOW_NAME} run; retaining the short fail-closed wait." >&2
-      return 0
+  active_workflow_runs_json='[]'
+  # The workflow-runs endpoint accepts one status filter per request. Query
+  # each active status separately so polling does not walk completed history;
+  # keep pagination because a status can still contain more than 100 runs.
+  for active_workflow_status in in_progress queued requested waiting pending; do
+    : >"${api_error_file}"
+    set +e
+    active_workflow_status_json="$(gh api --method GET \
+      "/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs" \
+      -f event=pull_request \
+      -f status="${active_workflow_status}" \
+      -f per_page=100 \
+      --paginate \
+      --slurp \
+      2>"${api_error_file}")"
+    active_workflow_status_result=$?
+    set -e
+    if [[ "${active_workflow_status_result}" -ne 0 ]]; then
+      active_workflow_status_error="$(<"${api_error_file}")"
+      if is_retryable_gh_failure "${active_workflow_status_result}" "${active_workflow_status_error}"; then
+        echo "Retryable GitHub API failure while checking for an active substantive ${EXPECTED_WORKFLOW_NAME} run; retaining the short fail-closed wait." >&2
+        return 0
+      fi
+      echo "Permanent GitHub API/configuration failure while checking active substantive workflow runs; refusing to preserve." >&2
+      [[ -z "${active_workflow_status_error}" ]] || printf '%s\n' "${active_workflow_status_error}" >&2
+      exit 1
     fi
-    echo "Permanent GitHub API/configuration failure while checking active substantive workflow runs; refusing to preserve." >&2
-    [[ -z "${active_workflow_runs_error}" ]] || printf '%s\n' "${active_workflow_runs_error}" >&2
-    exit 1
-  fi
+    set +e
+    active_workflow_runs_json="$(jq -n \
+      --argjson existing "${active_workflow_runs_json}" \
+      --argjson next "${active_workflow_status_json}" \
+      '$existing + $next' 2>>"${api_error_file}")"
+    active_workflow_runs_combine_status=$?
+    set -e
+    if [[ "${active_workflow_runs_combine_status}" -ne 0 ]]; then
+      echo "GitHub API returned malformed active workflow-run data; refusing to preserve." >&2
+      exit 1
+    fi
+  done
   set +e
   jq -e '
     type == "array"
@@ -158,7 +176,7 @@ find_active_substantive_workflow() {
       | select(.repository.full_name == $expected_repository)
       | select(.event == "pull_request")
       | select((.display_title // "") == $expected_display_title)
-      | select((.status // "") | IN("queued", "in_progress", "requested", "waiting"))
+      | select((.status // "") | IN("queued", "in_progress", "requested", "waiting", "pending"))
       | select(((.pull_requests // null) | type) == "array")
       | select(any(.pull_requests[]?;
           ((.number // null) | tostring) == $expected_pr and
