@@ -4218,11 +4218,13 @@ PY
 
 rendered="$(mktemp)"
 helm_rendered="$(mktemp)"
+base_rendered="$(mktemp)"
 resolved_values="$(mktemp)"
 namespace_gate_values="$(mktemp)"
 namespace_gate_rendered="$(mktemp)"
-trap 'rm -f "$rendered" "$helm_rendered" "$resolved_values" "$namespace_gate_values" "$namespace_gate_rendered"' EXIT
+trap 'rm -f "$rendered" "$helm_rendered" "$base_rendered" "$resolved_values" "$namespace_gate_values" "$namespace_gate_rendered"' EXIT
 kubectl kustomize "$MANIFEST_DIR" >"$rendered"
+kubectl kustomize "$ROOT_DIR/k8s/base" >"$base_rendered"
 require_literal "$rendered" "kind: CustomResourceDefinition"
 require_literal "$rendered" "kind: ValidatingAdmissionPolicy"
 require_literal "$rendered" "kind: ClusterIssuer"
@@ -4257,7 +4259,7 @@ if ! helm template hosted-identity-contract "$ROOT_DIR/k8s/helm/firemud" \
   >"$helm_rendered"; then
   fail "Helm chart render failed for resolved hosted values fixture"
 fi
-python3 - "$helm_rendered" <<'PY'
+python3 - "$helm_rendered" "$base_rendered" <<'PY'
 import sys
 from pathlib import Path
 
@@ -4304,8 +4306,8 @@ shared_services = (
 )
 
 
-def deployment_for(service):
-    return exactly_one(deployments.get(service, []), f"Deployment/{service}")
+def deployment_for(service, deployment_map=deployments):
+    return exactly_one(deployment_map.get(service, []), f"Deployment/{service}")
 
 
 def workload_container(deployment, service):
@@ -4339,12 +4341,12 @@ def env_map(container, service):
     }
 
 
-def assert_paths_and_mount(container, service, cert_path, key_path):
+def assert_paths_and_mount(container, service, cert_path, key_path, ca_path):
     env = env_map(container, service)
     expected_paths = {
         "FIREMUD_GRPC_CERT_CHAIN_PATH": cert_path,
         "FIREMUD_GRPC_PRIVATE_KEY_PATH": key_path,
-        "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+        "FIREMUD_GRPC_CA_CERT_PATH": ca_path,
     }
     for name, value in expected_paths.items():
         if env.get(name, {}).get("value") != value:
@@ -4361,10 +4363,16 @@ def assert_paths_and_mount(container, service, cert_path, key_path):
         fail(f"Deployment/{service} grpc-tls must mount read-only at /tls")
 
 
-for service in publication_services:
-    deployment = deployment_for(service)
+def assert_publication_service(service, deployment_map, source):
+    deployment = deployment_for(service, deployment_map)
     container, pod_spec = workload_container(deployment, service)
-    assert_paths_and_mount(container, service, "/tls/tls.crt", "/tls/tls.key")
+    assert_paths_and_mount(
+        container,
+        service,
+        "/tls/tls.crt",
+        "/tls/tls.key",
+        "/grpc-trust/ca.crt",
+    )
     env = env_map(container, service)
     namespace_identity = env.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
     if namespace_identity != {
@@ -4372,31 +4380,67 @@ for service in publication_services:
         "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
     }:
         fail(
-            f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
-            f"from metadata.namespace, found {namespace_identity!r}"
+            f"{source} Deployment/{service} must derive "
+            "FIREMUD_GRPC_WORKLOAD_NAMESPACE from metadata.namespace, "
+            f"found {namespace_identity!r}"
         )
-    grpc_volume = named_entry(
-        pod_spec.get("volumes"),
-        "grpc-tls",
-        f"Deployment/{service} volumes",
+
+    leaf_volume = named_entry(
+        pod_spec.get("volumes"), "grpc-tls", f"{source} Deployment/{service} volumes"
     )
-    secret_name = grpc_volume.get("secret", {}).get("secretName")
+    leaf_secret = leaf_volume.get("secret", {})
     expected_secret = f"firemud-grpc-{service}"
-    if secret_name != expected_secret:
-        if secret_name == "firemud-grpc-tls":
-            fail(
-                f"Deployment/{service} publication workload falls back to "
-                "shared firemud-grpc-tls"
-            )
+    if leaf_secret.get("secretName") != expected_secret:
         fail(
-            f"Deployment/{service} grpc-tls must use {expected_secret}, "
-            f"found {secret_name!r}"
+            f"{source} Deployment/{service} grpc-tls must use {expected_secret}, "
+            f"found {leaf_secret.get('secretName')!r}"
         )
+    leaf_items = leaf_secret.get("items")
+    expected_leaf_items = [
+        {"key": "tls.crt", "path": "tls.crt"},
+        {"key": "tls.key", "path": "tls.key"},
+    ]
+    if leaf_items != expected_leaf_items:
+        fail(
+            f"{source} Deployment/{service} leaf projection must contain only "
+            f"tls.crt and tls.key, found {leaf_items!r}"
+        )
+
+    trust_mount = named_entry(
+        container.get("volumeMounts"),
+        "grpc-trust",
+        f"{source} Deployment/{service} volumeMounts",
+    )
+    if trust_mount.get("mountPath") != "/grpc-trust" or trust_mount.get("readOnly") is not True:
+        fail(f"{source} Deployment/{service} grpc-trust must mount read-only at /grpc-trust")
+    trust_volume = named_entry(
+        pod_spec.get("volumes"),
+        "grpc-trust",
+        f"{source} Deployment/{service} volumes",
+    )
+    trust_secret = trust_volume.get("secret", {})
+    if trust_secret.get("secretName") != "firemud-grpc-tls":
+        fail(
+            f"{source} Deployment/{service} must read peer trust from shared "
+            f"firemud-grpc-tls, found {trust_secret.get('secretName')!r}"
+        )
+    expected_trust_items = [{"key": "ca.crt", "path": "ca.crt"}]
+    if trust_secret.get("items") != expected_trust_items:
+        fail(
+            f"{source} Deployment/{service} shared trust projection must expose "
+            f"only ca.crt, found {trust_secret.get('items')!r}"
+        )
+
+
+for service in publication_services:
+    assert_publication_service(service, deployments, "Helm")
 
 for service in shared_services:
     deployment = deployment_for(service)
     container, pod_spec = workload_container(deployment, service)
-    assert_paths_and_mount(container, service, "/tls/client.crt", "/tls/client.key")
+    assert_paths_and_mount(
+        container, service, "/tls/client.crt", "/tls/client.key", "/tls/ca.crt"
+    )
     if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in env_map(container, service):
         fail(
             f"Deployment/{service} shared transport unexpectedly declares "
@@ -4413,6 +4457,21 @@ for service in shared_services:
             f"Deployment/{service} shared grpc-tls must use firemud-grpc-tls, "
             f"found {secret_name!r}"
         )
+
+base_documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+base_deployments = {}
+for document in base_documents:
+    if document.get("kind") != "Deployment":
+        continue
+    name = document.get("metadata", {}).get("name")
+    if name:
+        base_deployments.setdefault(name, []).append(document)
+for service in publication_services:
+    assert_publication_service(service, base_deployments, "Kustomize base")
 PY
 
 python3 - "$resolved_values" "$namespace_gate_values" <<'PY'

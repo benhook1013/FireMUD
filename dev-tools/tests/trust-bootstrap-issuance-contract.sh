@@ -16,6 +16,7 @@ python3 - "$MANIFEST" <<'PY'
 from __future__ import annotations
 
 import copy
+import re
 import sys
 from pathlib import Path
 
@@ -150,6 +151,9 @@ def check_contract(items: list[dict]) -> None:
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
+    certificate_status = expressions(
+        actual_policies["firemud-trust-bootstrap-certificate-status"]
+    )
     for needle in (
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
         "request.operation == 'CREATE' &&",
@@ -175,8 +179,53 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
+        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
     ):
         require(certificate, needle, "Certificate boundary")
+    hosted_grpc_certificate_pattern = (
+        r"^(dev|pr-[1-9][0-9]{0,50})-grpc-"
+        r"(game-design-service|world-management-service|entity-management-service|"
+        r"game-logic-service|automation-scripting-service)$"
+    )
+    require(
+        certificate_status,
+        "system:serviceaccount:firemud-system:firemud-hosted-identity-controller",
+        "Certificate status boundary",
+    )
+    for needle in (
+        "request.namespace == 'dev-identity'",
+        "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')",
+        f"object.metadata.name.matches('{hosted_grpc_certificate_pattern}')",
+        "object.spec.issuerRef.name == 'firemud-ca-issuer'",
+        "object.spec.issuerRef.kind == 'ClusterIssuer'",
+        "object.spec.issuerRef.group == 'cert-manager.io'",
+        "object.spec == oldObject.spec",
+    ):
+        require(certificate_status, needle, "Certificate status boundary")
+    hosted_grpc_certificates = {
+        f"{identity}-grpc-{service}"
+        for identity in ("dev", "pr-42")
+        for service in (
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service",
+        )
+    }
+    if any(
+        re.fullmatch(hosted_grpc_certificate_pattern, name) is None
+        for name in hosted_grpc_certificates
+    ):
+        fail("controller gRPC Certificate allowlist does not cover the five canonical names")
+    for rejected_name in (
+        "pr-0-grpc-game-design-service",
+        "pr-42-grpc-unknown-service",
+        "pr-42-grpc-game-design-service-previous",
+        "pr-42-grpc-game-design-service-extra",
+    ):
+        if re.fullmatch(hosted_grpc_certificate_pattern, rejected_name):
+            fail(f"controller gRPC Certificate allowlist accepts noncanonical name: {rejected_name}")
     require(
         certificate_validation,
         "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$",

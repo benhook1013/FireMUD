@@ -35,7 +35,7 @@ chmod 700 "$FAKE_BIN/kubectl"
 
 for invalid_namespace in pr-0 pr-42-identity pr-01; do
   if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" FAKE_KUBECTL_FAIL_WAIT=false \
-    "$SCRIPT" "$invalid_namespace" >"$TEMP_DIR/invalid.out" 2>"$TEMP_DIR/invalid.err"; then
+    bash "$SCRIPT" "$invalid_namespace" >"$TEMP_DIR/invalid.out" 2>"$TEMP_DIR/invalid.err"; then
     echo "accepted invalid runtime namespace $invalid_namespace" >&2
     exit 1
   fi
@@ -49,7 +49,7 @@ done
 for namespace in pr-42 dev; do
   : >"$STATE_DIR/calls"
   PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" FAKE_KUBECTL_FAIL_WAIT=false \
-    "$SCRIPT" "$namespace" >"$TEMP_DIR/$namespace.out"
+    bash "$SCRIPT" "$namespace" >"$TEMP_DIR/$namespace.out"
   grep -Fxq "namespace=$namespace" "$TEMP_DIR/$namespace.out"
   grep -Fxq 'certificates=ready' "$TEMP_DIR/$namespace.out"
 
@@ -133,7 +133,7 @@ done
 
 : >"$STATE_DIR/calls"
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" FAKE_KUBECTL_FAIL_WAIT=true \
-  CERTIFICATE_WAIT_TIMEOUT_SECONDS=1 "$SCRIPT" pr-42 \
+  CERTIFICATE_WAIT_TIMEOUT_SECONDS=1 bash "$SCRIPT" pr-42 \
   >"$TEMP_DIR/failure.out" 2>"$TEMP_DIR/failure.err"; then
   echo "accepted a failed Certificate readiness wait" >&2
   exit 1

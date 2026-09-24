@@ -82,9 +82,9 @@ done
 for required in \
   "INTERNAL_ISSUER='firemud-ca-issuer'" \
   'runtime namespace must be dev or canonical pr-N' \
-  'secretName: firemud-grpc-${workload}' \
+  "secretName: firemud-grpc-\${workload}" \
   'rotationPolicy: Always' \
-  'Certificate/${certificate} did not become Ready' \
+  "Certificate/\${certificate} did not become Ready" \
   'certificates=ready'; do
   contains_literal "$standalone_grpc_certificates" "$required"
 done
