@@ -5,6 +5,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_JOIN_OPE
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
@@ -210,6 +211,7 @@ public class AccountJoinOperationRepository {
   public record JoinOperation(
       long accountId,
       long tenantId,
+      UUID realmId,
       String callerBinding,
       String scopeTokenHash,
       String connectScopeDigest,
@@ -233,6 +235,7 @@ public class AccountJoinOperationRepository {
     return new JoinOperation(
         row.getAccountId(),
         row.getTenantId(),
+        row.getRealmId(),
         row.getVerifiedCallerBinding(),
         row.getScopeTokenHash(),
         row.getConnectScopeDigest(),

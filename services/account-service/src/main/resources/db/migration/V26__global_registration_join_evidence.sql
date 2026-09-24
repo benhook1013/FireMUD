@@ -126,7 +126,7 @@ CREATE TABLE account_connect_scope_records (
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     target_class VARCHAR(20) NOT NULL,
     tenant_id BIGINT NOT NULL,
-    realm_id BIGINT NOT NULL,
+    realm_id UUID NOT NULL,
     world_slug VARCHAR(128) NOT NULL,
     realm_slug VARCHAR(128) NOT NULL,
     playable_state_namespace_id VARCHAR(128) NOT NULL,
@@ -146,7 +146,7 @@ CREATE TABLE account_connect_scope_records (
             OR (target_class = 'NON_PUBLIC'
                 AND playtest_lifecycle_id IS NOT NULL AND playtest_state_generation > 0)),
     CONSTRAINT account_connect_scope_positive_check
-        CHECK (tenant_id > 0 AND realm_id > 0 AND game_instance_id > 0
+        CHECK (tenant_id > 0 AND game_instance_id > 0
             AND catalog_revision > 0 AND pointer_version > 0)
 );
 
@@ -162,7 +162,7 @@ CREATE TABLE account_join_operations (
     connect_scope_digest VARCHAR(71) NOT NULL,
     world_slug VARCHAR(128) NOT NULL,
     realm_slug VARCHAR(128) NOT NULL,
-    realm_id BIGINT NOT NULL,
+    realm_id UUID NOT NULL,
     playable_state_namespace_id VARCHAR(128) NOT NULL,
     playable_state_scope VARCHAR(32) NOT NULL,
     game_instance_id BIGINT NOT NULL,
@@ -188,7 +188,7 @@ CREATE TABLE account_join_operations (
     CONSTRAINT account_join_operation_status_check
         CHECK (status IN ('PENDING', 'COMMITTED', 'FAILED')),
     CONSTRAINT account_join_operation_positive_versions_check
-        CHECK (tenant_id > 0 AND realm_id > 0 AND game_instance_id > 0 AND catalog_revision > 0
+        CHECK (tenant_id > 0 AND game_instance_id > 0 AND catalog_revision > 0
             AND pointer_version > 0
             AND (entitlement_version IS NULL OR entitlement_version > 0)),
     CONSTRAINT account_join_operation_policy_evidence_check

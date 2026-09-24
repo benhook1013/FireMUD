@@ -177,11 +177,15 @@ components:
           type: string
     BootstrapRealmDto:
       type: object
+      required: [worldSlug, realmSlug, realmId]
       properties:
         worldSlug:
           type: string
         realmSlug:
           type: string
+        realmId:
+          type: string
+          format: uuid
         displayName:
           type: string
         tenantId:

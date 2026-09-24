@@ -1,11 +1,13 @@
 package net.firedevops.firemud.accountservice.dto;
 
+import java.util.UUID;
+
 /** Immutable Account-owned target snapshot retained for an explicit public-production JOIN. */
 public record VerifiedJoinScope(
     String connectScopeId,
     long accountId,
     long tenantId,
-    long realmId,
+    UUID realmId,
     String worldSlug,
     String realmSlug,
     String playableStateNamespaceId,
