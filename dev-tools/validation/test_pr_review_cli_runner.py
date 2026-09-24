@@ -464,8 +464,11 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(result.merge_base, OLDER_BASE)
             self.assertEqual(result.parent_sha, PARENT)
             self.assertTrue(result.provisional)
+            pinned_ref = f"refs/firemud/pr-review-base/{result.run_id}"
+            self.assertTrue(pinned_ref.startswith("refs/firemud/pr-review-base/"))
+            self.assertNotIn("refs/heads/", pinned_ref)
             self.assertIn(
-                ("git", "-C", str(root), "update-ref", f"refs/heads/codex-review-base/{result.run_id}", OLDER_BASE),
+                ("git", "-C", str(root), "update-ref", pinned_ref, OLDER_BASE),
                 [call[0] for call in commands.calls],
             )
             self.assertIn(

@@ -43,9 +43,6 @@ class StatusError(ValueError):
     """Raised when required live or historical evidence is malformed."""
 
 
-ReportError = StatusError  # compatibility name used by the retired reporter
-
-
 def _timestamp(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise StatusError(f"{field} must be a non-empty timestamp string")
@@ -1245,4 +1242,4 @@ def emit_text(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["ReportError", "StatusError", "build_report", "emit_text", "normalize_checks", "status"]
+__all__ = ["StatusError", "build_report", "emit_text", "normalize_checks", "status"]

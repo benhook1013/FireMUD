@@ -446,11 +446,6 @@ class ReviewController:
         state = self._state()
         return {"ordered_prs": list(state.ordered_prs), "schema_version": state.schema_version}
 
-    # Command-layer friendly spellings.  They intentionally delegate to the
-    # same methods so there is one stack mutation and one target-selection path.
-    stack_set = set_stack
-    stack_show = show_stack
-
     def _live_snapshots(
         self, state: ReviewState, remote_heads: Mapping[str, str] | None = None
     ) -> tuple[dict[int, LivePullRequest], dict[int, stack.PRSnapshot], str]:
@@ -996,8 +991,6 @@ class ReviewController:
     def select_target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> dict[str, Any]:
         return self._target(channel, expected_pr).as_dict()
 
-    review_target = select_target
-
     def run_hosted(self, *, expected_pr: int | None = None, **kwargs: Any) -> Any:
         selected = self._target(policy.Channel.HOSTED, expected_pr)
         self._ensure_runnable(selected)
@@ -1063,9 +1056,6 @@ class ReviewController:
                 for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
             }
         return result
-
-    evidence_report = evidence
-    status_report = status
 
     def decide_judgment(
         self, *, pr: int, channel: str, decision: str, head: str, checkpoint: str, reason: str
@@ -1204,11 +1194,6 @@ class ReviewController:
         if operation == "reconcile":
             return self.decide_reconciliation(**kwargs)
         raise ControllerError("decision must be retain, reopen, policy, or reconcile")
-
-
-# Stable aliases make the integration seam discoverable to the thin command layer.
-Controller = ReviewController
-UnifiedReviewController = ReviewController
 
 
 def compact_result(value: Mapping[str, Any]) -> str:

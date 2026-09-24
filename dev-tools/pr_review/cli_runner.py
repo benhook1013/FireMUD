@@ -526,7 +526,9 @@ def run_cli_review(
     run_id = f"run.{uuid.uuid4().hex}"
     capture_dir = capture_root / run_id
     candidate_worktree: Path | None = None
-    pinned_ref = f"refs/heads/codex-review-base/{run_id}"
+    # Keep review anchors out of branch listings: this temporary ref is an
+    # implementation detail of the review run, not a user-visible branch.
+    pinned_ref = f"refs/firemud/pr-review-base/{run_id}"
     lock_path.touch(mode=0o600, exist_ok=True)
     with lock_path.open("r+") as lock_handle:
         try:
