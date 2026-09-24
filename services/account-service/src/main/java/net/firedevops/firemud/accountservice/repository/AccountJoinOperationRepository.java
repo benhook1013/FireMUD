@@ -36,24 +36,14 @@ public class AccountJoinOperationRepository {
   public Optional<JoinOperation> find(String requestId) {
     return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
         .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId))
-        .fetchOptional(
-            row ->
-                new JoinOperation(
-                    row.getAccountId(),
-                    row.getTenantId(),
-                    row.getVerifiedCallerBinding(),
-                    row.getScopeTokenHash(),
-                    row.getConnectScopeDigest(),
-                    row.getEntitlementAuthorityAvailability(),
-                    row.getAllowPublicJoin(),
-                    row.getEntitlementVersion(),
-                    row.getRequestDigestVersion(),
-                    row.getRequestDigest(),
-                    row.getStatus(),
-                    row.getOutcome(),
-                    row.getMembershipId(),
-                    row.getOutcomeMembershipVersion(),
-                    row.getOutcomeMembershipAuthorityGeneration()));
+        .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
+  }
+
+  public Optional<JoinOperation> findForUpdate(String requestId) {
+    return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
+        .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId))
+        .forUpdate()
+        .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
   }
 
   public boolean hasRetainedOperation(long accountId) {
@@ -61,15 +51,8 @@ public class AccountJoinOperationRepository {
         ACCOUNT_JOIN_OPERATIONS, ACCOUNT_JOIN_OPERATIONS.ACCOUNT_ID.eq(accountId));
   }
 
-  public boolean insertPending(
-      String requestId,
-      VerifiedJoinScope scope,
-      String callerBinding,
-      String requestDigest,
-      String entitlementAuthorityAvailability,
-      Long entitlementVersion,
-      Boolean allowPublicJoin,
-      boolean callerBoundAuthorityInvalidated) {
+  public boolean insertIntent(
+      String requestId, VerifiedJoinScope scope, String callerBinding, String intentDigest) {
     int inserted =
         dsl.insertInto(ACCOUNT_JOIN_OPERATIONS)
             .set(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID, requestId)
@@ -91,21 +74,73 @@ public class AccountJoinOperationRepository {
             .set(ACCOUNT_JOIN_OPERATIONS.GAME_INSTANCE_ID, scope.gameInstanceId())
             .set(ACCOUNT_JOIN_OPERATIONS.CATALOG_REVISION, scope.catalogRevision())
             .set(ACCOUNT_JOIN_OPERATIONS.POINTER_VERSION, scope.pointerVersion())
-            .set(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_VERSION, entitlementVersion)
-            .set(ACCOUNT_JOIN_OPERATIONS.ALLOW_PUBLIC_JOIN, allowPublicJoin)
-            .set(
-                ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY,
-                entitlementAuthorityAvailability)
-            .set(
-                ACCOUNT_JOIN_OPERATIONS.CALLER_BOUND_AUTHORITY_INVALIDATED,
-                callerBoundAuthorityInvalidated)
-            .set(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST_VERSION, 1)
-            .set(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST, requestDigest)
+            .set(ACCOUNT_JOIN_OPERATIONS.INTENT_DIGEST_VERSION, 1)
+            .set(ACCOUNT_JOIN_OPERATIONS.INTENT_DIGEST, intentDigest)
+            .set(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY, "NOT_EVALUATED")
+            .set(ACCOUNT_JOIN_OPERATIONS.CALLER_BOUND_AUTHORITY_INVALIDATED, false)
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_AUTHORITY_AVAILABILITY, "NOT_EVALUATED")
             .set(ACCOUNT_JOIN_OPERATIONS.STATUS, "PENDING")
             .onConflict(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID)
             .doNothing()
             .execute();
     return inserted == 1;
+  }
+
+  public void bindPolicyEvidence(
+      String requestId, String requestDigest, Long entitlementVersion, Boolean allowPublicJoin) {
+    int updated =
+        dsl.update(ACCOUNT_JOIN_OPERATIONS)
+            .set(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY, "AVAILABLE")
+            .set(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_VERSION, entitlementVersion)
+            .set(ACCOUNT_JOIN_OPERATIONS.ALLOW_PUBLIC_JOIN, allowPublicJoin)
+            .set(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST_VERSION, 1)
+            .set(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST, requestDigest)
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_AUTHORITY_AVAILABILITY, "AVAILABLE")
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_FAILURE_CODE, (String) null)
+            .set(ACCOUNT_JOIN_OPERATIONS.UPDATED_AT, org.jooq.impl.DSL.currentLocalDateTime())
+            .where(
+                ACCOUNT_JOIN_OPERATIONS
+                    .REQUEST_ID
+                    .eq(requestId)
+                    .and(ACCOUNT_JOIN_OPERATIONS.STATUS.eq("PENDING"))
+                    .and(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST.isNull()))
+            .execute();
+    if (updated != 1) {
+      throw new IllegalStateException("JOIN operation changed before policy binding");
+    }
+  }
+
+  public void recordAttemptFailure(
+      String requestId, String authorityAvailability, String failureCode) {
+    if (failureCode == null || failureCode.isBlank()) {
+      throw new IllegalArgumentException("JOIN attempt failure code is required");
+    }
+    if (!"AVAILABLE".equals(authorityAvailability)
+        && !"UNAVAILABLE".equals(authorityAvailability)
+        && !"NOT_EVALUATED".equals(authorityAvailability)) {
+      throw new IllegalArgumentException("JOIN attempt authority availability is invalid");
+    }
+    int updated =
+        dsl.update(ACCOUNT_JOIN_OPERATIONS)
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY,
+                org.jooq
+                    .impl
+                    .DSL
+                    .when(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST.isNull(), authorityAvailability)
+                    .otherwise(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY))
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_AUTHORITY_AVAILABILITY, authorityAvailability)
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_FAILURE_CODE, failureCode)
+            .set(ACCOUNT_JOIN_OPERATIONS.UPDATED_AT, org.jooq.impl.DSL.currentLocalDateTime())
+            .where(
+                ACCOUNT_JOIN_OPERATIONS
+                    .REQUEST_ID
+                    .eq(requestId)
+                    .and(ACCOUNT_JOIN_OPERATIONS.STATUS.eq("PENDING")))
+            .execute();
+    if (updated != 1) {
+      throw new IllegalStateException("JOIN operation changed while recording attempt failure");
+    }
   }
 
   public void finish(
@@ -118,15 +153,33 @@ public class AccountJoinOperationRepository {
     if (!"COMMITTED".equals(status) && !"FAILED".equals(status)) {
       throw new IllegalArgumentException("JOIN terminal status is invalid");
     }
+    if (outcome == null || outcome.isBlank()) {
+      throw new IllegalArgumentException("JOIN terminal outcome is required");
+    }
     int updated =
         dsl.update(ACCOUNT_JOIN_OPERATIONS)
             .set(ACCOUNT_JOIN_OPERATIONS.STATUS, status)
             .set(ACCOUNT_JOIN_OPERATIONS.OUTCOME, outcome)
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY,
+                org.jooq
+                    .impl
+                    .DSL
+                    .when(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST.isNull(), "NOT_EVALUATED")
+                    .otherwise(ACCOUNT_JOIN_OPERATIONS.ENTITLEMENT_AUTHORITY_AVAILABILITY))
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_AUTHORITY_AVAILABILITY,
+                org.jooq
+                    .impl
+                    .DSL
+                    .when(ACCOUNT_JOIN_OPERATIONS.REQUEST_DIGEST.isNull(), "NOT_EVALUATED")
+                    .otherwise(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_AUTHORITY_AVAILABILITY))
             .set(ACCOUNT_JOIN_OPERATIONS.MEMBERSHIP_ID, membershipId)
             .set(ACCOUNT_JOIN_OPERATIONS.OUTCOME_MEMBERSHIP_VERSION, membershipVersion)
             .set(
                 ACCOUNT_JOIN_OPERATIONS.OUTCOME_MEMBERSHIP_AUTHORITY_GENERATION,
                 membershipAuthorityGeneration)
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_ATTEMPT_FAILURE_CODE, (String) null)
             .set(ACCOUNT_JOIN_OPERATIONS.UPDATED_AT, org.jooq.impl.DSL.currentLocalDateTime())
             .where(
                 ACCOUNT_JOIN_OPERATIONS
@@ -163,11 +216,39 @@ public class AccountJoinOperationRepository {
       String entitlementAuthorityAvailability,
       Boolean allowPublicJoin,
       Long entitlementVersion,
-      int requestDigestVersion,
+      Integer requestDigestVersion,
       String requestDigest,
       String status,
       String outcome,
       Long membershipId,
       Long membershipVersion,
-      Long membershipAuthorityGeneration) {}
+      Long membershipAuthorityGeneration,
+      int intentDigestVersion,
+      String intentDigest,
+      String lastAttemptFailureCode,
+      String lastAttemptAuthorityAvailability) {}
+
+  private static JoinOperation toJoinOperation(
+      net.firedevops.firemud.accountservice.jooq.tables.records.AccountJoinOperationsRecord row) {
+    return new JoinOperation(
+        row.getAccountId(),
+        row.getTenantId(),
+        row.getVerifiedCallerBinding(),
+        row.getScopeTokenHash(),
+        row.getConnectScopeDigest(),
+        row.getEntitlementAuthorityAvailability(),
+        row.getAllowPublicJoin(),
+        row.getEntitlementVersion(),
+        row.getRequestDigestVersion(),
+        row.getRequestDigest(),
+        row.getStatus(),
+        row.getOutcome(),
+        row.getMembershipId(),
+        row.getOutcomeMembershipVersion(),
+        row.getOutcomeMembershipAuthorityGeneration(),
+        row.getIntentDigestVersion(),
+        row.getIntentDigest(),
+        row.getLastAttemptFailureCode(),
+        row.getLastAttemptAuthorityAvailability());
+  }
 }

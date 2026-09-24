@@ -5,8 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -21,7 +25,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -63,7 +71,193 @@ class AccountRepositoryIntegrationTest {
 
   @BeforeEach
   void cleanTables() {
+    dsl.execute("TRUNCATE TABLE account_audit_outbox");
     dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+  }
+
+  @Test
+  void joinIntentCommitsBeforePolicyAndMembershipAuditOutcomeCommitAtomically() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    DSLContext transactionAwareDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(transactionAwareDsl);
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(transactionAwareDsl);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "two-phase-join",
+                "two-phase-join@example.com",
+                "hash"));
+    VerifiedJoinScope scope = joinScope(accountId);
+    String callerBinding = "bootstrap-jti-two-phase";
+    String requestId = "join-two-phase-1";
+    String intentDigest = AccountJoinDigest.intent(requestId, scope, callerBinding);
+
+    transaction.executeWithoutResult(
+        status -> joinOperations.insertIntent(requestId, scope, callerBinding, intentDigest));
+
+    assertThat(joinOperation(joinOperations, requestId).status()).isEqualTo("PENDING");
+    assertThat(joinOperation(joinOperations, requestId).outcome()).isNull();
+    assertThat(joinOperation(joinOperations, requestId).intentDigest()).isEqualTo(intentDigest);
+    assertThat(joinOperation(joinOperations, requestId).requestDigest()).isNull();
+    assertThat(joinOperation(joinOperations, requestId).entitlementVersion()).isNull();
+    assertThat(joinOperation(joinOperations, requestId).allowPublicJoin()).isNull();
+
+    String policyDigest = AccountJoinDigest.request(scope, callerBinding, true, 1L);
+    UUID auditEventId = UUID.randomUUID();
+    Account account = new Account();
+    account.setId(accountId);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    status ->
+                        commitJoinOutcome(
+                            joinOperations,
+                            memberships,
+                            outbox,
+                            account,
+                            requestId,
+                            scope,
+                            policyDigest,
+                            auditEventId,
+                            true)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulate second-transaction rollback");
+
+    assertThat(joinOperation(joinOperations, requestId).status()).isEqualTo("PENDING");
+    assertThat(joinOperation(joinOperations, requestId).outcome()).isNull();
+    assertThat(joinOperation(joinOperations, requestId).requestDigest()).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
+                Long.class,
+                accountId,
+                scope.tenantId()))
+        .isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE audit_event_id = ?",
+                Long.class,
+                auditEventId))
+        .isZero();
+
+    transaction.executeWithoutResult(
+        status ->
+            commitJoinOutcome(
+                joinOperations,
+                memberships,
+                outbox,
+                account,
+                requestId,
+                scope,
+                policyDigest,
+                auditEventId,
+                false));
+
+    assertThat(joinOperation(joinOperations, requestId).status()).isEqualTo("COMMITTED");
+    assertThat(joinOperation(joinOperations, requestId).outcome()).isEqualTo("JOINED");
+    assertThat(joinOperation(joinOperations, requestId).intentDigest()).isEqualTo(intentDigest);
+    assertThat(joinOperation(joinOperations, requestId).requestDigest()).isEqualTo(policyDigest);
+    assertThat(joinOperation(joinOperations, requestId).entitlementVersion()).isEqualTo(1L);
+    assertThat(joinOperation(joinOperations, requestId).allowPublicJoin()).isEqualTo(true);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ? AND lifecycle_state = 'ACTIVE' AND authority_provenance = 'EXPLICIT_JOIN'",
+                Long.class,
+                accountId,
+                scope.tenantId()))
+        .isEqualTo(1L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE audit_event_id = ? AND delivery_status = 'PENDING'",
+                Long.class,
+                auditEventId))
+        .isEqualTo(1L);
+  }
+
+  private void commitJoinOutcome(
+      AccountJoinOperationRepository joinOperations,
+      AccountTenantMembershipRepository memberships,
+      AccountAuditOutboxRepository outbox,
+      Account account,
+      String requestId,
+      VerifiedJoinScope scope,
+      String policyDigest,
+      UUID auditEventId,
+      boolean simulateRollback) {
+    joinOperations.bindPolicyEvidence(requestId, policyDigest, 1L, true);
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setAccount(account);
+    membership.setTenantId(scope.tenantId());
+    membership.setGameplayAdmissionAllowed(true);
+    membership.setLifecycleState("ACTIVE");
+    membership.setMembershipVersion(1L);
+    membership.setMembershipAuthorityGeneration(1L);
+    membership.setAuthorityProvenance("EXPLICIT_JOIN");
+    memberships.save(membership);
+    outbox.append(
+        auditEventId,
+        "tenant",
+        scope.tenantId(),
+        "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+        "{\"requestId\":\"" + requestId + "\"}");
+    joinOperations.finish(
+        requestId,
+        "COMMITTED",
+        "JOINED",
+        membership.getId(),
+        membership.getMembershipVersion(),
+        membership.getMembershipAuthorityGeneration());
+    if (simulateRollback) {
+      throw new IllegalStateException("simulate second-transaction rollback");
+    }
+  }
+
+  private AccountJoinOperationRepository.JoinOperation joinOperation(
+      AccountJoinOperationRepository joinOperations, String requestId) {
+    return joinOperations.find(requestId).orElseThrow();
+  }
+
+  private static VerifiedJoinScope joinScope(long accountId) {
+    VerifiedJoinScope base =
+        new VerifiedJoinScope(
+            "two-phase-connect-scope",
+            accountId,
+            7L,
+            31L,
+            "demo",
+            "production",
+            "namespace-44",
+            "SHARED",
+            44L,
+            23L,
+            17L,
+            "2026-09-24T10:00:00Z",
+            "2026-09-24T10:02:00Z",
+            "unused");
+    String digest = AccountJoinDigest.scope(base);
+    return new VerifiedJoinScope(
+        base.connectScopeId(),
+        base.accountId(),
+        base.tenantId(),
+        base.realmId(),
+        base.worldSlug(),
+        base.realmSlug(),
+        base.playableStateNamespaceId(),
+        base.playableStateScope(),
+        base.gameInstanceId(),
+        base.catalogRevision(),
+        base.pointerVersion(),
+        base.evaluatedAt(),
+        base.connectScopeExpiresAt(),
+        digest);
   }
 
   @ParameterizedTest

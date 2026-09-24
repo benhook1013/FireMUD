@@ -168,12 +168,16 @@ CREATE TABLE account_join_operations (
     game_instance_id BIGINT NOT NULL,
     catalog_revision BIGINT NOT NULL,
     pointer_version BIGINT NOT NULL,
+    intent_digest_version INTEGER NOT NULL,
+    intent_digest VARCHAR(71) NOT NULL,
     entitlement_version BIGINT,
     allow_public_join BOOLEAN,
-    entitlement_authority_availability VARCHAR(16) NOT NULL,
+    entitlement_authority_availability VARCHAR(16) NOT NULL DEFAULT 'NOT_EVALUATED',
     caller_bound_authority_invalidated BOOLEAN NOT NULL,
-    request_digest_version INTEGER NOT NULL,
-    request_digest VARCHAR(71) NOT NULL,
+    request_digest_version INTEGER,
+    request_digest VARCHAR(71),
+    last_attempt_failure_code VARCHAR(64),
+    last_attempt_authority_availability VARCHAR(16) NOT NULL DEFAULT 'NOT_EVALUATED',
     status VARCHAR(16) NOT NULL,
     outcome VARCHAR(64),
     membership_id BIGINT REFERENCES account_tenant_membership(id),
@@ -192,10 +196,41 @@ CREATE TABLE account_join_operations (
                 AND entitlement_version IS NOT NULL AND allow_public_join IS NOT NULL)
             OR (entitlement_authority_availability IN ('UNAVAILABLE', 'NOT_EVALUATED')
                 AND entitlement_version IS NULL AND allow_public_join IS NULL)),
-    CONSTRAINT account_join_digest_version_check CHECK (request_digest_version = 1),
+    CONSTRAINT account_join_last_attempt_availability_check
+        CHECK (last_attempt_authority_availability IN ('AVAILABLE', 'UNAVAILABLE', 'NOT_EVALUATED')),
+    CONSTRAINT account_join_intent_digest_version_check
+        CHECK (intent_digest_version = 1 AND length(intent_digest) = 71
+            AND intent_digest LIKE 'sha256:%'),
+    CONSTRAINT account_join_policy_digest_check
+        CHECK ((request_digest_version IS NULL AND request_digest IS NULL
+                    AND entitlement_authority_availability <> 'AVAILABLE'
+                    AND entitlement_version IS NULL AND allow_public_join IS NULL)
+            OR (request_digest_version = 1 AND request_digest IS NOT NULL
+                AND length(request_digest) = 71 AND request_digest LIKE 'sha256:%'
+                AND entitlement_authority_availability = 'AVAILABLE'
+                AND entitlement_version IS NOT NULL AND allow_public_join IS NOT NULL)),
+    CONSTRAINT account_join_outcome_state_check
+        CHECK ((status = 'PENDING' AND outcome IS NULL
+                    AND membership_id IS NULL AND outcome_membership_version IS NULL
+                    AND outcome_membership_authority_generation IS NULL)
+            OR (status = 'COMMITTED' AND outcome IS NOT NULL
+                    AND membership_id IS NOT NULL
+                    AND outcome_membership_version IS NOT NULL
+                    AND outcome_membership_version > 0
+                    AND outcome_membership_authority_generation IS NOT NULL
+                    AND outcome_membership_authority_generation > 0)
+            OR (status = 'FAILED' AND outcome IS NOT NULL
+                    AND membership_id IS NULL AND outcome_membership_version IS NULL
+                    AND outcome_membership_authority_generation IS NULL)),
+    CONSTRAINT account_join_pending_attempt_failure_check
+        CHECK (last_attempt_failure_code IS NULL
+            OR (status = 'PENDING' AND btrim(last_attempt_failure_code) <> '')),
     CONSTRAINT account_join_committed_policy_check
-        CHECK (status <> 'COMMITTED' OR (entitlement_version > 0 AND allow_public_join = TRUE
-            AND membership_id IS NOT NULL AND outcome_membership_version > 0
+        CHECK (status <> 'COMMITTED' OR (entitlement_version IS NOT NULL
+            AND entitlement_version > 0 AND allow_public_join = TRUE
+            AND membership_id IS NOT NULL AND outcome_membership_version IS NOT NULL
+            AND outcome_membership_version > 0
+            AND outcome_membership_authority_generation IS NOT NULL
             AND outcome_membership_authority_generation > 0))
 );
 

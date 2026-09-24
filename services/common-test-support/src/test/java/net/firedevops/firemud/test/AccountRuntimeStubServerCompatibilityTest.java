@@ -37,5 +37,8 @@ class AccountRuntimeStubServerCompatibilityTest {
                     AccountRuntimeStubServer.implementedRuntimeMethodNames().stream(),
                     NON_RUNTIME_METHODS.stream())
                 .collect(java.util.stream.Collectors.toSet()));
+
+    assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
+        .contains("IssueDirectTextConnectScope", "JoinPublicProductionMembership");
   }
 }

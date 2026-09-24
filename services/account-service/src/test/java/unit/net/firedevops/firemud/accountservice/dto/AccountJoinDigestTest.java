@@ -16,20 +16,26 @@ class AccountJoinDigestTest {
         AccountJoinDigest.scope(scope));
     assertEquals(
         "sha256:764b03cbe948293517acb4ce201dbd24fc4d2a0a2306e853f2ab0a6c3775a768",
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", true, 5L));
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L));
     assertNotEquals(
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", true, 5L),
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", false, 5L));
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L),
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", false, 5L));
     assertNotEquals(
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", true, 5L),
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", true, 6L));
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L),
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 6L));
     assertNotEquals(
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "AVAILABLE", true, 5L),
-        AccountJoinDigest.request(
-            scope("scope-token-α", "preview"), "bootstrap-jti-α", "AVAILABLE", true, 5L));
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L),
+        AccountJoinDigest.request(scope("scope-token-α", "preview"), "bootstrap-jti-α", true, 5L));
+    assertNotEquals(
+        AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L),
+        AccountJoinDigest.request(withGameInstance(scope, 45L), "bootstrap-jti-α", true, 5L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> AccountJoinDigest.request(scope, "bootstrap-jti-α", null, null));
+
     assertEquals(
-        "sha256:3450f964af0d11503e93a34d5178697de8c07c0eb7fe7e215d70de61a93f5a38",
-        AccountJoinDigest.request(scope, "bootstrap-jti-α", "UNAVAILABLE", null, null));
+        "sha256:d6cfe1a2c241a63bdb0f5c381e18fddae1f00431da5f27cbfbf0f0a4b9748a3b",
+        AccountJoinDigest.intent("join-request-α", scope, "bootstrap-jti-α"));
   }
 
   @Test
@@ -43,13 +49,28 @@ class AccountJoinDigestTest {
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            AccountJoinDigest.request(
-                scope("scope-token", "production"), "bad=binding", "AVAILABLE", true, 1L));
+            AccountJoinDigest.request(scope("scope-token", "production"), "bad=binding", true, 1L));
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            AccountJoinDigest.request(
-                scope("scope-token", "production"), "caller", "AVAILABLE", true, null));
+        () -> AccountJoinDigest.request(scope("scope-token", "production"), "caller", true, null));
+  }
+
+  private static VerifiedJoinScope withGameInstance(VerifiedJoinScope scope, long gameInstanceId) {
+    return new VerifiedJoinScope(
+        scope.connectScopeId(),
+        scope.accountId(),
+        scope.tenantId(),
+        scope.realmId(),
+        scope.worldSlug(),
+        scope.realmSlug(),
+        scope.playableStateNamespaceId(),
+        scope.playableStateScope(),
+        gameInstanceId,
+        scope.catalogRevision(),
+        scope.pointerVersion(),
+        scope.evaluatedAt(),
+        scope.connectScopeExpiresAt(),
+        scope.snapshotDigest());
   }
 
   private static VerifiedJoinScope scope(String connectScopeId, String realmSlug) {

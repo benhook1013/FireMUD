@@ -67,6 +67,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxReposi
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -93,9 +94,12 @@ import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
@@ -138,6 +142,7 @@ public class AccountServiceImpl implements AccountService {
   private final EntityManagementClient entityManagementClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
+  private final TransactionTemplate joinTransactionTemplate;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -166,7 +171,8 @@ public class AccountServiceImpl implements AccountService {
       GameSessionClient gameSessionClient,
       EntityManagementClient entityManagementClient,
       JwtUtil jwtUtil,
-      net.firedevops.firemud.accountservice.service.session.SessionService sessionService) {
+      net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
+      PlatformTransactionManager transactionManager) {
     this.accountRepository = accountRepository;
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
@@ -191,6 +197,9 @@ public class AccountServiceImpl implements AccountService {
     this.entityManagementClient = entityManagementClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
+    this.joinTransactionTemplate = new TransactionTemplate(transactionManager);
+    this.joinTransactionTemplate.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
   @Override
@@ -431,7 +440,6 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.public_production_join")
   public JoinPublicProductionResult joinPublicProduction(
       String bootstrapToken, JoinPublicProductionRequest request) {
@@ -492,7 +500,6 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.public_production_join_internal")
   public JoinPublicProductionResult joinPublicProductionFromGameSession(
       DirectTextCallerContext caller, JoinPublicProductionRequest request) {
@@ -519,76 +526,250 @@ public class AccountServiceImpl implements AccountService {
         || !StringUtils.hasText(request.requestId())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
-    accountJoinOperationRepository.lockAccount(accountId);
-    Optional<AccountJoinOperationRepository.JoinOperation> existing =
-        accountJoinOperationRepository.find(request.requestId());
+    String requestId = request.requestId();
+    String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
+    Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);
+    VerifiedJoinScope retained;
     if (existing.isPresent()) {
-      var operation = existing.orElseThrow();
+      JoinOperation operation = existing.orElseThrow();
       if (operation.accountId() != accountId
           || !operation.callerBinding().equals(callerBinding)
-          || !operation
-              .scopeTokenHash()
-              .equals(AccountJoinDigest.tokenHash(request.connectScopeId()))) {
+          || !operation.scopeTokenHash().equals(scopeTokenHash)) {
         throw new AuthenticationException(
             "IDEMPOTENCY_CONFLICT", "JOIN request ID was reused with different input");
       }
-      VerifiedJoinScope retained =
-          accountConnectScopeRepository
-              .find(request.connectScopeId())
+      retained = retainedJoinScope(request.connectScopeId());
+      validateDirectTextJoinScope(directTextCaller, retained);
+      requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
+    } else {
+      ConnectScopeContext signedScope = requireConnectScopeContext(request.connectScopeId());
+      retained = retainedJoinScope(request.connectScopeId());
+      validateDirectTextJoinScope(directTextCaller, retained);
+      validateSignedJoinScope(signedScope, retained, accountId);
+      String intentDigest = AccountJoinDigest.intent(requestId, retained, callerBinding);
+      try {
+        joinTransactionTemplate.execute(
+            transactionStatus ->
+                accountJoinOperationRepository.insertIntent(
+                    requestId, retained, callerBinding, intentDigest));
+      } catch (RuntimeException ex) {
+        Optional<JoinOperation> claimReadback = safeFindJoinOperation(requestId);
+        if (claimReadback.isEmpty()) {
+          throw new AuthenticationException(
+              "AUTH_UNAVAILABLE", "JOIN request claim is uncertain; retry the same request", ex);
+        }
+        requireMatchingJoinIntent(claimReadback.orElseThrow(), requestId, callerBinding, retained);
+      }
+      JoinOperation claimed =
+          accountJoinOperationRepository
+              .find(requestId)
               .orElseThrow(
                   () ->
                       new AuthenticationException(
-                          "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
-      validateDirectTextJoinScope(directTextCaller, retained);
-      JoinEvaluation evaluation = evaluateJoin(retained);
-      if ("NOT_EVALUATED".equals(evaluation.authorityAvailability())
-          && !"NOT_EVALUATED".equals(operation.entitlementAuthorityAvailability())) {
-        throw new AuthenticationException(
-            evaluation.failureCode(), "Current JOIN authority could not be revalidated");
-      }
-      if ("UNAVAILABLE".equals(evaluation.authorityAvailability())
-          && "AVAILABLE".equals(operation.entitlementAuthorityAvailability())) {
-        throw new AuthenticationException(
-            "ENTITLEMENT_UNAVAILABLE",
-            "Current policy cannot be compared with retained JOIN evidence");
-      }
-      String requestDigest =
-          AccountJoinDigest.request(
-              retained,
-              callerBinding,
-              evaluation.authorityAvailability(),
-              evaluation.allowPublicJoin(),
-              evaluation.entitlementVersion());
-      if (!operation.connectScopeDigest().equals(retained.snapshotDigest())
-          || operation.requestDigestVersion() != 1
-          || !operation.requestDigest().equals(requestDigest)) {
-        throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
-      }
-      if ("PENDING".equals(operation.status())) {
-        throw new AuthenticationException(
-            "AUTH_UNAVAILABLE", "JOIN outcome is pending reconciliation");
-      }
-      return new JoinPublicProductionResult(
-          "COMMITTED".equals(operation.status()),
-          operation.outcome(),
-          operation.accountId(),
-          operation.tenantId(),
-          operation.membershipId() == null ? 0L : operation.membershipId(),
-          operation.membershipVersion() == null ? 0L : operation.membershipVersion(),
-          operation.membershipAuthorityGeneration() == null
-              ? 0L
-              : operation.membershipAuthorityGeneration(),
-          true);
+                          "AUTH_UNAVAILABLE", "JOIN request claim is not yet readable"));
+      requireMatchingJoinIntent(claimed, requestId, callerBinding, retained);
     }
-    ConnectScopeContext signedScope = requireConnectScopeContext(request.connectScopeId());
-    VerifiedJoinScope retained =
-        accountConnectScopeRepository
-            .find(request.connectScopeId())
-            .orElseThrow(
-                () ->
-                    new AuthenticationException(
-                        "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
-    validateDirectTextJoinScope(directTextCaller, retained);
+
+    try {
+      return joinTransactionTemplate.execute(
+          transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
+    } catch (AuthenticationException ex) {
+      if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
+        throw ex;
+      }
+      recordJoinAttemptFailureAfterRollback(requestId, ex.getCode());
+      return pendingJoinFailure(retained, ex.getCode());
+    } catch (RuntimeException ex) {
+      Optional<JoinOperation> outcomeReadback = safeFindJoinOperation(requestId);
+      if (outcomeReadback.isPresent()) {
+        JoinOperation operation = outcomeReadback.orElseThrow();
+        requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
+        if (!"PENDING".equals(operation.status())) {
+          return resultFromJoinOperation(operation, true);
+        }
+        recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
+      }
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "JOIN outcome is uncertain; retry the same request", ex);
+    }
+  }
+
+  private JoinPublicProductionResult executeJoinAttempt(
+      long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
+    accountJoinOperationRepository.lockAccount(accountId);
+    JoinOperation operation =
+        accountJoinOperationRepository
+            .findForUpdate(requestId)
+            .orElseThrow(() -> new IllegalStateException("JOIN request claim disappeared"));
+    requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
+
+    if (!"PENDING".equals(operation.status())) {
+      return replayJoinOperation(operation, callerBinding, scope);
+    }
+
+    JoinEvaluation evaluation = evaluateJoin(scope);
+    if (evaluation.failureCode() != null) {
+      if (isRetryableJoinAuthorityFailure(evaluation)) {
+        accountJoinOperationRepository.recordAttemptFailure(
+            requestId, evaluation.authorityAvailability(), evaluation.failureCode());
+        return pendingJoinFailure(scope, evaluation.failureCode());
+      }
+      return failedJoin(requestId, scope, evaluation.failureCode());
+    }
+    if (!"AVAILABLE".equals(evaluation.authorityAvailability())
+        || evaluation.allowPublicJoin() == null
+        || evaluation.entitlementVersion() == null) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, evaluation.authorityAvailability(), "ENTITLEMENT_UNAVAILABLE");
+      return pendingJoinFailure(scope, "ENTITLEMENT_UNAVAILABLE");
+    }
+    String requestDigest =
+        AccountJoinDigest.request(
+            scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
+    if (operation.requestDigest() != null
+        && (!Integer.valueOf(1).equals(operation.requestDigestVersion())
+            || !operation.requestDigest().equals(requestDigest))) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, "AVAILABLE", "IDEMPOTENCY_CONFLICT");
+      return pendingJoinFailure(scope, "IDEMPOTENCY_CONFLICT");
+    }
+    if (operation.requestDigest() == null) {
+      accountJoinOperationRepository.bindPolicyEvidence(
+          requestId, requestDigest, evaluation.entitlementVersion(), evaluation.allowPublicJoin());
+    }
+    if (!evaluation.gameplayAvailable()) {
+      return failedJoin(requestId, scope, "TENANT_BILLING_BLOCKED");
+    }
+    if (!evaluation.allowPublicJoin()) {
+      return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    }
+
+    JoinEvaluation commitEvaluation = evaluateJoin(scope);
+    if (commitEvaluation.failureCode() != null) {
+      if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
+        accountJoinOperationRepository.recordAttemptFailure(
+            requestId, commitEvaluation.authorityAvailability(), commitEvaluation.failureCode());
+        return pendingJoinFailure(scope, commitEvaluation.failureCode());
+      }
+      return failedJoin(requestId, scope, commitEvaluation.failureCode());
+    }
+    if (!"AVAILABLE".equals(commitEvaluation.authorityAvailability())) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, commitEvaluation.authorityAvailability(), "ENTITLEMENT_UNAVAILABLE");
+      return pendingJoinFailure(scope, "ENTITLEMENT_UNAVAILABLE");
+    }
+    String commitDigest =
+        AccountJoinDigest.request(
+            scope,
+            callerBinding,
+            commitEvaluation.allowPublicJoin(),
+            commitEvaluation.entitlementVersion());
+    if (!requestDigest.equals(commitDigest)) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, "AVAILABLE", "IDEMPOTENCY_CONFLICT");
+      return pendingJoinFailure(scope, "IDEMPOTENCY_CONFLICT");
+    }
+    if (!commitEvaluation.gameplayAvailable()) {
+      return failedJoin(requestId, scope, "TENANT_BILLING_BLOCKED");
+    }
+    if (!commitEvaluation.allowPublicJoin()) {
+      return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    }
+    AccountTenantMembership membership =
+        accountTenantMembershipRepository
+            .findByAccountIdAndTenantId(accountId, scope.tenantId())
+            .orElse(null);
+    boolean transitioned = false;
+    if (membership == null) {
+      membership = new AccountTenantMembership();
+      membership.setAccount(requireAccount(accountId));
+      membership.setTenantId(scope.tenantId());
+      membership.setMembershipVersion(1L);
+      membership.setMembershipAuthorityGeneration(1L);
+      membership.setLifecycleState("ACTIVE");
+      membership.setGameplayAdmissionAllowed(true);
+      membership.setAuthorityProvenance("EXPLICIT_JOIN");
+      accountTenantMembershipRepository.save(membership);
+      transitioned = true;
+    } else if ("INACTIVE".equals(membership.getLifecycleState())) {
+      accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
+      membership.setLifecycleState("ACTIVE");
+      membership.setGameplayAdmissionAllowed(true);
+      membership.setMembershipVersion(membership.getMembershipVersion() + 1L);
+      membership.setMembershipAuthorityGeneration(
+          membership.getMembershipAuthorityGeneration() + 1L);
+      membership.setAuthorityProvenance("EXPLICIT_JOIN");
+      accountTenantMembershipRepository.save(membership);
+      transitioned = true;
+    } else if (!"ACTIVE".equals(membership.getLifecycleState())
+        || !membership.isGameplayAdmissionAllowed()) {
+      return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+    }
+    if (transitioned) {
+      String payload =
+          AUDIT_JSON.writeValueAsString(
+              new JoinAuditPayload(
+                  accountId,
+                  scope.tenantId(),
+                  scope.worldSlug(),
+                  scope.realmSlug(),
+                  membership.getMembershipVersion(),
+                  requestId));
+      UUID auditEventId =
+          UUID.nameUUIDFromBytes(
+              ("account-join-audit/v1:" + requestId).getBytes(StandardCharsets.UTF_8));
+      accountAuditOutboxRepository.append(
+          auditEventId, "tenant", scope.tenantId(), "ACCOUNT_JOINED_PUBLIC_PRODUCTION", payload);
+    }
+    accountJoinOperationRepository.finish(
+        requestId,
+        "COMMITTED",
+        transitioned ? "JOINED" : "ALREADY_ACTIVE",
+        membership.getId(),
+        membership.getMembershipVersion(),
+        membership.getMembershipAuthorityGeneration());
+    return new JoinPublicProductionResult(
+        true,
+        transitioned ? "JOINED" : "ALREADY_ACTIVE",
+        accountId,
+        scope.tenantId(),
+        membership.getId(),
+        membership.getMembershipVersion(),
+        membership.getMembershipAuthorityGeneration(),
+        false);
+  }
+
+  private JoinPublicProductionResult failedJoin(
+      String requestId, VerifiedJoinScope scope, String outcomeCode) {
+    accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
+    return new JoinPublicProductionResult(
+        false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  }
+
+  private JoinPublicProductionResult pendingJoinFailure(
+      VerifiedJoinScope scope, String outcomeCode) {
+    return new JoinPublicProductionResult(
+        false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  }
+
+  private boolean isRetryableJoinAuthorityFailure(JoinEvaluation evaluation) {
+    return "UNAVAILABLE".equals(evaluation.authorityAvailability())
+        || "ADMISSION_POINTER_UNAVAILABLE".equals(evaluation.failureCode())
+        || "AUTH_UNAVAILABLE".equals(evaluation.failureCode())
+        || "ENTITLEMENT_UNAVAILABLE".equals(evaluation.failureCode());
+  }
+
+  private VerifiedJoinScope retainedJoinScope(String connectScopeId) {
+    return accountConnectScopeRepository
+        .find(connectScopeId)
+        .orElseThrow(
+            () ->
+                new AuthenticationException(
+                    "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
+  }
+
+  private void validateSignedJoinScope(
+      ConnectScopeContext signedScope, VerifiedJoinScope retained, long accountId) {
     if (retained.accountId() != accountId
         || signedScope.accountId() != accountId
         || signedScope.tenantId() != retained.tenantId()
@@ -607,123 +788,88 @@ public class AccountServiceImpl implements AccountService {
             .equals(retained.connectScopeExpiresAt())) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
-    JoinEvaluation evaluation = evaluateJoin(signedScope);
-    String requestDigest =
-        AccountJoinDigest.request(
-            retained,
-            callerBinding,
-            evaluation.authorityAvailability(),
-            evaluation.allowPublicJoin(),
-            evaluation.entitlementVersion());
-    boolean operationClaimed =
-        accountJoinOperationRepository.insertPending(
-            request.requestId(),
-            retained,
-            callerBinding,
-            requestDigest,
-            evaluation.authorityAvailability(),
-            evaluation.entitlementVersion(),
-            evaluation.allowPublicJoin(),
-            false);
-    if (!operationClaimed) {
+  }
+
+  private void requireMatchingJoinIntent(
+      JoinOperation operation, String requestId, String callerBinding, VerifiedJoinScope scope) {
+    String expectedIntentDigest = AccountJoinDigest.intent(requestId, scope, callerBinding);
+    if (operation.accountId() != scope.accountId()
+        || !operation.callerBinding().equals(callerBinding)
+        || !operation.scopeTokenHash().equals(AccountJoinDigest.tokenHash(scope.connectScopeId()))
+        || !operation.connectScopeDigest().equals(scope.snapshotDigest())
+        || operation.intentDigestVersion() != 1
+        || !operation.intentDigest().equals(expectedIntentDigest)) {
       throw new AuthenticationException(
           "IDEMPOTENCY_CONFLICT", "JOIN request ID was reused with different input");
     }
-    if (evaluation.failureCode() != null) {
-      return failedJoin(request.requestId(), retained, evaluation.failureCode());
-    }
-    if (!evaluation.gameplayAvailable()) {
-      return failedJoin(request.requestId(), retained, "TENANT_BILLING_BLOCKED");
-    }
-    if (!evaluation.allowPublicJoin()) {
-      return failedJoin(request.requestId(), retained, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
-    }
-    JoinEvaluation commitEvaluation = evaluateJoin(signedScope);
-    if (commitEvaluation.failureCode() != null) {
-      return failedJoin(request.requestId(), retained, commitEvaluation.failureCode());
-    }
-    if (!"AVAILABLE".equals(commitEvaluation.authorityAvailability())
-        || !java.util.Objects.equals(
-            evaluation.entitlementVersion(), commitEvaluation.entitlementVersion())
-        || !java.util.Objects.equals(
-            evaluation.allowPublicJoin(), commitEvaluation.allowPublicJoin())) {
-      return failedJoin(request.requestId(), retained, "ENTITLEMENT_UNAVAILABLE");
-    }
-    if (!commitEvaluation.gameplayAvailable()) {
-      return failedJoin(request.requestId(), retained, "TENANT_BILLING_BLOCKED");
-    }
-    if (!commitEvaluation.allowPublicJoin()) {
-      return failedJoin(request.requestId(), retained, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
-    }
-    AccountTenantMembership membership =
-        accountTenantMembershipRepository
-            .findByAccountIdAndTenantId(accountId, retained.tenantId())
-            .orElse(null);
-    boolean transitioned = false;
-    if (membership == null) {
-      membership = new AccountTenantMembership();
-      membership.setAccount(requireAccount(accountId));
-      membership.setTenantId(retained.tenantId());
-      membership.setMembershipVersion(1L);
-      membership.setMembershipAuthorityGeneration(1L);
-      membership.setLifecycleState("ACTIVE");
-      membership.setGameplayAdmissionAllowed(true);
-      membership.setAuthorityProvenance("EXPLICIT_JOIN");
-      accountTenantMembershipRepository.save(membership);
-      transitioned = true;
-    } else if ("INACTIVE".equals(membership.getLifecycleState())) {
-      accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(request.requestId());
-      membership.setLifecycleState("ACTIVE");
-      membership.setGameplayAdmissionAllowed(true);
-      membership.setMembershipVersion(membership.getMembershipVersion() + 1L);
-      membership.setMembershipAuthorityGeneration(
-          membership.getMembershipAuthorityGeneration() + 1L);
-      membership.setAuthorityProvenance("EXPLICIT_JOIN");
-      accountTenantMembershipRepository.save(membership);
-      transitioned = true;
-    } else if (!"ACTIVE".equals(membership.getLifecycleState())
-        || !membership.isGameplayAdmissionAllowed()) {
-      return failedJoin(request.requestId(), retained, "MEMBERSHIP_RECONCILIATION_REQUIRED");
-    }
-    if (transitioned) {
-      String payload =
-          AUDIT_JSON.writeValueAsString(
-              new JoinAuditPayload(
-                  accountId,
-                  retained.tenantId(),
-                  retained.worldSlug(),
-                  retained.realmSlug(),
-                  membership.getMembershipVersion(),
-                  request.requestId()));
-      UUID auditEventId =
-          UUID.nameUUIDFromBytes(
-              ("account-join-audit/v1:" + request.requestId()).getBytes(StandardCharsets.UTF_8));
-      accountAuditOutboxRepository.append(
-          auditEventId, "tenant", retained.tenantId(), "ACCOUNT_JOINED_PUBLIC_PRODUCTION", payload);
-    }
-    accountJoinOperationRepository.finish(
-        request.requestId(),
-        "COMMITTED",
-        transitioned ? "JOINED" : "ALREADY_ACTIVE",
-        membership.getId(),
-        membership.getMembershipVersion(),
-        membership.getMembershipAuthorityGeneration());
-    return new JoinPublicProductionResult(
-        true,
-        transitioned ? "JOINED" : "ALREADY_ACTIVE",
-        accountId,
-        retained.tenantId(),
-        membership.getId(),
-        membership.getMembershipVersion(),
-        membership.getMembershipAuthorityGeneration(),
-        false);
   }
 
-  private JoinPublicProductionResult failedJoin(
-      String requestId, VerifiedJoinScope scope, String outcomeCode) {
-    accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
+  private JoinPublicProductionResult replayJoinOperation(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    if (operation.requestDigest() != null) {
+      JoinEvaluation evaluation = evaluateJoin(scope);
+      if (evaluation.failureCode() != null) {
+        throw new AuthenticationException(
+            evaluation.failureCode(), "Current JOIN authority could not be revalidated");
+      }
+      if (!"AVAILABLE".equals(evaluation.authorityAvailability())) {
+        throw new AuthenticationException(
+            "ENTITLEMENT_UNAVAILABLE", "Current JOIN policy could not be revalidated");
+      }
+      String currentDigest =
+          AccountJoinDigest.request(
+              scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
+      if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
+          || !operation.requestDigest().equals(currentDigest)) {
+        throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
+      }
+    }
+    return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult resultFromJoinOperation(
+      JoinOperation operation, boolean replayed) {
     return new JoinPublicProductionResult(
-        false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+        "COMMITTED".equals(operation.status()),
+        operation.outcome(),
+        operation.accountId(),
+        operation.tenantId(),
+        operation.membershipId() == null ? 0L : operation.membershipId(),
+        operation.membershipVersion() == null ? 0L : operation.membershipVersion(),
+        operation.membershipAuthorityGeneration() == null
+            ? 0L
+            : operation.membershipAuthorityGeneration(),
+        replayed);
+  }
+
+  private Optional<JoinOperation> safeFindJoinOperation(String requestId) {
+    try {
+      return accountJoinOperationRepository.find(requestId);
+    } catch (RuntimeException ignored) {
+      return Optional.empty();
+    }
+  }
+
+  private void recordJoinAttemptFailureAfterRollback(String requestId, String failureCode) {
+    String availability =
+        "ENTITLEMENT_UNAVAILABLE".equals(failureCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
+    try {
+      joinTransactionTemplate.execute(
+          transactionStatus -> {
+            accountJoinOperationRepository
+                .findForUpdate(requestId)
+                .ifPresent(
+                    operation -> {
+                      if ("PENDING".equals(operation.status())) {
+                        accountJoinOperationRepository.recordAttemptFailure(
+                            requestId, availability, failureCode);
+                      }
+                    });
+            return null;
+          });
+    } catch (RuntimeException ignored) {
+      // The durable intent stays pending, and the caller retries the same request ID.
+    }
   }
 
   private void validateDirectTextJoinScope(

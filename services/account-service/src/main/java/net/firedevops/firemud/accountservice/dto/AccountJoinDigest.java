@@ -31,17 +31,10 @@ public final class AccountJoinDigest {
   public static String request(
       VerifiedJoinScope scope,
       String callerBinding,
-      String entitlementAuthorityAvailability,
       Boolean allowPublicJoin,
       Long entitlementVersion) {
-    if (!"AVAILABLE".equals(entitlementAuthorityAvailability)
-        && !"UNAVAILABLE".equals(entitlementAuthorityAvailability)
-        && !"NOT_EVALUATED".equals(entitlementAuthorityAvailability)) {
-      throw new IllegalArgumentException("Entitlement authority availability is invalid");
-    }
-    if ("AVAILABLE".equals(entitlementAuthorityAvailability)
-        != (allowPublicJoin != null && entitlementVersion != null && entitlementVersion > 0L)) {
-      throw new IllegalArgumentException("Policy evidence must match authority availability");
+    if (allowPublicJoin == null || entitlementVersion == null || entitlementVersion <= 0L) {
+      throw new IllegalArgumentException("A JOIN policy digest requires exact available evidence");
     }
     return hash(
         "joinDigestVersion=v1\n"
@@ -57,11 +50,29 @@ public final class AccountJoinDigest {
             + field("connectScopeId", scope.connectScopeId())
             + field("catalogRevision", scope.catalogRevision())
             + field("pointerVersion", scope.pointerVersion())
-            + field("entitlementAuthorityAvailability", entitlementAuthorityAvailability)
-            + ("AVAILABLE".equals(entitlementAuthorityAvailability)
-                ? field("allowPublicJoin", allowPublicJoin)
-                    + field("entitlementVersion", entitlementVersion)
-                : ""));
+            + field("entitlementAuthorityAvailability", "AVAILABLE")
+            + field("allowPublicJoin", allowPublicJoin)
+            + field("entitlementVersion", entitlementVersion));
+  }
+
+  public static String intent(String requestId, VerifiedJoinScope scope, String callerBinding) {
+    return hash(
+        "joinIntentDigestVersion=v1\n"
+            + "operationKind=JOIN\n"
+            + field("requestId", requestId)
+            + field("accountId", scope.accountId())
+            + field("callerBinding", callerBinding)
+            + field("connectScopeId", scope.connectScopeId())
+            + field("scopeDigest", scope.snapshotDigest())
+            + field("tenantId", scope.tenantId())
+            + field("worldSlug", scope.worldSlug())
+            + field("realmSlug", scope.realmSlug())
+            + field("realmId", scope.realmId())
+            + field("playableStateNamespaceId", scope.playableStateNamespaceId())
+            + field("playableStateScope", scope.playableStateScope())
+            + field("gameInstanceId", scope.gameInstanceId())
+            + field("catalogRevision", scope.catalogRevision())
+            + field("pointerVersion", scope.pointerVersion()));
   }
 
   public static String tokenHash(String connectScopeId) {

@@ -73,6 +73,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
@@ -96,6 +99,7 @@ class AccountServiceImplTest {
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
   @Mock private ExternalAccountRepository externalAccountRepository;
+  @Mock private PlatformTransactionManager transactionManager;
 
   @Mock private EmailVerificationTokenRepository emailVerificationTokenRepository;
 
@@ -108,6 +112,9 @@ class AccountServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(transactionManager.getTransaction(
+            org.mockito.ArgumentMatchers.any(TransactionDefinition.class)))
+        .thenAnswer(invocation -> new SimpleTransactionStatus());
     Subscription explicitActiveEntitlement = new Subscription();
     explicitActiveEntitlement.setId(1L);
     explicitActiveEntitlement.setTenantId(7L);
@@ -205,7 +212,8 @@ class AccountServiceImplTest {
             gameSessionClient,
             entityManagementClient,
             jwtUtil,
-            sessionService);
+            sessionService,
+            transactionManager);
   }
 
   @Test
@@ -416,11 +424,27 @@ class AccountServiceImplTest {
     when(sessionService.isAccountSessionActive(
             org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(true);
+    Subscription recovered = new Subscription();
+    recovered.setId(22L);
+    recovered.setTenantId(7L);
+    recovered.setStatus("active");
+    recovered.setEntitlementVersion(1L);
     when(subscriptionRepository.findByTenantIdForUpdate(7L))
         .thenReturn(
             ambiguous
                 ? java.util.List.of(new Subscription(), new Subscription())
-                : java.util.List.of());
+                : java.util.List.of(),
+            java.util.List.of(recovered),
+            java.util.List.of(recovered));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              return membership;
+            });
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
@@ -435,22 +459,38 @@ class AccountServiceImplTest {
 
     JoinPublicProductionResult first =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
-    JoinPublicProductionResult retry =
-        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
-
     assertFalse(first.success());
     assertEquals("ENTITLEMENT_UNAVAILABLE", first.outcomeCode());
-    assertFalse(retry.success());
-    assertTrue(retry.replayed());
-    assertEquals(first.outcomeCode(), retry.outcomeCode());
-    assertEquals("FAILED", retainedOperation.get().status());
-    assertEquals("UNAVAILABLE", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals("UNAVAILABLE", retainedOperation.get().lastAttemptAuthorityAvailability());
+    assertNotNull(retainedOperation.get().intentDigest());
+    assertEquals(null, retainedOperation.get().requestDigest());
+    assertEquals(null, retainedOperation.get().requestDigestVersion());
     assertEquals(null, retainedOperation.get().allowPublicJoin());
     assertEquals(null, retainedOperation.get().entitlementVersion());
-    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+
+    JoinPublicProductionResult retriedAfterRecovery =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertTrue(retriedAfterRecovery.success());
+    assertEquals("JOINED", retriedAfterRecovery.outcomeCode());
+    assertEquals("COMMITTED", retainedOperation.get().status());
+    assertEquals("AVAILABLE", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals(1L, retainedOperation.get().entitlementVersion());
+    assertEquals(true, retainedOperation.get().allowPublicJoin());
+    assertNotNull(retainedOperation.get().requestDigest());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
-    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
+        .append(
+            org.mockito.ArgumentMatchers.any(java.util.UUID.class),
+            org.mockito.ArgumentMatchers.eq("tenant"),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
+            org.mockito.ArgumentMatchers.contains("join-unavailable-1"));
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
         .findByTenantIdForUpdate(7L);
   }
 
@@ -495,13 +535,62 @@ class AccountServiceImplTest {
             new JoinPublicProductionRequest(connectScopeId, "join-race-1"));
 
     assertFalse(result.success());
-    assertEquals("ENTITLEMENT_UNAVAILABLE", result.outcomeCode());
-    assertEquals("FAILED", retainedOperation.get().status());
+    assertEquals("IDEMPOTENCY_CONFLICT", result.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(5L, retainedOperation.get().entitlementVersion());
+    assertEquals("IDEMPOTENCY_CONFLICT", retainedOperation.get().lastAttemptFailureCode());
+    assertNotNull(retainedOperation.get().requestDigest());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantIdForUpdate(7L);
+  }
+
+  @Test
+  void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    when(subscriptionRepository.findByTenantIdForUpdate(7L))
+        .thenThrow(new IllegalStateException("entitlement storage unavailable"));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProduction(
+                    bootstrap.bootstrapToken(),
+                    new JoinPublicProductionRequest(connectScopeId, "join-txn-boundary-1")));
+
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertNotNull(retainedOperation.get().intentDigest());
+    assertEquals(null, retainedOperation.get().requestDigest());
+    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(2))
+        .commit(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(1))
+        .rollback(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
   }
 
   @Test
@@ -524,17 +613,29 @@ class AccountServiceImplTest {
     retainJoinEvidence(retainedScope, retainedOperation);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    org.mockito.Mockito.when(
-            accountJoinOperationRepository.insertPending(
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.nullable(Long.class),
-                org.mockito.ArgumentMatchers.nullable(Boolean.class),
-                org.mockito.ArgumentMatchers.anyBoolean()))
-        .thenReturn(false);
+    VerifiedJoinScope scope = retainedScope.get();
+    retainedOperation.set(
+        new AccountJoinOperationRepository.JoinOperation(
+            12L,
+            scope.tenantId(),
+            "different-caller",
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
+            scope.snapshotDigest(),
+            "NOT_EVALUATED",
+            null,
+            null,
+            null,
+            null,
+            "PENDING",
+            null,
+            null,
+            null,
+            null,
+            1,
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
+                "join-global-collision-1", scope, "different-caller"),
+            null,
+            "NOT_EVALUATED"));
 
     AuthenticationException conflict =
         assertThrows(
@@ -609,15 +710,14 @@ class AccountServiceImplTest {
         .thenAnswer(invocation -> Optional.ofNullable(retainedScope.get()));
     when(accountJoinOperationRepository.find(org.mockito.ArgumentMatchers.anyString()))
         .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
+    when(accountJoinOperationRepository.findForUpdate(org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               String requestId = invocation.getArgument(0);
               VerifiedJoinScope scope = invocation.getArgument(1);
               String callerBinding = invocation.getArgument(2);
-              String requestDigest = invocation.getArgument(3);
-              String authorityAvailability = invocation.getArgument(4);
-              Long entitlementVersion = invocation.getArgument(5);
-              Boolean allowPublicJoin = invocation.getArgument(6);
+              String intentDigest = invocation.getArgument(3);
               retainedOperation.set(
                   new AccountJoinOperationRepository.JoinOperation(
                       scope.accountId(),
@@ -626,28 +726,94 @@ class AccountServiceImplTest {
                       net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
                           scope.connectScopeId()),
                       scope.snapshotDigest(),
-                      authorityAvailability,
-                      allowPublicJoin,
-                      entitlementVersion,
-                      1,
-                      requestDigest,
+                      "NOT_EVALUATED",
+                      null,
+                      null,
+                      null,
+                      null,
                       "PENDING",
                       null,
                       null,
                       null,
-                      null));
+                      null,
+                      1,
+                      intentDigest,
+                      null,
+                      "NOT_EVALUATED"));
               return true;
             })
         .when(accountJoinOperationRepository)
-        .insertPending(
+        .insertIntent(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class),
             org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var pending = retainedOperation.get();
+              retainedOperation.set(
+                  new AccountJoinOperationRepository.JoinOperation(
+                      pending.accountId(),
+                      pending.tenantId(),
+                      pending.callerBinding(),
+                      pending.scopeTokenHash(),
+                      pending.connectScopeDigest(),
+                      "AVAILABLE",
+                      invocation.getArgument(3),
+                      invocation.getArgument(2),
+                      1,
+                      invocation.getArgument(1),
+                      pending.status(),
+                      pending.outcome(),
+                      pending.membershipId(),
+                      pending.membershipVersion(),
+                      pending.membershipAuthorityGeneration(),
+                      pending.intentDigestVersion(),
+                      pending.intentDigest(),
+                      null,
+                      "AVAILABLE"));
+              return null;
+            })
+        .when(accountJoinOperationRepository)
+        .bindPolicyEvidence(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.nullable(Long.class),
-            org.mockito.ArgumentMatchers.nullable(Boolean.class),
+            org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyBoolean());
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var pending = retainedOperation.get();
+              String availability = invocation.getArgument(1);
+              retainedOperation.set(
+                  new AccountJoinOperationRepository.JoinOperation(
+                      pending.accountId(),
+                      pending.tenantId(),
+                      pending.callerBinding(),
+                      pending.scopeTokenHash(),
+                      pending.connectScopeDigest(),
+                      pending.requestDigest() == null
+                          ? availability
+                          : pending.entitlementAuthorityAvailability(),
+                      pending.allowPublicJoin(),
+                      pending.entitlementVersion(),
+                      pending.requestDigestVersion(),
+                      pending.requestDigest(),
+                      pending.status(),
+                      pending.outcome(),
+                      pending.membershipId(),
+                      pending.membershipVersion(),
+                      pending.membershipAuthorityGeneration(),
+                      pending.intentDigestVersion(),
+                      pending.intentDigest(),
+                      invocation.getArgument(2),
+                      availability));
+              return null;
+            })
+        .when(accountJoinOperationRepository)
+        .recordAttemptFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.doAnswer(
             invocation -> {
               var pending = retainedOperation.get();
@@ -667,7 +833,11 @@ class AccountServiceImplTest {
                       invocation.getArgument(2),
                       invocation.getArgument(3),
                       invocation.getArgument(4),
-                      invocation.getArgument(5)));
+                      invocation.getArgument(5),
+                      pending.intentDigestVersion(),
+                      pending.intentDigest(),
+                      null,
+                      pending.lastAttemptAuthorityAvailability()));
               return null;
             })
         .when(accountJoinOperationRepository)
@@ -1168,7 +1338,8 @@ class AccountServiceImplTest {
             gameSessionClient,
             entityManagementClient,
             jwtUtil,
-            sessionService);
+            sessionService,
+            transactionManager);
 
     IllegalStateException ex =
         assertThrows(IllegalStateException.class, () -> service.listBootstrapWorlds("boom-token"));

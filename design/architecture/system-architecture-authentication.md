@@ -271,7 +271,28 @@ These modes are complementary: public browse remains available before authentica
   ```
 
   The field names, `=`, line separators, and final newline are literal ASCII bytes. Values use the owning contract's canonical UTF-8 wire forms (including canonical decimal revisions and UTC RFC3339 timestamps), are not trimmed, case-folded, or Unicode-normalized, and may not contain `=` or a newline. `targetClass` is server-derived and not caller input. The bracket notation in the preimage illustration denotes conditional lines, not literal bytes: for `PUBLIC_PRODUCTION`, both lifecycle lines are omitted entirely, never encoded as empty, null, or sentinel values; for `NON_PUBLIC`, both are required, with a positive `playtestStateGeneration`. Account stores the digest with the scope record, including the immutable `evaluatedAt` value, and exact-compares it with the complete stored field set whenever the scope is consumed; a missing, extra, altered, or differently serialized field fails closed. This Account-owned scope-integrity evidence is distinct from the separately signed Gateway context and the JOIN idempotency digest.
-- The canonical `JOIN` idempotency digest is `SHA-256` over the UTF-8 bytes of this exact newline-delimited preimage, including the final newline and preserving this field order:
+- Before consulting entitlement authority, Account durably claims the stable `requestId` as `PENDING` with a policy-independent `joinIntentDigest/v1`. This immutable intent digest binds the request ID, authenticated account, verified caller binding, verified `connectScopeId` and scope snapshot digest, and the complete server-resolved target. It contains no entitlement availability, policy result, or entitlement version. The claim is committed before policy evaluation so an unavailable authority or an uncertain later transaction cannot erase evidence of the logical attempt. The intent digest is `SHA-256` over the UTF-8 bytes of the exact newline-delimited preimage below, including the final newline. Field names, `=`, separators, and the final newline are literal ASCII bytes; values use the canonical UTF-8 wire forms of the validated request and scope and may not contain `=` or a newline. A retry must match this intent exactly; a changed intent under the same request ID returns `IDEMPOTENCY_CONFLICT`.
+
+  ```text
+  joinIntentDigestVersion=v1
+  operationKind=JOIN
+  requestId=<stable requestId>
+  accountId=<authenticated accountId>
+  callerBinding=<validated caller binding>
+  connectScopeId=<verified connectScopeId>
+  scopeDigest=<verified connectScopeSnapshotDigest>
+  tenantId=<resolved tenantId>
+  worldSlug=<resolved worldSlug>
+  realmSlug=<resolved realmSlug>
+  realmId=<resolved realmId>
+  playableStateNamespaceId=<bound playableStateNamespaceId>
+  playableStateScope=<bound playableStateScope>
+  gameInstanceId=<bound gameInstanceId>
+  catalogRevision=<bound catalogRevision>
+  pointerVersion=<bound pointerVersion>
+  ```
+
+  The canonical policy-bound `JOIN` request digest is `SHA-256` over the UTF-8 bytes of this exact newline-delimited preimage, including the final newline and preserving this field order. It is computed only after a fresh authoritative entitlement evaluation returns `AVAILABLE` with an exact `allowPublicJoin` result and positive `entitlementVersion`:
 
   ```text
   joinDigestVersion=v1
@@ -287,12 +308,12 @@ These modes are complementary: public browse remains available before authentica
   connectScopeId=<verified connectScopeId>
   catalogRevision=<bound catalogRevision>
   pointerVersion=<bound pointerVersion>
-  entitlementAuthorityAvailability=<AVAILABLE|UNAVAILABLE|NOT_EVALUATED>
-  [allowPublicJoin=<exact authoritative boolean>]
-  [entitlementVersion=<exact authoritative version>]
+  entitlementAuthorityAvailability=AVAILABLE
+  allowPublicJoin=<exact authoritative boolean>
+  entitlementVersion=<exact authoritative version>
   ```
 
-  Field names, separators, and the final newline are literal ASCII bytes; values are the exact canonical UTF-8 wire strings from the authenticated caller binding and verified scope and may not contain `=` or a newline. No trimming, case folding, Unicode normalization, alternate serialization, or client-supplied replacement is permitted. Account calculates this unpublished pre-v1 `v1` digest only after establishing entitlement authority availability; when `AVAILABLE`, both policy lines are required and `allowPublicJoin` is lowercase `true` or `false` with a positive canonical decimal `entitlementVersion`. When authority is `UNAVAILABLE` or routing failed before policy evaluation (`NOT_EVALUATED`), both policy lines are omitted entirely, not filled with synthetic values. Account stores the digest version and exact availability/policy evidence with the `requestId`; an exact retry replays the stored outcome and a different digest returns `IDEMPOTENCY_CONFLICT`. No earlier JOIN digest was persisted, so no version-compatibility path is required.
+- Field names, separators, and the final newline are literal ASCII bytes; values are the exact canonical UTF-8 wire strings from the authenticated caller binding and verified scope and may not contain `=` or a newline. No trimming, case folding, Unicode normalization, alternate serialization, or client-supplied replacement is permitted. `allowPublicJoin` is lowercase `true` or `false`; `entitlementVersion` is a positive canonical decimal. Account stores the intent digest/version before evaluation, then stores the request digest/version and exact policy evidence only after `AVAILABLE` authority has supplied both policy values. If entitlement authority is unavailable, Account records the attempt failure and availability while leaving the operation `PENDING`; it does not create a policy-bound request digest or invent a policy result/version. A retry with the same intent may reconcile that pending operation when authority is available. At the membership commit gate Account re-evaluates policy and requires the exact same digest and evidence; changed policy returns `IDEMPOTENCY_CONFLICT` without committing membership or its transition event. Exact retries replay the stored operation result after their required current-policy check. No earlier JOIN digest was persisted, so no version-compatibility path is required.
 - Account validates the caller binding, `connectScopeId`/`connectScopeSnapshotDigest`, scope validity, expiry, and exact bound routing snapshot `{tenantId, realmId, worldSlug, realmSlug, playableStateNamespaceId, playableStateScope, gameInstanceId, catalogRevision, pointerVersion, evaluatedAt, connectScopeExpiresAt}` before applying the join operation; `evaluatedAt` is the same immutable, canonical UTC RFC3339 value committed in the scope record and hashed by `connectScopeSnapshotDigest/v1`. A non-public target additionally requires exact `playtestLifecycleId` and positive `playtestStateGeneration`, while public production omits both. A missing, expired, or mismatched retained scope fails closed and requires fresh authenticated `REALMS` discovery. An unavailable authority dependency returns `AUTH_UNAVAILABLE` and does not permit selector fallback; reachable invalid or contradictory scope evidence returns the applicable scope failure. The server must not re-resolve a stale selector or accept client-supplied target fields as fallback.
 
 Normative semantic split:
