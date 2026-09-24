@@ -167,7 +167,7 @@ for readme in readmes:
         if tuple(int(part) for part in version_parts) < (2, 63, 0):
             raise SystemExit(f"{workflow_versions}: GH_VERSION must be >= 2.63.0")
         prerequisite = (
-            "The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and "
+            "The `pr-review`, `report-worktree-pr-topology.sh`, and "
             "`maintenance/cloc-report.py pr` entrypoints "
             "require GitHub CLI `gh` >= 2.63.0 "
             "because they request the `baseRefOid` field; the repository workflow pin is "

@@ -74,11 +74,11 @@ assert_revalidation_refused() {
   fi
 }
 
-valid_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+valid_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean"}'
 revalidate_deploy "$valid_pull_request"
-valid_mixed_case_pull_request='{"state":"open","head":{"sha":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+valid_mixed_case_pull_request='{"state":"open","head":{"sha":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}'
 revalidate_deploy "$valid_mixed_case_pull_request"
-valid_automation_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
+valid_automation_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"github-actions[bot]"},"labels":[]}'
 revalidate_deploy "$valid_automation_pull_request"
 valid_cleanup_pull_request='{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}}}'
 revalidate_cleanup "$valid_cleanup_pull_request"
@@ -134,31 +134,31 @@ assert_revalidation_refused \
   'current pull request metadata is malformed'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}' \
   'pull request is not open (state=closed)'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}' \
   'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"not-a-sha","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"not-a-sha","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}' \
   'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=not-a-sha)'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}' \
   'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":null}' \
   'label metadata is malformed'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[]}' \
   'target is not preview-eligible (reason=unsupported-base-branch)'
 assert_revalidation_refused \
   --revalidate-deploy \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"dependabot[bot]"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":"dependabot[bot]"},"labels":[]}' \
   'target is not preview-eligible (reason=dependency-bot)'
 assert_revalidation_refused \
   --revalidate-cleanup \
@@ -169,10 +169,10 @@ assert_revalidation_refused \
   '[]' \
   'current pull request metadata is malformed'
 for malformed_author_pull_request in \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"labels":[]}' \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":null,"labels":[]}' \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":42},"labels":[]}' \
-  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":""},"labels":[]}'
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":null,"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":42},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","repo":{"full_name":"example/FireMUD"}},"user":{"login":""},"labels":[]}'
 do
   assert_revalidation_refused \
     --revalidate-deploy \
@@ -420,7 +420,11 @@ cat > "$TEMP_DIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
-printf '%s' "$FAKE_PULL_REQUEST_JSON"
+if [[ "${2:-}" == */git/ref/heads/* ]]; then
+  printf '%s' "${FAKE_BASE_REF_JSON:?}"
+else
+  printf '%s' "$FAKE_PULL_REQUEST_JSON"
+fi
 EOF
 chmod +x "$TEMP_DIR/bin/gh"
 
@@ -435,6 +439,7 @@ if GITHUB_REPOSITORY=example/FireMUD \
   GH_TOKEN=test-token \
   FAKE_GH_LOG="$TEMP_DIR/revalidate-gh.log" \
   FAKE_PULL_REQUEST_JSON="$valid_pull_request" \
+  FAKE_BASE_REF_JSON='{"object":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' \
   PATH="$TEMP_DIR/bin:$PATH" \
   bash "$revalidation_helper" 42 head-123 \
   >"$TEMP_DIR/invalid-shell-revalidation.out" \
@@ -479,6 +484,7 @@ if GITHUB_REPOSITORY=example/FireMUD \
   GH_TOKEN=test-token \
   FAKE_GH_LOG="$TEMP_DIR/reopened-gh.log" \
   FAKE_PULL_REQUEST_JSON="$valid_pull_request" \
+  FAKE_BASE_REF_JSON='{"object":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' \
   PATH="$TEMP_DIR/bin:$PATH" \
   bash "$revalidation_helper" --cleanup 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   >"$TEMP_DIR/reopened.stdout" \
@@ -531,6 +537,11 @@ grep -q '^eligible=false$' <<<"$deploy_stacked"
 grep -q '^reason=unsupported-base-branch$' <<<"$deploy_stacked"
 grep -q '^priority=false$' <<<"$deploy_stacked"
 
+deploy_stacked_priority="$(python3 "$SCRIPT" --operation deploy --state open --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[{"name":"preview:priority"}]')"
+grep -q '^eligible=true$' <<<"$deploy_stacked_priority"
+grep -q '^reason=eligible$' <<<"$deploy_stacked_priority"
+grep -q '^priority=true$' <<<"$deploy_stacked_priority"
+
 deploy_dependency_bot="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author 'renovate[bot]' --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$deploy_dependency_bot"
 grep -q '^reason=dependency-bot$' <<<"$deploy_dependency_bot"
@@ -545,8 +556,12 @@ grep -q '^eligible=true$' <<<"$destroy_closed"
 grep -q '^reason=eligible$' <<<"$destroy_closed"
 
 destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[]')"
-grep -q '^eligible=false$' <<<"$destroy_unsupported_base"
-grep -q '^reason=unsupported-base-branch$' <<<"$destroy_unsupported_base"
+grep -q '^eligible=true$' <<<"$destroy_unsupported_base"
+grep -q '^reason=eligible$' <<<"$destroy_unsupported_base"
+
+destroy_unlabelled_stacked="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[]')"
+grep -q '^eligible=true$' <<<"$destroy_unlabelled_stacked"
+grep -q '^reason=eligible$' <<<"$destroy_unlabelled_stacked"
 
 destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author 'renovate[bot]' --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$destroy_dependency_bot"
@@ -556,6 +571,13 @@ unknown_label_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base
 grep -q '^eligible=true$' <<<"$unknown_label_deploy"
 grep -q '^reason=eligible$' <<<"$unknown_label_deploy"
 grep -q '^priority=false$' <<<"$unknown_label_deploy"
+
+stacked_priority_revalidated='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/design-and-mvp","repo":{"full_name":"example/FireMUD"}},"user":{"login":"human"},"labels":[{"name":"preview:priority"}]}'
+revalidate_deploy "$stacked_priority_revalidated"
+assert_revalidation_refused \
+  --revalidate-deploy \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/design-and-mvp","repo":{"full_name":"fork/FireMUD"}},"user":{"login":"human"},"labels":[{"name":"preview:priority"}]}' \
+  'base repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 
 malformed_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=false$' <<<"$malformed_deploy"

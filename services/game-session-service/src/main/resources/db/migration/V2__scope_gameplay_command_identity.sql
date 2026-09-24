@@ -16,7 +16,7 @@ CREATE INDEX idx_gameplay_command_command_id
 -- use it as an idempotency key because command IDs may be reused by game instance.
 DROP INDEX IF EXISTS idx_remote_command_coordinator_command_id;
 
-CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_command_id
+CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_cmd
     ON remote_command_coordinator USING btree (tenant_id, origin_game_instance_id, command_id);
 
 CREATE INDEX idx_remote_command_coordinator_command_id

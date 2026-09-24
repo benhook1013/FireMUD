@@ -24,17 +24,13 @@ public final class GrpcClientAuth {
   public static <T extends AbstractStub<T>> T attach(
       T stub, JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
     return stub.withInterceptors(
-        authInterceptor(
-            method ->
-                PublicationReadGuard.PUBLICATION_READ_METHODS.contains(method.getFullMethodName())
-                    ? createInternalBearerToken(jwtUtil, runtimeIdentity)
-                    : createBearerToken(jwtUtil, runtimeIdentity)));
+        authInterceptor(() -> createBearerToken(jwtUtil, runtimeIdentity)));
   }
 
   public static <T extends AbstractStub<T>> T attachInternal(
       T stub, JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
     return stub.withInterceptors(
-        authInterceptor(method -> createInternalBearerToken(jwtUtil, runtimeIdentity)));
+        authInterceptor(() -> createInternalBearerToken(jwtUtil, runtimeIdentity)));
   }
 
   private static ClientInterceptor authInterceptor(TokenSupplier tokenSupplier) {
@@ -48,7 +44,7 @@ public final class GrpcClientAuth {
           public void start(Listener<RespT> responseListener, Metadata headers) {
             Metadata outboundHeaders = new Metadata();
             outboundHeaders.merge(headers);
-            outboundHeaders.put(AUTH_HEADER, "Bearer " + tokenSupplier.get(method));
+            outboundHeaders.put(AUTH_HEADER, "Bearer " + tokenSupplier.get());
             super.start(responseListener, outboundHeaders);
           }
         };
@@ -92,6 +88,6 @@ public final class GrpcClientAuth {
 
   @FunctionalInterface
   private interface TokenSupplier {
-    String get(MethodDescriptor<?, ?> method);
+    String get();
   }
 }
