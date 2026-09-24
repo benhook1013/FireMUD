@@ -420,25 +420,24 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewStatus.MISSING_EVIDENCE,
         )
 
-    def test_hosted_default_requires_two_corrected_state_dry_rounds_but_override_allows_one(self):
-        first = Evidence(
-            1, "h", "c1", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
-        )
-        second = Evidence(
-            1, "h", "c2", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
-        )
+    def test_hosted_default_requires_one_corrected_zero_useful_round_and_cli_keeps_three(self):
         state = ReviewState(ordered_prs=(1,))
-        self.assertEqual(completion_status(state, Channel.HOSTED, (first,)), ReviewStatus.READY)
-        self.assertEqual(completion_status(state, Channel.HOSTED, (first, second)), ReviewStatus.COMPLETE)
-        override = ReviewState(
-            ordered_prs=(1,),
-            policy_overrides={
-                "1:hosted": PolicyOverride(
-                    hosted_zero_useful=1, head="h", checkpoint="c1", reason="narrow close-out", patch_id="p"
-                )
-            },
+        corrected = Evidence(
+            1, "h", "corrected", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
         )
-        self.assertEqual(completion_status(override, Channel.HOSTED, (first,)), ReviewStatus.COMPLETE)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (corrected,)), ReviewStatus.COMPLETE)
+
+        accepted = dataclasses.replace(corrected, checkpoint="accepted", accepted=1, raw=1)
+        uncorrected = dataclasses.replace(corrected, checkpoint="uncorrected", corrected_state=False)
+        unattributable = dataclasses.replace(corrected, checkpoint="unattributable", attributable=False)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (accepted,)), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (uncorrected,)), ReviewStatus.MISSING_EVIDENCE)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (unattributable,)), ReviewStatus.READY)
+
+        cli_rounds = tuple(dataclasses.replace(corrected, checkpoint=f"cli-{index}") for index in range(1, 4))
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds[:1]), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds[:2]), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds), ReviewStatus.COMPLETE)
 
     def test_merged_predecessors_collapse_to_nearest_unmerged_or_default(self):
         snapshots = {

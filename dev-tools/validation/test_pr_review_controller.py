@@ -204,7 +204,7 @@ class ControllerTests(unittest.TestCase):
     def grant_allocation(self, *, channel="hosted", evidence=None, values=None, heads=None):
         controller = self.make(
             values or {1: pr(1, HEAD_1)},
-            evidence or {(1, channel): [self.allocation_evidence()]},
+            evidence or {(1, channel): [self.allocation_evidence(completed=False)]},
             heads=heads,
         )
         controller.set_stack([1])
@@ -245,7 +245,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["allocations"]["hosted"]["status"], "EXHAUSTED_PENDING")
         self.assertEqual(result["allocations"]["hosted"]["checkpoint"], "allocated-dry")
-        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(result["channels"]["hosted"], "COMPLETE")
         with self.assertRaisesRegex(ControllerError, "ALLOCATION_EXHAUSTED"):
             controller.resolve_hosted_target()
         with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
@@ -255,7 +255,7 @@ class ControllerTests(unittest.TestCase):
             )
 
     def test_allocation_ancestry_lookup_failure_is_invalid_without_breaking_status_or_target_selection(self):
-        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}
         controller = self.grant_allocation(evidence=evidence, values=values)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
@@ -276,7 +276,7 @@ class ControllerTests(unittest.TestCase):
                 controller.resolve_hosted_target()
 
     def test_productive_result_requires_corrected_head_before_handoff(self):
-        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         controller = self.grant_allocation(evidence=evidence)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
 
@@ -292,7 +292,7 @@ class ControllerTests(unittest.TestCase):
             )
 
     def test_accepted_fix_head_can_be_handed_off_after_validation(self):
-        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}
         controller = self.grant_allocation(evidence=evidence, values=values)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
@@ -323,14 +323,14 @@ class ControllerTests(unittest.TestCase):
         )
         for label, later, expected_status in cases:
             with self.subTest(result=label):
-                evidence = {(1, "hosted"): [self.allocation_evidence()]}
+                evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
                 controller = self.grant_allocation(evidence=evidence)
                 evidence[(1, "hosted")].extend(later)
                 view = controller.status()["prs"][0]["allocations"]["hosted"]
                 self.assertNotEqual(view["status"], "HANDED_OFF")
                 self.assertEqual(view["status"], expected_status)
 
-        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}
         controller = self.grant_allocation(evidence=evidence, values=values)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="stale", head=HEAD_2))
@@ -340,8 +340,8 @@ class ControllerTests(unittest.TestCase):
     def test_hosted_and_cli_allocations_are_independent(self):
         values = {1: pr(1, HEAD_1)}
         evidence = {
-            (1, "hosted"): [self.allocation_evidence()],
-            (1, "cli"): [self.allocation_evidence()],
+            (1, "hosted"): [self.allocation_evidence(completed=False)],
+            (1, "cli"): [self.allocation_evidence(completed=False)],
         }
         controller = self.make(values, evidence)
         controller.set_stack([1])
@@ -374,12 +374,13 @@ class ControllerTests(unittest.TestCase):
             2: pr(2, HEAD_2, "feature-1", HEAD_1),
         }
         evidence = {
-            (1, "hosted"): [self.allocation_evidence()],
+            (1, "hosted"): [self.allocation_evidence(completed=False)],
             (2, "hosted"): [
                 self.allocation_evidence(
                     2,
                     HEAD_2,
                     "child-before",
+                    completed=False,
                     parent_identity="1",
                     parent_head=HEAD_1,
                 )

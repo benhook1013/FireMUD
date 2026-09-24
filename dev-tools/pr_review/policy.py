@@ -91,8 +91,8 @@ def _override(state: ReviewState, pr: int, channel: Channel, evidence: Evidence)
     candidate = state.policy_overrides.get(f"{pr}:{channel.value}")
     if not candidate or not candidate.applies(evidence.head, evidence.checkpoint, evidence.patch_id):
         return None
-    # An override can shorten the required dry streak, never turn malformed,
-    # accepted, provisional, or uncorrected evidence into a completed round.
+    # An exact-bound override sets the required dry streak, never turns
+    # malformed, accepted, provisional, or uncorrected evidence into a completed round.
     if not _valid_complete(evidence, channel) or evidence.corrected_state is not True or evidence.accepted != 0:
         return None
     return candidate
@@ -258,7 +258,7 @@ def completion_status(
     if latest.anchored is not True:
         return ReviewStatus.READY
     override = _override(state, latest.pr, selected, latest)
-    required = 2 if selected == Channel.HOSTED else 3
+    required = 1 if selected == Channel.HOSTED else 3
     if override:
         value = override.hosted_zero_useful if selected == Channel.HOSTED else override.cli_zero_useful
         if value is not None:
