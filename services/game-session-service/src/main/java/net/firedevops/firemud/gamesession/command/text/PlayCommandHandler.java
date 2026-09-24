@@ -1072,8 +1072,8 @@ public class PlayCommandHandler {
         new SessionContext(
             context.sessionId(),
             context.tenantId(),
-            0L,
-            null,
+            context.accountId(),
+            context.loginName(),
             0L,
             null,
             0L,

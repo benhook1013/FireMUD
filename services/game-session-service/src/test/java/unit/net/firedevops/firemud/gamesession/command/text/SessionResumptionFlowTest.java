@@ -475,7 +475,13 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertFalse(lookAfterDeniedReconnect.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertTrue(sessionAuthenticationService.isAuthenticated("1"));
+    assertEquals(
+        77L, sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow().accountId());
+    TextCommandInterpretationResult joinAfterDeniedPlay =
+        interpreter.interpret("1", "JOIN demo", false);
+    assertEquals("AUTH_UNAVAILABLE", joinAfterDeniedPlay.commandResult().errorCode());
   }
 
   @Test
