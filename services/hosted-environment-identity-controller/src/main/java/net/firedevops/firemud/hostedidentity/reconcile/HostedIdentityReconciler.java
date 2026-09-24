@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -891,35 +892,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         || !isOwnedIdentityNamespace(identityNamespace, plan, namespaceTerminating)) {
       return false;
     }
-    List<String> secretNames =
-        List.of(
-            plan.ingressSecretName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.grpcSecretName(),
-            plan.ingressSecretName() + "-previous",
-            plan.telnetSecretName() + "-previous",
-            plan.gatewayInternalWsSecretName() + "-previous",
-            plan.tcpProxyBridgeSecretName() + "-previous",
-            plan.grpcSecretName() + "-previous");
-    List<String> workloadSecretNames =
-        new ArrayList<>(
-            HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                .flatMap(
-                    workload ->
-                        java.util.stream.Stream.of(
-                            plan.grpcPublicationSourceSecretName(workload),
-                            plan.grpcPublicationSourceSecretName(workload) + "-previous"))
-                .toList());
-    workloadSecretNames.add(plan.grpcAccountSourceSecretName());
-    workloadSecretNames.add(plan.grpcAccountSourceSecretName() + "-previous");
-    workloadSecretNames.add(plan.grpcGameSessionSourceSecretName());
-    workloadSecretNames.add(plan.grpcGameSessionSourceSecretName() + "-previous");
-    secretNames =
-        java.util.stream.Stream.concat(secretNames.stream(), workloadSecretNames.stream()).toList();
     List<String> ownedSecretNames = new ArrayList<>();
-    for (String name : secretNames) {
+    for (String name : HostedIdentityScopeService.identitySecretNames(plan)) {
       Secret secret = client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
       if (secret == null) {
         continue;
@@ -929,24 +903,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       }
       ownedSecretNames.add(name);
     }
-    List<String> certificateNames =
-        List.of(
-            plan.ingressCertificateName(),
-            plan.telnetCertificateName(),
-            plan.gatewayInternalWsCertificateName(),
-            plan.tcpProxyBridgeCertificateName());
-    List<String> workloadCertificateNames =
-        new ArrayList<>(
-            HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                .map(plan::grpcPublicationCertificateName)
-                .toList());
-    workloadCertificateNames.add(plan.grpcAccountCertificateName());
-    workloadCertificateNames.add(plan.grpcGameSessionCertificateName());
-    certificateNames =
-        java.util.stream.Stream.concat(certificateNames.stream(), workloadCertificateNames.stream())
-            .toList();
     List<String> ownedCertificateNames = new ArrayList<>();
-    for (String name : certificateNames) {
+    for (String name : HostedIdentityScopeService.requiredCertificateNames(plan)) {
       var operation =
           client
               .genericKubernetesResources(ResourceContexts.CERTIFICATES)
@@ -1090,9 +1048,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
       reason = "WorkloadIdentityEvidenceIncomplete";
       message =
-          "the five protected publication, exact Account, and Game Session workload identity proofs are required for readiness";
+          "all five protected publication projections and the exact Account and Game Session workload identities are required for readiness; readiness does not authorize publication methods";
     }
-    resource.setStatus(
+    HostedEnvironmentIdentityStatus updatedStatus =
         statusService.status(
             resource,
             phase,
@@ -1114,8 +1072,32 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 previousRole(resource, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
             roleStatus(
                 materials.material(HostedIdentityContract.GRPC_ROLE),
-                previousRole(resource, HostedIdentityContract.GRPC_ROLE))));
+                previousRole(resource, HostedIdentityContract.GRPC_ROLE)));
+    updatedStatus.setGrpcPublication(publicationRoleStatus(resource, materials));
+    resource.setStatus(updatedStatus);
     return UpdateControl.patchStatus(resource).rescheduleAfter(properties.getReconcileInterval());
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoleStatus(
+      HostedEnvironmentIdentity resource, RoleMaterials materials) {
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previous;
+    try {
+      previous = previousPublicationRoles(resource);
+    } catch (IllegalStateException malformedStoredStatus) {
+      // Repair the status shape without treating malformed evidence as a high-water mark.
+      return normalizedPreviousPublicationRoles(resource);
+    }
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> current = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus prior =
+          previous == null ? null : previous.get(role);
+      HostedEnvironmentIdentityStatus.RoleStatus evidence =
+          roleStatus(materials.material(role), prior);
+      current.put(
+          role, evidence == null ? new HostedEnvironmentIdentityStatus.RoleStatus() : evidence);
+    }
+    return current;
   }
 
   private static HostedEnvironmentIdentityStatus.RoleStatus roleStatus(
@@ -1137,11 +1119,14 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         material.state().statusValue());
   }
 
-  private static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
+  static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
       HostedEnvironmentIdentity resource, String role) {
-    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
-      return null;
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoles =
+          previousPublicationRoles(resource);
+      return publicationRoles == null ? null : publicationRoles.get(role);
     }
+    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) return null;
     if (resource.getStatus() == null) return null;
     return switch (role) {
       case HostedIdentityContract.INGRESS_ROLE -> resource.getStatus().getIngress();
@@ -1152,6 +1137,82 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       case HostedIdentityContract.GRPC_ROLE -> resource.getStatus().getGrpc();
       default -> throw new IllegalArgumentException("unsupported identity role: " + role);
     };
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previousPublicationRoles(
+      HostedEnvironmentIdentity resource) {
+    if (resource.getStatus() == null) {
+      return null;
+    }
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoles =
+        resource.getStatus().getGrpcPublication();
+    if (publicationRoles == null) {
+      // Existing status objects predate publication-role high-water evidence.
+      return null;
+    }
+    Set<String> expectedRoles =
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    if (!publicationRoles.keySet().equals(expectedRoles)) {
+      throw new IllegalStateException(
+          "grpc publication status must contain exactly five role entries");
+    }
+    for (Map.Entry<String, HostedEnvironmentIdentityStatus.RoleStatus> entry :
+        publicationRoles.entrySet()) {
+      if (!isSchemaValidPublicationRoleStatus(entry.getValue())) {
+        throw new IllegalStateException(
+            "grpc publication status contains an invalid entry for role " + entry.getKey());
+      }
+    }
+    return publicationRoles;
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus>
+      normalizedPreviousPublicationRoles(HostedEnvironmentIdentity resource) {
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> stored =
+        resource.getStatus() == null ? null : resource.getStatus().getGrpcPublication();
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> normalized = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus evidence =
+          stored == null ? null : stored.get(role);
+      normalized.put(
+          role,
+          isSchemaValidPublicationRoleStatus(evidence)
+              ? copyRoleStatus(evidence)
+              : new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    return normalized;
+  }
+
+  private static boolean isSchemaValidPublicationRoleStatus(
+      HostedEnvironmentIdentityStatus.RoleStatus roleStatus) {
+    return roleStatus != null
+        && schemaString(roleStatus.getRevision(), 128, "[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}")
+        && (roleStatus.getSourceGeneration() == null || roleStatus.getSourceGeneration() >= 1)
+        && (roleStatus.getSourceObjectGeneration() == null
+            || roleStatus.getSourceObjectGeneration() >= 1)
+        && schemaString(roleStatus.getSpkiSha256(), 64, "[0-9a-f]{64}")
+        && schemaString(roleStatus.getProvenance(), 128, "[A-Za-z][A-Za-z0-9_.-]{0,127}")
+        && schemaString(roleStatus.getState(), 64, "[A-Za-z][A-Za-z0-9_.-]{0,63}");
+  }
+
+  private static boolean schemaString(String value, int maxLength, String pattern) {
+    return value == null || (value.length() <= maxLength && value.matches(pattern));
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus copyRoleStatus(
+      HostedEnvironmentIdentityStatus.RoleStatus source) {
+    HostedEnvironmentIdentityStatus.RoleStatus copy =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    copy.setRevision(source.getRevision());
+    copy.setSourceGeneration(source.getSourceGeneration());
+    copy.setSourceObjectGeneration(source.getSourceObjectGeneration());
+    copy.setSpkiSha256(source.getSpkiSha256());
+    copy.setProvenance(source.getProvenance());
+    copy.setState(source.getState());
+    return copy;
   }
 
   static void validateSourceProgress(
@@ -1166,7 +1227,14 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     String revision =
         SecretProjectionService.revisionForRole(material.role(), material.source().getData());
     if (material.sourceGeneration() < priorGeneration) {
-      throw new IllegalStateException("certificate source generation rolled back");
+      throw new IllegalStateException(
+          "certificate source generation rolled back for role "
+              + material.role()
+              + " (source generation "
+              + material.sourceGeneration()
+              + " < prior generation "
+              + priorGeneration
+              + ")");
     }
     if (material.sourceObjectGeneration() < priorObjectGeneration) {
       throw new IllegalStateException("certificate source object generation rolled back");

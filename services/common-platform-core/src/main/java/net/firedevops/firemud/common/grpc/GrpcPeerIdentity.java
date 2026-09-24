@@ -50,6 +50,9 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
     if (uri == null || namespace == null || service == null) {
       throw new IllegalArgumentException("Peer identity fields are required");
     }
+    if (CanonicalUri.parse(uri).filter(canonical -> canonical.value().equals(uri)).isEmpty()) {
+      throw new IllegalArgumentException("Peer identity URI must be canonical");
+    }
     Matcher matcher = IDENTITY_PATTERN.matcher(uri);
     if (!matcher.matches()
         || !namespace.equals(matcher.group("namespace"))
@@ -67,10 +70,11 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
 
   /** Parses one exact FireMUD SPIFFE workload URI. */
   public static Optional<GrpcPeerIdentity> parseUri(String uri) {
-    if (uri == null) {
+    Optional<CanonicalUri> canonical = CanonicalUri.parse(uri);
+    if (canonical.isEmpty()) {
       return Optional.empty();
     }
-    Matcher matcher = IDENTITY_PATTERN.matcher(uri);
+    Matcher matcher = IDENTITY_PATTERN.matcher(canonical.get().value());
     if (!matcher.matches()) {
       return Optional.empty();
     }
@@ -79,7 +83,7 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
     if (!ALLOWED_SERVICE_NAMES.contains(service)) {
       return Optional.empty();
     }
-    return Optional.of(new GrpcPeerIdentity(uri, namespace, service));
+    return Optional.of(new GrpcPeerIdentity(canonical.get().value(), namespace, service));
   }
 
   /** Extracts the authenticated leaf identity from a gRPC TLS session. */

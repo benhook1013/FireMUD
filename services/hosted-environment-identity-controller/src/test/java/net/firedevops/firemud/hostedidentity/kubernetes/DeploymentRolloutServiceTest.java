@@ -75,12 +75,14 @@ class DeploymentRolloutServiceTest {
                 "tcp-proxy-service",
                 Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-current"),
                 3L));
+    ArgumentCaptor<Deployment> accountReplacement = ArgumentCaptor.forClass(Deployment.class);
     when(graph.resources().get("account-service").get())
         .thenReturn(
             readyDeployment(
                 "account-service",
                 Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "account-old"),
-                3L));
+                3L))
+        .thenAnswer(invocation -> accountReplacement.getValue());
     when(graph.resources().get("game-session-service").get())
         .thenReturn(
             readyDeployment(
@@ -98,6 +100,14 @@ class DeploymentRolloutServiceTest {
               readyDeployment(
                   workload, Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision), 3L));
     }
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    when(graph.resources().get("game-logic-service").get())
+        .thenReturn(
+            readyDeployment(
+                "game-logic-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "publication-old"),
+                3L))
+        .thenAnswer(invocation -> replacement.getValue());
     ReplaceDeletable<Deployment> lockedGameLogic = mock(ReplaceDeletable.class);
     when(graph.resources().get("game-logic-service").lockResourceVersion("rv-3"))
         .thenReturn(lockedGameLogic);
@@ -124,7 +134,6 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
     verify(lockedGameLogic).replace(replacement.capture());
     assertEquals(
         "publication-current",
@@ -135,7 +144,6 @@ class DeploymentRolloutServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
-    ArgumentCaptor<Deployment> accountReplacement = ArgumentCaptor.forClass(Deployment.class);
     verify(lockedAccount).replace(accountReplacement.capture());
     assertEquals(
         "account-current",
@@ -146,6 +154,73 @@ class DeploymentRolloutServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+
+    Deployment converged = replacement.getValue();
+    converged.getMetadata().setGeneration(4L);
+    converged.getStatus().setObservedGeneration(4L);
+    Deployment convergedAccount = accountReplacement.getValue();
+    convergedAccount.getMetadata().setGeneration(4L);
+    convergedAccount.getStatus().setObservedGeneration(4L);
+    DeploymentRolloutService.RolloutResult secondResult =
+        new DeploymentRolloutService()
+            .sync(
+                graph.client(),
+                plan,
+                "telnet-current",
+                "gateway-current",
+                "grpc-current",
+                workloadIdentityRevisions,
+                () -> {});
+
+    assertEquals(true, secondResult.ready());
+    assertEquals(true, secondResult.telnetReady());
+    assertEquals(true, secondResult.grpcReady());
+    assertEquals(4L, converged.getMetadata().getGeneration());
+    assertEquals(4L, converged.getStatus().getObservedGeneration());
+    verify(graph.resources().get("game-logic-service"), times(2)).get();
+    verify(graph.resources().get("game-logic-service")).lockResourceVersion("rv-3");
+    verify(lockedGameLogic, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      if (!"game-logic-service".equals(workload)) {
+        verify(graph.resources().get(workload), never()).lockResourceVersion(anyString());
+      }
+    }
+    verify(graph.resources().get("account-service")).lockResourceVersion("rv-3");
+    verify(lockedAccount, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+  }
+
+  @Test
+  void rejectsPublicationWorkloadOverlappingGrpcConsumerBeforeAnyRolloutMutation() {
+    String overlappingWorkload = HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.getFirst();
+    EnvironmentIdentityPlan plan = planWithConsumers(overlappingWorkload);
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", overlappingWorkload);
+    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      publicationRevisions.put(
+          HostedIdentityContract.grpcPublicationRole(workload), "publication-current");
+    }
+    Runnable runtimeProfileFence = mock(Runnable.class);
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .sync(
+                        graph.client(),
+                        plan,
+                        "telnet-current",
+                        "gateway-current",
+                        "grpc-current",
+                        publicationRevisions,
+                        runtimeProfileFence));
+
+    assertEquals(
+        "gRPC consumer overlaps publication workload: " + overlappingWorkload,
+        failure.getMessage());
+    verify(runtimeProfileFence, never()).run();
+    verify(graph.resources().get("tcp-proxy-service"), never()).get();
+    verify(graph.resources().get(overlappingWorkload), never()).get();
   }
 
   @Test

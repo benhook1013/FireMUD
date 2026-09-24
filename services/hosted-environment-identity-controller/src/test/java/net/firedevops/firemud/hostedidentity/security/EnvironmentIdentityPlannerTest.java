@@ -33,6 +33,14 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("firemud-grpc-tls", plan.grpcSecretName());
     assertEquals(
         List.of(
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service"),
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    assertEquals(
+        List.of(
             "account-service",
             "game-session-service",
             "logging-admin-service",
@@ -62,6 +70,12 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(
         plan.grpcGameSessionSecretName(),
         plan.secretName(HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
+      assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));
+      assertEquals(
+          "spiffe://firemud/ns/pr-42/sa/" + workload, plan.grpcPublicationUriSan(workload));
+    }
   }
 
   @Test

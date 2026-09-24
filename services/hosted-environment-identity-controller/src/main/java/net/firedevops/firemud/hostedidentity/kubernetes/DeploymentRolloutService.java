@@ -61,6 +61,14 @@ public class DeploymentRolloutService {
     if (grpcWorkloadIdentityRevisions == null) {
       throw new IllegalArgumentException("gRPC workload identity revisions are required");
     }
+    if (!grpcWorkloadIdentityRevisions.isEmpty()) {
+      for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+        if (plan.grpcConsumers().contains(workload)) {
+          throw new IllegalArgumentException(
+              "gRPC consumer overlaps publication workload: " + workload);
+        }
+      }
+    }
     Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
     revisionsByDeployment
         .computeIfAbsent(TCP_PROXY_DEPLOYMENT, ignored -> new LinkedHashMap<>())
