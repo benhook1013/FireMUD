@@ -108,6 +108,15 @@ case "$operation" in
           ;;
       esac
     fi
+    if [[ "$PROJECTION_MODE" == delayed-each-workload && "$secret" == firemud-grpc-* && "$key" == tls.crt ]]; then
+      workload="${secret#firemud-grpc-}"
+      count_file="$STATE_DIR/$workload-cert-reads"
+      count=0
+      [[ ! -f "$count_file" ]] || count="$(<"$count_file")"
+      count=$((count + 1))
+      printf '%s\n' "$count" >"$count_file"
+      if ((count == 1)); then exit 0; fi
+    fi
     file=''
     if [[ "$secret" == firemud-grpc-tls ]]; then
       case "$key" in
@@ -146,19 +155,28 @@ run_helper() {
   local mode="$1"
   local log="$2"
   local state="$3"
+  local bash_env_file="${4:-}"
+  local timeout_seconds="${5:-1}"
   mkdir -p "$state"
   PATH="$mock_bin:$PATH" \
+    BASH_ENV="$bash_env_file" \
     DATA_DIR="$data_dir" \
     KUBECTL_LOG="$log" \
     PROJECTION_MODE="$mode" \
     STATE_DIR="$state" \
-    CERTIFICATE_WAIT_TIMEOUT_SECONDS=1 \
+    CERTIFICATE_WAIT_TIMEOUT_SECONDS="$timeout_seconds" \
     bash "$HELPER" dev
 }
 
+cat >"$fixture_dir/advance-shell-clock.sh" <<'EOF'
+sleep() {
+  SECONDS=$((SECONDS + 1))
+}
+EOF
+
 success_log="$fixture_dir/success.log"
-run_helper complete "$success_log" "$fixture_dir/success-state" \
-  >"$fixture_dir/success.out"
+run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
+  >"$fixture_dir/success.out" 2>"$fixture_dir/success.err"
 grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
   exit 1
@@ -190,6 +208,26 @@ grep -Fq 'did not become key-complete' "$fixture_dir/incomplete.err" || {
 }
 if grep -q '^delete ' "$incomplete_log"; then
   echo "the helper deleted legacy Secrets before every projection validated" >&2
+  exit 1
+fi
+
+# Each publication projection becomes ready on its second read, one simulated
+# second later. The helper must apply one timeout to all five workloads rather
+# than resetting a fresh timeout for every workload.
+aggregate_timeout_log="$fixture_dir/aggregate-timeout.log"
+if run_helper delayed-each-workload "$aggregate_timeout_log" \
+  "$fixture_dir/aggregate-timeout-state" "$fixture_dir/advance-shell-clock.sh" 5 \
+  >"$fixture_dir/aggregate-timeout.out" 2>"$fixture_dir/aggregate-timeout.err"; then
+  echo "the helper reset its certificate wait timeout for each publication workload" >&2
+  exit 1
+fi
+grep -Fq 'aggregate 5s window' "$fixture_dir/aggregate-timeout.err" || {
+  echo "the helper failed for an unexpected reason on aggregate certificate timeout" >&2
+  cat "$fixture_dir/aggregate-timeout.err" >&2
+  exit 1
+}
+if grep -q '^delete ' "$aggregate_timeout_log"; then
+  echo "the helper deleted legacy Secrets before all projections met the aggregate deadline" >&2
   exit 1
 fi
 

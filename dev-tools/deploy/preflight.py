@@ -146,7 +146,7 @@ PUBLICATION_GRPC_WORKLOADS = (
     "game-logic-service",
     "automation-scripting-service",
 )
-PUBLICATION_GRPC_LEAF_SECRET_KEYS = {"tls.crt", "tls.key"}
+PUBLICATION_GRPC_LEAF_SECRET_KEYS = {"tls.crt", "tls.key", "ca.crt"}
 PUBLICATION_GRPC_TRUST_SECRET_NAME = "firemud-grpc-tls"
 PUBLICATION_GRPC_TRUST_SECRET_KEYS = {"ca.crt"}
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(

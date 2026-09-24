@@ -270,16 +270,16 @@ if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
 fi
 issuer_ca=''
 issuer_fingerprint=''
+certificate_wait_deadline=$((SECONDS + certificate_wait_timeout_seconds))
 
 for workload in "${workloads[@]}"; do
   secret_name="firemud-grpc-${workload}"
   workload_cert="$cert_dir/${workload}.crt"
   workload_key="$cert_dir/${workload}.key"
   workload_ca="$cert_dir/${workload}-ca.crt"
-  deadline=$((SECONDS + certificate_wait_timeout_seconds))
   projection_complete=false
 
-  while ((SECONDS < deadline)); do
+  while ((SECONDS < certificate_wait_deadline)); do
     if secret_exists "$secret_name" &&
       read_secret_file "$secret_name" tls.crt "$workload_cert" &&
       read_secret_file "$secret_name" tls.key "$workload_key" &&
@@ -290,7 +290,7 @@ for workload in "${workloads[@]}"; do
     sleep 5
   done
   [[ "$projection_complete" == true ]] || {
-    echo "cert-manager Secret ${namespace}/${secret_name} did not become key-complete within ${certificate_wait_timeout_seconds}s" >&2
+    echo "cert-manager Secret ${namespace}/${secret_name} did not become key-complete within the aggregate ${certificate_wait_timeout_seconds}s window" >&2
     exit 1
   }
 

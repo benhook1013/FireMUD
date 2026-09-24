@@ -9911,11 +9911,11 @@ publication_keys = {name: keys for name, _, keys in publication_requirements}
 if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
     raise SystemExit("publication Secret requirements did not use the expected-binding namespace")
 if any(
-    publication_keys[name] != {"tls.crt", "tls.key"}
+    publication_keys[name] != {"tls.crt", "tls.key", "ca.crt"}
     for name in expected_publication_names
 ) or publication_keys[module.PUBLICATION_GRPC_TRUST_SECRET_NAME] != {"ca.crt"}:
     raise SystemExit(
-        "publication Secret requirements did not separate leaf keys from the shared CA key"
+        "source publication Secret requirements omitted certificate-manager CA material"
     )
 
 def publication_static_issues(documents):
@@ -10195,6 +10195,12 @@ for invalid_leaf_items in (
         "malformed grpc-tls Secret volume",
     )
 
+if publication_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"]["items"] != [
+    {"key": "tls.crt", "path": "tls.crt"},
+    {"key": "tls.key", "path": "tls.key"},
+]:
+    raise SystemExit("runtime publication leaf projection exposed keys beyond tls.crt/tls.key")
+
 for invalid_trust_case in ("missing", "wrong-secret", "extra-key", "wrong-path"):
     invalid_trust_documents = copy.deepcopy(publication_documents)
     trust_volume = invalid_trust_documents[0]["spec"]["template"]["spec"]["volumes"][1]
@@ -10415,6 +10421,23 @@ with patch.object(
 if len(missing_key_issues) != 1 or "missing keys: tls.key" not in missing_key_issues[0]:
     raise SystemExit(
         f"missing publication Secret key fixture did not fail closed: {missing_key_issues}"
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Required Secret {namespace}/{name} is missing keys: ca.crt", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_ca_issues = module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    )
+if len(missing_ca_issues) != 1 or "missing keys: ca.crt" not in missing_ca_issues[0]:
+    raise SystemExit(
+        f"publication Secret missing ca.crt did not fail closed: {missing_ca_issues}"
     )
 
 namespace = "pr-42"
