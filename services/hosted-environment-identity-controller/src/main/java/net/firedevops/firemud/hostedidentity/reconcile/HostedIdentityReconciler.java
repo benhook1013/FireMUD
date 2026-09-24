@@ -1026,7 +1026,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       ready = false;
       phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
       reason = "PublicationIdentityEvidenceIncomplete";
-      message = "all five protected publication identity proofs are required for readiness";
+      message =
+          "all five publication identity projections are required for readiness; this status does not authorize publication methods";
     }
     HostedEnvironmentIdentityStatus updatedStatus =
         statusService.status(

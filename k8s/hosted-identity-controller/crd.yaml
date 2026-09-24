@@ -205,6 +205,7 @@ spec:
                 grpc: *consumer_status_schema
                 grpcPublication:
                   type: object
+                  description: Per-publication workload certificate projection and rollout evidence only; this does not prove receiver-method authorization or authorize publication identity activation.
                   additionalProperties: *consumer_status_schema
                   x-kubernetes-validations:
                     - rule: "self.size() == 5 && self.all(role, role in ['grpc-publication-game-design-service', 'grpc-publication-world-management-service', 'grpc-publication-entity-management-service', 'grpc-publication-game-logic-service', 'grpc-publication-automation-scripting-service'])"

@@ -3,10 +3,7 @@ package net.firedevops.firemud.common.security;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
-import java.util.List;
-import java.util.Map;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class PublicationReadGuardTest {
@@ -19,17 +16,10 @@ class PublicationReadGuardTest {
 
   private final PublicationReadGuard guard = new PublicationReadGuard(TRUSTED_NAMESPACE);
 
-  @AfterEach
-  void clearSession() {
-    SessionContext.clear();
-  }
-
   @Test
-  void allowsAllFourExactPublicationReadsWithPeerAndRoleFreeInternalJwt() {
+  void allowsAllFourExactPublicationReadsWithPeerIdentityWithoutJwt() {
     withPeer(
         () -> {
-          SessionContext.setContext(
-              null, List.of(), Map.of(), true, "forged-but-not-authoritative", "instance-1");
           for (String method : PublicationReadGuard.PUBLICATION_READ_METHODS) {
             guard.requirePublicationRead(method);
           }
@@ -37,24 +27,14 @@ class PublicationReadGuardTest {
   }
 
   @Test
-  void deniesJwtOnlyServiceNameWithoutPeerIdentity() {
-    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+  void deniesMissingPeerIdentityWithoutJwt() {
     assertThatThrownBy(
             () -> guard.requirePublicationRead(PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD))
         .isInstanceOf(AdminAuthorizationException.class);
   }
 
   @Test
-  void deniesMissingPeerIdentity() {
-    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
-    assertThatThrownBy(
-            () ->
-                guard.requirePublicationRead(PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
-        .isInstanceOf(AdminAuthorizationException.class);
-  }
-
-  @Test
-  void deniesWrongPeerEvenWhenJwtClaimsGameDesign() {
+  void deniesWrongPeerWithoutJwt() {
     GrpcPeerIdentity wrongPeer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/firemud/sa/world-management-service",
@@ -63,8 +43,6 @@ class PublicationReadGuardTest {
     withPeer(
         wrongPeer,
         () -> {
-          SessionContext.setContext(
-              null, List.of(), Map.of(), true, "game-design-service", "instance-1");
           assertThatThrownBy(
                   () -> guard.requirePublicationRead(PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD))
               .isInstanceOf(AdminAuthorizationException.class);
@@ -72,24 +50,20 @@ class PublicationReadGuardTest {
   }
 
   @Test
-  void deniesUserAndAdminJwtSubstitutionEvenWithCorrectPeer() {
+  void deniesGameDesignPeerFromWrongNamespace() {
+    GrpcPeerIdentity wrongNamespacePeer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/other/sa/game-design-service",
+            "other",
+            "game-design-service");
     withPeer(
-        () -> {
-          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
-          assertThatThrownBy(
-                  () ->
-                      guard.requirePublicationRead(
-                          PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD))
-              .isInstanceOf(AdminAuthorizationException.class);
-
-          SessionContext.setContext(
-              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
-          assertThatThrownBy(
-                  () ->
-                      guard.requirePublicationRead(
-                          PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD))
-              .isInstanceOf(AdminAuthorizationException.class);
-        });
+        wrongNamespacePeer,
+        () ->
+            assertThatThrownBy(
+                    () ->
+                        guard.requirePublicationRead(
+                            PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
+                .isInstanceOf(AdminAuthorizationException.class));
   }
 
   @Test

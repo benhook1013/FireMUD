@@ -460,6 +460,10 @@ consumer_schemas = [
 assert all(value == consumer_schemas[0] for value in consumer_schemas[1:])
 publication_roles = consumer_properties["grpcPublication"]
 assert publication_roles["type"] == "object"
+assert publication_roles["description"] == (
+    "Per-publication workload certificate projection and rollout evidence only; "
+    "this does not prove receiver-method authorization or authorize publication identity activation."
+)
 assert publication_roles["additionalProperties"] == consumer_schemas[0]
 assert publication_roles["x-kubernetes-validations"] == [
     {

@@ -8,8 +8,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
  *
  * <p>The guard is intentionally explicit about the method set. It must be called by the four
  * corresponding handlers, rather than installed as a blanket rejection for every gRPC method. The
- * peer certificate is the workload authority; the signed internal JWT is an independent predicate
- * and contributes no service identity or operator role.
+ * peer certificate is the workload authority for these workload-only reads.
  */
 public final class PublicationReadGuard {
   public static final String WORLD_MANAGEMENT_DIGEST_METHOD =
@@ -68,23 +67,10 @@ public final class PublicationReadGuard {
         || !peerIdentity.isInNamespace(trustedNamespace)) {
       throw denied();
     }
-
-    // AuthTokenInterceptor must have validated the signature before this guard runs. The
-    // serviceName claim is intentionally not compared with the peer and cannot substitute for it.
-    if (!SessionContext.isInternalService()
-        || hasText(SessionContext.getAccountId())
-        || !SessionContext.getGlobalRoles().isEmpty()
-        || !SessionContext.getScopedRolesMap().isEmpty()) {
-      throw denied();
-    }
   }
 
   private AdminAuthorizationException denied() {
     return new AdminAuthorizationException(
-        "Publication read requires the authenticated Game Design workload and a role-free internal JWT");
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
+        "Publication read requires the authenticated Game Design workload peer identity");
   }
 }
