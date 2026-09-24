@@ -17,19 +17,56 @@ from pathlib import Path
 import yaml
 
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/dev-demo.yml")
+SUMMARY_HELPER_PATH = "./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+SUMMARY_HELPER_NAME = "write-dev-demo-summary.sh"
 ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset(
     {"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"}
 )
 
-SUMMARY_HELPER_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_./$-])(?:bash[ \t]+)?"
-    r"(?P<invocation>(?:"
-    r"dev-tools/[A-Za-z0-9_./-]+[.]sh|"
-    r"[.]/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
-    r"/[^\s;&|\"']+/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
-    r"(?P<variable>\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*))"
-    r"/dev-tools/[A-Za-z0-9_./-]+[.]sh"
-    r"))(?![A-Za-z0-9_./-])"
+# The workflow deliberately has one supported summary language. Keep this
+# parser narrower than shell itself: a direct, line-continued invocation of
+# the canonical helper, followed by the exact plan outputs, is the only
+# supported helper form. Unknown shell syntax is rejected rather than being
+# silently omitted from the sensitive-output scan.
+SUMMARY_HELPER_COMMAND_PATTERN = re.compile(
+    r"^(?:"
+    r"(?:target|success|destroyed) "
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]head_sha \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]image_tag \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]hostname \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]telnet_port \}\}"'
+    r"|"
+    r"unavailable "
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]head_sha \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]image_tag \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]hostname \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]telnet_port \}\}" '
+    r'"cluster-access"'
+    r"|"
+    r"failure "
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]head_sha \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]image_tag \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]hostname \}\}" '
+    r'"\$\{\{ needs[.]dev-demo-plan[.]outputs[.]telnet_port \}\}" '
+    r'"\$\{DEV_DEMO_STAGE:-unknown\}"'
+    r') >> "\$GITHUB_STEP_SUMMARY"$'
+)
+
+SUMMARY_METADATA_LINES = (
+    "{",
+    'echo ""',
+    'echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"',
+    'echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"',
+    'echo "- Demo login password: repository smoke default (not printed)"',
+    '} >> "$GITHUB_STEP_SUMMARY"',
+)
+
+REPO_SHELL_HELPER_REFERENCE = re.compile(
+    r"(?<![A-Za-z0-9_./$-])"
+    r"(?:(?:bash|source|\.)[ \t]+)?"
+    r"(?P<path>(?:(?:\./)?|\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/|/[^\s\"']+/)"
+    r"dev-tools/[A-Za-z0-9_./-]+[.]sh)"
+    r"(?![A-Za-z0-9_./-])"
 )
 
 FORBIDDEN_SUMMARY_REFERENCE = re.compile(
@@ -44,21 +81,8 @@ FORBIDDEN_SUMMARY_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 
-SUMMARY_TARGET = re.compile(
-    r"(?P<operator>>{1,2}|tee(?:[ \t]+(?:-a|--append))?)[ \t]*"
-    r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
-)
-HEREDOC_OPEN = re.compile(
-    r"<<(?P<strip_tabs>-)?[ \t]*(?P<quote>['\"]?)"
-    r"(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)"
-    r"(?P=quote)"
-)
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
-PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
-    r"public_account_url\s*\(\s*(?P<quote>['\"])/auth/player-bootstrap"
-    r"(?P=quote)\s*\)",
-    re.DOTALL,
-)
+BOOTSTRAP_PYTHON_HEREDOC_OPENER = 'cat >"${BOOTSTRAP_SCRIPT}" <<\'PY\''
 BOOTSTRAP_SECRET_COMMAND_PREFIX = (
     "kubectl",
     "-n",
@@ -144,8 +168,6 @@ class WorkflowRunSource:
     job_name: str
     step_name: str
     source: str
-    summary_reachable: bool = False
-    resolved_helper_path: Path | None = None
 
 
 def normalize_script(script: str) -> str:
@@ -156,61 +178,6 @@ def normalize_nonempty_lines(script: str) -> str:
     return "\n".join(
         " ".join(line.split()) for line in script.splitlines() if line.strip()
     )
-
-
-def shell_group_tokens(line: str) -> list[str]:
-    """Return shell grouping tokens while ignoring quoted/comment text."""
-
-    tokens: list[str] = []
-    quote: str | None = None
-    escaped = False
-    word_started = False
-    index = 0
-    while index < len(line):
-        character = line[index]
-        if escaped:
-            escaped = False
-            word_started = True
-            index += 1
-            continue
-        if character == "\\" and quote != "'":
-            escaped = True
-            word_started = True
-            index += 1
-            continue
-        if quote is not None:
-            if character == quote:
-                quote = None
-            index += 1
-            continue
-        if character in "'\"":
-            quote = character
-            word_started = True
-            index += 1
-            continue
-        if character == "$" and index + 1 < len(line) and line[index + 1] in "{(":
-            opener = line[index + 1]
-            closer = "}" if opener == "{" else ")"
-            depth = 1
-            word_started = True
-            index += 2
-            while index < len(line) and depth:
-                if line[index] == opener:
-                    depth += 1
-                elif line[index] == closer:
-                    depth -= 1
-                index += 1
-            continue
-        if character == "#" and not word_started:
-            break
-        if character in "{}()":
-            tokens.append(character)
-        if character.isspace() or character in ";|&<>()":
-            word_started = False
-        else:
-            word_started = True
-        index += 1
-    return tokens
 
 
 def _assert_supported_shell_if(line: str) -> None:
@@ -236,87 +203,44 @@ def closing_fi_index(lines: list[str], if_index: int) -> int | None:
     return None
 
 
-def _grouped_command_start(
-    lines: list[str], index: int, target_match: re.Match[str]
-) -> int | None:
-    attached_tokens = shell_group_tokens(lines[index][: target_match.start()])
-    if not attached_tokens or attached_tokens[-1] not in "})":
-        return None
-    depth = 0
-    saw_closing_group = False
-    for candidate in range(index, -1, -1):
-        candidate_text = (
-            lines[candidate][: target_match.start()]
-            if candidate == index
-            else lines[candidate]
-        )
-        for token in reversed(shell_group_tokens(candidate_text)):
-            if token in "})":
-                depth += 1
-                saw_closing_group = True
-            elif saw_closing_group and token in "{(":
-                depth -= 1
-                if depth == 0:
-                    return candidate
-    return None
-
-
-def _summary_heredoc(
-    lines: list[str], start: int, index: int
-) -> re.Match[str] | None:
-    for opener_index in range(start, index + 1):
-        if opener_index < index and any(
-            not lines[candidate].rstrip().endswith("\\")
-            for candidate in range(opener_index, index)
-        ):
-            continue
-        opener_line = lines[opener_index]
-        match = HEREDOC_OPEN.search(opener_line)
-        if match is None:
-            continue
-        suffix = opener_line[match.end() :]
-        if re.search(r"[;&|]", suffix) and not re.fullmatch(
-            r"\s*\|\s*tee(?:\s+(?:-a|--append))?\s+"
-            r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?\s*",
-            suffix,
-        ):
-            continue
-        return match
-    return None
-
-
 def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
+    """Find only the canonical direct helper and metadata summary regions."""
+
     lines = source.splitlines()
     ranges: list[tuple[int, int]] = []
-    for index, line in enumerate(lines):
-        target_match = SUMMARY_TARGET.search(line)
-        if target_match is None:
-            continue
-        start = _grouped_command_start(lines, index, target_match)
-        if start is None:
-            start = index
-            while start > 0 and lines[start - 1].rstrip().endswith("\\"):
-                start -= 1
-        end = index
-        heredoc_match = _summary_heredoc(lines, start, index)
-        if heredoc_match is not None:
-            delimiter = heredoc_match.group("delimiter")
-            strip_tabs = heredoc_match.group("strip_tabs") is not None
-            for candidate in range(index + 1, len(lines)):
-                candidate_line = lines[candidate]
-                if strip_tabs:
-                    candidate_line = candidate_line.lstrip("\t")
-                if candidate_line == delimiter:
-                    end = candidate
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() == f"bash {SUMMARY_HELPER_PATH} \\":
+            end = index
+            command_lines = [lines[index].strip()]
+            while command_lines[-1].endswith("\\"):
+                end += 1
+                if end >= len(lines):
                     break
-            else:
-                end = len(lines) - 1
-        ranges.append((start, end))
+                command_lines.append(lines[end].strip())
+            if end < len(lines):
+                command = " ".join(
+                    line.removesuffix("\\").rstrip() for line in command_lines
+                )
+                if SUMMARY_HELPER_COMMAND_PATTERN.fullmatch(
+                    command.removeprefix(f"bash {SUMMARY_HELPER_PATH} ")
+                ):
+                    ranges.append((index, end))
+                index = end
+        if index + len(SUMMARY_METADATA_LINES) <= len(lines):
+            candidate = tuple(
+                line.strip()
+                for line in lines[index : index + len(SUMMARY_METADATA_LINES)]
+            )
+            if candidate == SUMMARY_METADATA_LINES:
+                ranges.append((index, index + len(SUMMARY_METADATA_LINES) - 1))
+                index += len(SUMMARY_METADATA_LINES) - 1
+        index += 1
     return ranges
 
 
 def summary_write_regions(source: str) -> list[str]:
-    """Return shell regions that write to GITHUB_STEP_SUMMARY."""
+    """Return supported regions that write to GITHUB_STEP_SUMMARY."""
 
     lines = source.splitlines()
     return [
@@ -325,38 +249,30 @@ def summary_write_regions(source: str) -> list[str]:
     ]
 
 
+def _repo_shell_helper_references(source: str) -> list[tuple[int, str]]:
+    """Find explicit repository shell-helper paths and their source lines."""
+
+    return [
+        (source.count("\n", 0, match.start()), match.group("path"))
+        for match in REPO_SHELL_HELPER_REFERENCE.finditer(source)
+    ]
+
+
+def _repo_shell_helper_path(reference: str, root_dir: Path) -> Path:
+    if reference.startswith("$"):
+        variable, separator, suffix = reference.partition("/dev-tools/")
+        variable = variable[2:-1] if variable.startswith("${") else variable[1:]
+        if not separator or variable not in ALLOWED_WORKSPACE_ROOT_VARIABLES:
+            raise AssertionError(f"unsupported repository shell helper root: {reference}")
+        return (root_dir / "dev-tools" / suffix).resolve()
+    if reference.startswith("/"):
+        return Path(reference).resolve()
+    return (root_dir / reference.removeprefix("./")).resolve()
+
+
 def has_forbidden_summary_reference(text: str) -> bool:
     normalized_text = re.sub(r"[ \t]+", " ", text)
     return FORBIDDEN_SUMMARY_REFERENCE.search(normalized_text) is not None
-
-
-def _variable_name(variable: str) -> str:
-    return variable[2:-1] if variable.startswith("${") else variable[1:]
-
-
-def normalize_summary_helper_path(invocation: str, root_dir: Path) -> Path:
-    """Resolve a helper path, rejecting unknown variable-rooted forms."""
-
-    root_dir = root_dir.resolve()
-    if invocation.startswith("$"):
-        variable, separator, suffix = invocation.partition("/dev-tools/")
-        if (
-            not separator
-            or _variable_name(variable) not in ALLOWED_WORKSPACE_ROOT_VARIABLES
-        ):
-            allowed = ", ".join(sorted(ALLOWED_WORKSPACE_ROOT_VARIABLES))
-            raise ValueError(
-                f"unsupported variable-prefixed summary helper path: {invocation}; "
-                f"allowed workspace variables: {allowed}"
-            )
-        return (root_dir / "dev-tools" / suffix).resolve()
-    if invocation.startswith("/"):
-        return Path(invocation).resolve()
-    return (root_dir / invocation.removeprefix("./")).resolve()
-
-
-def _helper_matches(source: str) -> Iterable[re.Match[str]]:
-    return SUMMARY_HELPER_PATTERN.finditer(source)
 
 
 def collect_workflow_run_sources(workflow: dict) -> list[WorkflowRunSource]:
@@ -392,71 +308,122 @@ def collect_workflow_run_sources(workflow: dict) -> list[WorkflowRunSource]:
 def discover_summary_writers(
     workflow_run_sources: Iterable[WorkflowRunSource], root_dir: Path
 ) -> list[WorkflowRunSource]:
-    """Find direct and transitively redirected summary-producing sources."""
+    """Find summary writers and reject unsupported shell/source forms."""
 
     root_dir = root_dir.resolve()
     summary_writers: list[WorkflowRunSource] = []
-    pending = list(workflow_run_sources)
-    seen_sources: dict[tuple[str, str, str], bool] = {}
-    seen_helpers: dict[tuple[str, Path], bool] = {}
-    summary_writer_indexes: dict[tuple[str, str, str] | tuple[str, Path], int] = {}
-    while pending:
-        current = pending.pop()
-        if current.resolved_helper_path is None:
-            traversal_key: tuple[str, str, str] | tuple[str, Path] = (
-                current.job_name,
-                current.step_name,
-                current.source,
-            )
-            previous_reachability = seen_sources.get(traversal_key)
-        else:
-            traversal_key = (current.job_name, current.resolved_helper_path)
-            previous_reachability = seen_helpers.get(traversal_key)
-        if previous_reachability is True or (
-            previous_reachability is False and not current.summary_reachable
-        ):
-            continue
-        if current.resolved_helper_path is None:
-            seen_sources[traversal_key] = current.summary_reachable
-        else:
-            seen_helpers[traversal_key] = current.summary_reachable
+    pending_helpers: list[Path] = []
+    seen_helpers: set[Path] = set()
+    for current in workflow_run_sources:
         direct_ranges = _summary_write_line_ranges(current.source)
-        if direct_ranges or current.summary_reachable:
-            existing_index = summary_writer_indexes.get(traversal_key)
-            if existing_index is None:
-                summary_writer_indexes[traversal_key] = len(summary_writers)
-                summary_writers.append(current)
-            else:
-                summary_writers[existing_index] = current
-
-        for match in _helper_matches(current.source):
-            helper_path = normalize_summary_helper_path(
-                match.group("invocation"), root_dir
-            )
-            try:
-                relative_helper = helper_path.relative_to(root_dir)
-            except ValueError as exc:
-                raise ValueError(
-                    f"summary helper path escapes repository root: {match.group('invocation')}"
-                ) from exc
-            if not helper_path.is_file():
+        if any(
+            marker in current.source
+            for marker in ("GITHUB_STEP_SUMMARY", SUMMARY_HELPER_NAME)
+        ):
+            summary_lines = {
+                line_index
+                for line_index, line in enumerate(current.source.splitlines())
+                if "GITHUB_STEP_SUMMARY" in line
+            }
+            expected_summary_lines = {end for _, end in direct_ranges}
+            if summary_lines != expected_summary_lines:
                 raise AssertionError(
-                    "summary helper file is missing: "
-                    f"{helper_path} (referenced as {match.group('invocation')})"
+                    "dev-demo summary must use only the canonical direct helper or "
+                    "the exact safe metadata block; unsupported or indirect summary "
+                    f"syntax found in {current.job_name}/{current.step_name}"
                 )
-            line_index = current.source.count("\n", 0, match.start())
-            redirected = current.summary_reachable or any(
-                start <= line_index <= end for start, end in direct_ranges
-            )
+            helper_lines = {
+                line_index
+                for line_index, line in enumerate(current.source.splitlines())
+                if SUMMARY_HELPER_NAME in line
+            }
+            expected_helper_lines = {
+                start
+                for start, _ in direct_ranges
+                if current.source.splitlines()[start].strip().startswith("bash ")
+            }
+            if helper_lines != expected_helper_lines:
+                raise AssertionError(
+                    "dev-demo summary helper must use the canonical direct invocation; "
+                    f"unsupported or indirect helper syntax found in {current.job_name}/{current.step_name}"
+                )
+            if direct_ranges:
+                summary_writers.append(current)
+
+        direct_helper_starts = {
+            start
+            for start, _ in direct_ranges
+            if current.source.splitlines()[start].strip().startswith("bash ")
+        }
+        for line_index, helper_reference in _repo_shell_helper_references(
+            current.source
+        ):
+            helper_path = _repo_shell_helper_path(helper_reference, root_dir)
+            canonical_path = (root_dir / SUMMARY_HELPER_PATH.removeprefix("./")).resolve()
+            if helper_path == canonical_path:
+                if line_index not in direct_helper_starts:
+                    raise AssertionError(
+                        "dev-demo summary helper must use the canonical direct invocation; "
+                        f"unsupported or indirect helper syntax found in {current.job_name}/{current.step_name}"
+                    )
+                continue
+            pending_helpers.append(helper_path)
+
+    while pending_helpers:
+        helper_path = pending_helpers.pop()
+        if helper_path in seen_helpers:
+            continue
+        seen_helpers.add(helper_path)
+        try:
+            helper_path.relative_to(root_dir)
+        except ValueError as exc:
+            raise AssertionError(
+                "repository shell helper path escapes the repository: "
+                f"{helper_path}"
+            ) from exc
+        if not helper_path.is_file():
+            raise AssertionError(f"repository shell helper is missing: {helper_path}")
+        try:
             helper_source = helper_path.read_text(encoding="utf-8")
-            pending.append(
-                WorkflowRunSource(
-                    current.job_name,
-                    f"{current.step_name}:{relative_helper.as_posix()}",
-                    helper_source,
-                    summary_reachable=redirected,
-                    resolved_helper_path=helper_path,
+        except OSError as exc:
+            raise AssertionError(
+                f"repository shell helper cannot be read: {helper_path}"
+            ) from exc
+        if "GITHUB_STEP_SUMMARY" in helper_source:
+            raise AssertionError(
+                "repository shell helper must not write to GITHUB_STEP_SUMMARY: "
+                f"{helper_path}"
+            )
+        for _, helper_reference in _repo_shell_helper_references(helper_source):
+            nested_path = _repo_shell_helper_path(helper_reference, root_dir)
+            if nested_path == (
+                root_dir / SUMMARY_HELPER_PATH.removeprefix("./")
+            ).resolve():
+                raise AssertionError(
+                    "repository shell helper must not invoke the canonical dev-demo "
+                    f"summary helper: {helper_path}"
                 )
+            pending_helpers.append(nested_path)
+
+    if any(
+        _summary_write_line_ranges(source.source)
+        for source in summary_writers
+    ):
+        helper_path = root_dir / SUMMARY_HELPER_PATH.removeprefix("./")
+        if not helper_path.is_file():
+            raise AssertionError(
+                "canonical dev-demo summary helper is missing: " f"{helper_path}"
+            )
+        try:
+            helper_source = helper_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise AssertionError(
+                "canonical dev-demo summary helper cannot be read: " f"{helper_path}"
+            ) from exc
+        if has_forbidden_summary_reference(helper_source):
+            raise AssertionError(
+                "canonical dev-demo summary helper must not reference "
+                "bootstrap credential material"
             )
     return summary_writers
 
@@ -682,79 +649,58 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         )
 
 
-def _player_bootstrap_payload_end(source: str, start: int) -> int | None:
-    """Return the end of the first balanced mapping after a request call."""
+def _bootstrap_python_source(bootstrap_manifest: str) -> str:
+    """Extract the Python heredoc so shell comments and strings cannot be calls."""
 
-    if start >= len(source) or source[start] != "{":
-        return None
-
-    depth = 0
-    quote: str | None = None
-    triple_quoted = False
-    escaped = False
-    index = start
-    while index < len(source):
-        character = source[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif triple_quoted:
-                if source.startswith(quote * 3, index):
-                    quote = None
-                    triple_quoted = False
-                    index += 2
-            elif character == quote:
-                quote = None
-            index += 1
-            continue
-        if character in "'\"":
-            if source.startswith(character * 3, index):
-                quote = character
-                triple_quoted = True
-                index += 3
-            else:
-                quote = character
-                index += 1
-            continue
-        if character == "#":
-            newline = source.find("\n", index)
-            index = len(source) if newline == -1 else newline + 1
-            continue
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-        index += 1
-    return None
-
-
-def _player_bootstrap_payload(source: str, request: re.Match[str]) -> ast.Dict | None:
-    """Parse the mapping passed to one /auth/player-bootstrap request."""
-
-    payload_start = request.end()
-    while payload_start < len(source) and source[payload_start].isspace():
-        payload_start += 1
-    if payload_start >= len(source) or source[payload_start] != ",":
-        return None
-    payload_start += 1
-    while payload_start < len(source) and source[payload_start].isspace():
-        payload_start += 1
-    payload_end = _player_bootstrap_payload_end(source, payload_start)
-    if payload_end is None:
-        return None
+    lines = bootstrap_manifest.splitlines()
+    opener_indices = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == BOOTSTRAP_PYTHON_HEREDOC_OPENER
+    ]
+    if len(opener_indices) != 1:
+        raise AssertionError(
+            "dev-demo bootstrap must contain exactly one Python script heredoc"
+        )
+    start = opener_indices[0] + 1
     try:
-        expression = ast.parse(source[payload_start:payload_end], mode="eval")
-    except SyntaxError:
-        return None
-    return expression.body if isinstance(expression.body, ast.Dict) else None
+        end = next(index for index in range(start, len(lines)) if lines[index].strip() == "PY")
+    except StopIteration as exc:
+        raise AssertionError(
+            "dev-demo bootstrap Python script heredoc is unterminated"
+        ) from exc
+    return "\n".join(lines[start:end])
 
 
-def _validate_player_bootstrap_payload(source: str, request: re.Match[str]) -> bool:
-    payload = _player_bootstrap_payload(source, request)
+def _player_bootstrap_requests(bootstrap_manifest: str) -> list[ast.Call]:
+    """Return actual Python calls, excluding comments and string literals."""
+
+    try:
+        python_tree = ast.parse(_bootstrap_python_source(bootstrap_manifest))
+    except SyntaxError as exc:
+        raise AssertionError(
+            "dev-demo bootstrap Python script must be valid Python"
+        ) from exc
+    return [
+        node
+        for node in ast.walk(python_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "post_json"
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Name)
+        and node.args[0].func.id == "public_account_url"
+        and node.args[0].args
+        and isinstance(node.args[0].args[0], ast.Constant)
+        and node.args[0].args[0].value == "/auth/player-bootstrap"
+    ]
+
+
+def _validate_player_bootstrap_payload(request: ast.Call) -> bool:
+    if len(request.args) < 2 or not isinstance(request.args[1], ast.Dict):
+        return False
+    payload = request.args[1]
     if payload is None or len(payload.keys) != 2:
         return False
     fields = {
@@ -884,18 +830,14 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
         )
 
-    player_bootstrap_requests = list(
-        PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest)
-    )
+    player_bootstrap_requests = _player_bootstrap_requests(bootstrap_manifest)
     player_bootstrap_request_count = len(player_bootstrap_requests)
     if player_bootstrap_request_count != 1:
         raise AssertionError(
             "dev-demo bootstrap must contain exactly one /auth/player-bootstrap request "
             f"(found {player_bootstrap_request_count})"
         )
-    if not _validate_player_bootstrap_payload(
-        bootstrap_manifest, player_bootstrap_requests[0]
-    ):
+    if not _validate_player_bootstrap_payload(player_bootstrap_requests[0]):
         raise AssertionError(
             "dev-demo bootstrap must send exactly accountIdentifier and secret "
             "to /auth/player-bootstrap"
@@ -988,10 +930,7 @@ def validate_workflow(root: Path) -> None:
         for source in summary_writers
         if any(
             has_forbidden_summary_reference(region)
-            for region in (
-                summary_write_regions(source.source)
-                + ([source.source] if source.summary_reachable else [])
-            )
+            for region in summary_write_regions(source.source)
         )
     ]
     if offending:
