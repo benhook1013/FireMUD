@@ -1402,13 +1402,6 @@ class ReviewController:
         checkpoints = [_field(item, "checkpoint", "checkpoint_id") for item in subsequent]
         if any(not isinstance(value, str) or not value for value in checkpoints) or len(checkpoints) != len(set(checkpoints)):
             return result("INVALID", "post-allocation evidence has missing or duplicate checkpoint identities")
-        completed_after = [
-            item for item in subsequent
-            if _field(item, "completed") is True and _field(item, "attributable") is True
-            and _field(item, "provisional") is not True
-        ]
-        if len(completed_after) > 1:
-            return result("INVALID", "more than one completed review followed the one-review promise")
         matching: list[Any] = []
         for item in subsequent:
             if not (

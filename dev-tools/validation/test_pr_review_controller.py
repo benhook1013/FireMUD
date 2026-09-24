@@ -254,6 +254,36 @@ class ControllerTests(unittest.TestCase):
                 checkpoint="allocated-dry", validation="checks green", reason="premature",
             )
 
+    def test_ineligible_completed_observation_does_not_invalidate_one_valid_allocation_result(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-unanchored", anchored=False),
+                self.allocation_evidence(checkpoint="allocated-valid"),
+            )
+        )
+
+        progress = controller.status()["prs"][0]["allocations"]["hosted"]
+
+        self.assertEqual(progress["status"], "EXHAUSTED_PENDING")
+        self.assertEqual(progress["checkpoint"], "allocated-valid")
+
+    def test_two_valid_results_invalidate_one_review_allocation(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-first"),
+                self.allocation_evidence(checkpoint="allocated-second"),
+            )
+        )
+
+        progress = controller.status()["prs"][0]["allocations"]["hosted"]
+
+        self.assertEqual(progress["status"], "INVALID")
+        self.assertIn("multiple completed results match", progress["reason"])
+
     def test_consumed_dry_and_useful_allocations_cannot_be_renewed(self):
         for label, accepted in (("dry", 0), ("useful", 1)):
             with self.subTest(result=label):
