@@ -11,11 +11,6 @@ for required_variable in GH_TOKEN BASE_SHA HEAD_SHA PR_NUMBER REQUIRED_GATE_NAME
     exit 1
   fi
 done
-ALLOW_PENDING="${ALLOW_PENDING:-false}"
-if [[ "${ALLOW_PENDING}" != "true" && "${ALLOW_PENDING}" != "false" ]]; then
-  echo "Required-gate preservation received invalid allow-pending value; refusing to poll." >&2
-  exit 1
-fi
 is_github_sha() {
   [[ "$1" =~ ^[0-9A-Fa-f]{40}$ ]]
 }
@@ -61,13 +56,19 @@ is_github_timestamp() {
 
 api_error_file="$(mktemp)"
 trap 'rm -f "$api_error_file"' EXIT
-# Every required-gate caller allows at least 25 minutes. Leave two minutes for
-# runner setup and cleanup while allowing a substantive predecessor to finish
-# after the previous 19-minute preservation budget.
+# Every required-gate caller allows 95 minutes. Retain the shorter missing-run
+# budget, but leave five minutes of setup/cleanup room when a verified
+# substantive predecessor's gate is delayed behind its dependency graph.
+# Neither budget permits an unverified candidate to satisfy the required check.
 poll_interval_seconds=15
 poll_timeout_seconds=$((23 * 60))
+active_poll_timeout_seconds=$((90 * 60))
 max_attempts=92
-poll_deadline=$((SECONDS + poll_timeout_seconds))
+active_max_attempts=$((active_poll_timeout_seconds / poll_interval_seconds))
+poll_attempt_limit="${max_attempts}"
+poll_started_seconds="${SECONDS}"
+poll_deadline=$((poll_started_seconds + poll_timeout_seconds))
+active_poll_deadline=$((poll_started_seconds + active_poll_timeout_seconds))
 max_preservation_step_refresh_attempts=8
 expected_workflow_id=""
 declare -A workflow_run_cache=()
@@ -86,7 +87,164 @@ sleep_until_poll_deadline() {
   fi
   sleep "${delay}"
 }
-for attempt in $(seq 1 "${max_attempts}"); do
+extend_for_active_substantive_run() {
+  if [[ "${poll_attempt_limit}" != "${active_max_attempts}" ]]; then
+    poll_attempt_limit="${active_max_attempts}"
+    poll_deadline="${active_poll_deadline}"
+    echo "Verified substantive workflow is active before ${REQUIRED_GATE_NAME} was published; extending the bounded wait to ${active_poll_timeout_seconds}s." >&2
+  fi
+}
+
+# Determine whether an active workflow for the exact PR/base/head tuple is
+# substantive. Metadata-only runs skip their `changes` job, so a matching run
+# is not enough. A queued or in-progress change detector is intentionally
+# inconclusive: do not extend the wait until the detector has completed
+# successfully and has therefore proved that this is a substantive run.
+find_active_substantive_workflow() {
+  active_substantive_workflow=false
+  uncertain_substantive_workflow=false
+  : >"${api_error_file}"
+  set +e
+  active_workflow_runs_json="$(gh api --method GET \
+    "/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs" \
+    -f event=pull_request \
+    -f per_page=100 \
+    --paginate \
+    --slurp \
+    2>"${api_error_file}")"
+  active_workflow_runs_status=$?
+  set -e
+  if [[ "${active_workflow_runs_status}" -ne 0 ]]; then
+    active_workflow_runs_error="$(<"${api_error_file}")"
+    if is_retryable_gh_failure "${active_workflow_runs_status}" "${active_workflow_runs_error}"; then
+      echo "Retryable GitHub API failure while checking for an active substantive ${EXPECTED_WORKFLOW_NAME} run; retaining the short fail-closed wait." >&2
+      return 0
+    fi
+    echo "Permanent GitHub API/configuration failure while checking active substantive workflow runs; refusing to preserve." >&2
+    [[ -z "${active_workflow_runs_error}" ]] || printf '%s\n' "${active_workflow_runs_error}" >&2
+    exit 1
+  fi
+  set +e
+  jq -e '
+    type == "array"
+    and all(.[]; type == "object" and (.workflow_runs | type) == "array")
+  ' <<<"${active_workflow_runs_json}" >/dev/null 2>>"${api_error_file}"
+  active_workflow_runs_shape_status=$?
+  set -e
+  if [[ "${active_workflow_runs_shape_status}" -ne 0 ]]; then
+    echo "GitHub API returned malformed active workflow-run data; refusing to preserve." >&2
+    exit 1
+  fi
+
+  set +e
+  active_run_rows="$(jq -r \
+    --arg current_run_id "${GITHUB_RUN_ID}" \
+    --arg expected_workflow_id "${expected_workflow_id}" \
+    --arg expected_workflow_name "${EXPECTED_WORKFLOW_NAME}" \
+    --arg expected_workflow_path "${EXPECTED_WORKFLOW_PATH}" \
+    --arg expected_head "${HEAD_SHA}" \
+    --arg expected_base "${BASE_SHA}" \
+    --arg expected_repository "${GITHUB_REPOSITORY}" \
+    --arg expected_display_title "${expected_display_title}" \
+    --arg expected_pr "${PR_NUMBER}" '
+      .[].workflow_runs[]?
+      | select((.id | type) == "number")
+      | select((.id | tostring) != $current_run_id)
+      | select((.workflow_id | type) == "number" and (.workflow_id | tostring) == $expected_workflow_id)
+      | select(.name == $expected_workflow_name or .name == $expected_display_title)
+      | select(.path == $expected_workflow_path or
+          ((.path | startswith($expected_workflow_path + "@")) and
+            ((.path | ltrimstr($expected_workflow_path + "@")) | test("^.+$"))))
+      | select(.repository.full_name == $expected_repository)
+      | select(.event == "pull_request")
+      | select((.display_title // "") == $expected_display_title)
+      | select((.status // "") | IN("queued", "in_progress", "requested", "waiting"))
+      | select(((.pull_requests // null) | type) == "array")
+      | select(any(.pull_requests[]?;
+          ((.number // null) | tostring) == $expected_pr and
+          ((.base.sha // "") == $expected_base) and
+          ((.head.sha // "") == $expected_head)) or
+        ((.pull_requests | length) == 0 and
+          (.display_title == $expected_display_title)))
+      | [(.id | tostring), (.status // "__missing__")]
+      | @tsv' <<<"${active_workflow_runs_json}" 2>>"${api_error_file}")"
+  active_run_rows_status=$?
+  set -e
+  if [[ "${active_run_rows_status}" -ne 0 ]]; then
+    echo "GitHub API returned malformed active workflow-run identity data; refusing to preserve." >&2
+    exit 1
+  fi
+
+  while IFS=$'\t' read -r active_run_id active_run_status; do
+    [[ -z "${active_run_id}${active_run_status}" ]] && continue
+    : >"${api_error_file}"
+    set +e
+    active_run_jobs_json="$(gh api --method GET \
+      "/repos/${GITHUB_REPOSITORY}/actions/runs/${active_run_id}/jobs" \
+      -f per_page=100 \
+      --paginate \
+      --slurp \
+      2>"${api_error_file}")"
+    active_run_jobs_status=$?
+    set -e
+    if [[ "${active_run_jobs_status}" -ne 0 ]]; then
+      active_run_jobs_error="$(<"${api_error_file}")"
+      if is_retryable_gh_failure "${active_run_jobs_status}" "${active_run_jobs_error}"; then
+        uncertain_substantive_workflow=true
+        continue
+      fi
+      echo "Permanent GitHub API/configuration failure while identifying the active workflow's change-detection job; refusing to preserve." >&2
+      [[ -z "${active_run_jobs_error}" ]] || printf '%s\n' "${active_run_jobs_error}" >&2
+      exit 1
+    fi
+    set +e
+    jq -e '
+      type == "array"
+      and all(.[]; type == "object" and (.jobs | type) == "array")
+    ' <<<"${active_run_jobs_json}" >/dev/null 2>>"${api_error_file}"
+    active_run_jobs_shape_status=$?
+    set -e
+    if [[ "${active_run_jobs_shape_status}" -ne 0 ]]; then
+      echo "GitHub API returned malformed active workflow job data; refusing to preserve." >&2
+      exit 1
+    fi
+    set +e
+    change_job_rows="$(jq -r '
+      [.[].jobs[]?
+        | select((.name // "") | test("^Detect .+-Relevant Changes$"))
+        | [(.status // "__missing__"), (.conclusion // "")]
+      ]
+      | .[]
+      | @tsv' <<<"${active_run_jobs_json}" 2>>"${api_error_file}")"
+    change_job_rows_status=$?
+    set -e
+    if [[ "${change_job_rows_status}" -ne 0 ]]; then
+      echo "GitHub API returned malformed change-detection job data; refusing to preserve." >&2
+      exit 1
+    fi
+    change_job_count=0
+    change_job_completed_successfully=false
+    change_job_inconclusive=false
+    while IFS=$'\t' read -r change_job_status change_job_conclusion; do
+      [[ -z "${change_job_status}${change_job_conclusion}" ]] && continue
+      change_job_count=$((change_job_count + 1))
+      if [[ "${change_job_status}" == "completed" && "${change_job_conclusion}" == "success" ]]; then
+        change_job_completed_successfully=true
+      elif [[ "${change_job_status}" != "completed" ]]; then
+        change_job_inconclusive=true
+      fi
+    done <<<"${change_job_rows}"
+    if (( change_job_count != 1 )); then
+      uncertain_substantive_workflow=true
+    elif [[ "${change_job_completed_successfully}" == "true" ]]; then
+      active_substantive_workflow=true
+    elif [[ "${change_job_inconclusive}" == "true" ]]; then
+      uncertain_substantive_workflow=true
+    fi
+  done <<<"${active_run_rows}"
+}
+
+for attempt in $(seq 1 "${active_max_attempts}"); do
   if (( SECONDS >= poll_deadline )); then
     echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
     exit 1
@@ -109,8 +267,8 @@ for attempt in $(seq 1 "${max_attempts}"); do
         [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
         exit 1
       fi
-      echo "Retryable GitHub API failure while resolving the expected ${EXPECTED_WORKFLOW_PATH}; retrying attempt ${attempt}/${max_attempts}." >&2
-      if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
+      echo "Retryable GitHub API failure while resolving the expected ${EXPECTED_WORKFLOW_PATH}; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
+      if [ "${attempt}" -eq "${poll_attempt_limit}" ] || (( SECONDS >= poll_deadline )); then
         echo "Timed out resolving the expected workflow identity for ${REQUIRED_GATE_NAME}." >&2
         exit 1
       fi
@@ -155,8 +313,8 @@ for attempt in $(seq 1 "${max_attempts}"); do
       [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
       exit 1
     fi
-    echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
-    if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
+    echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
+    if [ "${attempt}" -eq "${poll_attempt_limit}" ] || (( SECONDS >= poll_deadline )); then
       echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
       exit 1
     fi
@@ -281,6 +439,7 @@ for attempt in $(seq 1 "${max_attempts}"); do
           .head_sha == $expected_head and
           .repository.full_name == $expected_repository and
           .event == "pull_request" and
+          (.display_title // null) == $expected_display_title and
           ((.pull_requests // null) | type) == "array" and
           (
             ((.pull_requests | length) > 0 and
@@ -438,7 +597,7 @@ for attempt in $(seq 1 "${max_attempts}"); do
         if [[ -z "${conclusion}" && -z "${completed_at}" ]] &&
           { [[ -z "${started_at}" ]] || is_github_timestamp "${started_at}"; }; then
           started_at="${started_at:-9999-12-31T23:59:59Z}"
-          pending_rows+=("${started_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tpending\t'"${check_status}")
+          pending_rows+=("${started_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tpending\t'"${check_status}"$'\t'"${preserve_step_conclusion}")
         else
           candidate_ambiguous=true
         fi
@@ -449,11 +608,11 @@ for attempt in $(seq 1 "${max_attempts}"); do
 
   if [[ "${job_lookup_retryable}" == "true" ]]; then
     if [[ "${retry_reason}" == *"API lookup" ]]; then
-      echo "Retryable GitHub API failure during ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
+      echo "Retryable GitHub API failure during ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     else
-      echo "Retrying ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
+      echo "Retrying ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     fi
-    if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
+    if [ "${attempt}" -eq "${poll_attempt_limit}" ] || (( SECONDS >= poll_deadline )); then
       echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
       exit 1
     fi
@@ -480,7 +639,7 @@ for attempt in $(seq 1 "${max_attempts}"); do
   else
     prior_row=$'none\tnone\tnone\tnone\tnone\t'
   fi
-  IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion <<< "${prior_row}"
+  IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion prior_preserve_step <<< "${prior_row}"
   if [ "${prior_status}" = "completed" ]; then
     if [ "${prior_conclusion}" = "success" ]; then
       exit 0
@@ -489,15 +648,19 @@ for attempt in $(seq 1 "${max_attempts}"); do
     exit 1
   fi
   if [ "${prior_status}" = "none" ]; then
-    if [[ "${ALLOW_PENDING}" == "true" ]]; then
-      echo "No prior ${REQUIRED_GATE_NAME} is visible yet; allowing the distinct metadata-only job to finish." >&2
-      exit 0
+    find_active_substantive_workflow
+    if [[ "${active_substantive_workflow}" == "true" ]]; then
+      extend_for_active_substantive_run
+      echo "A verified substantive workflow is active with ${REQUIRED_GATE_NAME} unpublished; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
+    elif [[ "${uncertain_substantive_workflow}" == "true" ]]; then
+      echo "A possible substantive workflow is active, but its non-skipped change-detection job is not yet proven; retaining the short fail-closed bound (attempt ${attempt}/${poll_attempt_limit})." >&2
+    else
+      echo "No attributable substantive workflow is visible yet; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     fi
-    if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
+    if [ "${attempt}" -eq "${poll_attempt_limit}" ] || (( SECONDS >= poll_deadline )); then
       echo "Timed out waiting for a prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to appear." >&2
       exit 1
     fi
-    echo "No prior ${REQUIRED_GATE_NAME} is visible yet; retrying attempt ${attempt}/${max_attempts}." >&2
     if ! sleep_until_poll_deadline; then
       echo "Timed out waiting for a prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to appear." >&2
       exit 1
@@ -508,15 +671,23 @@ for attempt in $(seq 1 "${max_attempts}"); do
     echo "Unexpected prior ${REQUIRED_GATE_NAME} selection state ${prior_status:-unknown}; refusing to preserve." >&2
     exit 1
   fi
-  if [[ "${ALLOW_PENDING}" == "true" ]]; then
-    echo "Relevant prior ${REQUIRED_GATE_NAME} is still pending; allowing the distinct metadata-only job to finish." >&2
-    exit 0
+  if [[ "${prior_preserve_step}" == "skipped" ]]; then
+    extend_for_active_substantive_run
+  else
+    find_active_substantive_workflow
+    if [[ "${active_substantive_workflow}" == "true" ]]; then
+      extend_for_active_substantive_run
+    fi
   fi
-  if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
+  if [ "${attempt}" -eq "${poll_attempt_limit}" ] || (( SECONDS >= poll_deadline )); then
     echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2
     exit 1
   fi
-  echo "Relevant prior ${REQUIRED_GATE_NAME} is still ${prior_conclusion:-finishing}; retrying attempt ${attempt}/${max_attempts}." >&2
+  if [[ "${prior_preserve_step}" == "skipped" || "${active_substantive_workflow:-false}" == "true" ]]; then
+    echo "A verified substantive ${REQUIRED_GATE_NAME} is still pending; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
+  else
+    echo "A prior ${REQUIRED_GATE_NAME} is pending but its substantive identity is not yet verified; retaining the short fail-closed bound (attempt ${attempt}/${poll_attempt_limit})." >&2
+  fi
   if ! sleep_until_poll_deadline; then
     echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2
     exit 1
