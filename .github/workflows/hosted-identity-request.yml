@@ -963,6 +963,22 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write requester kubeconfig
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Revalidate open PR before runtime verification
         env:
@@ -976,6 +992,7 @@ jobs:
       - name: Capture exact runtime Namespace UID before verification
         id: capture-runtime-namespace
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -1030,6 +1047,10 @@ jobs:
 
       - name: Wait for exact controller identity projection
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          IDENTITY_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             "pr-${{ needs.validate-target.outputs.pr_number }}" \
@@ -1039,6 +1060,7 @@ jobs:
 
       - name: Wait for runtime rollouts
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1049,6 +1071,7 @@ jobs:
         id: runtime-port
         if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1143,6 +1166,7 @@ jobs:
       - name: Revalidate exact source binding and runtime Namespace UID before success publication
         env:
           GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -1199,6 +1223,9 @@ jobs:
       - name: Write bounded hosted playable diagnostic evidence
         if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         env:
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          IDENTITY_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          RUNTIME_KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
@@ -1210,9 +1237,9 @@ jobs:
           umask 077
           evidence_dir="$(mktemp -d "$RUNNER_TEMP/preview-playable-evidence.XXXXXX")"
           trap 'rm -f -- "$evidence_dir/namespace.json" "$evidence_dir/identity.json" "$evidence_dir/pods.json"; rmdir -- "$evidence_dir"' EXIT
-          kubectl get namespace "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/namespace.json"
-          kubectl -n firemud-system get hostedenvironmentidentity "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/identity.json"
-          kubectl -n "$RUNTIME_NAMESPACE" get pods -o json > "$evidence_dir/pods.json"
+          kubectl --kubeconfig "$NAMESPACE_KUBECONFIG" get namespace "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/namespace.json"
+          kubectl --kubeconfig "$IDENTITY_KUBECONFIG" -n firemud-system get hostedenvironmentidentity "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/identity.json"
+          kubectl --kubeconfig "$RUNTIME_KUBECONFIG" -n "$RUNTIME_NAMESPACE" get pods -o json > "$evidence_dir/pods.json"
           python3 ./dev-tools/hosted/preview/write-playable-proof.py \
             --pr-number "$PR_NUMBER" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
             --merge-sha "$MERGE_SHA" --image-tag "$IMAGE_TAG" \
@@ -1225,6 +1252,7 @@ jobs:
       - name: Revalidate exact source binding and runtime Namespace UID after diagnostic evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -1303,6 +1331,7 @@ jobs:
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         with:
           script: |
             const { execFileSync } = require("node:child_process");
@@ -1371,7 +1400,9 @@ jobs:
         if: ${{ always() }}
         run: |
           rm -f -- \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
             "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/hosted-identity-requester.kubeconfig" \
             "$RUNNER_TEMP/preview-telnet-semantics.json" \
             "$RUNNER_TEMP/preview-wss-semantics.json" \
             "$RUNNER_TEMP/preview-playable-proof.json"

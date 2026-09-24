@@ -353,11 +353,7 @@ class TelnetServerTest {
       }
       assertExistingTlsSession(existingConnection, initialCertificate);
 
-      switchProjectedGeneration(
-          mount,
-          "..2026_09_24_00_00_02",
-          "/certs/dev-cert.pem",
-          null);
+      switchProjectedGeneration(mount, "..2026_09_24_00_00_02", "/certs/dev-cert.pem", null);
       assertEquals("FAILED", invokeWatcherReload(server));
       assertEquals(Status.OUT_OF_SERVICE, TlsCertificateWatcher.health().getStatus());
       assertTrue(registry.counter("tcpproxy.tls.misconfig").count() >= 1.0);
@@ -369,10 +365,7 @@ class TelnetServerTest {
       assertExistingTlsSession(existingConnection, initialCertificate);
 
       switchProjectedGeneration(
-          mount,
-          "..2026_09_24_00_00_03",
-          "/certs/dev-cert.pem",
-          "/certs/dev-key.pem");
+          mount, "..2026_09_24_00_00_03", "/certs/dev-cert.pem", "/certs/dev-key.pem");
       assertEquals("SUCCEEDED", invokeWatcherReload(server));
       assertEquals(Status.UP, TlsCertificateWatcher.health().getStatus());
       try (SSLSocket recoveredConnection = connectTls(server, clientContext)) {

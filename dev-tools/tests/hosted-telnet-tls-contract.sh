@@ -74,6 +74,21 @@ from pathlib import Path
 import yaml
 
 documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")))
+proxy_deployment = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+proxy_container = next(
+    container
+    for container in proxy_deployment["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+proxy_env = {item["name"]: item.get("value") for item in proxy_container.get("env", [])}
+assert proxy_env.get("FIREMUD_TLS_READINESS_GATE_ENABLED") == "true", (
+    "hosted Telnet TLS must gate new TCP Proxy admission on TLS reload health"
+)
 service = next(
     document
     for document in documents

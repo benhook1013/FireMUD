@@ -415,6 +415,8 @@ previewStack:
       healthPort: 8080
       extraEnv:
         # __TCP_PROXY_GATEWAY_BASE_URL_LINE__
+        # Hosted TCP Proxy admission must close when its active TLS projection cannot reload.
+        FIREMUD_TLS_READINESS_GATE_ENABLED: "true"
         TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
         TCP_PROXY_DEFAULT_REALM_SLUG: "production"
         TCP_PROXY_DEFAULT_POINTER_VERSION: "1"

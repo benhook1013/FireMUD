@@ -641,6 +641,12 @@ contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
 contains "$waiter" 'get namespace "$runtime_namespace" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'namespace_kubeconfig="${NAMESPACE_KUBECONFIG:-}"'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'identity_kubeconfig="${IDENTITY_KUBECONFIG:-}"'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'kubectl_prefix=(--kubeconfig "$kubeconfig_path")'
 contains "$waiter" 'Unable to determine controller projection'
 contains "$waiter" 'Unable to determine runtime namespace'
 contains "$waiter" 'Unable to determine HostedEnvironmentIdentity'
@@ -1784,7 +1790,7 @@ for job_name, job in jobs.items():
         assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
-assert manager_kubeconfig_jobs == {"deploy-runtime", "destroy-runtime"}
+assert manager_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -2123,6 +2129,27 @@ verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
+verify_runtime_write = verify_by_name["Write runtime kubeconfig"]
+verify_manager_write = verify_by_name["Write trusted namespace-manager kubeconfig"]
+verify_requester_write = verify_by_name["Write requester kubeconfig"]
+assert verify_runtime_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}
+assert verify_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+assert verify_requester_write["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert verify_requester_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
+}
 verify_head_step_index = next(
     index
     for index, step in enumerate(verify_steps)
@@ -2136,9 +2163,13 @@ capture_uid_step_index = next(
 capture_uid_step = verify_by_name[
     "Capture exact runtime Namespace UID before verification"
 ]
-assert capture_uid_step_index == verify_head_step_index + 1
+assert verify_steps.index(verify_runtime_write) < verify_steps.index(verify_manager_write)
+assert verify_steps.index(verify_manager_write) < verify_steps.index(verify_requester_write)
+assert verify_steps.index(verify_requester_write) < verify_head_step_index
+assert verify_steps.index(verify_requester_write) < capture_uid_step_index
 assert capture_uid_step["id"] == "capture-runtime-namespace"
 assert capture_uid_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
@@ -2160,6 +2191,9 @@ for required in (
 runtime_port_run = verify_by_name["Read allocated TCP port"]["run"]
 assert verify_by_name["Read allocated TCP port"]["if"] == (
     "${{ needs.validate-target.outputs.exposure_mode == 'public' }}"
+)
+assert verify_by_name["Read allocated TCP port"]["env"]["KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
 )
 assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
@@ -2183,6 +2217,11 @@ controller_wait = verify_by_name["Wait for exact controller identity projection"
 assert controller_wait["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
 )
+assert controller_wait["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "NAMESPACE_KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "IDENTITY_KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+}
 assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
 final_uid_step_index = next(
     index
@@ -2196,6 +2235,7 @@ final_uid_step = verify_by_name[
 assert final_uid_step_index < verify_success_index
 assert final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
@@ -2249,6 +2289,21 @@ assert 'if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then' in tel
 assert 'export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"' in telnet_diagnostic["run"]
 for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
     assert diagnostic["if"] == public_controller_condition
+assert proof_writer["env"]["NAMESPACE_KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
+)
+assert proof_writer["env"]["IDENTITY_KUBECONFIG"] == (
+    "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+)
+assert proof_writer["env"]["RUNTIME_KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
+)
+for credential_path in (
+    '"$NAMESPACE_KUBECONFIG"',
+    '"$IDENTITY_KUBECONFIG"',
+    '"$RUNTIME_KUBECONFIG"',
+):
+    assert credential_path in proof_writer["run"]
 assert "--expected-room-id \"$room_id\"" in wss_diagnostic["run"]
 assert "--reconnect" in wss_diagnostic["run"]
 assert "write-playable-proof.py" in proof_writer["run"]
@@ -2287,6 +2342,7 @@ assert verify_failure["env"] == {
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
     ),
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
 }
 failure_script = verify_failure["with"]["script"]
 for fragment in (
@@ -5368,7 +5424,16 @@ cat >"$waiter_stub_dir/kubectl" <<'SH'
 set -euo pipefail
 
 scenario="${WAITER_SCENARIO:?}"
+kubectl_kubeconfig=""
+if [[ "${1:-}" == --kubeconfig ]]; then
+  [[ $# -ge 3 ]]
+  kubectl_kubeconfig="$2"
+  shift 2
+fi
 printf '%s\n' "$*" >>"${WAITER_KUBECTL_LOG:?}"
+if [[ -n "${WAITER_KUBECONFIG_LOG:-}" ]]; then
+  printf '%s\t%s\n' "$kubectl_kubeconfig" "$*" >>"$WAITER_KUBECONFIG_LOG"
+fi
 
 next_count() {
   local name="$1"
@@ -5707,6 +5772,35 @@ run_active_waiter_fixture namespace-transport-recovery 0 4 2
 run_active_waiter_fixture namespace-transport-exhaustion 45 3 2 'Unable to connect to the server'
 run_active_waiter_fixture identity-transport-recovery 0 6 2
 run_active_waiter_fixture identity-transport-exhaustion 46 6 2 'Unable to connect to the server'
+
+# Trusted verification keeps runtime data-plane credentials separate from the
+# control-plane Namespace and HostedEnvironmentIdentity reads.
+credential_separation_log="$TEMP_DIR/active-credential-separation.kubectl.log"
+credential_separation_count_root="$TEMP_DIR/active-credential-separation.counts"
+credential_separation_output="$TEMP_DIR/active-credential-separation.output"
+credential_separation_error="$TEMP_DIR/active-credential-separation.error"
+mkdir -p "$credential_separation_count_root"
+: >"$credential_separation_log"
+env \
+  PATH="$waiter_stub_dir:$PATH" \
+  WAITER_SCENARIO=success \
+  WAITER_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  WAITER_COUNT_ROOT="$credential_separation_count_root" \
+  WAITER_KUBECTL_LOG="$TEMP_DIR/active-credential-separation.calls.log" \
+  WAITER_KUBECONFIG_LOG="$credential_separation_log" \
+  KUBECONFIG="$TEMP_DIR/runtime.kubeconfig" \
+  NAMESPACE_KUBECONFIG="$TEMP_DIR/namespace-manager.kubeconfig" \
+  IDENTITY_KUBECONFIG="$TEMP_DIR/requester.kubeconfig" \
+  bash "$waiter" pr-42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-42 60 \
+  >"$credential_separation_output" 2>"$credential_separation_error"
+grep -Fqx -- "$TEMP_DIR/namespace-manager.kubeconfig$(printf '\t')get namespace pr-42 --ignore-not-found -o json" \
+  "$credential_separation_log"
+grep -Fqx -- "$TEMP_DIR/requester.kubeconfig$(printf '\t')-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" \
+  "$credential_separation_log"
+if grep -Fq -- "$TEMP_DIR/runtime.kubeconfig" "$credential_separation_log"; then
+  echo "active waiter used the runtime kubeconfig for control-plane reads" >&2
+  exit 1
+fi
 
 # Every waiter mode keeps the existing positive-integer diagnostic while
 # enforcing the shared bounded timeout ceiling.

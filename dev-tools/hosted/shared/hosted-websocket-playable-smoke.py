@@ -63,6 +63,7 @@ class HttpResponse:
 
 HttpRequest = Callable[[str, str, Any, Mapping[str, str], float], HttpResponse]
 WebSocketFactory = Callable[[str, float, Sequence[str]], Any]
+WEBSOCKET_CLOSE_OPCODE = 0x8
 
 
 def redact_credentials(value: Any, username: str, password: str) -> str:
@@ -356,6 +357,43 @@ def _require_look_view(
     raise _fail("LOOK accepted without an authoritative LOOK view", config)
 
 
+def _await_websocket_close(ws: Any, config: SmokeConfig) -> None:
+    """Require websocket-client's documented close-control-frame observation."""
+    recv_data = getattr(ws, "recv_data", None)
+    if not callable(recv_data):
+        raise _fail(
+            "first-party WSS close observation is unavailable; expected a WebSocket close opcode",
+            config,
+        )
+
+    deadline = time.monotonic() + config.timeout_seconds
+    while time.monotonic() < deadline:
+        ws.settimeout(max(0.01, deadline - time.monotonic()))
+        try:
+            observation = recv_data(control_frame=True)
+        except Exception as exc:
+            raise _fail(
+                "first-party WSS close observation failed after LOGOUT",
+                config,
+            ) from exc
+        if (
+            not isinstance(observation, tuple)
+            or len(observation) != 2
+            or not isinstance(observation[0], int)
+        ):
+            raise _fail(
+                "first-party WSS close observation returned a malformed frame",
+                config,
+            )
+        if observation[0] == WEBSOCKET_CLOSE_OPCODE:
+            return
+
+    raise _fail(
+        "first-party WSS session did not receive a WebSocket close opcode after LOGOUT",
+        config,
+    )
+
+
 def _run_gameplay_session(
     config: SmokeConfig,
     websocket_factory: WebSocketFactory,
@@ -388,16 +426,8 @@ def _run_gameplay_session(
             ws.send("LOGOUT")
             _await_command_result(ws, "LOGOUT", config)
             # Game Session closes the first-party transport after the accepted
-            # LOGOUT result.  A recv exception is the normal close observation.
-            deadline = time.monotonic() + config.timeout_seconds
-            while time.monotonic() < deadline:
-                ws.settimeout(max(0.01, deadline - time.monotonic()))
-                try:
-                    ws.recv()
-                except Exception:
-                    break
-            else:
-                raise _fail("first-party WSS session did not close after LOGOUT", config)
+            # LOGOUT result.  A timeout or unrelated receive error is not proof.
+            _await_websocket_close(ws, config)
     finally:
         close = getattr(ws, "close", None)
         if callable(close):

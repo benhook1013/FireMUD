@@ -14,9 +14,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -25,6 +25,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSessionContext;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
@@ -98,7 +99,8 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
           new DefaultChannelGroup("tcp-proxy-internal-tls", GlobalEventExecutor.INSTANCE, true);
       acceptedChannels = channels;
       ReactorHttpHandlerAdapter adapter =
-          new ReactorHttpHandlerAdapter(new InternalOnlyHttpHandler(httpHandler));
+          new ReactorHttpHandlerAdapter(
+              new InternalOnlyHttpHandler(httpHandler, this::isTlsMaterialHealthy));
       DisposableServer boundServer =
           HttpServer.create()
               .host(bindAddress)
@@ -171,8 +173,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
                 ? configuredPath(properties.getTrustedClientCaPath(), "trusted client CA")
                 : null);
     snapshot.requireConsistentCertificateKeyGeneration();
-    File certificate =
-        requiredFile(snapshot.certificate.readPath.toString(), "certificate chain");
+    File certificate = requiredFile(snapshot.certificate.readPath.toString(), "certificate chain");
     File privateKey = requiredFile(snapshot.privateKey.readPath.toString(), "private key");
     SslContextBuilder builder = SslContextBuilder.forServer(certificate, privateKey);
     if (trustPolicy.requiresClientCertificate()) {
@@ -319,7 +320,11 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
         Path fileTarget = Files.readSymbolicLink(normalizedPath);
         if (fileTarget.getNameCount() > 1
             && PROJECTED_DATA_DIRECTORY.equals(fileTarget.getName(0).toString())) {
-          Path projectionPointer = normalizedPath.getParent().resolve(PROJECTED_DATA_DIRECTORY);
+          Path parent = normalizedPath.getParent();
+          if (parent == null) {
+            throw new IOException("Projected TLS material has no parent directory");
+          }
+          Path projectionPointer = parent.resolve(PROJECTED_DATA_DIRECTORY);
           if (!Files.isSymbolicLink(projectionPointer)) {
             throw new IOException("Projected TLS material has no stable ..data link");
           }
@@ -327,7 +332,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
           Path generationDirectory =
               projectionGeneration.isAbsolute()
                   ? projectionGeneration
-                  : projectionPointer.getParent().resolve(projectionGeneration);
+                  : parent.resolve(projectionGeneration);
           Path relativeFile = fileTarget.subpath(1, fileTarget.getNameCount());
           Path readPath = generationDirectory.resolve(relativeFile).toAbsolutePath().normalize();
           return new CredentialPathSnapshot(
@@ -455,9 +460,11 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
 
   static final class InternalOnlyHttpHandler implements HttpHandler {
     private final HttpHandler delegate;
+    private final BooleanSupplier tlsMaterialHealthy;
 
-    InternalOnlyHttpHandler(HttpHandler delegate) {
+    InternalOnlyHttpHandler(HttpHandler delegate, BooleanSupplier tlsMaterialHealthy) {
       this.delegate = Objects.requireNonNull(delegate);
+      this.tlsMaterialHealthy = Objects.requireNonNull(tlsMaterialHealthy);
     }
 
     @Override
@@ -467,14 +474,20 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
       URI requestUri = request.getURI();
       String decodedPath = requestUri.getPath();
       String canonicalPath = requestUri.normalize().getPath();
+      boolean gameplayPath =
+          canonicalPath != null
+              && (canonicalPath.equals("/ws/game") || canonicalPath.startsWith("/ws/game/"));
+      boolean readinessPath = "/actuator/health/readiness".equals(canonicalPath);
+      boolean livenessPath = "/actuator/health/liveness".equals(canonicalPath);
       if (decodedPath != null
           && !containsParentSegment(decodedPath)
           && canonicalPath != null
           && !containsDotSegment(canonicalPath)
-          && (canonicalPath.equals("/ws/game")
-              || canonicalPath.startsWith("/ws/game/")
-              || canonicalPath.equals("/actuator/health/readiness")
-              || canonicalPath.equals("/actuator/health/liveness"))) {
+          && (gameplayPath || readinessPath || livenessPath)) {
+        if ((gameplayPath || readinessPath) && !tlsMaterialHealthy.getAsBoolean()) {
+          response.setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);
+          return response.setComplete();
+        }
         return delegate.handle(request, response);
       }
       response.setStatusCode(HttpStatus.NOT_FOUND);

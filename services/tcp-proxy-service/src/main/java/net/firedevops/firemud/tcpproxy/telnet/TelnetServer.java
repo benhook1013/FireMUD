@@ -22,9 +22,9 @@ import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -313,11 +313,14 @@ public final class TelnetServer {
     Path privateKeyPath = Path.of(keyPath).toAbsolutePath().normalize();
     boolean certificateProjected = isProjectedSecretFile(certificatePath);
     boolean privateKeyProjected = isProjectedSecretFile(privateKeyPath);
+    Path certificateParent = certificatePath.getParent();
+    Path privateKeyParent = privateKeyPath.getParent();
 
     if (certificateProjected || privateKeyProjected) {
       if (!certificateProjected
           || !privateKeyProjected
-          || !certificatePath.getParent().equals(privateKeyPath.getParent())) {
+          || certificateParent == null
+          || !certificateParent.equals(privateKeyParent)) {
         throw new SSLException(
             "TCP proxy Telnet TLS certificate and key must share one projected Secret");
       }
@@ -326,8 +329,10 @@ public final class TelnetServer {
     try {
       Path certificateSnapshot = certificatePath.toRealPath();
       Path privateKeySnapshot = privateKeyPath.toRealPath();
+      Path certificateGeneration = certificateSnapshot.getParent();
       if (certificateProjected
-          && !certificateSnapshot.getParent().equals(privateKeySnapshot.getParent())) {
+          && (certificateGeneration == null
+              || !certificateGeneration.equals(privateKeySnapshot.getParent()))) {
         throw new SSLException(
             "TCP proxy Telnet TLS certificate and key resolve to different Secret generations");
       }
@@ -425,7 +430,8 @@ public final class TelnetServer {
       if (tlsEnabled) {
         TlsCertificateWatcher watcher =
             new TlsCertificateWatcher(
-                List.of(Path.of(certPath), Path.of(keyPath)), this::reloadServerSslContextFromWatcher);
+                List.of(Path.of(certPath), Path.of(keyPath)),
+                this::reloadServerSslContextFromWatcher);
         tlsCertificateWatcher = watcher;
         watcher.start();
         reloadServerSslContext();

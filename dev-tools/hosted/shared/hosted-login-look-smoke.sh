@@ -53,7 +53,8 @@ login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None
-responses = run_telnet_smoke_session(
+step_results = []
+run_telnet_smoke_session(
     host,
     port,
     login_play_look_steps(
@@ -71,6 +72,7 @@ responses = run_telnet_smoke_session(
     tls_enabled=True,
     tls_server_hostname=host,
     tls_ca_file=ca_file,
+    step_results=step_results,
 )
 
 semantic_out = os.environ.get("SMOKE_SEMANTIC_OUT")
@@ -78,7 +80,10 @@ if semantic_out:
     import json
     import re
 
-    room_id = telnet_look_room_id(responses[-1])
+    look_responses = [step["response"] for step in step_results if step["label"] == "LOOK"]
+    if len(look_responses) != 1:
+        raise RuntimeError("Telnet smoke did not record exactly one LOOK response")
+    room_id = telnet_look_room_id(look_responses[0])
     if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", room_id) is None:
         raise RuntimeError("Telnet LOOK room ID is malformed")
     path = Path(semantic_out)

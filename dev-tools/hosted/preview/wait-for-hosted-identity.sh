@@ -69,11 +69,17 @@ read_kubectl_json() {
   local -n transport_retries_ref="$2"
   local resource_label="$3"
   local failure_diagnostic="$4"
-  shift 4
+  local kubeconfig_path="$5"
+  shift 5
+
+  local -a kubectl_prefix=()
+  if [[ -n "$kubeconfig_path" ]]; then
+    kubectl_prefix=(--kubeconfig "$kubeconfig_path")
+  fi
 
   : >"$kubectl_error_file"
   # shellcheck disable=SC2034 # The assignment targets the caller's nameref.
-  if output_ref="$(kubectl "$@" 2>"$kubectl_error_file")"; then
+  if output_ref="$(kubectl "${kubectl_prefix[@]}" "$@" 2>"$kubectl_error_file")"; then
     transport_retries_ref=0
     return 0
   else
@@ -168,6 +174,7 @@ if [[ "${1:-}" == "--projections" ]]; then
         transport_retries \
         "${runtime_namespace}/${secret_name}" \
         "Unable to determine controller projection ${runtime_namespace}/${secret_name}" \
+        "" \
         -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json; then
         continue
       fi
@@ -229,6 +236,7 @@ if [[ "${1:-}" == "--retired" ]]; then
       transport_retries \
       "HostedEnvironmentIdentity/${identity_name}" \
       "Unable to determine retirement state for HostedEnvironmentIdentity/${identity_name}" \
+      "${IDENTITY_KUBECONFIG:-}" \
       -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json; then
       continue
     fi
@@ -307,6 +315,11 @@ validate_timeout_seconds "$timeout_seconds"
 validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
 initialize_wait_state "$timeout_seconds"
+# The active waiter normally uses the caller's KUBECONFIG. Trusted verification
+# can provide narrower control-plane credentials for the Namespace and identity
+# reads without changing the runtime credential used by other data-plane steps.
+namespace_kubeconfig="${NAMESPACE_KUBECONFIG:-}"
+identity_kubeconfig="${IDENTITY_KUBECONFIG:-}"
 # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
 namespace_transport_retries=0
 # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
@@ -317,6 +330,7 @@ while (( SECONDS < deadline )); do
     namespace_transport_retries \
     "namespace/${runtime_namespace}" \
     "Unable to determine runtime namespace ${runtime_namespace}" \
+    "$namespace_kubeconfig" \
     get namespace "$runtime_namespace" --ignore-not-found -o json; then
     continue
   fi
@@ -390,6 +404,7 @@ while (( SECONDS < deadline )); do
     identity_transport_retries \
     "HostedEnvironmentIdentity/${identity_name}" \
     "Unable to determine HostedEnvironmentIdentity/${identity_name}" \
+    "$identity_kubeconfig" \
     -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json; then
     continue
   fi

@@ -58,6 +58,7 @@ class FakeWebSocket:
         self.commands = []
         self.responses = deque()
         self.closed = False
+        self.close_observed = False
         self.look_payload = (
             {
                 "roomId": "R-1021",
@@ -87,9 +88,16 @@ class FakeWebSocket:
     def recv(self):
         if self.responses:
             return self.responses.popleft()
-        if self.commands and self.commands[-1] == "LOGOUT":
-            self.closed = True
         raise RuntimeError("fake server closed")
+
+    def recv_data(self, *, control_frame=False):
+        if not control_frame:
+            raise AssertionError("close observation must request control frames")
+        if self.commands and self.commands[-1] == "LOGOUT":
+            self.close_observed = True
+            self.closed = True
+            return MODULE.WEBSOCKET_CLOSE_OPCODE, b"\x03\xe8"
+        raise RuntimeError("fake server did not close")
 
     def close(self):
         self.closed = True
@@ -135,6 +143,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         self.assertNotIn("outputs", result)
         ws = sockets[1]
         self.assertEqual(ws.commands, ["LOGIN", "PLAY demo production Ada", "LOOK", "LOGOUT"])
+        self.assertTrue(ws.close_observed)
         self.assertEqual(
             sockets[0][2],
             [
@@ -347,6 +356,31 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 websocket_factory=FakeWebSocket,
             )
         self.assertNotIn(secret, str(caught.exception))
+
+    def test_logout_silent_open_does_not_count_as_a_close(self):
+        http = FakeHttp()
+        sockets = []
+
+        class SilentOpenWebSocket(FakeWebSocket):
+            def recv_data(self, *, control_frame=False):
+                self.assert_control_frame = control_frame
+                raise TimeoutError("socket remains open")
+
+        def socket_factory(url, timeout, headers):
+            socket = SilentOpenWebSocket()
+            sockets.append(socket)
+            return socket
+
+        with self.assertRaisesRegex(
+            MODULE.HostedWebSocketPlayableSmokeError, "close observation"
+        ):
+            MODULE.run_smoke(
+                self.config(),
+                http_request=http,
+                websocket_factory=socket_factory,
+            )
+        self.assertFalse(sockets[0].close_observed)
+        self.assertTrue(sockets[0].assert_control_frame)
 
 
 if __name__ == "__main__":

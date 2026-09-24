@@ -158,8 +158,8 @@ class TcpProxyTlsListenerTest {
   }
 
   @Test
-  void validClientCaRotationUpdatesNoSniHandshakesAndPreservesOpenBridge(
-      @TempDir Path directory) throws Exception {
+  void validClientCaRotationUpdatesNoSniHandshakesAndPreservesOpenBridge(@TempDir Path directory)
+      throws Exception {
     Path clientCa = Files.copy(fixture("dev-ca.pem"), directory.resolve("ca.crt"));
     GatewayTcpProxyListenerProperties properties = tlsProperties(0);
     properties.setTrustedClientCaPath(clientCa.toString());
@@ -214,8 +214,7 @@ class TcpProxyTlsListenerTest {
       await(websocketOpened::get);
       assertThat(websocket.isDisposed()).isFalse();
 
-      Files.copy(
-          fixture("tcp-proxy-client-ca.pem"), clientCa, StandardCopyOption.REPLACE_EXISTING);
+      Files.copy(fixture("tcp-proxy-client-ca.pem"), clientCa, StandardCopyOption.REPLACE_EXISTING);
       SslContext rotatedClient = clientContext("tcp-proxy-client.pem", "tcp-proxy-client-key.pem");
       await(
           () -> {
@@ -383,7 +382,7 @@ class TcpProxyTlsListenerTest {
           return response.setComplete();
         };
     TcpProxyTlsListener.InternalOnlyHttpHandler handler =
-        new TcpProxyTlsListener.InternalOnlyHttpHandler(delegate);
+        new TcpProxyTlsListener.InternalOnlyHttpHandler(delegate, () -> true);
 
     MockServerHttpResponse gameplayResponse = new MockServerHttpResponse();
     handler.handle(MockServerHttpRequest.get("/ws/game/demo").build(), gameplayResponse).block();
@@ -439,6 +438,44 @@ class TcpProxyTlsListenerTest {
     handler.handle(requestWithoutPath, pathlessResponse).block();
     assertThat(delegated).isFalse();
     assertThat(pathlessResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void unhealthyProjectedTlsBlocksNewBridgeAndInternalReadinessButNotLiveness() {
+    AtomicBoolean delegated = new AtomicBoolean();
+    AtomicBoolean tlsHealthy = new AtomicBoolean(true);
+    HttpHandler delegate =
+        (request, response) -> {
+          delegated.set(true);
+          response.setStatusCode(HttpStatus.NO_CONTENT);
+          return response.setComplete();
+        };
+    TcpProxyTlsListener.InternalOnlyHttpHandler handler =
+        new TcpProxyTlsListener.InternalOnlyHttpHandler(delegate, tlsHealthy::get);
+
+    for (String path : new String[] {"/ws/game/demo", "/actuator/health/readiness"}) {
+      MockServerHttpResponse healthyResponse = new MockServerHttpResponse();
+      handler.handle(MockServerHttpRequest.get(path).build(), healthyResponse).block();
+      assertThat(delegated).as("healthy delegate for %s", path).isTrue();
+      assertThat(healthyResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    }
+
+    tlsHealthy.set(false);
+    for (String path : new String[] {"/ws/game/demo", "/actuator/health/readiness"}) {
+      delegated.set(false);
+      MockServerHttpResponse unhealthyResponse = new MockServerHttpResponse();
+      handler.handle(MockServerHttpRequest.get(path).build(), unhealthyResponse).block();
+      assertThat(delegated).as("unhealthy delegate for %s", path).isFalse();
+      assertThat(unhealthyResponse.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    delegated.set(false);
+    MockServerHttpResponse livenessResponse = new MockServerHttpResponse();
+    handler
+        .handle(MockServerHttpRequest.get("/actuator/health/liveness").build(), livenessResponse)
+        .block();
+    assertThat(delegated).isTrue();
+    assertThat(livenessResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
   }
 
   @Test
