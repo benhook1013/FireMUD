@@ -578,6 +578,7 @@ class ReviewController:
             set_anchor_status(pr, stack.ReconciliationStatus.UNRECONCILED, reason)
 
         moved: set[int] = set(result.affected_descendants)
+        drifted_sources: set[int] = set()
         # GitHub's PR head is the candidate identity, while the source branch is
         # the parent ref used by a child.  A branch moving without a child base
         # refresh is therefore a real parent movement, even when the PR payload
@@ -587,7 +588,8 @@ class ReviewController:
                 continue
             branch_tip = _sha(remote_heads[item.head_ref], f"PR #{pr} head branch")
             if branch_tip != item.head:
-                reasons[pr] = "parent source branch moved since the live PR head"
+                reasons[pr] = "source branch tip differs from the live PR head"
+                drifted_sources.add(pr)
                 moved.add(pr)
         changed = True
         while changed:
@@ -597,7 +599,10 @@ class ReviewController:
                     moved.add(pr)
                     changed = True
         for pr in moved:
-            statuses[pr] = stack.ReconciliationStatus.PARENT_MOVED
+            if pr in drifted_sources:
+                statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+            else:
+                statuses[pr] = stack.ReconciliationStatus.PARENT_MOVED
         for pr, item in live.items():
             if item.merged:
                 continue

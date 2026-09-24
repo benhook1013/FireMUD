@@ -193,6 +193,8 @@ class ControllerTests(unittest.TestCase):
         controller = self.make(values, heads={"feature-1": "1" * 40})
         controller.set_stack([1, 2])
         result = controller.status()
+        self.assertEqual(result["prs"][0]["reconciliation"], "UNRECONCILED")
+        self.assertIn("source branch tip differs from the live PR head", result["prs"][0]["reason"])
         self.assertEqual(result["prs"][1]["reconciliation"], "PARENT_MOVED")
         with self.assertRaises(ControllerError):
             controller.resolve_hosted_target()
