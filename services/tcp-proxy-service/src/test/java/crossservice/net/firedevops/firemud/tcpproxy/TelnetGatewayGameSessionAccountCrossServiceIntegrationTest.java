@@ -222,9 +222,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
 
     try (GameplayTelnetDriver telnetClient =
-        GameplayTelnetScenarios.openReady(
-            this::openTelnetClient,
-            GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT));
+            GameplayTelnetScenarios.openReady(
+                this::openTelnetClient,
+                GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT));
         GameplayWebSocketDriver webSocketClient =
             openReadyGatewayWebSocketClient(SORA_EMAIL, "Sora", "gateway-sora")) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
