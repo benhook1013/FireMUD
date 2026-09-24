@@ -108,7 +108,6 @@ find_active_substantive_workflow() {
   active_workflow_runs_json="$(gh api --method GET \
     "/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs" \
     -f event=pull_request \
-    -f head_sha="${HEAD_SHA}" \
     -f per_page=100 \
     --paginate \
     --slurp \
@@ -156,7 +155,6 @@ find_active_substantive_workflow() {
       | select(.path == $expected_workflow_path or
           ((.path | startswith($expected_workflow_path + "@")) and
             ((.path | ltrimstr($expected_workflow_path + "@")) | test("^.+$"))))
-      | select(.head_sha == $expected_head)
       | select(.repository.full_name == $expected_repository)
       | select(.event == "pull_request")
       | select((.display_title // "") == $expected_display_title)

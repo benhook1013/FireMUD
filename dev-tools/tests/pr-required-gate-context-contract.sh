@@ -257,6 +257,13 @@ result_step_names = {
     "smoke-gate": "Classify smoke gate execution",
     "codeql-gate": "Enforce successful CodeQL analysis",
 }
+change_job_names = {
+    "ci.yml": "Detect CI-Relevant Changes",
+    "security.yml": "Detect Security-Relevant Changes",
+    "license-scan.yml": "Detect License-Relevant Changes",
+    "smoke.yml": "Detect Smoke-Relevant Changes",
+    "codeql.yml": "Detect CodeQL-Relevant Changes",
+}
 
 path = Path(sys.argv[1])
 job_id = sys.argv[2]
@@ -275,6 +282,11 @@ if data.get("name") != expected_workflow_name:
     raise SystemExit(
         f"{workflow} must declare the caller-supplied workflow name {expected_workflow_name!r}; "
         f"found {data.get('name')!r}"
+    )
+if data.get("jobs", {}).get("changes", {}).get("name") != change_job_names[workflow]:
+    raise SystemExit(
+        f"{workflow} changes job name must match the poller's expected "
+        f"{change_job_names[workflow]!r} pattern"
     )
 if job_id not in expected_job_if or job_id not in result_step_names:
     raise SystemExit(
@@ -494,16 +506,26 @@ if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
   mkdir -p "$GH_CALL_COUNT_DIR"
 fi
 if [[ "$*" == *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs"* ]]; then
-  if [[ "$*" != *"head_sha=${HEAD_SHA}"* || "$*" != *"event=pull_request"* ||
+  if [[ "$*" == *"head_sha="* || "$*" != *"event=pull_request"* ||
     "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
-    echo "simulated active workflow lookup omitted exact head/event or pagination" >&2
+    echo "simulated active workflow lookup used a branch-tip filter or omitted event/pagination" >&2
     exit 90
   fi
   case "${GH_SCENARIO:-}" in
-    active-workflow-delayed-gate|active-workflow-wrong-base|active-workflow-metadata-only)
+    active-workflow-delayed-gate|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple)
       display_title="CI — Validation pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
       [[ "${GH_SCENARIO}" == "active-workflow-wrong-base" ]] && display_title="CI — Validation pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
-      printf '[{"workflow_runs":[{"id":100,"workflow_id":42,"name":"%s","path":".github/workflows/ci.yml","head_sha":"%s","display_title":"%s","repository":{"full_name":"example/firemud"},"event":"pull_request","status":"in_progress","pull_requests":[]}]}]\n' "$display_title" "$HEAD_SHA" "$display_title"
+      run_head_sha="${HEAD_SHA}"
+      pull_requests='[]'
+      if [[ "${GH_SCENARIO}" == "active-workflow-delayed-gate" ]]; then
+        # GitHub may report the synthetic merge SHA for pull_request runs;
+        # the populated PR tuple remains the authoritative identity.
+        run_head_sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+        pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+      elif [[ "${GH_SCENARIO}" == "active-workflow-mismatched-tuple" ]]; then
+        pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\"}}]"
+      fi
+      printf '[{"workflow_runs":[{"id":100,"workflow_id":42,"name":"%s","path":".github/workflows/ci.yml","head_sha":"%s","display_title":"%s","repository":{"full_name":"example/firemud"},"event":"pull_request","status":"in_progress","pull_requests":%s}]}]\n' "$display_title" "$run_head_sha" "$display_title" "$pull_requests"
       ;;
     active-workflow-malformed-list)
       printf '[{"workflow_runs":"invalid"}]\n'
@@ -729,7 +751,7 @@ JSON
   no-local-workflow-file)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  no-prior|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-malformed-list)
+  no-prior|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple|active-workflow-malformed-list)
     printf '[{"check_runs":[]}]\n'
     ;;
   delayed-predecessor)
@@ -1179,7 +1201,7 @@ grep -Fq 'substantive workflow is active' "$slow_substantive_output" || {
   exit 1
 }
 
-for absent_scenario in active-workflow-wrong-base active-workflow-metadata-only; do
+for absent_scenario in active-workflow-wrong-base active-workflow-metadata-only active-workflow-mismatched-tuple; do
   absent_output="$tmp_dir/${absent_scenario}-output"
   absent_count="$tmp_dir/count-${absent_scenario}"
   set +e
@@ -1187,7 +1209,8 @@ for absent_scenario in active-workflow-wrong-base active-workflow-metadata-only;
   absent_status=$?
   set -e
   [[ "$absent_status" -ne 0 && "$(<"$absent_count")" == "$max_attempts" ]] || {
-    echo "required-gate action extended or accepted a $absent_scenario predecessor" >&2
+    echo "required-gate action extended or accepted a $absent_scenario predecessor (status=$absent_status attempts=$(<"$absent_count"))" >&2
+    cat "$absent_output" >&2
     exit 1
   }
 done
