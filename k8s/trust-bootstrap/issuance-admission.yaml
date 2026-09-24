@@ -303,16 +303,8 @@ spec:
     - expression: >-
         request.userInfo.groups.exists(group, group == 'system:masters') ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
-         object.spec == oldObject.spec) ||
-        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
-         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-         object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') &&
-         has(object.spec.issuerRef) &&
-         object.spec.issuerRef.name == 'firemud-ca-issuer' &&
-         object.spec.issuerRef.kind == 'ClusterIssuer' &&
-         object.spec.issuerRef.group == 'cert-manager.io' &&
          object.spec == oldObject.spec)
-      message: only cert-manager or the canonical hosted identity controller may update status for an unchanged internal Certificate
+      message: only cert-manager or trusted system:masters may update status for an unchanged internal Certificate
       reason: Forbidden
 
 ---

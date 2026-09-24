@@ -94,7 +94,9 @@ public class DeploymentRolloutService {
         }
         revisionsByDeployment
             .computeIfAbsent(workload, ignored -> new LinkedHashMap<>())
-            .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision);
+            .put(
+                HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                combinedGrpcPublicationRevision(grpcRevision, revision));
       }
     }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
@@ -118,6 +120,19 @@ public class DeploymentRolloutService {
     boolean grpcReady =
         grpcConsumers.allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
     return new RolloutResult(telnetReady && grpcReady, telnetReady, grpcReady);
+  }
+
+  /** Encodes both inputs without delimiter ambiguity in the existing publication rollout value. */
+  private static String combinedGrpcPublicationRevision(
+      String grpcRevision, String publicationRevision) {
+    return "v1|shared-grpc|"
+        + grpcRevision.length()
+        + "|"
+        + grpcRevision
+        + "|publication-leaf|"
+        + publicationRevision.length()
+        + "|"
+        + publicationRevision;
   }
 
   /**
