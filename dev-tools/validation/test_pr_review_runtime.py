@@ -941,6 +941,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_pull_request", return_value=self._payload()),
                 patch.object(hosted, "default_trigger_record_path", return_value=common / "firemud" / "new.json"),
                 patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=AssertionError("unexpected subprocess call")),
                 self.assertRaisesRegex(ControllerError, "cannot be adopted safely"),
             ):
                 HostedRunner("owner/repo", live)(target, expect_pr=42)
@@ -985,6 +986,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=AssertionError("unexpected subprocess call")),
                 self.assertRaisesRegex(ControllerError, "awaiting_response"),
             ):
                 HostedRunner("owner/repo", live)(target, expect_pr=42)
