@@ -4,12 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class PublicationReadGuardTest {
@@ -21,6 +24,11 @@ class PublicationReadGuardTest {
           "game-design-service");
 
   private final PublicationReadGuard guard = new PublicationReadGuard(TRUSTED_NAMESPACE);
+
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
+  }
 
   @Test
   void protectsExactlyTheGeneratedPublicationDigestMethods() {
@@ -42,12 +50,40 @@ class PublicationReadGuardTest {
   }
 
   @Test
-  void allowsAllFourExactPublicationReadsWithPeerIdentityWithoutJwt() {
+  void allowsAllFourExactPublicationReadsWithWorkloadOnlyContext() {
     withPeer(
         () -> {
+          SessionContext.setContext(
+              null, List.of(), Map.of(), true, "game-design-service", "game-design-instance");
           for (String method : PublicationReadGuard.PUBLICATION_READ_METHODS) {
             guard.requirePublicationRead(method);
           }
+        });
+  }
+
+  @Test
+  void deniesAuthenticatedUserContextEvenWithGameDesignPeer() {
+    withPeer(
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of());
+          assertThatThrownBy(
+                  () ->
+                      guard.requirePublicationRead(
+                          PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD))
+              .isInstanceOf(AdminAuthorizationException.class);
+        });
+  }
+
+  @Test
+  void deniesAuthenticatedAdminContextEvenWithGameDesignPeer() {
+    withPeer(
+        () -> {
+          SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+          assertThatThrownBy(
+                  () ->
+                      guard.requirePublicationRead(
+                          PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD))
+              .isInstanceOf(AdminAuthorizationException.class);
         });
   }
 

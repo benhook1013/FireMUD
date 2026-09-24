@@ -1074,14 +1074,17 @@ class RuntimeTest(unittest.TestCase):
             head_sha=HEAD,
         )
 
-        def run_audit(expected_fingerprints: tuple[str, ...]) -> dict[str, object]:
+        def run_audit(
+            expected_fingerprints: tuple[str, ...],
+            historical_observations: list[dict[str, Any]] | None = None,
+        ) -> dict[str, object]:
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(observer, "_complete_trigger_paths", return_value=["trigger-10.json"]),
                 patch.object(hosted, "load_trigger_record", return_value=record),
                 patch.object(hosted, "trigger_state", return_value=state),
-                patch.object(observer, "history", return_value=[]),
+                patch.object(observer, "history", return_value=historical_observations or []),
             ):
                 return observer.legacy_transition_reauthorization_audit(
                     42,
@@ -1096,6 +1099,9 @@ class RuntimeTest(unittest.TestCase):
 
         rejected = run_audit(("d" * 64,))
         self.assertIn("completed Hosted response has no checkpoint or prior audit", rejected["unmatched_responses"])
+
+        history_alone = run_audit((), [expected])
+        self.assertIn("completed Hosted response has no checkpoint or prior audit", history_alone["unmatched_responses"])
 
     def test_unrecorded_completed_hosted_response_requires_one_checkpoint_by_review_identity(self) -> None:
         trigger = {
