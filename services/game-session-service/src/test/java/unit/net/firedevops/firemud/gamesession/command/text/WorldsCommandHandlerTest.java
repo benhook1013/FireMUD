@@ -4,10 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -68,21 +65,8 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseCharactersReturnsStructuredCharacterList() {
-    gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("7001")
-                        .setName("Emberline")
-                        .setLevel(12)
-                        .build())
-                .build());
+  void browseCharactersFailsClosedForValidSelectorBeforeEntityRosterRead() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
@@ -90,82 +74,8 @@ class WorldsCommandHandlerTest {
             "demo",
             null);
 
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
-    CharacterBrowseViewOutput output =
-        ((WorldsCommandHandler.CharacterBrowseResult.Success) result).output();
-    assertThat(output.worldSlug()).isEqualTo("demo");
-    assertThat(output.realmSlug()).isEqualTo("production");
-    assertThat(output.stateScope()).isEqualTo("SHARED");
-    assertThat(output.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
-    assertThat(output.characters()).hasSize(1);
-    assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
-  }
-
-  @Test
-  void browseCharactersUsesIsolatedStateRealmRoster() {
-    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
-    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setGameInstanceId(41L);
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("8001")
-                        .setName("Forkline")
-                        .setLevel(5)
-                        .build())
-                .build());
-
-    WorldsCommandHandler.CharacterBrowseResult result =
-        handler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
-
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
-    CharacterBrowseViewOutput output =
-        ((WorldsCommandHandler.CharacterBrowseResult.Success) result).output();
-    assertThat(output.stateScope()).isEqualTo("ISOLATED");
-    assertThat(output.characterCreationPolicy()).isEqualTo("COPIED_ONLY");
-    assertThat(output.characters())
-        .extracting(CharacterBrowseViewOutput.CharacterEntry::characterName)
-        .containsExactly("Forkline");
-  }
-
-  @Test
-  void browseCharactersFallsBackToUnspecifiedRosterScopeForNullRealmScope() {
-    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
-    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED))
-        .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
-    WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(
-            TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-            entityManagementClient);
-
-    WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
-
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
+    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   private static GameplayCatalogProperties.World world(

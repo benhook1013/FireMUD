@@ -161,8 +161,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
                   + realmSelectionRequired.worldSlug()
                   + " before CHARS.");
       case WorldsCommandHandler.CharacterBrowseResult.Unavailable ignored ->
-          errorResult(
-              "CHARACTER_LIST_UNAVAILABLE", "Character list unavailable. Retry CHARS shortly.");
+          errorResult("CHARACTER_LIST_UNAVAILABLE", "Character browsing is currently unavailable.");
     };
   }
 

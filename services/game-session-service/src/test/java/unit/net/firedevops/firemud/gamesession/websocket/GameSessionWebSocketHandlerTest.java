@@ -1031,6 +1031,88 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void freshFirstPartyPlayDoesNotReplayRetainedBufferFromAnEarlierLogout() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    SessionContext freshBinding =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "fresh-connect-token"));
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(freshBinding));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(freshBinding), eq(List.of()), eq(false)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq("en-NZ"),
+            any(PresentationProperties.class),
+            any()))
+        .thenReturn("OK PLAY");
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+    verify(lookHandler)
+        .describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH);
+  }
+
+  @Test
+  void resumedPlayRefreshesLookWhenNoRetainedBufferExists() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    SessionContext binding =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), true, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(binding));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(binding), eq(List.of()), eq(false)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq("en-NZ"),
+            any(PresentationProperties.class),
+            any()))
+        .thenReturn("OK PLAY");
+    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(lookHandler)
+        .describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH);
+  }
+
+  @Test
   void handleMessageUsesTenantScopedSessionContextWhenTenantAttributePresent() throws Exception {
     when(session.getAttributes())
         .thenReturn(

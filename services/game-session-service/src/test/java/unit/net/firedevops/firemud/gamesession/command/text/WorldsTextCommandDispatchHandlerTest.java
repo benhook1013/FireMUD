@@ -9,12 +9,9 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -98,19 +95,8 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedCharsBrowse() {
+  void unavailableCharsDoesNotReadRosterOrPublishGameplayEvent() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
-    when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("7001")
-                        .setName("Emberline")
-                        .setLevel(12)
-                        .build())
-                .build());
     SessionContext context =
         new SessionContext(
             7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -123,18 +109,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(CharacterBrowseViewOutput.class);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "CHARS".equals(gameplayCommand.getCommandName())
-                        && "CHARS demo".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
   }
 
   @Test

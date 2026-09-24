@@ -464,12 +464,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation,
       Optional<SessionContext> maybeContext)
       throws IOException {
-    boolean reconnectRestoreRequested =
-        interpretation.reconnectRedrawRecommended()
-            || StringUtils.hasText(resolveConnectContext(session));
+    boolean reconnectRestoreRequested = interpretation.reconnectRedrawRecommended();
+    boolean firstPartyPlay = "first_party_web".equals(resolveConnectionMode(session));
     if (command.type() != TextCommandType.PLAY
         || !interpretation.commandResult().accepted()
-        || !reconnectRestoreRequested) {
+        || !reconnectRestoreRequested && !firstPartyPlay) {
       return;
     }
     maybeContext
@@ -477,14 +476,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         .ifPresent(
             context -> {
               try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
-                Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-                    screenBufferService.get(
-                        context.tenantId(), context.gameInstanceId(), context.characterId());
-                if (maybeBuffer.isEmpty()) {
-                  return;
+                if (reconnectRestoreRequested) {
+                  screenBufferService
+                      .get(context.tenantId(), context.gameInstanceId(), context.characterId())
+                      .ifPresent(buffer -> sendReplayEntries(session, buffer, "screen buffer"));
                 }
-                maybeBuffer.ifPresent(
-                    buffer -> sendReplayEntries(session, buffer, "screen buffer"));
                 String localeTag = resolveLocaleTag(session, sessionId);
                 PresentationProperties effectivePresentation =
                     settingsResolver.presentation(context);
