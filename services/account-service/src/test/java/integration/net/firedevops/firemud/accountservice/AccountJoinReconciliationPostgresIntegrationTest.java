@@ -336,14 +336,14 @@ class AccountJoinReconciliationPostgresIntegrationTest {
 
   private JoinFixture fixture(String subscriptionStatus) {
     String suffix = UUID.randomUUID().toString();
-    String requestId = "join-reconcile-" + suffix;
+    String requestId = "join-rec-" + suffix;
     long tenantId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
     long accountId =
         Objects.requireNonNull(
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                    "join-reconcile-" + suffix,
-                    "join-reconcile-" + suffix + "@example.com",
+                    "join-rec-" + suffix,
+                    "join-rec-" + suffix + "@example.com",
                     "test-hash")
                 .fetchOne(0, Long.class));
     dsl.execute(
