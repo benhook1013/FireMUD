@@ -278,12 +278,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
               .setAccountId(String.valueOf(result.accountId()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "PERMISSION_DENIED", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -317,8 +325,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       RequestEmailLoginOtpRequest request,
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
       accountService.requestEmailLoginOtp(request.getEmail());
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          RequestEmailLoginOtpResponse.newBuilder()
+              .setError(appError("RequestEmailLoginOtp", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
           RequestEmailLoginOtpResponse.newBuilder()
@@ -333,11 +347,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmailLoginOtp(
       VerifyEmailLoginOtpRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
       var result = accountService.verifyEmailLoginOtp(request.getEmail(), request.getCode());
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
               .setAccountId(String.valueOf(result.accountId()))
+              .build());
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(appError("VerifyEmailLoginOtp", "PERMISSION_DENIED", ex.getMessage()))
               .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(

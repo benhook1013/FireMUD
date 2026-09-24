@@ -353,23 +353,30 @@ class AccountGrpcServiceTest {
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
-    service.authenticate(
-        AuthenticateRequest.newBuilder().setEmail("demo@example.com").setPassword("bad").build(),
-        new StreamObserver<AuthenticateResponse>() {
-          @Override
-          public void onNext(AuthenticateResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                AuthenticateRequest.newBuilder()
+                    .setEmail("demo@example.com")
+                    .setPassword("bad")
+                    .build(),
+                new StreamObserver<AuthenticateResponse>() {
+                  @Override
+                  public void onNext(AuthenticateResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertNotNull(ref.get());
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, ref.get().getError().getCode());
@@ -377,26 +384,56 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void authenticateReturnsAuthenticatedSessionForExactGameSessionPeer() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
+        .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                AuthenticateRequest.newBuilder()
+                    .setEmail("demo@example.com")
+                    .setPassword("password")
+                    .build(),
+                observer));
+
+    assertEquals("9", observer.response().getAccountId());
+    assertEquals("jwt", observer.response().getAuthToken());
+    assertTrue(observer.completed());
+    Mockito.verify(accountService).authenticateForGameplay("demo@example.com", "password");
+  }
+
+  @Test
   void requestEmailLoginOtpDispatchesNeutralChallengeRequest() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<RequestEmailLoginOtpResponse> ref = new AtomicReference<>();
-    service.requestEmailLoginOtp(
-        RequestEmailLoginOtpRequest.newBuilder().setEmail("demo@example.com").build(),
-        new StreamObserver<RequestEmailLoginOtpResponse>() {
-          @Override
-          public void onNext(RequestEmailLoginOtpResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.requestEmailLoginOtp(
+                RequestEmailLoginOtpRequest.newBuilder().setEmail("demo@example.com").build(),
+                new StreamObserver<RequestEmailLoginOtpResponse>() {
+                  @Override
+                  public void onNext(RequestEmailLoginOtpResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertNotNull(ref.get());
     assertTrue(ref.get().getAccepted());
@@ -409,26 +446,30 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
         .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
-    service.verifyEmailLoginOtp(
-        VerifyEmailLoginOtpRequest.newBuilder()
-            .setEmail("demo@example.com")
-            .setCode("123456")
-            .build(),
-        new StreamObserver<AuthenticateResponse>() {
-          @Override
-          public void onNext(AuthenticateResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.verifyEmailLoginOtp(
+                VerifyEmailLoginOtpRequest.newBuilder()
+                    .setEmail("demo@example.com")
+                    .setCode("123456")
+                    .build(),
+                new StreamObserver<AuthenticateResponse>() {
+                  @Override
+                  public void onNext(AuthenticateResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertNotNull(ref.get());
     assertEquals("9", ref.get().getAccountId());
@@ -443,21 +484,78 @@ class AccountGrpcServiceTest {
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
 
-    service.verifyEmailLoginOtp(
-        VerifyEmailLoginOtpRequest.newBuilder()
-            .setEmail("demo@example.com")
-            .setCode("123456")
-            .build(),
-        observer);
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.verifyEmailLoginOtp(
+                VerifyEmailLoginOtpRequest.newBuilder()
+                    .setEmail("demo@example.com")
+                    .setCode("123456")
+                    .build(),
+                observer));
 
     assertNotNull(observer.response());
     assertEquals(
         AuthenticationErrorCodes.INVALID_CREDENTIALS, observer.response().getError().getCode());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void credentialMethodsRejectAbsentAndWrongGameSessionPeersBeforeServiceCall() {
+    List<GrpcPeerIdentity> rejectedPeers =
+        java.util.Arrays.asList(
+            null,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/test/sa/world-management-service",
+                WORKLOAD_NAMESPACE,
+                "world-management-service"));
+    for (GrpcPeerIdentity peer : rejectedPeers) {
+      PingService pingService = Mockito.mock(PingService.class);
+      AccountService accountService = Mockito.mock(AccountService.class);
+      AccountGrpcService service =
+          new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+      RecordingObserver<AuthenticateResponse> authenticateObserver = new RecordingObserver<>();
+      RecordingObserver<RequestEmailLoginOtpResponse> requestObserver = new RecordingObserver<>();
+      RecordingObserver<AuthenticateResponse> verifyObserver = new RecordingObserver<>();
+
+      withPeer(
+          peer,
+          () ->
+              service.authenticate(
+                  AuthenticateRequest.newBuilder()
+                      .setEmail("demo@example.com")
+                      .setPassword("password")
+                      .build(),
+                  authenticateObserver));
+      withPeer(
+          peer,
+          () ->
+              service.requestEmailLoginOtp(
+                  RequestEmailLoginOtpRequest.newBuilder().setEmail("demo@example.com").build(),
+                  requestObserver));
+      withPeer(
+          peer,
+          () ->
+              service.verifyEmailLoginOtp(
+                  VerifyEmailLoginOtpRequest.newBuilder()
+                      .setEmail("demo@example.com")
+                      .setCode("123456")
+                      .build(),
+                  verifyObserver));
+
+      assertEquals("PERMISSION_DENIED", authenticateObserver.response().getError().getCode());
+      assertEquals("PERMISSION_DENIED", requestObserver.response().getError().getCode());
+      assertEquals("PERMISSION_DENIED", verifyObserver.response().getError().getCode());
+      assertTrue(authenticateObserver.completed());
+      assertTrue(requestObserver.completed());
+      assertTrue(verifyObserver.completed());
+      Mockito.verifyNoInteractions(accountService);
+    }
   }
 
   @Test
