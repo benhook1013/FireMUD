@@ -240,7 +240,8 @@ class DeploymentRolloutServiceTest {
     }
     verify(graph.resources().get("tcp-proxy-service"), never()).lockResourceVersion(anyString());
     verify(graph.resources().get("logging-admin-service"), never()).get();
-    verify(graph.resources().get("logging-admin-service"), never()).lockResourceVersion(anyString());
+    verify(graph.resources().get("logging-admin-service"), never())
+        .lockResourceVersion(anyString());
   }
 
   @Test
