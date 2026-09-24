@@ -1052,6 +1052,12 @@ def publication_workload_secret_requirements(
                 f"Rendered publication workload {workload} grpc-tls Secret must not use the "
                 "shared trust Secret firemud-grpc-tls"
             )
+        expected_leaf_secret_name = f"firemud-grpc-{workload}"
+        if secret_name != expected_leaf_secret_name:
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls Secret must be "
+                f"{expected_leaf_secret_name}; found {secret_name}"
+            )
 
         trust_volume = trust_volumes[0]
         trust_secret = trust_volume.get("secret")
