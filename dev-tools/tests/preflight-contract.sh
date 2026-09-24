@@ -9380,6 +9380,35 @@ if any(
         "publication Secret requirements did not use expected-binding namespace and keys"
     )
 
+default_mode_publication_documents = copy.deepcopy(publication_documents)
+default_mode_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["defaultMode"] = 0o440
+default_mode_requirements = module.publication_workload_secret_requirements(
+    publication_expected, default_mode_publication_documents
+)
+if len(default_mode_requirements) != len(module.PUBLICATION_GRPC_WORKLOADS):
+    raise SystemExit("publication grpc-tls Secret defaultMode was not accepted")
+
+for forbidden_secret_key in ("items", "optional", "unexpected"):
+    forbidden_secret_documents = copy.deepcopy(publication_documents)
+    forbidden_secret_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+        "secret"
+    ][forbidden_secret_key] = []
+    forbidden_secret_issues = module.publication_workload_secret_issues(
+        publication_expected,
+        forbidden_secret_documents,
+        lookup_cluster_secrets=False,
+    )
+    if (
+        len(forbidden_secret_issues) != 1
+        or "malformed grpc-tls Secret volume" not in forbidden_secret_issues[0]
+    ):
+        raise SystemExit(
+            f"publication grpc-tls Secret accepted forbidden key {forbidden_secret_key}: "
+            f"{forbidden_secret_issues}"
+        )
+
 malformed_static_publication_documents = copy.deepcopy(publication_documents)
 malformed_static_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
     "secret"
@@ -9403,6 +9432,22 @@ if (
     raise SystemExit(
         "ci-static publication render validation did not reject a malformed Secret volume: "
         f"{static_publication_issues}"
+    )
+
+malformed_volumes_documents = copy.deepcopy(publication_documents)
+malformed_volumes_documents[0]["spec"]["template"]["spec"]["volumes"] = "not-a-list"
+malformed_volumes_issues = module.publication_workload_secret_issues(
+    publication_expected,
+    malformed_volumes_documents,
+    lookup_cluster_secrets=False,
+)
+if (
+    len(malformed_volumes_issues) != 1
+    or "no valid pod volumes list" not in malformed_volumes_issues[0]
+):
+    raise SystemExit(
+        "ci-static publication render validation did not report malformed pod volumes: "
+        f"{malformed_volumes_issues}"
     )
 
 missing_workload_documents = publication_documents[:-1]

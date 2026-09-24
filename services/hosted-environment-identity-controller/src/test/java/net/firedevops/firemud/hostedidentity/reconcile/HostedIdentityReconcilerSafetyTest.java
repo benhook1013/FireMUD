@@ -1500,15 +1500,7 @@ class HostedIdentityReconcilerSafetyTest {
       var persistedRole = new HostedEnvironmentIdentityStatus.RoleStatus();
       persistedRole.setRevision("sha256:" + "a".repeat(64));
       boolean rollbackTarget = publicationRole.equals(role);
-      String fixtureFingerprintDigit =
-          switch (workload) {
-            case "game-design-service" -> "6";
-            case "world-management-service" -> "7";
-            case "entity-management-service" -> "8";
-            case "game-logic-service" -> "9";
-            case "automation-scripting-service" -> "a";
-            default -> throw new IllegalArgumentException(workload);
-          };
+      String fixtureFingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
       persistedRole.setSourceGeneration(rollbackTarget ? 4L : 1L);
       persistedRole.setSourceObjectGeneration(rollbackTarget ? 2L : 1L);
       persistedRole.setSpkiSha256((rollbackTarget ? "b" : fixtureFingerprintDigit).repeat(64));
@@ -1966,15 +1958,7 @@ class HostedIdentityReconcilerSafetyTest {
           .thenAnswer(
               invocation -> {
                 String workload = invocation.getArgument(0, String.class);
-                String fingerprintDigit =
-                    switch (workload) {
-                      case "game-design-service" -> "6";
-                      case "world-management-service" -> "7";
-                      case "entity-management-service" -> "8";
-                      case "game-logic-service" -> "9";
-                      case "automation-scripting-service" -> "a";
-                      default -> throw new IllegalArgumentException(workload);
-                    };
+                String fingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
                 return material(
                     plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
               });
@@ -2222,6 +2206,17 @@ class HostedIdentityReconcilerSafetyTest {
       resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
       return reconciler.reconcile(resource, mock(Context.class));
     }
+  }
+
+  private static String grpcPublicationFixtureFingerprintDigit(String workload) {
+    return switch (workload) {
+      case "game-design-service" -> "6";
+      case "world-management-service" -> "7";
+      case "entity-management-service" -> "8";
+      case "game-logic-service" -> "9";
+      case "automation-scripting-service" -> "a";
+      default -> throw new IllegalArgumentException(workload);
+    };
   }
 
   private static HostedIdentityProperties initializedProperties(

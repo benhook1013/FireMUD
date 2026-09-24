@@ -940,7 +940,7 @@ def publication_workload_secret_requirements(
         pod_spec = get(deployment, "spec.template.spec")
         volumes = pod_spec.get("volumes") if isinstance(pod_spec, dict) else None
         if not isinstance(volumes, list):
-            raise ValueError(
+            raise TypeError(
                 f"Rendered publication workload {workload} has no valid pod volumes list"
             )
         grpc_volumes = [
@@ -960,6 +960,7 @@ def publication_workload_secret_requirements(
             or not isinstance(secret_name, str)
             or not secret_name.strip()
             or secret_name != secret_name.strip()
+            or not set(secret).issubset({"secretName", "defaultMode"})
             or set(grpc_volume) != {"name", "secret"}
         ):
             raise ValueError(
@@ -985,7 +986,7 @@ def publication_workload_secret_issues(
     """Validate publication Secret bindings and, optionally, their live data keys."""
     try:
         requirements = publication_workload_secret_requirements(expected, documents)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         return [str(exc)]
     if not lookup_cluster_secrets:
         return []
