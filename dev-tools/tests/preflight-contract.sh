@@ -2532,6 +2532,184 @@ try:
                 f"{invalid_issue}, {invalid_retryable}, {invalid_timed_out}"
             )
 
+    bridge_expected_bindings = {
+        "internalBindings": {
+            "certificates": {
+                "gatewayInternalWsListenerRef": (
+                    "cert-manager://staging/staging-gateway-internal-ws"
+                ),
+                "tcpProxyBridgeClientRef": (
+                    "cert-manager://staging/staging-tcp-proxy-bridge"
+                ),
+            }
+        }
+    }
+    bridge_secret_names = (
+        "staging-gateway-internal-ws",
+        "staging-tcp-proxy-bridge",
+    )
+    complete_bridge_secret_data = {
+        "tls.crt": "encoded-cert",
+        "tls.key": "encoded-key",
+        "ca.crt": "encoded-ca",
+    }
+
+    def bridge_secret_lookup(responses, calls):
+        def lookup(args, **kwargs):
+            if (
+                kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS
+                or len(args) != 8
+                or args[:4] != ["kubectl", "get", "secret", "-n"]
+                or args[6:] != ["-o", "json"]
+            ):
+                raise SystemExit(
+                    "bridge Secret lookup did not use the namespaced JSON API request"
+                )
+            namespace, secret_name = args[4:6]
+            calls.append((namespace, secret_name))
+            if secret_name not in responses:
+                raise SystemExit(
+                    f"bridge Secret lookup used an unexpected binding: {secret_name}"
+                )
+            status, payload, stderr = responses[secret_name]
+            stdout = "" if payload is None else json.dumps(payload)
+            return module.subprocess.CompletedProcess(args, status, stdout, stderr)
+
+        return lookup
+
+    expected_bridge_calls = [
+        ("staging", secret_name) for secret_name in bridge_secret_names
+    ]
+    ready_bridge_calls = []
+    ready_bridge_responses = {
+        secret_name: (0, {"data": complete_bridge_secret_data}, "")
+        for secret_name in bridge_secret_names
+    }
+    with patch.object(
+        module.subprocess,
+        "run",
+        bridge_secret_lookup(ready_bridge_responses, ready_bridge_calls),
+    ):
+        ready_bridge_issues = module.bridge_certificate_secret_issues(
+            bridge_expected_bindings
+        )
+    if ready_bridge_issues or ready_bridge_calls != expected_bridge_calls:
+        raise SystemExit(
+            "ordinary operator bridge Secret gate did not accept and query both complete bindings: "
+            f"{ready_bridge_issues}, {ready_bridge_calls}"
+        )
+
+    bridge_failure_cases = (
+        (
+            "missing Secret",
+            {
+                bridge_secret_names[0]: (
+                    1,
+                    None,
+                    'Error from server (NotFound): secrets "staging-gateway-internal-ws" not found',
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+            },
+            "gatewayInternalWsListenerRef",
+            "Missing required Secret in cluster",
+        ),
+        (
+            "missing key",
+            {
+                bridge_secret_names[0]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {
+                        "data": {
+                            "tls.crt": "encoded-cert",
+                            "tls.key": "encoded-key",
+                        }
+                    },
+                    "",
+                ),
+            },
+            "tcpProxyBridgeClientRef",
+            "missing keys: ca.crt",
+        ),
+        (
+            "operator API failure",
+            {
+                bridge_secret_names[0]: (
+                    1,
+                    None,
+                    'Error from server (Forbidden): secrets "staging-gateway-internal-ws" is forbidden',
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+            },
+            "gatewayInternalWsListenerRef",
+            "could not be verified",
+        ),
+    )
+    for case_name, responses, expected_path, expected_message in bridge_failure_cases:
+        bridge_failure_calls = []
+        with patch.object(
+            module.subprocess,
+            "run",
+            bridge_secret_lookup(responses, bridge_failure_calls),
+        ):
+            bridge_issues = module.bridge_certificate_secret_issues(
+                bridge_expected_bindings
+            )
+        if (
+            len(bridge_issues) != 1
+            or expected_path not in bridge_issues[0]
+            or expected_message not in bridge_issues[0]
+            or bridge_failure_calls != expected_bridge_calls
+        ):
+            raise SystemExit(
+                f"ordinary operator bridge Secret gate did not fail closed for {case_name}: "
+                f"{bridge_issues}, {bridge_failure_calls}"
+            )
+
+    invalid_bridge_expected_bindings = copy.deepcopy(bridge_expected_bindings)
+    invalid_bridge_expected_bindings["internalBindings"]["certificates"][
+        "gatewayInternalWsListenerRef"
+    ] = "secret://staging/not-a-certificate-binding"
+    invalid_bridge_calls = []
+    with patch.object(
+        module.subprocess,
+        "run",
+        bridge_secret_lookup(
+            {
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                )
+            },
+            invalid_bridge_calls,
+        ),
+    ):
+        invalid_bridge_issues = module.bridge_certificate_secret_issues(
+            invalid_bridge_expected_bindings
+        )
+    if (
+        len(invalid_bridge_issues) != 1
+        or "gatewayInternalWsListenerRef" not in invalid_bridge_issues[0]
+        or invalid_bridge_calls != [("staging", bridge_secret_names[1])]
+    ):
+        raise SystemExit(
+            "invalid bridge certificate binding was not rejected without a live lookup: "
+            f"{invalid_bridge_issues}, {invalid_bridge_calls}"
+        )
+
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 0
     retry_payloads = iter(
@@ -9534,8 +9712,62 @@ overlapping_spec["containers"][0]["volumeMounts"].append(
     }
 )
 expect_publication_static_failure(
-    "another read-only Secret mount covering a gRPC TLS path",
+    "another volume mount covering a gRPC TLS path",
     overlapping_secret_mount_documents,
+)
+
+writable_secret_overlay_documents = copy.deepcopy(publication_documents)
+writable_overlay_spec = writable_secret_overlay_documents[0]["spec"]["template"]["spec"]
+writable_overlay_spec["volumes"].append(
+    {"name": "writable-secret-overlay", "secret": {"secretName": "alternate-identity"}}
+)
+writable_overlay_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "writable-secret-overlay",
+        "mountPath": "/tls/tls.key",
+        "readOnly": False,
+    }
+)
+expect_publication_static_failure(
+    "a writable Secret overlay on a gRPC TLS path",
+    writable_secret_overlay_documents,
+)
+
+config_map_overlay_documents = copy.deepcopy(publication_documents)
+config_map_overlay_spec = config_map_overlay_documents[0]["spec"]["template"]["spec"]
+config_map_overlay_spec["volumes"].append(
+    {"name": "config-map-overlay", "configMap": {"name": "grpc-config"}}
+)
+config_map_overlay_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "config-map-overlay",
+        "mountPath": "/tls/ca.crt",
+        "readOnly": True,
+    }
+)
+expect_publication_static_failure(
+    "a ConfigMap overlay on a gRPC TLS path",
+    config_map_overlay_documents,
+)
+
+grpc_subpath_documents = copy.deepcopy(publication_documents)
+grpc_subpath_mount = grpc_subpath_documents[0]["spec"]["template"]["spec"][
+    "containers"
+][0]["volumeMounts"][0]
+grpc_subpath_mount["subPath"] = "tls.crt"
+expect_publication_static_failure(
+    "a grpc-tls subPath mount",
+    grpc_subpath_documents,
+)
+
+grpc_subpath_expr_documents = copy.deepcopy(publication_documents)
+grpc_subpath_expr_mount = grpc_subpath_expr_documents[0]["spec"]["template"]["spec"][
+    "containers"
+][0]["volumeMounts"][0]
+grpc_subpath_expr_mount["subPathExpr"] = "$(TLS_FILE)"
+expect_publication_static_failure(
+    "a grpc-tls subPathExpr mount",
+    grpc_subpath_expr_documents,
 )
 
 unrelated_secret_mount_documents = copy.deepcopy(publication_documents)
@@ -9556,6 +9788,21 @@ unrelated_secret_requirements = module.publication_workload_secret_requirements(
 )
 if unrelated_secret_requirements != publication_requirements:
     raise SystemExit("an unrelated non-overlapping Secret mount changed publication requirements")
+
+ancestor_secret_mount_documents = copy.deepcopy(publication_documents)
+ancestor_spec = ancestor_secret_mount_documents[0]["spec"]["template"]["spec"]
+ancestor_spec["volumes"].append(
+    {"name": "ancestor-secret", "secret": {"secretName": "ancestor-identity"}}
+)
+ancestor_spec["containers"][0]["volumeMounts"].append(
+    {"name": "ancestor-secret", "mountPath": "/", "readOnly": True}
+)
+ancestor_secret_requirements = module.publication_workload_secret_requirements(
+    publication_expected,
+    ancestor_secret_mount_documents,
+)
+if ancestor_secret_requirements != publication_requirements:
+    raise SystemExit("an ancestor Secret mount shadowing no gRPC TLS file was rejected")
 
 ambiguous_container_documents = copy.deepcopy(publication_documents)
 ambiguous_container_spec = ambiguous_container_documents[0]["spec"]["template"]["spec"]

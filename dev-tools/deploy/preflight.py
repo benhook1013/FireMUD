@@ -901,6 +901,37 @@ def expected_player_secret_bindings(
     )
 
 
+def bridge_certificate_secret_issues(expected: dict[str, Any]) -> list[str]:
+    """Check the live key-bearing Secrets selected by the expected bridge certificate refs."""
+    binding_paths = (
+        "internalBindings.certificates.gatewayInternalWsListenerRef",
+        "internalBindings.certificates.tcpProxyBridgeClientRef",
+    )
+    required_keys = {"tls.crt", "tls.key", "ca.crt"}
+    issues = []
+    for binding_path in binding_paths:
+        parsed_ref = parse_binding_ref(get(expected, binding_path))
+        if (
+            parsed_ref is None
+            or parsed_ref[0] != "cert-manager"
+            or not parsed_ref[1]
+            or len(parsed_ref[2]) != 1
+            or not parsed_ref[2][0]
+        ):
+            issues.append(
+                "Cannot resolve required Secret binding from expected bindings: "
+                + binding_path
+            )
+            continue
+        _, namespace, segments = parsed_ref
+        issue, _, _ = secret_keys_lookup_failure(
+            segments[0], namespace, required_keys
+        )
+        if issue is not None:
+            issues.append(f"{binding_path}: {issue}")
+    return issues
+
+
 def publication_workload_secret_requirements(
     expected: dict[str, Any],
     documents: list[dict[str, Any]],
@@ -1091,6 +1122,10 @@ def publication_workload_secret_requirements(
             raise ValueError(
                 f"Rendered publication workload {workload} requires one read-only grpc-tls mount at a canonical absolute mountPath"
             )
+        if "subPath" in grpc_mount or "subPathExpr" in grpc_mount:
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls mount must not use subPath or subPathExpr"
+            )
         if any(
             not path_is_under_mount(path, grpc_mount_path)
             for path in grpc_paths.values()
@@ -1099,45 +1134,17 @@ def publication_workload_secret_requirements(
                 f"Rendered publication workload {workload} has a gRPC TLS path outside its grpc-tls mount"
             )
 
-        volume_definitions: dict[str, list[dict[str, Any]]] = {}
-        for volume in volumes:
-            if isinstance(volume, dict) and isinstance(volume.get("name"), str):
-                volume_definitions.setdefault(volume["name"], []).append(volume)
         for mount in volume_mounts:
-            if mount is grpc_mount or mount.get("readOnly") is not True:
+            if mount is grpc_mount:
                 continue
             mount_path = posixpath.normpath("/" + mount["mountPath"].lstrip("/"))
-            if not any(
+            if not path_is_under_mount(mount_path, grpc_mount_path) or not any(
                 path_is_under_mount(path, mount_path) for path in grpc_paths.values()
             ):
                 continue
-            mounted_volumes = volume_definitions.get(mount["name"], [])
-            if len(mounted_volumes) != 1:
-                raise ValueError(
-                    f"Rendered publication workload {workload} has an ambiguous read-only mount covering a gRPC TLS path"
-                )
-            mounted_volume = mounted_volumes[0]
-            projected = mounted_volume.get("projected")
-            projected_sources = projected.get("sources") if isinstance(projected, dict) else None
-            projected_secret = (
-                isinstance(projected_sources, list)
-                and any(
-                    isinstance(source, dict) and "secret" in source
-                    for source in projected_sources
-                )
+            raise ValueError(
+                f"Rendered publication workload {workload} has another volume mount covering a gRPC TLS path"
             )
-            malformed_projected = "projected" in mounted_volume and (
-                not isinstance(projected_sources, list)
-                or not projected_sources
-                or any(
-                    not isinstance(source, dict) or len(source) != 1
-                    for source in projected_sources
-                )
-            )
-            if "secret" in mounted_volume or projected_secret or malformed_projected:
-                raise ValueError(
-                    f"Rendered publication workload {workload} has another read-only Secret mount covering a gRPC TLS path"
-                )
         requirements.append(
             (secret_name, workload_namespace, set(PUBLICATION_GRPC_SECRET_KEYS))
         )
@@ -7407,6 +7414,17 @@ def main() -> int:
                 ) or has_required_failure
                 secret_check_failed = True
                 break
+        if not secret_check_failed:
+            bridge_secret_issues = bridge_certificate_secret_issues(expected_bindings)
+            if bridge_secret_issues:
+                has_required_failure = append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "fail",
+                    "Bridge certificate Secret: " + "; ".join(bridge_secret_issues),
+                ) or has_required_failure
+                secret_check_failed = True
         if not secret_check_failed:
             publication_secret_issues = publication_workload_secret_issues(
                 expected_bindings, documents
