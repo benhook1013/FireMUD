@@ -67,16 +67,25 @@ jobs:
           set -euo pipefail
           preview_workflow_name="PR Preview Environment"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
-          max_active="${PREVIEW_MAX_ACTIVE:-1}"
+          max_active="${PREVIEW_MAX_ACTIVE:-2}"
 
-          parse_namespace_heads() {
+          parse_namespace_tuple() {
             jq -er '
               def annotation($annotations; $name):
                 ($annotations[$name] // "")
                 | if type != "string" then
-                    error("namespace head annotation is not a string")
+                    error("namespace preview annotation is not a string")
                   elif test("[|\\r\\n]") then
-                    error("namespace head annotation contains an unsafe delimiter")
+                    error("namespace preview annotation contains an unsafe delimiter")
+                  else
+                    .
+                  end;
+              def metadata_field($metadata; $name):
+                ($metadata[$name] // "")
+                | if type != "string" then
+                    error("namespace metadata field is not a string")
+                  elif test("[|\\r\\n]") then
+                    error("namespace metadata field contains an unsafe delimiter")
                   else
                     .
                   end;
@@ -87,10 +96,37 @@ jobs:
               else
                 (.metadata.annotations // {}) as $annotations
                 | [
+                    annotation($annotations; "firemud.dev/last-preview-base-sha"),
                     annotation($annotations; "firemud.dev/last-preview-head-sha"),
+                    annotation($annotations; "firemud.dev/last-preview-merge-sha"),
+                    annotation($annotations; "firemud.dev/last-preview-image-tag"),
+                    annotation($annotations; "firemud.dev/requested-preview-base-sha"),
                     annotation($annotations; "firemud.dev/requested-preview-head-sha"),
-                    (.metadata.resourceVersion // "")
+                    annotation($annotations; "firemud.dev/requested-preview-merge-sha"),
+                    annotation($annotations; "firemud.dev/requested-preview-image-tag"),
+                    annotation($annotations; "firemud.dev/proof-preview-base-sha"),
+                    annotation($annotations; "firemud.dev/proof-preview-head-sha"),
+                    annotation($annotations; "firemud.dev/proof-preview-merge-sha"),
+                    annotation($annotations; "firemud.dev/proof-preview-image-tag"),
+                    annotation($annotations; "firemud.dev/proof-preview-namespace-uid"),
+                    annotation($annotations; "firemud.dev/proof-retry-count"),
+                    annotation($annotations; "firemud.dev/proof-retry-base-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-head-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-merge-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-image-tag"),
+                    metadata_field(.metadata; "uid"),
+                    metadata_field(.metadata; "resourceVersion")
                   ]
+                | if (
+                    (.[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
+                    or (
+                      (.[13] | test("^[0-3]$"))
+                      and (.[14] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[15] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[16] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[17] | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+                    )
+                  ) then . else error("namespace proof-retry evidence is malformed") end
                 | join("|")
               end
             ' <<<"$1"
@@ -101,15 +137,33 @@ jobs:
           readonly repair_dispatch=11
           readonly repair_abort=20
 
-          repair_requested_head() {
+          repair_requested_tuple() {
             local namespace="$1"
             local pr_number="$2"
-            local head_sha="$3"
-            local requested_head_sha="$4"
+            local base_sha="$3"
+            local head_sha="$4"
+            local merge_sha="$5"
+            local image_tag="$6"
+            local requested_base_sha="$7"
+            local requested_head_sha="$8"
+            local requested_merge_sha="$9"
+            local requested_image_tag="${10}"
             local fresh_namespace_json
-            local fresh_namespace_heads
-            local fresh_head_sha
+            local fresh_namespace_tuple
+            local fresh_last_base_sha
+            local fresh_last_head_sha
+            local fresh_last_merge_sha
+            local fresh_last_image_tag
+            local fresh_requested_base_sha
             local fresh_requested_head_sha
+            local fresh_requested_merge_sha
+            local fresh_requested_image_tag
+            local fresh_proof_base_sha
+            local fresh_proof_head_sha
+            local fresh_proof_merge_sha
+            local fresh_proof_image_tag
+            local fresh_proof_namespace_uid
+            local fresh_namespace_uid
             local fresh_namespace_resource_version
             local annotation_failure_namespace_json
 
@@ -122,25 +176,51 @@ jobs:
             if [[ -z "${fresh_namespace_json}" ]]; then
               return "$repair_dispatch"
             fi
-            if ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
+            if ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
               echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
               return "$repair_skip"
             fi
-            IFS='|' read -r fresh_head_sha fresh_requested_head_sha fresh_namespace_resource_version <<<"${fresh_namespace_heads}"
-            if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
-              echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
+            IFS='|' read -r fresh_last_base_sha fresh_last_head_sha fresh_last_merge_sha fresh_last_image_tag \
+              fresh_requested_base_sha fresh_requested_head_sha fresh_requested_merge_sha fresh_requested_image_tag \
+              fresh_proof_base_sha fresh_proof_head_sha fresh_proof_merge_sha fresh_proof_image_tag \
+              fresh_proof_namespace_uid _ _ _ _ _ \
+              fresh_namespace_uid \
+              fresh_namespace_resource_version <<<"${fresh_namespace_tuple}"
+            if [[ "${fresh_last_base_sha}" != "${base_sha}" ||
+              "${fresh_last_head_sha}" != "${head_sha}" ||
+              "${fresh_last_merge_sha}" != "${merge_sha}" ||
+              "${fresh_last_image_tag}" != "${image_tag}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: deployed preview tuple changed during annotation repair check."
               return "$repair_skip"
             fi
-            if [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
-              echo "Preview ${namespace} already aligned to ${head_sha}"
+            if [[ "${fresh_proof_base_sha}" != "${base_sha}" ||
+              "${fresh_proof_head_sha}" != "${head_sha}" ||
+              "${fresh_proof_merge_sha}" != "${merge_sha}" ||
+              "${fresh_proof_image_tag}" != "${image_tag}" ||
+              -z "${fresh_namespace_uid}" ||
+              "${fresh_proof_namespace_uid}" != "${fresh_namespace_uid}" ]]; then
+              echo "Preview ${namespace} deployed tuple is missing proof for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}; dispatching retry."
+              return "$repair_dispatch"
+            fi
+            if [[ "${fresh_requested_base_sha}" == "${base_sha}" &&
+              "${fresh_requested_head_sha}" == "${head_sha}" &&
+              "${fresh_requested_merge_sha}" == "${merge_sha}" &&
+              "${fresh_requested_image_tag}" == "${image_tag}" ]]; then
+              echo "Preview ${namespace} already aligned to ${base_sha}/${head_sha}/${merge_sha}/${image_tag}"
               return "$repair_success"
             fi
-            if [[ "${fresh_requested_head_sha}" != "${requested_head_sha}" ]]; then
-              echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+            if [[ "${fresh_requested_base_sha}" != "${requested_base_sha}" ||
+              "${fresh_requested_head_sha}" != "${requested_head_sha}" ||
+              "${fresh_requested_merge_sha}" != "${requested_merge_sha}" ||
+              "${fresh_requested_image_tag}" != "${requested_image_tag}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: requested preview tuple changed during annotation repair check."
               return "$repair_skip"
             fi
             if ! kubectl annotate namespace "${namespace}" \
+              "firemud.dev/requested-preview-base-sha=${base_sha}" \
               "firemud.dev/requested-preview-head-sha=${head_sha}" \
+              "firemud.dev/requested-preview-merge-sha=${merge_sha}" \
+              "firemud.dev/requested-preview-image-tag=${image_tag}" \
               --overwrite \
               --resource-version "${fresh_namespace_resource_version}" >/dev/null; then
               if ! annotation_failure_namespace_json="$(
@@ -156,27 +236,139 @@ jobs:
               echo "Namespace ${namespace} was deleted during requested-head repair; dispatching replacement."
               return "$repair_dispatch"
             fi
-            if [[ -z "${requested_head_sha}" ]]; then
-              echo "Repaired missing requested head for aligned preview ${namespace}"
+            if [[ -z "${requested_base_sha}${requested_head_sha}${requested_merge_sha}${requested_image_tag}" ]]; then
+              echo "Repaired missing requested preview tuple for ${namespace}"
             else
-              echo "Repaired stale requested head for aligned preview ${namespace}"
+              echo "Repaired stale requested preview tuple for ${namespace}"
             fi
             return "$repair_success"
+          }
+
+          record_proof_retry() {
+            local namespace="$1"
+            local pr_number="$2"
+            local base_sha="$3"
+            local head_sha="$4"
+            local merge_sha="$5"
+            local image_tag="$6"
+            local fresh_namespace_json
+            local fresh_namespace_tuple
+            local current_base_sha
+            local current_head_sha
+            local current_merge_sha
+            local current_image_tag
+            local requested_base_sha
+            local requested_head_sha
+            local requested_merge_sha
+            local requested_image_tag
+            local proof_base_sha
+            local proof_head_sha
+            local proof_merge_sha
+            local proof_image_tag
+            local proof_namespace_uid
+            local retry_count
+            local retry_base_sha
+            local retry_head_sha
+            local retry_merge_sha
+            local retry_image_tag
+            local namespace_uid
+            local namespace_resource_version
+            local next_retry_count
+
+            if ! fresh_namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to recheck namespace ${namespace} before proof retry dispatch." >&2
+              return 1
+            fi
+            if [[ -z "${fresh_namespace_json}" ]]; then
+              echo "Skipping PR #${pr_number}: namespace ${namespace} disappeared before proof retry dispatch." >&2
+              return 1
+            fi
+            if ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
+              echo "Skipping PR #${pr_number}: malformed namespace proof-retry evidence; refusing dispatch." >&2
+              return 1
+            fi
+            IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
+              requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
+              proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
+              retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
+              namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
+            if [[ "${current_base_sha}" != "${base_sha}" ||
+              "${current_head_sha}" != "${head_sha}" ||
+              "${current_merge_sha}" != "${merge_sha}" ||
+              "${current_image_tag}" != "${image_tag}" ]]; then
+              echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
+              return 1
+            fi
+            if [[ "${proof_base_sha}" == "${base_sha}" &&
+              "${proof_head_sha}" == "${head_sha}" &&
+              "${proof_merge_sha}" == "${merge_sha}" &&
+              "${proof_image_tag}" == "${image_tag}" &&
+              -n "${namespace_uid}" &&
+              "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
+              echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
+              return 2
+            fi
+            if [[ "${retry_base_sha}" == "${base_sha}" &&
+              "${retry_head_sha}" == "${head_sha}" &&
+              "${retry_merge_sha}" == "${merge_sha}" &&
+              "${retry_image_tag}" == "${image_tag}" ]]; then
+              next_retry_count=$((10#${retry_count} + 1))
+            else
+              next_retry_count=1
+            fi
+            if (( next_retry_count > 3 )); then
+              echo "Skipping PR #${pr_number}: proof retry budget exhausted for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}." >&2
+              return 3
+            fi
+            if ! kubectl annotate namespace "${namespace}" \
+              "firemud.dev/proof-retry-count=${next_retry_count}" \
+              "firemud.dev/proof-retry-base-sha=${base_sha}" \
+              "firemud.dev/proof-retry-head-sha=${head_sha}" \
+              "firemud.dev/proof-retry-merge-sha=${merge_sha}" \
+              "firemud.dev/proof-retry-image-tag=${image_tag}" \
+              --overwrite \
+              --resource-version "${namespace_resource_version}" >/dev/null; then
+              echo "Skipping PR #${pr_number}: Namespace ${namespace} changed before proof retry evidence could be recorded." >&2
+              return 1
+            fi
+            echo "Recorded proof retry ${next_retry_count}/3 for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag})."
+            return 0
           }
 
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
-            | sort -t $'\t' -k1,1n -k2,2n |
-          while IFS=$'\t' read -r _ pr_number head_sha pr_author pr_base_ref pr_state labels_json_base64; do
+          dispatch_candidates() {
+            while IFS=$'\t' read -r _ pr_number head_sha pr_author pr_base_ref pr_state labels_json_base64; do
             if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
               [[ -z "$labels_json" ]] ||
               ! jq -e 'type == "array"' <<<"$labels_json" >/dev/null; then
               echo "Skipping PR #${pr_number}: label metadata could not be decoded as a JSON array." >&2
               continue
             fi
+            if ! live_pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")" ||
+              [[ "$(jq -r '.state // empty' <<<"${live_pr_json}")" != open ]] ||
+              [[ "$(jq -r '.head.repo.full_name // empty' <<<"${live_pr_json}")" != "${GITHUB_REPOSITORY}" ]] ||
+              [[ "$(jq -r '.base.repo.full_name // empty' <<<"${live_pr_json}")" != "${GITHUB_REPOSITORY}" ]]; then
+              echo "Skipping PR #${pr_number}: current pull-request ownership or state is not trusted." >&2
+              continue
+            fi
+            if ! head_sha="$(jq -er '.head.sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${live_pr_json}")" ||
+              ! pr_base_ref="$(jq -er '.base.ref | select(type == "string" and test("^[A-Za-z0-9._/-]+$"))' <<<"${live_pr_json}")" ||
+              ! pr_author="$(jq -er '.user.login | select(type == "string" and length > 0)' <<<"${live_pr_json}")" ||
+              ! live_labels_json="$(jq -c '.labels | if type == "array" then [.[] | {name: .name}] else empty end' <<<"${live_pr_json}")"; then
+              echo "Skipping PR #${pr_number}: current pull-request identity or labels are malformed." >&2
+              continue
+            fi
+            head_sha="${head_sha,,}"
+            if ! jq -e 'type == "array"' <<<"${live_labels_json}" >/dev/null; then
+              echo "Skipping PR #${pr_number}: current label metadata is malformed." >&2
+              continue
+            fi
+            labels_json="${live_labels_json}"
+            pr_state=open
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \
@@ -193,10 +385,27 @@ jobs:
               continue
             fi
 
+            if [[ "$dispatch_sent" == "true" ]]; then
+              echo "Skipping PR #${pr_number}: another preview repair was already dispatched this cycle."
+              continue
+            fi
+
             namespace="pr-${pr_number}"
             namespace_exists=false
+            current_base_sha=""
             current_head_sha=""
+            current_merge_sha=""
+            current_image_tag=""
+            requested_base_sha=""
             requested_head_sha=""
+            requested_merge_sha=""
+            requested_image_tag=""
+            proof_base_sha=""
+            proof_head_sha=""
+            proof_merge_sha=""
+            proof_image_tag=""
+            proof_namespace_uid=""
+            namespace_uid=""
             if ! namespace_json="$(
               kubectl get namespace "${namespace}" --ignore-not-found -o json
             )"; then
@@ -205,18 +414,70 @@ jobs:
             fi
             if [[ -n "${namespace_json}" ]]; then
               namespace_exists=true
-              if ! namespace_heads="$(parse_namespace_heads "${namespace_json}")"; then
+              if ! namespace_tuple="$(parse_namespace_tuple "${namespace_json}")"; then
                 echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} snapshot." >&2
                 continue
               fi
-              IFS='|' read -r current_head_sha requested_head_sha _ <<<"${namespace_heads}"
+              IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
+                requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
+                proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
+                _ _ _ _ _ \
+                namespace_uid _ <<<"${namespace_tuple}"
+            elif [[ "$priority" != "true" && "$available_slots" -le 0 ]]; then
+              echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
+              continue
             fi
 
-            if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              if [[ "${requested_head_sha}" != "${head_sha}" ]]; then
+            mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"${live_pr_json}")"
+            mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"${live_pr_json}")"
+            if [[ "${mergeable}" != true || "${mergeable_state}" == invalid ||
+              "${mergeable_state}" == unknown || "${mergeable_state}" == dirty ||
+              "${mergeable_state}" == conflicting ]]; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current base/head merge is not ready (mergeable=${mergeable}, state=${mergeable_state})."
+              continue
+            fi
+            if ! base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${pr_base_ref}")" ||
+              ! base_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${base_ref_json}")" ||
+              ! merge_sha="$(jq -er '.merge_commit_sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${live_pr_json}")"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current base ref or merge SHA is unavailable." >&2
+              continue
+            fi
+            base_sha="${base_sha,,}"
+            merge_sha="${merge_sha,,}"
+            if ! merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${merge_sha}")" ||
+              ! jq -e \
+                --arg merge_sha "${merge_sha}" \
+                --arg base_sha "${base_sha}" \
+                --arg head_sha "${head_sha}" \
+                '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+                <<<"${merge_commit_json}" >/dev/null; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current merge SHA does not have the exact base/head parents." >&2
+              continue
+            fi
+            if ! image_tag="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+              "${merge_sha}" "${pr_number}" "${base_sha}")"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: runtime image identity could not be resolved." >&2
+              continue
+            fi
+
+            if [[ "${current_base_sha}" == "${base_sha}" &&
+              "${current_head_sha}" == "${head_sha}" &&
+              "${current_merge_sha}" == "${merge_sha}" &&
+              "${current_image_tag}" == "${image_tag}" &&
+              "${proof_base_sha}" == "${base_sha}" &&
+              "${proof_head_sha}" == "${head_sha}" &&
+              "${proof_merge_sha}" == "${merge_sha}" &&
+              "${proof_image_tag}" == "${image_tag}" &&
+              -n "${namespace_uid}" &&
+              "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
+              if [[ "${requested_base_sha}" != "${base_sha}" ||
+                "${requested_head_sha}" != "${head_sha}" ||
+                "${requested_merge_sha}" != "${merge_sha}" ||
+                "${requested_image_tag}" != "${image_tag}" ]]; then
                 repair_status="$repair_success"
-                if repair_requested_head \
-                  "$namespace" "$pr_number" "$head_sha" "$requested_head_sha"; then
+                if repair_requested_tuple \
+                  "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
+                  "$requested_base_sha" "$requested_head_sha" "$requested_merge_sha" "$requested_image_tag"; then
                   repair_status="$repair_success"
                 else
                   repair_status=$?
@@ -237,14 +498,16 @@ jobs:
                     ;;
                 esac
               else
-                echo "Preview ${namespace} already aligned to ${head_sha}"
+                echo "Preview ${namespace} already aligned to ${base_sha}/${head_sha}/${merge_sha}/${image_tag}"
                 continue
               fi
             fi
 
-            if [[ "$dispatch_sent" == "true" ]]; then
-              echo "Skipping PR #${pr_number}: another preview repair was already dispatched this cycle."
-              continue
+            if [[ "${current_base_sha}" == "${base_sha}" &&
+              "${current_head_sha}" == "${head_sha}" &&
+              "${current_merge_sha}" == "${merge_sha}" &&
+              "${current_image_tag}" == "${image_tag}" ]]; then
+              echo "Preview ${namespace} deployed tuple is missing proof for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}; dispatching retry."
             fi
 
             if [[ "$namespace_exists" != "true" ]]; then
@@ -254,36 +517,72 @@ jobs:
               fi
             fi
 
-            active_preview_run_id="$(
-              gh run list \
-                --workflow "${preview_workflow_name}" \
-                --branch "${DEFAULT_BRANCH}" \
-                --limit 100 \
-                --json databaseId,status,displayTitle \
-                | jq -r --arg run_name "Preview dispatch pr-${pr_number}-${head_sha}" '
-                    first(
-                      .[]
-                      | select(
-                          .displayTitle == $run_name
-                          and (
-                            .status == "requested"
-                            or .status == "queued"
-                            or .status == "in_progress"
-                            or .status == "waiting"
-                            or .status == "pending"
+            if ! active_preview_run_id="$(
+              jq -r \
+                --arg workflow_name "${preview_workflow_name}" \
+                --arg trusted_workflow_name "Trusted Hosted Identity Request" \
+                --arg default_branch "${DEFAULT_BRANCH}" \
+                --arg pr_title "PR preview ${pr_number}" \
+                --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
+                    if type != "array" then
+                      error("workflow runs are not an array")
+                    else
+                      if any(.[];
+                          (type != "object")
+                          or ((.id | type) != "number")
+                          or ((.name | type) != "string")
+                          or ((.head_branch | type) != "string")
+                          or ((.display_title | type) != "string")
+                          or ((.status | type) != "string")
+                          or ((.firemud_reconciler_branch_filtered | type) != "boolean")
+                        ) then
+                        error("workflow run entry is malformed")
+                      else
+                        .[]
+                        | select(
+                            ((.name == $workflow_name) or (.name == $trusted_workflow_name))
+                            and (
+                              (.firemud_reconciler_branch_filtered == false)
+                              or (.firemud_reconciler_branch_filtered == true and .head_branch == $default_branch)
+                            )
+                            and (.display_title == $run_name or .display_title == $pr_title)
+                            and (
+                              .status == "requested"
+                              or .status == "queued"
+                              or .status == "in_progress"
+                              or .status == "waiting"
+                              or .status == "pending"
+                            )
                           )
-                        )
-                      | .databaseId
-                    ) // ""
-                  '
-            )"
+                        | .id
+                      end
+                    end
+                  ' <<<"${active_preview_runs_json}"
+            )"; then
+              echo "Unable to parse active preview workflow runs; refusing preview reconcile." >&2
+              exit 1
+            fi
 
             if [[ -n "${active_preview_run_id}" ]]; then
-              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} for head ${head_sha} is already queued or in progress."
+              echo "Skipping proof retry for PR #${pr_number}: preview source or trusted consumer run ${active_preview_run_id} for ${base_sha}/${head_sha}/${merge_sha} is already queued or in progress."
               continue
             fi
 
-            echo "Dispatching preview render for PR #${pr_number} (${head_sha}) from trusted ref ${DEFAULT_BRANCH}"
+            if [[ "${namespace_exists}" == "true" &&
+              "${current_base_sha}" == "${base_sha}" &&
+              "${current_head_sha}" == "${head_sha}" &&
+              "${current_merge_sha}" == "${merge_sha}" &&
+              "${current_image_tag}" == "${image_tag}" &&
+              ("${proof_base_sha}" != "${base_sha}" ||
+                "${proof_head_sha}" != "${head_sha}" ||
+                "${proof_merge_sha}" != "${merge_sha}" ||
+                "${proof_image_tag}" != "${image_tag}" ||
+                -z "${namespace_uid}" ||
+                "${proof_namespace_uid}" != "${namespace_uid}") ]]; then
+              record_proof_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" || continue
+            fi
+
+            echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
             gh api \
               --method POST \
               "repos/${GITHUB_REPOSITORY}/dispatches" \
@@ -291,9 +590,98 @@ jobs:
               -f 'client_payload[action]=deploy' \
               -f "client_payload[pr_number]=${pr_number}" \
               -f "client_payload[head_sha]=${head_sha}" \
+              -f "client_payload[base_ref]=${pr_base_ref}" \
+              -f "client_payload[base_sha]=${base_sha}" \
+              -f "client_payload[merge_sha]=${merge_sha}" \
+              -f "client_payload[image_tag]=${image_tag}" \
               -f 'client_payload[preview_domain]=preview.firedevops.net'
             dispatch_sent=true
-          done
+            done
+          }
+
+          candidate_rows="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+              --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
+              | sort -t $'\t' -k1,1n -k2,2n
+          )"
+          if [[ -n "$candidate_rows" ]]; then
+            active_preview_run_sets=()
+            for active_status in requested queued in_progress waiting pending; do
+              for active_run_scope in branch pull_request_target workflow_run; do
+                if [[ "$active_run_scope" == branch ]]; then
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=true
+                elif [[ "$active_run_scope" == pull_request_target ]]; then
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request_target&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=false
+                else
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_run&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=false
+                fi
+                if ! active_preview_run_pages_json="$(gh api --paginate --slurp "$active_run_query")"; then
+                  echo "Unable to inspect active preview workflow runs; refusing preview reconcile." >&2
+                  exit 1
+                fi
+                if ! active_preview_runs_for_query="$(
+                  jq -c \
+                    --argjson branch_filtered "$active_run_branch_filtered" '
+                      if type != "array" then
+                        error("workflow run pages are not an array")
+                      else
+                        [
+                          .[] as $page
+                          | if ($page | type) != "object" or ($page.workflow_runs | type) != "array" then
+                              error("workflow run page is malformed")
+                            else
+                              $page.workflow_runs[]
+                            end
+                          | if type != "object" then
+                              error("workflow run entry is malformed")
+                            else
+                              . + {firemud_reconciler_branch_filtered: $branch_filtered}
+                            end
+                        ]
+                      end
+                    ' <<<"$active_preview_run_pages_json"
+                )"; then
+                  echo "Unable to normalize active preview workflow runs; refusing preview reconcile." >&2
+                  exit 1
+                fi
+                active_preview_run_sets+=("$active_preview_runs_for_query")
+              done
+            done
+            if ! active_preview_runs_json="$(
+              printf '%s\n' "${active_preview_run_sets[@]}" | jq -c -s '
+                if any(.[]; type != "array") then
+                  error("active preview workflow run result is not an array")
+                else
+                  add
+                  | group_by(.id)
+                  | map(
+                      . as $runs
+                      | if any($runs[];
+                          .name != $runs[0].name
+                          or .head_branch != $runs[0].head_branch
+                          or .display_title != $runs[0].display_title
+                        ) then
+                          error("active preview workflow run metadata differs between query scopes")
+                        else
+                          $runs[0] + {
+                            firemud_reconciler_branch_filtered: all(
+                              $runs[];
+                              .firemud_reconciler_branch_filtered == true
+                            )
+                          }
+                        end
+                    )
+                end
+              '
+            )"; then
+              echo "Unable to merge active preview workflow runs; refusing preview reconcile." >&2
+              exit 1
+            fi
+            dispatch_candidates <<<"$candidate_rows"
+          fi
 
       - name: Remove preview kubeconfig
         if: ${{ always() }}
