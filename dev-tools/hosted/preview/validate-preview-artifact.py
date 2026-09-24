@@ -1570,7 +1570,7 @@ def validate_service_consumers(
             {
                 "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
                 "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
-                "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
             }
             if service in PUBLICATION_GRPC_WORKLOADS
             else {
@@ -1599,6 +1599,8 @@ def validate_service_consumers(
             "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
         }
+        if service in PUBLICATION_GRPC_WORKLOADS:
+            expected_mounts["grpc-trust"] = ("/grpc-trust", "firemud-grpc-tls")
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
@@ -1664,6 +1666,23 @@ def validate_service_consumers(
                 )
                 if source.get("secretName") != source_name:
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
+                if volume_name == "grpc-trust":
+                    expected_source = {
+                        "secretName": source_name,
+                        "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                    }
+                    if source != expected_source:
+                        fail(f"Deployment/{service} has an unsafe grpc-trust projection")
+                if volume_name == "grpc-tls" and service in PUBLICATION_GRPC_WORKLOADS:
+                    expected_source = {
+                        "secretName": source_name,
+                        "items": [
+                            {"key": "tls.crt", "path": "tls.crt"},
+                            {"key": "tls.key", "path": "tls.key"},
+                        ],
+                    }
+                    if source != expected_source:
+                        fail(f"Deployment/{service} has an unsafe grpc-tls projection")
                 if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"}:
                     expected_source = {
                         "secretName": source_name,

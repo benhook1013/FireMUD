@@ -73,13 +73,18 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                                     },
                                     {
                                         "name": "FIREMUD_GRPC_CA_CERT_PATH",
-                                        "value": "/tls/ca.crt",
+                                        "value": "/grpc-trust/ca.crt",
                                     },
                                 ],
                                 "volumeMounts": [
                                     {
                                         "name": "grpc-tls",
                                         "mountPath": "/tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "grpc-trust",
+                                        "mountPath": "/grpc-trust",
                                         "readOnly": True,
                                     },
                                     {
@@ -94,7 +99,18 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                             {
                                 "name": "grpc-tls",
                                 "secret": {
-                                    "secretName": "firemud-grpc-game-design-service"
+                                    "secretName": "firemud-grpc-game-design-service",
+                                    "items": [
+                                        {"key": "tls.crt", "path": "tls.crt"},
+                                        {"key": "tls.key", "path": "tls.key"},
+                                    ],
+                                },
+                            },
+                            {
+                                "name": "grpc-trust",
+                                "secret": {
+                                    "secretName": "firemud-grpc-tls",
+                                    "items": [{"key": "ca.crt", "path": "ca.crt"}],
                                 },
                             },
                             {

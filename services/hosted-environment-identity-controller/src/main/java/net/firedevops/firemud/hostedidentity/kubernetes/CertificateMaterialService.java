@@ -559,8 +559,7 @@ public class CertificateMaterialService {
         return validateAcceptedMaterial(
             validationSecret, current, expectedDnsNames, expectedType, expectedTrustAnchor);
       } catch (SecretMaterialValidator.MaterialValidationException currentFailure) {
-        if (!"certificate SANs do not exactly match the derived names"
-            .equals(currentFailure.getMessage())) {
+        if (!currentFailure.isSanMismatch()) {
           throw currentFailure;
         }
         try {
@@ -571,8 +570,7 @@ public class CertificateMaterialService {
               expectedType,
               expectedTrustAnchor);
         } catch (SecretMaterialValidator.MaterialValidationException previousFailure) {
-          if (!"certificate SANs do not exactly match the derived names"
-              .equals(previousFailure.getMessage())) {
+          if (!previousFailure.isSanMismatch()) {
             throw previousFailure;
           }
           currentFailure.addSuppressed(previousFailure);

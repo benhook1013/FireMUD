@@ -459,6 +459,7 @@ class SecretMaterialValidatorTest {
                         SecretMaterialValidator.trustAnchorFingerprint(invalidCa)));
 
     assertEquals("certificate CA key usage must include keyCertSign", failure.getMessage());
+    assertFalse(failure.isSanMismatch());
   }
 
   @Test
@@ -1161,6 +1162,7 @@ class SecretMaterialValidatorTest {
                         SecretMaterialValidator.trustAnchorFingerprint(unexpectedAnchor)));
 
     assertEquals("certificate chain trust anchor fingerprint mismatch", failure.getMessage());
+    assertFalse(failure.isSanMismatch());
   }
 
   @Test

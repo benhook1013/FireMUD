@@ -161,6 +161,40 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
+  void rejectsPublicationWorkloadOverlappingGrpcConsumerBeforeAnyRolloutMutation() {
+    String overlappingWorkload = HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.getFirst();
+    EnvironmentIdentityPlan plan = planWithConsumers(overlappingWorkload);
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", overlappingWorkload);
+    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      publicationRevisions.put(
+          HostedIdentityContract.grpcPublicationRole(workload), "publication-current");
+    }
+    Runnable runtimeProfileFence = mock(Runnable.class);
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .sync(
+                        graph.client(),
+                        plan,
+                        "telnet-current",
+                        "gateway-current",
+                        "grpc-current",
+                        publicationRevisions,
+                        runtimeProfileFence));
+
+    assertEquals(
+        "gRPC consumer overlaps publication workload: " + overlappingWorkload,
+        failure.getMessage());
+    verify(runtimeProfileFence, never()).run();
+    verify(graph.resources().get("tcp-proxy-service"), never()).get();
+    verify(graph.resources().get(overlappingWorkload), never()).get();
+  }
+
+  @Test
   void gatewayInternalWsOnlyRevisionRollsOnlyGatewayAndPreservesReadinessSemantics() {
     EnvironmentIdentityPlan plan = planWithConsumers("spring-cloud-gateway", "account-service");
     DeploymentClientGraph graph =

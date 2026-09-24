@@ -3702,6 +3702,19 @@ def service_consumer_documents():
                 "jwt-signing-keys",
             ),
         }
+        publication_workload = service in {
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service",
+        }
+        if publication_workload:
+            sources["grpc-trust"] = (
+                "/grpc-trust",
+                "secret",
+                "firemud-grpc-tls",
+            )
         if service == "account-service":
             sources["jwt-jwks"] = (
                 "/var/run/secrets/firemud/jwks",
@@ -3739,6 +3752,15 @@ def service_consumer_documents():
                     {"key": "tls.key", "path": "tls.key"},
                     {"key": "ca.crt", "path": "ca.crt"},
                 ]
+            elif name == "grpc-tls" and publication_workload:
+                projection["items"] = [
+                    {"key": "tls.crt", "path": "tls.crt"},
+                    {"key": "tls.key", "path": "tls.key"},
+                ]
+            elif name == "grpc-trust":
+                projection["items"] = [
+                    {"key": "ca.crt", "path": "ca.crt"},
+                ]
             volumes.append({"name": name, kind: projection})
         container = {
             "name": service,
@@ -3760,7 +3782,10 @@ def service_consumer_documents():
                     "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
                     "value": "/tls/tls.key",
                 },
-                {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+                {
+                    "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                    "value": "/grpc-trust/ca.crt",
+                },
                 {
                     "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
                     "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
@@ -3797,6 +3822,92 @@ def service_consumer_documents():
             }
         )
     return documents
+
+
+valid_consumers = service_consumer_documents()
+validator.validate_service_consumers(valid_consumers, "pr-42", "standalone", "public")
+
+missing_publication_trust_mount = copy.deepcopy(valid_consumers)
+publication_deployment = next(
+    document
+    for document in missing_publication_trust_mount
+    if document["metadata"]["name"] == "game-design-service"
+)
+publication_pod = publication_deployment["spec"]["template"]["spec"]
+publication_pod["containers"][0]["volumeMounts"] = [
+    mount
+    for mount in publication_pod["containers"][0]["volumeMounts"]
+    if mount["name"] != "grpc-trust"
+]
+publication_pod["volumes"] = [
+    volume for volume in publication_pod["volumes"] if volume["name"] != "grpc-trust"
+]
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        missing_publication_trust_mount, "pr-42", "standalone", "public"
+    ),
+    "Deployment/game-design-service has duplicate or unexpected identity consumers",
+)
+
+wrong_publication_trust_mount = copy.deepcopy(valid_consumers)
+publication_deployment = next(
+    document
+    for document in wrong_publication_trust_mount
+    if document["metadata"]["name"] == "game-design-service"
+)
+publication_mount = next(
+    mount
+    for mount in publication_deployment["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount["name"] == "grpc-trust"
+)
+publication_mount["mountPath"] = "/tls"
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        wrong_publication_trust_mount, "pr-42", "standalone", "public"
+    ),
+    "Deployment/game-design-service has an unsafe grpc-trust mount",
+)
+
+unsafe_publication_trust_projection = copy.deepcopy(valid_consumers)
+publication_deployment = next(
+    document
+    for document in unsafe_publication_trust_projection
+    if document["metadata"]["name"] == "game-design-service"
+)
+publication_trust_volume = next(
+    volume
+    for volume in publication_deployment["spec"]["template"]["spec"]["volumes"]
+    if volume["name"] == "grpc-trust"
+)
+publication_trust_volume["secret"]["items"].append(
+    {"key": "tls.key", "path": "tls.key"}
+)
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        unsafe_publication_trust_projection, "pr-42", "standalone", "public"
+    ),
+    "Deployment/game-design-service has an unsafe grpc-trust projection",
+)
+
+wrong_publication_trust_path = copy.deepcopy(valid_consumers)
+publication_deployment = next(
+    document
+    for document in wrong_publication_trust_path
+    if document["metadata"]["name"] == "game-design-service"
+)
+publication_container = publication_deployment["spec"]["template"]["spec"]["containers"][0]
+next(
+    entry
+    for entry in publication_container["env"]
+    if entry["name"] == "FIREMUD_GRPC_CA_CERT_PATH"
+)["value"] = "/tls/ca.crt"
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        wrong_publication_trust_path, "pr-42", "standalone", "public"
+    ),
+    "Deployment/game-design-service must configure FIREMUD_GRPC_CA_CERT_PATH "
+    "as /grpc-trust/ca.crt",
+)
 
 
 for source_kind, volume_name, service in (

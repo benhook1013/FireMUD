@@ -939,6 +939,7 @@ class CertificateMaterialServiceTest {
                     plan, unexpectedBundlePlan, unexpectedBundle, validator));
 
     assertEquals("certificate SANs do not exactly match the derived names", failure.getMessage());
+    assertTrue(failure.isSanMismatch());
   }
 
   @Test
@@ -978,6 +979,7 @@ class CertificateMaterialServiceTest {
             () -> service.beginMaterialization(secretClient.client(), plan).grpc(1L));
 
     assertEquals("certificate SANs do not exactly match the derived names", failure.getMessage());
+    assertTrue(failure.isSanMismatch());
   }
 
   @Test
