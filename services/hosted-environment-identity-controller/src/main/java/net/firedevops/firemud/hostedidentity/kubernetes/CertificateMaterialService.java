@@ -319,7 +319,7 @@ public class CertificateMaterialService {
       return candidate;
     }
     return projectionMaterial(
-        projection, candidate.role(), expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
+        plan, projection, candidate.role(), expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
   }
 
   static boolean pendingProjectionOwnsRotation(
@@ -555,28 +555,15 @@ public class CertificateMaterialService {
       }
     }
     if (HostedIdentityContract.GRPC_ROLE.equals(role) && deferredBehindAnotherRotation) {
-      try {
-        return validateAcceptedMaterial(
-            validationSecret, current, expectedDnsNames, expectedType, expectedTrustAnchor);
-      } catch (SecretMaterialValidator.MaterialValidationException currentFailure) {
-        if (!currentFailure.isSanMismatch()) {
-          throw currentFailure;
-        }
-        try {
-          return validateAcceptedMaterial(
-              validationSecret,
-              current,
-              previousGrpcBundleDnsNames(plan, expectedDnsNames),
-              expectedType,
-              expectedTrustAnchor);
-        } catch (SecretMaterialValidator.MaterialValidationException previousFailure) {
-          if (!previousFailure.isSanMismatch()) {
-            throw previousFailure;
-          }
-          currentFailure.addSuppressed(previousFailure);
-          throw currentFailure;
-        }
-      }
+      return validateGrpcMaterialWithPreviousSans(
+          plan,
+          validationSecret,
+          expectedDnsNames,
+          current.expectedUriSans(),
+          expectedType,
+          current.requireServerAuth(),
+          current.requireClientAuth(),
+          expectedTrustAnchor);
     }
     return validateAcceptedMaterial(
         validationSecret, current, expectedDnsNames, expectedType, expectedTrustAnchor);
@@ -598,6 +585,47 @@ public class CertificateMaterialService {
         expectedTrustAnchor);
   }
 
+  private SecretMaterialValidator.MaterialSummary validateGrpcMaterialWithPreviousSans(
+      EnvironmentIdentityPlan plan,
+      Secret secret,
+      Collection<String> expectedDnsNames,
+      Collection<String> expectedUriSans,
+      String expectedType,
+      boolean requireServerAuth,
+      boolean requireClientAuth,
+      String expectedTrustAnchor) {
+    try {
+      return materialValidator.validateIdentity(
+          secret,
+          expectedDnsNames,
+          expectedUriSans,
+          expectedType,
+          requireServerAuth,
+          requireClientAuth,
+          expectedTrustAnchor);
+    } catch (SecretMaterialValidator.MaterialValidationException currentFailure) {
+      if (!currentFailure.isSanMismatch()) {
+        throw currentFailure;
+      }
+      try {
+        return materialValidator.validateIdentity(
+            secret,
+            previousGrpcBundleDnsNames(plan, expectedDnsNames),
+            expectedUriSans,
+            expectedType,
+            requireServerAuth,
+            requireClientAuth,
+            expectedTrustAnchor);
+      } catch (SecretMaterialValidator.MaterialValidationException previousFailure) {
+        if (!previousFailure.isSanMismatch()) {
+          throw previousFailure;
+        }
+        currentFailure.addSuppressed(previousFailure);
+        throw currentFailure;
+      }
+    }
+  }
+
   private static List<String> previousGrpcBundleDnsNames(
       EnvironmentIdentityPlan plan, Collection<String> currentDnsNames) {
     return java.util.stream.Stream.concat(
@@ -610,7 +638,11 @@ public class CertificateMaterialService {
   }
 
   private RoleMaterial projectionMaterial(
-      Secret projection, String role, RoleExpectation expectation, RoleMaterialState state) {
+      EnvironmentIdentityPlan plan,
+      Secret projection,
+      String role,
+      RoleExpectation expectation,
+      RoleMaterialState state) {
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
     long sourceGeneration =
         positiveAnnotation(annotations, HostedIdentityContract.SOURCE_GENERATION_ANNOTATION);
@@ -621,14 +653,24 @@ public class CertificateMaterialService {
       throw new IllegalStateException("accepted projection provenance is invalid");
     }
     var summary =
-        materialValidator.validateIdentity(
-            projection,
-            expectation.expectedDnsNames(),
-            expectation.expectedUriSans(),
-            expectation.expectedType(),
-            expectation.requireServerAuth(),
-            expectation.requireClientAuth(),
-            expectation.trustAnchor());
+        HostedIdentityContract.GRPC_ROLE.equals(role)
+            ? validateGrpcMaterialWithPreviousSans(
+                plan,
+                projection,
+                expectation.expectedDnsNames(),
+                expectation.expectedUriSans(),
+                expectation.expectedType(),
+                expectation.requireServerAuth(),
+                expectation.requireClientAuth(),
+                expectation.trustAnchor())
+            : materialValidator.validateIdentity(
+                projection,
+                expectation.expectedDnsNames(),
+                expectation.expectedUriSans(),
+                expectation.expectedType(),
+                expectation.requireServerAuth(),
+                expectation.requireClientAuth(),
+                expectation.trustAnchor());
     return new RoleMaterial(
         role, projection, summary, sourceGeneration, sourceObjectGeneration, provenance, state);
   }
@@ -1211,7 +1253,11 @@ public class CertificateMaterialService {
         return null;
       }
       return projectionMaterial(
-          observation.projection(), role, expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
+          plan,
+          observation.projection(),
+          role,
+          expectation,
+          RoleMaterialState.SERIALIZED_IN_FLIGHT);
     }
 
     private boolean initializing(String role) {

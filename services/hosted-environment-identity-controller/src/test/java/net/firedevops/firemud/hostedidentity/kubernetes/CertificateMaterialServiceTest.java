@@ -909,6 +909,43 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void unacceptedGrpcProjectionAllowsPreviousElevenConsumerSansDuringIngressRotation()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+
+    CertificateMaterialService.RoleMaterial inFlight =
+        materializeGrpcProjection(
+            plan, previousBundlePlan, previousBundle, validator, true, false);
+
+    assertEquals(SERIALIZED_IN_FLIGHT, inFlight.state());
+    assertEquals(previousBundle.getData(), inFlight.source().getData());
+  }
+
+  @Test
+  void unacceptedGrpcProjectionDoesNotRetryPreviousSansForOtherValidationFailures()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+
+    MaterialValidationException failure =
+        assertThrows(
+            MaterialValidationException.class,
+            () ->
+                materializeGrpcProjection(
+                    plan, previousBundlePlan, previousBundle, validator, true, true));
+
+    assertEquals("certificate and private key do not match", failure.getMessage());
+    assertFalse(failure.isSanMismatch());
+  }
+
+  @Test
   void deferredAcceptedGrpcProjectionAllowsCurrentSixConsumerSansDuringIngressRotation()
       throws Exception {
     EnvironmentIdentityPlan plan = plan();
@@ -2051,7 +2088,19 @@ class CertificateMaterialServiceTest {
       EnvironmentIdentityPlan plan,
       EnvironmentIdentityPlan bundlePlan,
       Secret bundle,
-      SecretMaterialValidator validator) {
+      SecretMaterialValidator validator)
+      throws Exception {
+    return materializeGrpcProjection(plan, bundlePlan, bundle, validator, false, false);
+  }
+
+  private static CertificateMaterialService.RoleMaterial materializeGrpcProjection(
+      EnvironmentIdentityPlan plan,
+      EnvironmentIdentityPlan bundlePlan,
+      Secret bundle,
+      SecretMaterialValidator validator,
+      boolean unaccepted,
+      boolean mismatchedKey)
+      throws Exception {
     SecretClient secretClient = secretClient(plan);
     Resource<Secret> absentProjection = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentProjection);
@@ -2067,17 +2116,41 @@ class CertificateMaterialServiceTest {
     when(ingressProjectionResource.get()).thenReturn(ingressProjection);
 
     Secret grpcProjection = acceptedGrpcProjection(plan, bundlePlan, bundle, validator);
+    if (mismatchedKey) {
+      grpcProjection
+          .getData()
+          .put("tls.key", GrpcMaterialFixture.generate(bundlePlan).getData().get("tls.key"));
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .put(
+              HostedIdentityContract.REVISION_ANNOTATION,
+              SecretProjectionService.revisionForRole(
+                  HostedIdentityContract.GRPC_ROLE, grpcProjection.getData()));
+    }
+    if (unaccepted) {
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    }
     Resource<Secret> grpcProjectionResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(plan.grpcSecretName()))
         .thenReturn(grpcProjectionResource);
     when(grpcProjectionResource.get()).thenReturn(grpcProjection);
 
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setGrpcTrustAnchorSha256(trustAnchorFingerprint(bundle));
     CertificateMaterialService service =
         new CertificateMaterialService(
             new CertificateResourceFactory(),
             validator,
             mock(GrpcTransportBundleGenerator.class),
-            new HostedIdentityProperties());
+            properties);
     return service.beginMaterialization(secretClient.client(), plan).grpc(1L);
   }
 
