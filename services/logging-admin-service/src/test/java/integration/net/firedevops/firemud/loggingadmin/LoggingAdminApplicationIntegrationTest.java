@@ -1,19 +1,45 @@
 package net.firedevops.firemud.loggingadmin;
 
+import static net.firedevops.firemud.loggingadmin.jooq.tables.AccountAuditReceipts.ACCOUNT_AUDIT_RECEIPTS;
+import static net.firedevops.firemud.loggingadmin.jooq.tables.LogEvents.LOG_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.client.AccountClient;
 import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptDto;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptOutcome;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptStatus;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditScope;
+import net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest;
+import net.firedevops.firemud.loggingadmin.dto.QueryLogsRequest;
+import net.firedevops.firemud.loggingadmin.jooq.tables.records.AccountAuditReceiptsRecord;
+import net.firedevops.firemud.loggingadmin.jooq.tables.records.LogEventsRecord;
+import net.firedevops.firemud.loggingadmin.service.AuditStorageUnavailableException;
+import net.firedevops.firemud.loggingadmin.service.LogEventService;
+import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -70,6 +96,176 @@ class LoggingAdminApplicationIntegrationTest {
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private GameSessionControlPlaneClient gameSessionControlPlaneClient;
+
+  @Autowired private DSLContext dsl;
+  @Autowired private LogEventService logEventService;
+  @Autowired private LogQueryService logQueryService;
+
+  @Test
+  void accountAuditReceiptAndProjectionShareStableIdentityAcrossRetryAndConflict() {
+    String eventId = "82a6f475-0baa-4fd0-a86b-580f286a9940";
+    String payload = "{\"accountId\":91,\"auditMarker\":\"tenant-retry-proof\"}";
+    CreateLogEventRequest request = tenantAuditRequest(eventId, payload);
+
+    var accepted = logEventService.createLogEvent(request);
+    var duplicate = logEventService.createLogEvent(request);
+    var conflict =
+        logEventService.createLogEvent(tenantAuditRequest(eventId, "{\"changed\":true}"));
+
+    assertThat(accepted.status()).isEqualTo(AccountAuditReceiptStatus.COMMITTED);
+    assertThat(accepted.outcome()).isEqualTo(AccountAuditReceiptOutcome.ACCEPTED);
+    assertThat(duplicate.outcome()).isEqualTo(AccountAuditReceiptOutcome.DUPLICATE);
+    assertThat(duplicate.receiptId()).isEqualTo(accepted.receiptId());
+    assertThat(duplicate.logEventId()).isEqualTo(accepted.logEventId());
+    assertThat(conflict.status()).isEqualTo(AccountAuditReceiptStatus.CONFLICT);
+    assertThat(conflict.outcome()).isEqualTo(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT);
+    assertThat(conflict.logEventId()).isEqualTo(accepted.logEventId());
+
+    LogEventsRecord projection =
+        dsl.selectFrom(LOG_EVENTS).where(LOG_EVENTS.ID.eq(accepted.logEventId())).fetchOne();
+    AccountAuditReceiptsRecord receipt =
+        dsl.selectFrom(ACCOUNT_AUDIT_RECEIPTS)
+            .where(ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId))
+            .fetchOne();
+    assertThat(projection).isNotNull();
+    assertThat(projection.getScope()).isEqualTo("tenant");
+    assertThat(projection.getTenantId()).isEqualTo(42L);
+    assertThat(projection.getAuditEventId()).isEqualTo(eventId);
+    assertThat(projection.getType()).isEqualTo("ACCOUNT_AUDIT");
+    assertThat(projection.getMessage()).isEqualTo("Account audit event " + eventId);
+    assertThat(projection.getMessage()).doesNotContain("accountId", "tenant-retry-proof");
+    assertThat(receipt).isNotNull();
+    assertThat(receipt.getLogEventId()).isEqualTo(projection.getId());
+    assertThat(receipt.getPayload()).isEqualTo(payload.getBytes(StandardCharsets.UTF_8));
+    assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isOne();
+    assertThat(
+            dsl.fetchCount(
+                ACCOUNT_AUDIT_RECEIPTS, ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId)))
+        .isOne();
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId)))
+        .containsExactly("Account audit event " + eventId);
+  }
+
+  @Test
+  void platformAuditProjectionHasNoTenantAndIsExcludedFromTenantQuery() {
+    String eventId = "41613d4b-3e66-4c9a-9f1c-7e02f54d0c34";
+    String marker = "platform-only-marker";
+    String payload = "{\"accountId\":92,\"auditMarker\":\"" + marker + "\"}";
+    CreateLogEventRequest request = platformAuditRequest(eventId, payload);
+
+    var accepted = logEventService.createLogEvent(request);
+
+    LogEventsRecord projection =
+        dsl.selectFrom(LOG_EVENTS).where(LOG_EVENTS.ID.eq(accepted.logEventId())).fetchOne();
+    assertThat(projection).isNotNull();
+    assertThat(projection.getScope()).isEqualTo("platform");
+    assertThat(projection.getTenantId()).isNull();
+    assertThat(projection.getAuditEventId()).isEqualTo(eventId);
+    assertThat(projection.getMessage()).isEqualTo("Account audit event " + eventId);
+    assertThat(projection.getMessage()).doesNotContain(marker);
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId))).isEmpty();
+  }
+
+  @Test
+  void receiptFailureRollsBackTheAlreadyInsertedAuditProjection() {
+    String eventId = "f15e1f7a-f2ee-4f90-b83d-77695bcac86c";
+    dsl.execute(
+        "CREATE OR REPLACE FUNCTION fail_test_account_audit_receipt() RETURNS trigger "
+            + "LANGUAGE plpgsql AS $$ BEGIN IF NEW.audit_event_id = '"
+            + eventId
+            + "' THEN RAISE EXCEPTION 'injected receipt insert failure'; END IF; RETURN NEW; END $$");
+    dsl.execute(
+        "CREATE TRIGGER fail_test_account_audit_receipt BEFORE INSERT ON account_audit_receipts "
+            + "FOR EACH ROW EXECUTE FUNCTION fail_test_account_audit_receipt()");
+    try {
+      assertThatThrownBy(
+              () ->
+                  logEventService.createLogEvent(tenantAuditRequest(eventId, "{\"accountId\":93}")))
+          .isInstanceOf(AuditStorageUnavailableException.class);
+      assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isZero();
+      assertThat(
+              dsl.fetchCount(
+                  ACCOUNT_AUDIT_RECEIPTS, ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId)))
+          .isZero();
+    } finally {
+      dsl.execute(
+          "DROP TRIGGER IF EXISTS fail_test_account_audit_receipt ON account_audit_receipts");
+      dsl.execute("DROP FUNCTION IF EXISTS fail_test_account_audit_receipt()");
+    }
+  }
+
+  @Test
+  void concurrentExactRetriesCreateOneProjectionAndReturnTheSameIdentifiers() throws Exception {
+    String eventId = "4b7d9ee5-62f5-44dd-8b35-dcf6490d7404";
+    CreateLogEventRequest request = tenantAuditRequest(eventId, "{\"accountId\":94}");
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<AccountAuditReceiptDto> first = executor.submit(() -> createAfter(start, request));
+      Future<AccountAuditReceiptDto> second = executor.submit(() -> createAfter(start, request));
+      start.countDown();
+      var firstResult = first.get(20, TimeUnit.SECONDS);
+      var secondResult = second.get(20, TimeUnit.SECONDS);
+
+      assertThat(firstResult.logEventId()).isEqualTo(secondResult.logEventId());
+      assertThat(firstResult.receiptId()).isEqualTo(secondResult.receiptId());
+      assertThat(java.util.List.of(firstResult.outcome(), secondResult.outcome()))
+          .containsExactlyInAnyOrder(
+              AccountAuditReceiptOutcome.ACCEPTED, AccountAuditReceiptOutcome.DUPLICATE);
+      assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isOne();
+      assertThat(
+              dsl.fetchCount(
+                  ACCOUNT_AUDIT_RECEIPTS, ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId)))
+          .isOne();
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private AccountAuditReceiptDto createAfter(CountDownLatch start, CreateLogEventRequest request) {
+    try {
+      if (!start.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Concurrent audit test did not start");
+      }
+      return logEventService.createLogEvent(request);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Concurrent audit test was interrupted", ex);
+    }
+  }
+
+  private static CreateLogEventRequest tenantAuditRequest(String eventId, String payload) {
+    return auditRequest(AccountAuditScope.TENANT, 42L, eventId, payload);
+  }
+
+  private static CreateLogEventRequest platformAuditRequest(String eventId, String payload) {
+    return auditRequest(AccountAuditScope.PLATFORM, null, eventId, payload);
+  }
+
+  private static CreateLogEventRequest auditRequest(
+      AccountAuditScope scope, Long tenantId, String eventId, String payload) {
+    ByteString payloadBytes = ByteString.copyFrom(payload, StandardCharsets.UTF_8);
+    return new CreateLogEventRequest(
+        scope,
+        tenantId,
+        eventId,
+        "account-service",
+        "ACCOUNT_AUDIT_INTEGRATION_TEST",
+        Instant.parse("2026-09-24T00:00:00Z"),
+        1,
+        payloadBytes,
+        1,
+        digest(payloadBytes.toByteArray()));
+  }
+
+  private static String digest(byte[] payload) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is unavailable", ex);
+    }
+  }
 
   @Test
   void pingEndpointReturnsPong() throws Exception {

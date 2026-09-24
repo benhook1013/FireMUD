@@ -177,7 +177,7 @@ spec:
             {{- if $service.springProfile }}
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
-            {{- if has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray) }}
+            {{- if or (has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray)) (eq $service.name "logging-admin-service") }}
             - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
               valueFrom:
                 fieldRef:

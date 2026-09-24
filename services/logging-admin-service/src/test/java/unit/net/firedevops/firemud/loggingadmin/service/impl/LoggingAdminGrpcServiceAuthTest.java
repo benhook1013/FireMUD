@@ -153,12 +153,7 @@ class LoggingAdminGrpcServiceAuthTest {
                 digest,
                 AccountAuditReceiptStatus.COMMITTED,
                 AccountAuditReceiptOutcome.ACCEPTED));
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            moderationService,
-            new SimpleMeterRegistry());
+    LoggingAdminGrpcService service = newService(logEventService);
 
     AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -208,6 +203,21 @@ class LoggingAdminGrpcServiceAuthTest {
 
     invokeWithPeer(
         "game-session-service",
+        () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
+
+    assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService);
+  }
+
+  @Test
+  void accountAuditMethodsRejectAccountPeerFromWrongNamespace() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeerUri(
+        "spiffe://firemud/ns/other/sa/account-service",
         () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
 
     assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
@@ -787,7 +797,8 @@ class LoggingAdminGrpcServiceAuthTest {
         Mockito.mock(LogQueryService.class),
         logEventService,
         Mockito.mock(ModerationService.class),
-        new SimpleMeterRegistry());
+        new SimpleMeterRegistry(),
+        "firemud");
   }
 
   private static boolean passesWithoutBearer(
@@ -835,10 +846,13 @@ class LoggingAdminGrpcServiceAuthTest {
 
   private static void invokeWithPeer(String serviceName, Runnable invocation) {
     String uri = "spiffe://firemud/ns/firemud/sa/" + serviceName;
+    invokeWithPeerUri(uri, invocation);
+  }
+
+  private static void invokeWithPeerUri(String uri, Runnable invocation) {
     Context context =
         Context.current()
-            .withValue(
-                GrpcPeerIdentity.CONTEXT_KEY, new GrpcPeerIdentity(uri, "firemud", serviceName));
+            .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(uri).orElseThrow());
     Context previous = context.attach();
     try {
       invocation.run();

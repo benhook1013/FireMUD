@@ -5,6 +5,7 @@ import java.util.UUID;
 /** A durable receiver-side audit envelope and its readback receipt. */
 public record AccountAuditReceipt(
     long id,
+    long logEventId,
     UUID receiptId,
     String scope,
     Long tenantId,
