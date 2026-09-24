@@ -245,7 +245,7 @@ PY
       return "$status"
     fi
   else
-    echo "Skipping static preflight policy enforcement because no production attestation context is present."
+    echo "Skipping ci-static preflight because no PR k8s/* changes were detected; any PR k8s/* change runs static preflight, while production-overlay changes also require production attestation."
     echo "Overlay render and image validation still run below."
   fi
   echo "::endgroup::"
