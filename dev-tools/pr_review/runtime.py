@@ -400,8 +400,14 @@ class LiveEvidence:
         hosted_checkpoint_ids = {item.hosted_review_id for item in hosted_checkpoints}
         if any(item.comment_id is None or item.hosted_review_id is None for item in hosted_checkpoints):
             raise ControllerError("a Hosted checkpoint has incomplete immutable identity")
+        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
+        for item in hosted_checkpoints:
+            if item.hosted_review_id is not None:
+                checkpoints_by_response.setdefault(item.hosted_review_id, []).append(item)
         checkpoint_by_response = {
-            item.hosted_review_id: item for item in hosted_checkpoints if item.hosted_review_id is not None
+            response_id: matching[0]
+            for response_id, matching in checkpoints_by_response.items()
+            if len(matching) == 1
         }
 
         records_by_trigger: dict[int, tuple[dict[str, Any], hosted.TriggerState]] = {}
@@ -529,6 +535,17 @@ class LiveEvidence:
                 cooldown = hosted._rate_limit(response_item.get("body", ""), response_at) if response_at else None
                 if cooldown is None or cooldown > datetime.now(timezone.utc):
                     active_reservations.append("an unrecorded public response has an unresolved rate limit")
+            elif response_state == "completed":
+                response_id = github.immutable_database_id(response_item)
+                matching_checkpoints = checkpoints_by_response.get(response_id, []) if response_id is not None else []
+                if not matching_checkpoints:
+                    unmatched_responses.append(
+                        "an unrecorded completed Hosted response has no matching public checkpoint"
+                    )
+                elif len(matching_checkpoints) != 1:
+                    ambiguous_responses.append(
+                        "an unrecorded completed Hosted response has ambiguous public checkpoints"
+                    )
 
         hosted_history = self.history(pr, "hosted")
         represented_checkpoints = {

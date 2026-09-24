@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1095,6 +1096,86 @@ class RuntimeTest(unittest.TestCase):
 
         rejected = run_audit(("d" * 64,))
         self.assertIn("completed Hosted response has no checkpoint or prior audit", rejected["unmatched_responses"])
+
+    def test_unrecorded_completed_hosted_response_requires_one_checkpoint_by_review_identity(self) -> None:
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:00:00Z",
+            "updatedAt": "2026-09-24T00:00:00Z",
+            "url": "https://example.test/comments/10",
+        }
+        review = {
+            "databaseId": 71,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-24T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        checkpoint = {
+            "databaseId": 72,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 1 found / 1 accepted · `{HEAD}` · 1 files\n"
+                "<!-- firemud-hosted-review: 71 -->"
+            ),
+            "createdAt": "2026-09-24T00:02:00Z",
+            "updatedAt": "2026-09-24T00:02:00Z",
+        }
+        payload = self._payload([trigger], [review])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+
+        def run_audit(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
+            selected_payload = self._payload([trigger, *checkpoints], [review])
+            selected_pull = selected_payload["data"]["repository"]["pullRequest"]
+            selected_pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            with (
+                patch.object(github, "fetch_pull_request", return_value=selected_payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                )
+
+        missing = run_audit([])
+        self.assertIn(
+            "an unrecorded completed Hosted response has no matching public checkpoint",
+            missing["unmatched_responses"],
+        )
+
+        matched = run_audit([checkpoint])
+        self.assertNotIn(
+            "an unrecorded completed Hosted response has no matching public checkpoint",
+            matched["unmatched_responses"],
+        )
+        self.assertNotIn(
+            "an unrecorded completed Hosted response has ambiguous public checkpoints",
+            matched["ambiguous_responses"],
+        )
+
+        wrong_identity = {**checkpoint, "body": checkpoint["body"].replace("review: 71", "review: 99")}
+        unmatched = run_audit([wrong_identity])
+        self.assertIn(
+            "an unrecorded completed Hosted response has no matching public checkpoint",
+            unmatched["unmatched_responses"],
+        )
+
+        duplicate = {**checkpoint, "databaseId": 73}
+        ambiguous = run_audit([checkpoint, duplicate])
+        self.assertIn(
+            "an unrecorded completed Hosted response has ambiguous public checkpoints",
+            ambiguous["ambiguous_responses"],
+        )
 
     def test_historical_hosted_checkpoint_uses_captured_head_after_live_head_moves(self) -> None:
         current_head = "d" * 40
