@@ -665,6 +665,16 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   elif [[ "${GH_SCENARIO:-}" == "wrong-run-name" ]]; then
     workflow_name='Security Checks'
   fi
+  if [[ "${GH_SCENARIO:-}" == "valid-new-tuple" ]]; then
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+  elif [[ "${GH_SCENARIO:-}" == "stale-then-current-tuple" ]]; then
+    if [[ "${run_id}" == "200" ]]; then
+      display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
+      pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+    else
+      pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+    fi
+  fi
   if [[ "${GH_SCENARIO:-}" == "fork-empty-association" ||
     "${GH_SCENARIO:-}" == "dynamic-run-name-fork-empty" ]]; then
     pull_requests='[]'
@@ -677,11 +687,13 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
   elif [[ "${GH_SCENARIO:-}" == "populated-wrong-base" ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
   elif [[ "${GH_SCENARIO:-}" == "empty-wrong-head" ]]; then
     pull_requests='[]'
     display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-dddddddddddddddddddddddddddddddddddddddd"
   elif [[ "${GH_SCENARIO:-}" == "populated-wrong-head" ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-dddddddddddddddddddddddddddddddddddddddd"
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\"}}]"
   elif [[ "${GH_SCENARIO:-}" == "empty-wrong-title" ]]; then
     pull_requests='[]'
     display_title='not the canonical run title'
@@ -803,7 +815,10 @@ JSON
   same-timestamp-newer-failure)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|populated-wrong-base|empty-wrong-head|populated-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
+  stale-then-current-tuple)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/201/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|populated-wrong-base|empty-wrong-head|populated-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association|valid-new-tuple)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   duplicate-invalid-run-identity)
@@ -1504,7 +1519,39 @@ for details_url_scenario in details-url-query details-url-fragment; do
   }
 done
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base populated-wrong-base empty-wrong-head populated-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
+valid_new_tuple_count="$tmp_dir/count-valid-new-tuple"
+run_action "$valid_new_tuple_count" none valid-new-tuple
+[[ "$(<"$valid_new_tuple_count")" == "1" ]] || {
+  echo "required-gate action rejected a valid populated current workflow tuple" >&2
+  exit 1
+}
+
+stale_then_current_tuple_count="$tmp_dir/count-stale-then-current-tuple"
+run_action "$stale_then_current_tuple_count" none stale-then-current-tuple
+[[ "$(<"$stale_then_current_tuple_count")" == "1" ]] || {
+  echo "required-gate action did not skip a stale populated tuple before accepting the valid current tuple" >&2
+  exit 1
+}
+
+for stale_scenario in populated-wrong-base populated-wrong-head; do
+  stale_output="$tmp_dir/${stale_scenario}-output"
+  stale_count="$tmp_dir/count-${stale_scenario}"
+  set +e
+  run_action "$stale_count" none "$stale_scenario" >"$stale_output" 2>&1
+  stale_status=$?
+  set -e
+  [[ "$stale_status" -ne 0 && "$(<"$stale_count")" == "$max_attempts" ]] || {
+    echo "required-gate action did not skip stale populated ${stale_scenario} tuple (status=$stale_status attempts=$(<"$stale_count"))" >&2
+    cat "$stale_output" >&2
+    exit 1
+  }
+  if grep -Fq 'Ambiguous prior' "$stale_output"; then
+    echo "required-gate action treated stale populated ${stale_scenario} tuple as ambiguous" >&2
+    exit 1
+  fi
+done
+
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1

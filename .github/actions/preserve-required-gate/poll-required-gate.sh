@@ -132,9 +132,10 @@ find_active_substantive_workflow() {
     fi
     set +e
     active_workflow_runs_json="$(jq -n \
-      --argjson existing "${active_workflow_runs_json}" \
-      --argjson next "${active_workflow_status_json}" \
-      '$existing + $next' 2>>"${api_error_file}")"
+      --slurpfile existing /dev/fd/3 \
+      --slurpfile next /dev/fd/4 \
+      '$existing[0] + $next[0]' 3<<<"${active_workflow_runs_json}" \
+      4<<<"${active_workflow_status_json}" 2>>"${api_error_file}")"
     active_workflow_runs_combine_status=$?
     set -e
     if [[ "${active_workflow_runs_combine_status}" -ne 0 ]]; then
@@ -433,45 +434,66 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
       workflow_run_cache["${workflow_run_id}"]="${workflow_run_json}"
     fi
     set +e
-    workflow_run_identity_ok="$(jq -r \
+    workflow_run_identity_state="$(jq -r \
       --arg expected_id "${workflow_run_id}" \
       --arg expected_workflow_id "${expected_workflow_id}" \
       --arg expected_name "${EXPECTED_WORKFLOW_NAME}" \
       --arg expected_path "${EXPECTED_WORKFLOW_PATH}" \
       --arg expected_head "${HEAD_SHA}" \
+      --arg expected_base "${BASE_SHA}" \
       --arg expected_repository "${GITHUB_REPOSITORY}" \
       --arg expected_pr "${PR_NUMBER}" \
       --arg expected_display_title "${expected_display_title}" \
-      'if (.id | type) == "number" and
-            (.workflow_id | type) == "number" and
-            (.id == ($expected_id | tonumber)) and
-            (.workflow_id == ($expected_workflow_id | tonumber)) and
-          (.name == $expected_name or .name == $expected_display_title) and
+      '. as $run
+      | ((try (.display_title | capture("^(?<name>.*) pr-(?<pr>[1-9][0-9]*) base-(?<base>[0-9A-Fa-f]{40}) head-(?<head>[0-9A-Fa-f]{40})$")) catch null) // {}) as $title
+      | if ($run.id | type) == "number" and
+            ($run.workflow_id | type) == "number" and
+            ($run.id == ($expected_id | tonumber)) and
+            ($run.workflow_id == ($expected_workflow_id | tonumber)) and
+          ($run.name == $expected_name or $run.name == $expected_display_title) and
           (
-            .path == $expected_path or
+            $run.path == $expected_path or
             (
-              (.path | startswith($expected_path + "@")) and
-              ((.path | ltrimstr($expected_path + "@")) | test("^.+$"))
+              ($run.path | startswith($expected_path + "@")) and
+              (($run.path | ltrimstr($expected_path + "@")) | test("^.+$"))
             )
           ) and
-          .head_sha == $expected_head and
-          .repository.full_name == $expected_repository and
-          .event == "pull_request" and
-          (.display_title // null) == $expected_display_title and
-          ((.pull_requests // null) | type) == "array" and
+          $run.head_sha == $expected_head and
+          $run.repository.full_name == $expected_repository and
+          $run.event == "pull_request" and
+          (($run.pull_requests // null) | type) == "array" and
           (
-            ((.pull_requests | length) > 0 and
-              any(.pull_requests[]; ((.number // null) | tostring) == $expected_pr)) or
-            ((.pull_requests | length) == 0 and
-              (.display_title // null) == $expected_display_title)
+            (($run.pull_requests | length) > 0 and
+              any($run.pull_requests[]; ((.number // null) | tostring) == $expected_pr)) or
+            (($run.pull_requests | length) == 0 and
+              ($run.display_title // null) == $expected_display_title)
           )
-        then "true" else "false" end' \
+        then
+          if ($run.display_title // null) == $expected_display_title then
+            "current"
+          elif (($run.pull_requests | length) > 0) and
+            $title.name == $expected_name and $title.pr == $expected_pr and
+            any($run.pull_requests[];
+              ((.number // null) | tostring) == $expected_pr and
+              (.base.sha // "") == $title.base and
+              (.head.sha // "") == $title.head and
+              ((.base.sha // "") != $expected_base or (.head.sha // "") != $expected_head))
+          then
+            "stale"
+          else
+            "invalid"
+          end
+        else "invalid" end' \
       <<<"${workflow_run_json}" 2>>"${api_error_file}")"
     workflow_run_query_status=$?
     set -e
     if [[ "${workflow_run_query_status}" -ne 0 ||
-      "${workflow_run_identity_ok}" != "true" ]]; then
+      ( "${workflow_run_identity_state}" != "current" &&
+        "${workflow_run_identity_state}" != "stale" ) ]]; then
       candidate_ambiguous=true
+      continue
+    fi
+    if [[ "${workflow_run_identity_state}" == "stale" ]]; then
       continue
     fi
     job_json="${job_cache[${job_id}]:-}"
