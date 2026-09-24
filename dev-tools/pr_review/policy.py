@@ -52,6 +52,7 @@ class Evidence:
     unreconciled: bool = False
     over_ceiling: bool = False
     parent_moved: bool = False
+    non_counting: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -127,6 +128,7 @@ def _review_entries(history: Iterable[Evidence | Mapping[str, Any]]) -> list[Evi
         item
         for value in history
         if not (item := Evidence.from_value(value)).correction
+        and not item.non_counting
         and item.completed is True
         and item.attributable is True
         and item.provisional is False
@@ -143,6 +145,7 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
             index
             for index, item in enumerate(history)
             if not item.correction
+            and not item.non_counting
             and item.completed is True
             and item.attributable is True
             and item.provisional is False
@@ -150,7 +153,11 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
         default=-1,
     )
     last_provisional = max(
-        (index for index, item in enumerate(history) if not item.correction and item.provisional),
+        (
+            index
+            for index, item in enumerate(history)
+            if not item.correction and not item.non_counting and item.provisional
+        ),
         default=-1,
     )
     return (
@@ -174,6 +181,7 @@ def taper_satisfied(
     if allow_uncorrected_state and not retained_patch_id:
         return False
     materialized = [Evidence.from_value(value) for value in history]
+    materialized = [item for item in materialized if not item.non_counting]
     values = _review_entries(materialized)
     if _same_head_provisional_barrier(materialized, values):
         return False
@@ -225,8 +233,10 @@ def completion_status(
     all_items = [Evidence.from_value(value) for value in evidence]
     if len({item.pr for item in all_items}) > 1:
         return ReviewStatus.MISSING_EVIDENCE
-    history = [item for item in all_items if not item.correction]
+    history = [item for item in all_items if not item.correction and not item.non_counting]
     if not history:
+        if all_items and any(item.non_counting for item in all_items):
+            return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:
         blocked = _blocked(item, None)
@@ -306,7 +316,7 @@ def select_review_target(
                 ReviewStatus.MISSING_EVIDENCE,
                 f"{pr} has evidence bound to another PR",
             )
-        evidence = [item for item in all_items if not item.correction]
+        evidence = [item for item in all_items if not item.correction and not item.non_counting]
         reviews = _review_entries(evidence)
         latest = reviews[-1] if reviews else Evidence(pr, "", "")
         blocked = None

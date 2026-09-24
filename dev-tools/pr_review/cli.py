@@ -128,6 +128,20 @@ def _parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--prior-head", required=True)
     reconcile.add_argument("--reason", required=True)
     reconcile.add_argument("--json", action="store_true", dest="as_json")
+    transition = decide_commands.add_parser(
+        "transition",
+        aliases=("legacy-transition",),
+        help="make observed legacy evidence non-counting at one exact coherent current anchor",
+    )
+    transition.add_argument("--pr", required=True, type=_positive_int)
+    transition.add_argument("--head", required=True, type=_exact_sha)
+    transition.add_argument("--reason", required=True)
+    transition.add_argument(
+        "--reauthorize",
+        action="store_true",
+        help="carry the exact prior legacy fingerprints to a new coherent anchor",
+    )
+    transition.add_argument("--json", action="store_true", dest="as_json")
     retirement = decide_commands.add_parser("trigger-retire")
     retirement.add_argument("--pr", required=True, type=_positive_int)
     retirement.add_argument("--trigger-id", required=True, type=_positive_int)
@@ -388,6 +402,13 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 prior_head=args.prior_head,
                 reason=args.reason,
+            ), 0
+        if args.decide_command in {"transition", "legacy-transition"}:
+            return controller.decide_legacy_transition(
+                pr=args.pr,
+                head=args.head,
+                reason=args.reason,
+                reauthorize=args.reauthorize,
             ), 0
         return controller.decide_policy(
             pr=args.pr,

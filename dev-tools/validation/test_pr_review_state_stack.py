@@ -14,6 +14,7 @@ from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status,
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
 from pr_review.state import (
     Judgment,
+    LegacyEvidenceTransition,
     PolicyOverride,
     ReviewState,
     StackReconciliationDecision,
@@ -21,6 +22,7 @@ from pr_review.state import (
     StateStore,
     SummaryFindingDisposition,
     adjudicate_summary_findings,
+    observation_fingerprint,
 )
 
 
@@ -89,6 +91,28 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertNotIn("live_head", json.dumps(document))
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
+
+    def test_legacy_transition_round_trips_exact_anchor_and_fingerprints(self):
+        transition = LegacyEvidenceTransition(
+            2818,
+            "a" * 40,
+            "develop",
+            "b" * 40,
+            "c" * 40,
+            "patch-id",
+            (observation_fingerprint({"checkpoint": "hosted"}),),
+            (observation_fingerprint({"checkpoint": "cli"}),),
+            "legacy evidence lacks modern anchors",
+        )
+        state = ReviewState(ordered_prs=(2818,), legacy_transitions=(transition,))
+        self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
+        self.assertTrue(transition.matches(2818, {
+            "child_head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "patch-id",
+        }))
 
     def test_malformed_nested_state_records_raise_state_error(self):
         malformed_states = (
@@ -543,6 +567,24 @@ class ReviewStateStackTest(unittest.TestCase):
         state = ReviewState(ordered_prs=(1,))
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
+
+    def test_non_counting_legacy_history_starts_fresh_without_satisfying_taper(self):
+        history = tuple(
+            Evidence(
+                1,
+                "h",
+                f"legacy-{index}",
+                anchored=False,
+                completed=True,
+                attributable=True,
+                non_counting=True,
+            )
+            for index in range(3)
+        )
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
+        self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+        self.assertEqual(select_review_target(state, Channel.CLI, (1,), {1: history}).status, ReviewStatus.READY)
 
     def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
         reviews = tuple(

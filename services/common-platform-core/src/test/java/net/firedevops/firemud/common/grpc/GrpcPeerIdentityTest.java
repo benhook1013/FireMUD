@@ -32,9 +32,7 @@ class GrpcPeerIdentityTest {
 
   @Test
   void normalizesCanonicalEquivalentUriSanBeforeValidatingWorkloadIdentity() {
-    assertThat(
-            GrpcPeerIdentity.parseUri(
-                "spiffe://FIREMUD/ns/%66iremud/sa/game-%64esign-service"))
+    assertThat(GrpcPeerIdentity.parseUri("spiffe://FIREMUD/ns/%66iremud/sa/game-%64esign-service"))
         .get()
         .extracting(GrpcPeerIdentity::uri, GrpcPeerIdentity::namespace, GrpcPeerIdentity::service)
         .containsExactly(GAME_DESIGN_URI, "firemud", "game-design-service");
@@ -44,8 +42,7 @@ class GrpcPeerIdentityTest {
   void rejectsReservedEscapesAndDotSegmentsBeforeWorkloadValidation() {
     assertThat(GrpcPeerIdentity.parseUri("spiffe://firemud/ns/fire%2Fmud/sa/game-design-service"))
         .isEmpty();
-    assertThat(GrpcPeerIdentity.parseUri("spiffe://firemud/ns/./sa/game-design-service"))
-        .isEmpty();
+    assertThat(GrpcPeerIdentity.parseUri("spiffe://firemud/ns/./sa/game-design-service")).isEmpty();
     assertThat(GrpcPeerIdentity.parseUri("spiffe://firemud/ns/%2e%2e/sa/game-design-service"))
         .isEmpty();
   }

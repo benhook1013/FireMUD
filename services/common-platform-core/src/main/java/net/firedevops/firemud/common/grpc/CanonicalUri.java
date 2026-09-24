@@ -26,9 +26,7 @@ public record CanonicalUri(String value, String scheme, String authority, String
 
   /** Parses and normalizes one absolute URI using the version-one identity contract. */
   public static Optional<CanonicalUri> parse(String raw) {
-    if (raw == null
-        || raw.isEmpty()
-        || !StandardCharsets.US_ASCII.newEncoder().canEncode(raw)) {
+    if (raw == null || raw.isEmpty() || !StandardCharsets.US_ASCII.newEncoder().canEncode(raw)) {
       return Optional.empty();
     }
 

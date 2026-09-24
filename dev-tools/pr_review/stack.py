@@ -75,6 +75,8 @@ class Reconciliation:
     patch_ids: Mapping[int, str] = dataclasses.field(default_factory=dict)
     statuses: Mapping[int, ReconciliationStatus] = dataclasses.field(default_factory=dict)
     channel_statuses: Mapping[tuple[int, str], ReconciliationStatus] = dataclasses.field(default_factory=dict)
+    legacy_transition_prs: tuple[int, ...] = ()
+    legacy_transition_fingerprints: Mapping[int, Mapping[str, tuple[str, ...]]] = dataclasses.field(default_factory=dict)
 
     def status_for(self, pr: int, channel: str | None = None) -> ReconciliationStatus:
         status = self.statuses.get(pr)

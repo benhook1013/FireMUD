@@ -15,6 +15,7 @@ checkpoint observations remain provider data and are never copied into state.
 from __future__ import annotations
 
 import dataclasses
+import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -28,7 +29,15 @@ from .cli_runner import (
 )
 from .hosted import prepare_full_trigger
 from .patch_identity import patch_identity
-from .state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
+from .state import (
+    Judgment,
+    LegacyEvidenceTransition,
+    PolicyOverride,
+    ReviewState,
+    StackReconciliationDecision,
+    StateStore,
+    observation_fingerprint,
+)
 
 
 class ControllerError(RuntimeError):
@@ -40,6 +49,7 @@ class WrongStackTarget(ControllerError):
 
 
 GIT_TIMEOUT_SECONDS = 30
+LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
 
 
 class GitProvider(Protocol):
@@ -415,6 +425,88 @@ class ReviewController:
     def _state(self) -> ReviewState:
         return self.store.load()
 
+    @staticmethod
+    def _legacy_transition_for(
+        state: ReviewState, pr: int, anchor: AnchorFacts
+    ) -> LegacyEvidenceTransition | None:
+        """Return the newest exact-anchor legacy transition, if any."""
+
+        for transition in reversed(state.legacy_transitions):
+            if transition.matches(pr, anchor.as_dict()):
+                return transition
+        return None
+
+    @staticmethod
+    def _mark_non_counting(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            marked = dict(value)
+            marked["non_counting"] = True
+            return marked
+        if isinstance(value, policy.Evidence):
+            return dataclasses.replace(value, non_counting=True)
+        if dataclasses.is_dataclass(value) and hasattr(value, "non_counting"):
+            return dataclasses.replace(value, non_counting=True)
+        raise ControllerError("legacy transition encountered an unsupported evidence record")
+
+    @staticmethod
+    def _clear_untrusted_non_counting(value: Any) -> Any:
+        """Do not trust a caller-supplied policy projection marker."""
+
+        if isinstance(value, Mapping):
+            cleared = dict(value)
+            cleared.pop("non_counting", None)
+            return cleared
+        if isinstance(value, policy.Evidence):
+            return dataclasses.replace(value, non_counting=False)
+        if dataclasses.is_dataclass(value) and hasattr(value, "non_counting"):
+            return dataclasses.replace(value, non_counting=False)
+        return value
+
+    def _counting_history_for_anchor(
+        self, state: ReviewState, pr: int, channel: policy.Channel, anchor: AnchorFacts
+    ) -> list[Any]:
+        """Return only observations not captured by the exact legacy transition."""
+
+        history = _history(self._evidence_provider, pr, channel)
+        transition = self._legacy_transition_for(state, pr, anchor)
+        if transition is None:
+            return [self._clear_untrusted_non_counting(value) for value in history]
+        selected = set(transition.fingerprints_for(channel.value))
+        projected: list[Any] = []
+        for value in history:
+            if observation_fingerprint(value) not in selected:
+                projected.append(self._clear_untrusted_non_counting(value))
+        return projected
+
+    def _policy_history(
+        self,
+        state: ReviewState,
+        pr: int,
+        channel: policy.Channel,
+        reconciliation: stack.Reconciliation,
+    ) -> list[Any]:
+        """Project exact legacy observations as non-counting policy history.
+
+        The raw evidence remains available through ``evidence``.  A transition
+        only marks records whose immutable fingerprint was captured by that
+        exact current anchor; a later, altered, or otherwise new observation is
+        deliberately left visible to policy and can still block review.
+        """
+
+        history = _history(self._evidence_provider, pr, channel)
+        if pr not in reconciliation.legacy_transition_prs:
+            return history
+        selected = set(
+            reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
+        )
+        projected: list[Any] = []
+        for value in history:
+            if observation_fingerprint(value) in selected:
+                projected.append(self._mark_non_counting(value))
+            else:
+                projected.append(self._clear_untrusted_non_counting(value))
+        return projected
+
     def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
         numbers = tuple(pr_numbers)
         if not numbers or any(isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0 for pr in numbers):
@@ -504,6 +596,8 @@ class ReviewController:
         unsupported_reasons = {pr: reasons[pr] for pr in unsupported}
         reconciled: dict[int, StackReconciliationDecision] = {}
         anchors: dict[int, AnchorFacts] = {}
+        legacy_transition_prs: set[int] = set()
+        legacy_transition_fingerprints: dict[int, Mapping[str, tuple[str, ...]]] = {}
         anchor_failures: dict[int, str] = {}
         for pr in state.ordered_prs:
             if live[pr].merged or baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT:
@@ -517,6 +611,13 @@ class ReviewController:
                 anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                 continue
             anchors[pr] = current
+            transition = self._legacy_transition_for(state, pr, current)
+            if transition is not None:
+                legacy_transition_prs.add(pr)
+                legacy_transition_fingerprints[pr] = {
+                    "hosted": transition.hosted_fingerprints,
+                    "cli": transition.cli_fingerprints,
+                }
             decision = self._active_stack_reconciliation(state, pr, current)
             if decision is not None:
                 reconciled[pr] = decision
@@ -524,8 +625,11 @@ class ReviewController:
         for pr in state.ordered_prs:
             if pr in reconciled:
                 continue
+            current = anchors.get(pr)
+            if current is None:
+                continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                latest = _latest_review(_history(self._evidence_provider, pr, channel))
+                latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
                 if latest is not None:
                     parent_head = _field(latest, "parent_head")
                     if (
@@ -635,7 +739,7 @@ class ReviewController:
                     continue
                 anchors[pr] = current
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                latest = _latest_review(_history(self._evidence_provider, pr, channel))
+                latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
                 if latest is None:
                     continue
                 previous = latest
@@ -718,6 +822,8 @@ class ReviewController:
             reasons=reasons,
             statuses=statuses,
             channel_statuses=channel_statuses,
+            legacy_transition_prs=tuple(pr for pr in state.ordered_prs if pr in legacy_transition_prs),
+            legacy_transition_fingerprints=legacy_transition_fingerprints,
         )
 
     def _current_branches_match(
@@ -815,6 +921,289 @@ class ReviewController:
             raise ControllerError("Git provider returned an empty patch identity")
         return AnchorFacts(pr, item.head, link.identity, link.parent_head, merge_base, patch_id)
 
+    @staticmethod
+    def _legacy_transition_record(value: Any, pr: int, current_head: str) -> None:
+        """Validate one observation before allowing it into the legacy set."""
+
+        if not isinstance(value, (Mapping, policy.Evidence)):
+            raise ControllerError("legacy transition encountered malformed evidence")
+        try:
+            item = policy.Evidence.from_value(value)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ControllerError("legacy transition encountered malformed evidence") from error
+        if item.pr != pr:
+            raise ControllerError("legacy transition evidence is bound to another pull request")
+        try:
+            old_head = _sha(item.head, "legacy transition evidence head")
+            normalized_current_head = _sha(current_head, "legacy transition current head")
+        except ControllerError as error:
+            raise ControllerError("legacy transition evidence has no exact candidate identity") from error
+        if old_head == normalized_current_head:
+            raise ControllerError("legacy transition evidence must target an old head")
+        if not isinstance(item.checkpoint, str) or not item.checkpoint.strip():
+            raise ControllerError("legacy transition evidence has no immutable checkpoint identity")
+        if item.anchored is not None and not isinstance(item.anchored, bool):
+            raise ControllerError("legacy transition evidence field 'anchored' is malformed")
+        for name in (
+            "completed",
+            "attributable",
+            "correction",
+            "corrected_state",
+            "provisional",
+            "rate_limited",
+            "held",
+            "unstable",
+            "unreconciled",
+            "over_ceiling",
+            "parent_moved",
+            "non_counting",
+        ):
+            if not isinstance(getattr(item, name), bool):
+                raise ControllerError(f"legacy transition evidence field {name!r} is malformed")
+        for name in ("accepted", "raw"):
+            count = getattr(item, name)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ControllerError(f"legacy transition evidence field {name!r} is malformed")
+        if item.non_counting:
+            raise ControllerError("legacy transition cannot accept already projected evidence")
+        if item.provisional:
+            raise ControllerError("legacy transition cannot dismiss provisional evidence")
+        if item.rate_limited or item.unstable or item.unreconciled or item.over_ceiling or item.parent_moved:
+            raise ControllerError("legacy transition cannot dismiss stale or ambiguous evidence")
+
+        # The only non-completed status that may be retired by this transition
+        # is a completed Hosted response that lacks the modern public checkpoint
+        # linkage. Active reservations, pending captures, and unresolved
+        # findings use different identities and remain hard blockers.
+        if item.held:
+            if (
+                LEGACY_UNCHECKPOINTED.fullmatch(item.checkpoint) is None
+                or item.completed
+                or item.attributable
+            ):
+                raise ControllerError("legacy transition cannot dismiss an active or actionable reservation")
+        elif item.completed is not True or item.attributable is not True:
+            raise ControllerError("legacy transition cannot dismiss incomplete or unattributable evidence")
+
+        if item.checkpoint.startswith("pending-capture:"):
+            raise ControllerError("legacy transition cannot dismiss an unlinked CLI capture")
+
+        anchor_fields = ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        raw_anchor = {
+            "child_head": _field(value, "child_head", "candidate_sha"),
+            "parent_identity": _field(value, "parent_identity", "parent_ref"),
+            "parent_head": _field(value, "parent_head", "parent_sha", "base_tip_sha"),
+            "merge_base": _field(value, "merge_base"),
+            "patch_id": _field(value, "patch_id", "patch_identity"),
+        }
+        present = [raw_anchor[name] for name in anchor_fields if raw_anchor[name] not in (None, "")]
+        if item.anchored is True:
+            raise ControllerError("legacy transition requires evidence without a modern anchor")
+        # Historical CLI records explicitly carried ``anchored=false`` while
+        # retaining a few old parent fields, but never a modern patch identity.
+        # Preserve that exact legacy shape; an unanchored record with a patch
+        # identity, or an implicit/ambiguous partial shape, is not dismissible.
+        if present and (item.anchored is not False or raw_anchor["patch_id"] not in (None, "")):
+            raise ControllerError("legacy transition evidence has a partial or spoofed identity anchor")
+
+    @staticmethod
+    def _reauthorization_observation(value: Any, pr: int) -> None:
+        """Require every non-legacy observation to remain normal counting evidence."""
+
+        if not isinstance(value, (Mapping, policy.Evidence)):
+            raise ControllerError("legacy transition reauthorization encountered malformed evidence")
+        try:
+            item = policy.Evidence.from_value(value)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ControllerError("legacy transition reauthorization encountered malformed evidence") from error
+        if item.pr != pr:
+            raise ControllerError("legacy transition reauthorization evidence is bound to another pull request")
+        if item.non_counting:
+            raise ControllerError("legacy transition reauthorization cannot accept projected evidence")
+        for name in (
+            "completed",
+            "attributable",
+            "correction",
+            "corrected_state",
+            "provisional",
+            "rate_limited",
+            "held",
+            "unstable",
+            "unreconciled",
+            "over_ceiling",
+            "parent_moved",
+            "non_counting",
+        ):
+            if not isinstance(getattr(item, name), bool):
+                raise ControllerError(f"legacy transition reauthorization field {name!r} is malformed")
+        for name in ("accepted", "raw"):
+            count = getattr(item, name)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ControllerError(f"legacy transition reauthorization field {name!r} is malformed")
+        try:
+            _sha(item.head, "legacy transition modern evidence head")
+        except ControllerError as error:
+            raise ControllerError("legacy transition reauthorization requires exact modern evidence identity") from error
+        if not isinstance(item.checkpoint, str) or not item.checkpoint.strip():
+            raise ControllerError("legacy transition reauthorization requires an immutable modern checkpoint")
+        if item.provisional or item.held or item.rate_limited or item.unstable or item.unreconciled:
+            raise ControllerError("legacy transition reauthorization cannot ignore active or ambiguous evidence")
+        if item.over_ceiling or item.parent_moved:
+            raise ControllerError("legacy transition reauthorization cannot ignore blocked evidence")
+        if item.completed is not True or item.attributable is not True or item.anchored is not True:
+            raise ControllerError("legacy transition reauthorization requires completed anchored evidence")
+        raw_anchor = {
+            "child_head": _field(value, "child_head", "candidate_sha"),
+            "parent_identity": _field(value, "parent_identity", "parent_ref"),
+            "parent_head": _field(value, "parent_head", "parent_sha", "base_tip_sha"),
+            "merge_base": _field(value, "merge_base"),
+            "patch_id": _field(value, "patch_id", "patch_identity"),
+        }
+        if not isinstance(raw_anchor["parent_identity"], str) or not raw_anchor["parent_identity"].strip():
+            raise ControllerError("legacy transition reauthorization requires a complete modern identity anchor")
+        for name in ("child_head", "parent_head", "merge_base"):
+            try:
+                _sha(raw_anchor[name], f"legacy transition modern evidence {name}")
+            except ControllerError as error:
+                raise ControllerError(
+                    "legacy transition reauthorization requires a complete modern identity anchor"
+                ) from error
+        if not isinstance(raw_anchor["patch_id"], str) or not raw_anchor["patch_id"].strip():
+            raise ControllerError("legacy transition reauthorization requires a complete modern identity anchor")
+        if _sha(raw_anchor["child_head"], "legacy transition modern evidence child head") != _sha(
+            item.head, "legacy transition modern evidence head"
+        ):
+            raise ControllerError("legacy transition reauthorization requires matching modern head identity")
+
+    def decide_legacy_transition(
+        self, *, pr: int, head: str, reason: str, reauthorize: bool = False
+    ) -> dict[str, Any]:
+        """Retire only the observed legacy evidence at one exact current anchor."""
+
+        if not isinstance(reason, str) or not reason.strip():
+            raise ControllerError("legacy evidence transition requires a reason")
+        if len(reason) > 500 or any(ord(character) < 0x20 for character in reason):
+            raise ControllerError("legacy evidence transition reason is malformed")
+        if not isinstance(reauthorize, bool):
+            raise ControllerError("legacy evidence transition reauthorization flag is malformed")
+        state = self._state()
+        if pr not in state.ordered_prs:
+            raise ControllerError(f"PR #{pr} is not in the configured review stack")
+        normalized_head = _sha(head, "transition head")
+        remote_heads = self.git.remote_heads()
+        live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
+        baseline = stack.reconcile_stack(
+            state.ordered_prs,
+            snapshots,
+            self.default_base_ref,
+            default_tip,
+            is_ancestor=self.git.is_ancestor,
+        )
+        if (
+            baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT
+            or live[pr].merged
+            or self._head_repository_problem(live[pr])
+            or not self._current_branches_match(state, live, baseline, pr, remote_heads)
+        ):
+            raise ControllerError("legacy evidence transition requires a coherent exact-current live topology")
+        if normalized_head != live[pr].head:
+            raise ControllerError("transition head does not match the live pull-request head")
+        link = baseline.links[pr]
+        current = self._anchor(pr, live[pr], link)
+        existing = next(
+            (item for item in reversed(state.legacy_transitions) if item.matches(pr, current.as_dict())),
+            None,
+        )
+        prior = next(
+            (
+                item
+                for item in reversed(state.legacy_transitions)
+                if item.pr == pr and not item.matches(pr, current.as_dict())
+            ),
+            None,
+        )
+        if prior is not None and not reauthorize and existing is None:
+            raise ControllerError("legacy transition requires explicit reauthorization after the anchor changed")
+        if reauthorize and prior is None and existing is None:
+            raise ControllerError("legacy transition reauthorization requires a prior transition")
+        fingerprints: dict[str, tuple[str, ...]] = {}
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            values = tuple(_history(self._evidence_provider, pr, channel))
+            reauthorization_reference = existing or prior
+            if reauthorize and reauthorization_reference is not None:
+                expected = reauthorization_reference.fingerprints_for(channel.value)
+                expected_set = set(expected)
+                found: dict[str, Any] = {}
+                checkpoints: set[str] = set()
+                for value in values:
+                    fingerprint = observation_fingerprint(value)
+                    checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                    if checkpoint in checkpoints:
+                        raise ControllerError("legacy transition evidence has an ambiguous duplicate checkpoint")
+                    checkpoints.add(checkpoint)
+                    if fingerprint in expected_set:
+                        if fingerprint in found:
+                            raise ControllerError("legacy transition evidence has an ambiguous duplicate observation")
+                        self._legacy_transition_record(value, pr, current.child_head)
+                        found[fingerprint] = value
+                    else:
+                        self._reauthorization_observation(value, pr)
+                if set(found) != expected_set:
+                    raise ControllerError("legacy transition reauthorization lost an old evidence observation")
+                fingerprints[channel.value] = expected
+                continue
+
+            channel_fingerprints: list[str] = []
+            checkpoints: set[str] = set()
+            for value in values:
+                self._legacy_transition_record(value, pr, current.child_head)
+                checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                if checkpoint in checkpoints:
+                    raise ControllerError("legacy transition evidence has an ambiguous duplicate checkpoint")
+                checkpoints.add(checkpoint)
+                channel_fingerprints.append(observation_fingerprint(value))
+            fingerprints[channel.value] = tuple(dict.fromkeys(channel_fingerprints))
+        if not any(fingerprints.values()):
+            raise ControllerError("no legacy evidence requires a transition")
+        transition = LegacyEvidenceTransition(
+            pr,
+            current.child_head,
+            current.parent_identity,
+            current.parent_head,
+            current.merge_base,
+            current.patch_id,
+            fingerprints["hosted"],
+            fingerprints["cli"],
+            reason.strip(),
+        )
+        if existing is not None:
+            if (
+                existing.hosted_fingerprints != transition.hosted_fingerprints
+                or existing.cli_fingerprints != transition.cli_fingerprints
+            ):
+                raise ControllerError("an exact-anchor legacy transition already exists with different evidence")
+            return {
+                "transition": existing.to_dict(),
+                "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+                "recorded": False,
+            }
+        updated = self.store.update(
+            lambda current_state: dataclasses.replace(
+                current_state,
+                legacy_transitions=current_state.legacy_transitions + (transition,),
+            )
+        )
+        return {
+            "transition": transition.to_dict(),
+            "legacy_transitions": [item.to_dict() for item in updated.legacy_transitions],
+            "recorded": True,
+        }
+
+    # Keep the shorter spelling available to callers of the controller API;
+    # the CLI's canonical operation is ``decide transition``.
+    def decide_transition(self, **kwargs: Any) -> dict[str, Any]:
+        return self.decide_legacy_transition(**kwargs)
+
     def decide_reconciliation(
         self, *, pr: int, channel: str, checkpoint: str, prior_head: str, reason: str
     ) -> dict[str, Any]:
@@ -871,11 +1260,14 @@ class ReviewController:
             problem = self._head_repository_problem(live[pr])
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
-        history = {pr: _history(self._evidence_provider, pr, selected) for pr in state.ordered_prs}
+        history = {
+            pr: self._policy_history(state, pr, selected, reconciliation)
+            for pr in state.ordered_prs
+        }
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
         other_heads = {}
         for pr in state.ordered_prs:
-            values = _history(self._evidence_provider, pr, other)
+            values = self._policy_history(state, pr, other, reconciliation)
             latest = _latest_review(values)
             other_anchor_status = reconciliation.status_for(pr, other.value)
             if latest is not None and other_anchor_status not in {
@@ -950,7 +1342,7 @@ class ReviewController:
             channel_status: dict[str, str] = {}
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
-                other_history = _history(self._evidence_provider, pr, other)
+                other_history = self._policy_history(state, pr, other, reconciliation)
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
@@ -963,7 +1355,7 @@ class ReviewController:
                     channel_status[channel.value] = policy.completion_status(
                         state,
                         channel,
-                        _history(self._evidence_provider, pr, channel),
+                        self._policy_history(state, pr, channel, reconciliation),
                         reconciliation=channel_reconciliation,
                         other_channel_head=(
                             other_head
@@ -1149,7 +1541,7 @@ class ReviewController:
         link = reconciliation.links[pr]
         anchor = self._anchor(pr, current, link)
         reconciliation_status = reconciliation.status_for(pr, selected_channel.value)
-        history = _history(self._evidence_provider, pr, selected_channel)
+        history = self._policy_history(state, pr, selected_channel, reconciliation)
         parsed_history = [policy.Evidence.from_value(item) for item in history]
         effective_reviews: list[tuple[int, policy.Evidence]] = []
         for index, item in enumerate(parsed_history):
@@ -1203,9 +1595,11 @@ class ReviewController:
             return self.decide_judgment(decision=operation, **kwargs)
         if operation == "policy":
             return self.decide_policy(**kwargs)
+        if operation in {"transition", "legacy-transition"}:
+            return self.decide_legacy_transition(**kwargs)
         if operation == "reconcile":
             return self.decide_reconciliation(**kwargs)
-        raise ControllerError("decision must be retain, reopen, policy, or reconcile")
+        raise ControllerError("decision must be retain, reopen, policy, or reconcile, or transition")
 
 
 def compact_result(value: Mapping[str, Any]) -> str:

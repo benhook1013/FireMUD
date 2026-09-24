@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -20,10 +21,44 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
 
 class StateError(ValueError):
     """Raised when private review-stack state is invalid or unavailable."""
+
+
+def _fingerprint_value(value: Any) -> Any:
+    """Return a deterministic JSON-compatible representation for one observation."""
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _fingerprint_value(dataclasses.asdict(value))
+    if isinstance(value, Mapping):
+        return {
+            str(key): _fingerprint_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_fingerprint_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise StateError("legacy transition evidence contains an unsupported value")
+
+
+def observation_fingerprint(value: Any) -> str:
+    """Hash one immutable evidence observation for a legacy transition."""
+
+    try:
+        encoded = json.dumps(
+            _fingerprint_value(value),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise StateError("legacy transition evidence is not fingerprintable") from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -364,6 +399,101 @@ class StackReconciliationDecision:
 
 
 @dataclasses.dataclass(frozen=True)
+class LegacyEvidenceTransition:
+    """Explicitly make one exact set of legacy observations non-counting."""
+
+    pr: int
+    child_head: str
+    parent_identity: str
+    parent_head: str
+    merge_base: str
+    patch_id: str
+    hosted_fingerprints: tuple[str, ...] = ()
+    cli_fingerprints: tuple[str, ...] = ()
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("legacy transition PR must be a positive integer")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                self.child_head,
+                self.parent_identity,
+                self.parent_head,
+                self.merge_base,
+                self.patch_id,
+                self.reason,
+            )
+        ):
+            raise StateError("legacy transitions require complete identities and a reason")
+        for name in ("hosted_fingerprints", "cli_fingerprints"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, str) or FINGERPRINT.fullmatch(value) is None for value in values
+            ):
+                raise StateError(f"legacy transition {name} must contain SHA-256 fingerprints")
+            if len(set(values)) != len(values):
+                raise StateError(f"legacy transition {name} fingerprints must be unique")
+        if not self.hosted_fingerprints and not self.cli_fingerprints:
+            raise StateError("legacy transition requires at least one legacy observation")
+
+    def matches(self, pr: int, anchor: Mapping[str, Any]) -> bool:
+        return self.pr == pr and all(
+            getattr(self, field) == anchor.get(field)
+            for field in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        )
+
+    def fingerprints_for(self, channel: str) -> tuple[str, ...]:
+        if channel == "hosted":
+            return self.hosted_fingerprints
+        if channel == "cli":
+            return self.cli_fingerprints
+        raise StateError("legacy transition channel must be hosted or cli")
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> LegacyEvidenceTransition:
+        allowed = {
+            "pr",
+            "child_head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+            "hosted_fingerprints",
+            "cli_fingerprints",
+            "reason",
+        }
+        if set(value) - allowed:
+            raise StateError("legacy transition contains fields outside the private schema")
+        try:
+            hosted = value.get("hosted_fingerprints", ())
+            cli = value.get("cli_fingerprints", ())
+            if isinstance(hosted, list):
+                hosted = tuple(hosted)
+            if isinstance(cli, list):
+                cli = tuple(cli)
+            return cls(
+                pr=value["pr"],
+                child_head=value["child_head"],
+                parent_identity=value["parent_identity"],
+                parent_head=value["parent_head"],
+                merge_base=value["merge_base"],
+                patch_id=value["patch_id"],
+                hosted_fingerprints=hosted,
+                cli_fingerprints=cli,
+                reason=value["reason"],
+            )
+        except StateError:
+            raise
+        except (KeyError, AttributeError, TypeError) as exc:
+            raise StateError("legacy transition record is malformed") from exc
+
+
+@dataclasses.dataclass(frozen=True)
 class ReviewState:
     """The complete persisted document, excluding all live review observations."""
 
@@ -371,6 +501,7 @@ class ReviewState:
     policy_overrides: Mapping[str, PolicyOverride] = dataclasses.field(default_factory=dict)
     judgments: tuple[Judgment, ...] = ()
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
+    legacy_transitions: tuple[LegacyEvidenceTransition, ...] = ()
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
     schema_version: int = SCHEMA_VERSION
 
@@ -390,6 +521,8 @@ class ReviewState:
                 raise StateError("policy overrides must be keyed by PR and channel")
         if any(not isinstance(item, SummaryFindingDisposition) for item in self.summary_dispositions):
             raise StateError("summary dispositions must contain validated disposition records")
+        if any(not isinstance(item, LegacyEvidenceTransition) for item in self.legacy_transitions):
+            raise StateError("legacy transitions must contain validated transition records")
         identities = [item.identity for item in self.summary_dispositions]
         if len(set(identities)) != len(identities):
             raise StateError("summary dispositions must have unique exact finding identities")
@@ -401,6 +534,7 @@ class ReviewState:
             "policy_overrides": {identity: item.to_dict() for identity, item in sorted(self.policy_overrides.items())},
             "judgments": [item.to_dict() for item in self.judgments],
             "reconciliations": [item.to_dict() for item in self.reconciliations],
+            "legacy_transitions": [item.to_dict() for item in self.legacy_transitions],
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
         }
 
@@ -414,6 +548,7 @@ class ReviewState:
             "policy_overrides",
             "judgments",
             "reconciliations",
+            "legacy_transitions",
             "summary_dispositions",
         }:
             raise StateError("state contains fields outside the private configuration schema")
@@ -432,6 +567,9 @@ class ReviewState:
                 judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
                 reconciliations=tuple(
                     StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
+                ),
+                legacy_transitions=tuple(
+                    LegacyEvidenceTransition.from_dict(item) for item in value.get("legacy_transitions", ())
                 ),
                 summary_dispositions=tuple(
                     SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())

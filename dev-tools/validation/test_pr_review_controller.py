@@ -758,6 +758,254 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
         self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
 
+    def test_legacy_transition_reopens_both_channels_without_counting_or_erasing_history(self):
+        old_parent = "1" * 40
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_identity": "develop",
+            "parent_head": old_parent,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="legacy review records lack modern linked anchors",
+        )
+
+        self.assertTrue(result["recorded"])
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(controller.status()["prs"][0]["channels"], {"hosted": "READY", "cli": "READY"})
+        controller.hosted_adapter = lambda target, **kwargs: (target, kwargs)
+        controller.cli_adapter = lambda target, **kwargs: (target, kwargs)
+        self.assertEqual(controller.run_hosted(expected_pr=1)[0].snapshot.head_sha, HEAD_1)
+        self.assertEqual(controller.run_cli(expected_pr=1)[0].snapshot.head_sha, HEAD_1)
+        self.assertEqual(controller.evidence(1)["1"]["cli"][0]["checkpoint"], "legacy-cli")
+        self.assertEqual(controller.evidence(1)["1"]["hosted"][0]["checkpoint"], "trigger-uncheckpointed:42")
+        evidence[(1, "cli")].append(
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "new-modern-but-moved",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": old_parent,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            }
+        )
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+    def test_legacy_transition_fails_closed_for_active_actionable_or_spoofed_records(self):
+        scenarios = {
+            "active reservation": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger:42",
+                "held": True,
+            },
+            "actionable thread": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "review-threads:1:0",
+                "held": True,
+            },
+            "spoofed patch": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "patch_id": "spoofed",
+            },
+            "spoofed projection": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "non_counting": True,
+            },
+            "same-head completed legacy evidence": {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "legacy-same-head",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+            },
+            "malformed old head": {
+                "pr": 1,
+                "head": "not-a-sha",
+                "checkpoint": "legacy-malformed-head",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+            },
+            "malformed held marker": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger-uncheckpointed:not-numeric",
+                "held": True,
+            },
+            "ambiguous held marker": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger-uncheckpointed:01",
+                "held": True,
+            },
+        }
+        for name, record in scenarios.items():
+            with self.subTest(name=name):
+                controller = self.make(
+                    {1: pr(1, HEAD_1)}, {(1, "cli"): [record]}, heads={"feature-1": HEAD_1}
+                )
+                controller.set_stack([1])
+                with self.assertRaisesRegex(ControllerError, "legacy transition"):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_1,
+                        reason="must not dismiss unsafe legacy state",
+                    )
+
+    def test_legacy_transition_reauthorization_keeps_newer_review_counting_after_head_advance(self):
+        old_head = "7" * 40
+        old_parent = "1" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_head": old_parent,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="retire the unanchored legacy observations",
+        )
+
+        modern_hosted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "modern-hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 1,
+            "raw": 1,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        evidence[(1, "hosted")].append(modern_hosted)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "explicit reauthorization"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="move legacy retirement to the fixed head",
+            )
+
+        active_new_reservation = {
+            "pr": 1,
+            "head": HEAD_2,
+            "checkpoint": "trigger:99",
+            "held": True,
+        }
+        evidence[(1, "hosted")].append(active_new_reservation)
+        with self.assertRaisesRegex(ControllerError, "active or ambiguous"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="must not dismiss a newer active reservation",
+                reauthorize=True,
+            )
+        evidence[(1, "hosted")].pop()
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="move the same immutable legacy retirement to the fixed head",
+            reauthorize=True,
+        )
+        self.assertTrue(result["recorded"])
+        status = controller.status()["prs"][0]
+        self.assertEqual(status["reconciliation"], "COHERENT")
+        self.assertEqual(status["channels"], {"hosted": "READY", "cli": "READY"})
+        self.assertEqual(len(controller._state().legacy_transitions), 2)
+        self.assertEqual(controller.evidence(1)["1"]["hosted"][1]["checkpoint"], "modern-hosted")
+
+    def test_legacy_transition_requires_exact_coherent_current_topology(self):
+        legacy = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip="9" * 40)},
+            {(1, "cli"): [legacy]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "coherent exact-current live topology"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_1,
+                reason="moved topology must remain blocked",
+            )
+
     def test_reconciliation_uses_latest_completed_attributable_review_anchor(self):
         review = {
             "pr": 1,

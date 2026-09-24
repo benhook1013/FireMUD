@@ -53,9 +53,7 @@ class PublicationReadGuardTest {
   void deniesGameDesignPeerFromWrongNamespace() {
     GrpcPeerIdentity wrongNamespacePeer =
         new GrpcPeerIdentity(
-            "spiffe://firemud/ns/other/sa/game-design-service",
-            "other",
-            "game-design-service");
+            "spiffe://firemud/ns/other/sa/game-design-service", "other", "game-design-service");
     withPeer(
         wrongNamespacePeer,
         () ->
