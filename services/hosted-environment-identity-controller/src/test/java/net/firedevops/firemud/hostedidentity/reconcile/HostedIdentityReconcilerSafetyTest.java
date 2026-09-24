@@ -6,6 +6,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -1586,6 +1587,63 @@ class HostedIdentityReconcilerSafetyTest {
     resource.setStatus(status);
 
     assertNotNull(HostedIdentityReconciler.previousRole(resource, role));
+  }
+
+  @Test
+  void grpcPublicationHistoryRejectsNullRoleStatusWithExactCanonicalRoleSet() {
+    String nullRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      publicationHistory.put(
+          role, role.equals(nullRole) ? null : new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    HostedEnvironmentIdentity resource = resource();
+    resource.setStatus(status);
+
+    assertEquals(5, publicationHistory.size());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        publicationHistory.keySet());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, nullRole));
+    assertEquals(
+        "grpc publication status contains an invalid entry for role " + nullRole,
+        failure.getMessage());
+  }
+
+  @Test
+  void grpcPublicationHistoryRejectsUnexpectedKeyReplacingCanonicalRole() {
+    String replacedRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      publicationHistory.put(role, new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    publicationHistory.remove(replacedRole);
+    publicationHistory.put("unexpected-role", new HostedEnvironmentIdentityStatus.RoleStatus());
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    HostedEnvironmentIdentity resource = resource();
+    resource.setStatus(status);
+
+    assertEquals(5, publicationHistory.size());
+    assertFalse(publicationHistory.containsKey(replacedRole));
+    assertTrue(publicationHistory.containsKey("unexpected-role"));
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, replacedRole));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
   }
 
   @Test
