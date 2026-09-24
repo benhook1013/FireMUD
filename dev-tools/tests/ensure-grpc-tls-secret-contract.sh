@@ -27,19 +27,25 @@ mkdir -p "$data_dir" "$mock_bin"
 
 # Build one shared issuer and five distinct workload identities. The helper
 # validates the real X.509 extensions, SANs, key pairs, and issuer chains.
-openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/issuer.key"
-openssl req -x509 -new -key "$fixture_dir/issuer.key" -sha256 -days 30 \
-  -subj /CN=FireMUD-Contract-Issuer \
+openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/shared-issuer.key"
+openssl req -x509 -new -key "$fixture_dir/shared-issuer.key" -sha256 -days 30 \
+  -subj /CN=FireMUD-Shared-Contract-Issuer \
   -addext 'basicConstraints=critical,CA:TRUE' \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' \
-  -out "$data_dir/issuer.crt"
+  -out "$data_dir/shared-issuer.crt"
+openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/publication-issuer.key"
+openssl req -x509 -new -key "$fixture_dir/publication-issuer.key" -sha256 -days 30 \
+  -subj /CN=FireMUD-Publication-Contract-Issuer \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -out "$data_dir/publication-issuer.crt"
 openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/shared.key"
 openssl req -new -key "$fixture_dir/shared.key" -subj /CN=FireMUD-Shared-Client \
   -out "$fixture_dir/shared.csr"
-openssl x509 -req -in "$fixture_dir/shared.csr" -CA "$data_dir/issuer.crt" \
-  -CAkey "$fixture_dir/issuer.key" -CAcreateserial -days 30 -sha256 \
+openssl x509 -req -in "$fixture_dir/shared.csr" -CA "$data_dir/shared-issuer.crt" \
+  -CAkey "$fixture_dir/shared-issuer.key" -CAcreateserial -days 30 -sha256 \
   -out "$data_dir/shared.crt"
-cp "$data_dir/issuer.crt" "$data_dir/shared-ca.crt"
+cp "$data_dir/shared-issuer.crt" "$data_dir/shared-ca.crt"
 cp "$fixture_dir/shared.key" "$data_dir/shared.key"
 
 for workload in "${workloads[@]}"; do
@@ -54,21 +60,51 @@ extendedKeyUsage=serverAuth,clientAuth
 subjectAltName=URI:spiffe://firemud/ns/dev/sa/$workload,DNS:$workload,DNS:$workload.dev,DNS:$workload.dev.svc,DNS:$workload.dev.svc.cluster.local
 EOF
   openssl x509 -req -in "$fixture_dir/$workload.csr" \
-    -CA "$data_dir/issuer.crt" -CAkey "$fixture_dir/issuer.key" \
+    -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" \
     -CAcreateserial -days 30 -sha256 -extfile "$fixture_dir/$workload.ext" \
     -extensions leaf -out "$data_dir/$workload.crt"
-  cp "$data_dir/issuer.crt" "$data_dir/$workload-ca.crt"
+  cp "$data_dir/publication-issuer.crt" "$data_dir/$workload-ca.crt"
 done
 
 cat >"$mock_bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == -n ]] || { echo "unexpected kubectl arguments: $*" >&2; exit 2; }
-namespace="$2"
-shift 2
+if [[ "$1" == -n ]]; then
+  namespace="$2"
+  shift 2
+else
+  namespace=dev
+fi
 operation="$1"
 shift
 case "$operation" in
+  create)
+    [[ "$1" == secret && "$2" == generic ]] || { echo "unexpected kubectl create: $*" >&2; exit 2; }
+    secret="$3"
+    shift 3
+    printf 'create %s/%s\n' "$namespace" "$secret" >>"$KUBECTL_LOG"
+    printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\ndata:\n' "$secret"
+    while (($#)); do
+      case "$1" in
+        --from-file=*)
+          assignment="${1#--from-file=}"
+          key="${assignment%%=*}"
+          file="${assignment#*=}"
+          [[ -s "$file" ]] || { echo "missing Secret input file: $file" >&2; exit 2; }
+          printf '  %s: %s\n' "$key" "$(base64 -w0 "$file")"
+          ;;
+        --dry-run=client|-o|yaml)
+          ;;
+        *) echo "unexpected kubectl create option: $1" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    ;;
+  apply)
+    [[ "$1" == -f && "$2" == - ]] || { echo "unexpected kubectl apply: $*" >&2; exit 2; }
+    printf 'apply %s/%s\n' "$namespace" "${APPLIED_SECRET_NAME:-firemud-grpc-tls}" >>"$KUBECTL_LOG"
+    cat >"$APPLIED_SECRET"
+    ;;
   get)
     [[ "$1" == secret ]] || { echo "unexpected kubectl get: $*" >&2; exit 2; }
     secret="$2"
@@ -151,6 +187,8 @@ exit 0
 EOF
 chmod +x "$mock_bin/kubectl" "$mock_bin/sleep"
 
+applied_secret="$fixture_dir/applied-secret.yaml"
+
 run_helper() {
   local mode="$1"
   local log="$2"
@@ -162,6 +200,7 @@ run_helper() {
     BASH_ENV="$bash_env_file" \
     DATA_DIR="$data_dir" \
     KUBECTL_LOG="$log" \
+    APPLIED_SECRET="$applied_secret" \
     PROJECTION_MODE="$mode" \
     STATE_DIR="$state" \
     CERTIFICATE_WAIT_TIMEOUT_SECONDS="$timeout_seconds" \
@@ -175,8 +214,11 @@ sleep() {
 EOF
 
 success_log="$fixture_dir/success.log"
-run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
-  >"$fixture_dir/success.out" 2>"$fixture_dir/success.err"
+if ! run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
+  >"$fixture_dir/success.out" 2>"$fixture_dir/success.err"; then
+  cat "$fixture_dir/success.out" "$fixture_dir/success.err" >&2
+  exit 1
+fi
 grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
   exit 1
@@ -186,9 +228,41 @@ if grep -Eq '^read dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$suc
   exit 1
 fi
 last_projection_line="$(grep -n '^read dev/firemud-grpc-automation-scripting-service ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
+reapply_line="$(grep -n '^apply dev/firemud-grpc-tls$' "$success_log" | cut -d: -f1)"
 legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cut -d: -f1)"
-[[ -n "$last_projection_line" && -n "$legacy_delete_line" && "$legacy_delete_line" -gt "$last_projection_line" ]] || {
-  echo "the legacy runtime CA Secret was not deleted after all projections validated" >&2
+[[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \
+  "$reapply_line" -gt "$last_projection_line" && "$legacy_delete_line" -gt "$reapply_line" ]] || {
+  echo "the shared Secret was not reapplied before deleting the legacy runtime CA Secret" >&2
+  exit 1
+}
+
+applied_shared_ca="$fixture_dir/applied-shared-ca.crt"
+applied_client_cert="$fixture_dir/applied-client.crt"
+applied_client_key="$fixture_dir/applied-client.key"
+for key in ca.crt client.crt client.key; do
+  encoded="$(sed -n "s/^  ${key//./\\.}: //p" "$applied_secret")"
+  [[ -n "$encoded" ]] || { echo "reapplied Secret is missing $key" >&2; exit 1; }
+  case "$key" in
+    ca.crt) output="$applied_shared_ca" ;;
+    client.crt) output="$applied_client_cert" ;;
+    client.key) output="$applied_client_key" ;;
+  esac
+  printf '%s' "$encoded" | base64 --decode >"$output"
+done
+openssl verify -CAfile "$applied_shared_ca" "$data_dir/shared.crt" >/dev/null || {
+  echo "reapplied shared CA bundle no longer trusts the existing shared client" >&2
+  exit 1
+}
+openssl verify -CAfile "$applied_shared_ca" "$data_dir/game-design-service.crt" >/dev/null || {
+  echo "reapplied shared CA bundle does not trust the publication CA" >&2
+  exit 1
+}
+cmp -s "$data_dir/shared.crt" "$applied_client_cert" || {
+  echo "reapplying the shared Secret changed its existing client certificate" >&2
+  exit 1
+}
+cmp -s "$data_dir/shared.key" "$applied_client_key" || {
+  echo "reapplying the shared Secret changed its existing client key" >&2
   exit 1
 }
 

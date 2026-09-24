@@ -918,8 +918,7 @@ class CertificateMaterialServiceTest {
     Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
 
     CertificateMaterialService.RoleMaterial inFlight =
-        materializeGrpcProjection(
-            plan, previousBundlePlan, previousBundle, validator, true, false);
+        materializeGrpcProjection(plan, previousBundlePlan, previousBundle, validator, true, false);
 
     assertEquals(SERIALIZED_IN_FLIGHT, inFlight.state());
     assertEquals(previousBundle.getData(), inFlight.source().getData());
