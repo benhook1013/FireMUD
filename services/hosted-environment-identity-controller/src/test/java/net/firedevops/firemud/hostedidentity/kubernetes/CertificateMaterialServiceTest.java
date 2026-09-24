@@ -934,9 +934,7 @@ class CertificateMaterialServiceTest {
     MaterialValidationException failure =
         assertThrows(
             MaterialValidationException.class,
-            () ->
-                materializeGrpcProjection(
-                    plan, plan, currentBundle, validator, true, true));
+            () -> materializeGrpcProjection(plan, plan, currentBundle, validator, true, true));
 
     assertEquals("certificate and private key do not match", failure.getMessage());
     assertFalse(failure.isSanMismatch());
