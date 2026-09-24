@@ -540,14 +540,85 @@ class AccountServiceImplTest {
 
     assertFalse(result.success());
     assertEquals("IDEMPOTENCY_CONFLICT", result.outcomeCode());
-    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals("FAILED", retainedOperation.get().status());
+    assertEquals("IDEMPOTENCY_CONFLICT", retainedOperation.get().outcome());
     assertEquals(5L, retainedOperation.get().entitlementVersion());
-    assertEquals("IDEMPOTENCY_CONFLICT", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals(true, retainedOperation.get().allowPublicJoin());
+    assertEquals(1, retainedOperation.get().requestDigestVersion());
     assertNotNull(retainedOperation.get().requestDigest());
+    assertEquals(null, retainedOperation.get().lastAttemptFailureCode());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantIdForUpdate(7L);
+  }
+
+  @Test
+  void changedPolicyOnRetryTerminalizesPreviouslyBoundPendingJoin() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    Subscription initialPolicy = new Subscription();
+    initialPolicy.setId(22L);
+    initialPolicy.setTenantId(7L);
+    initialPolicy.setStatus("active");
+    initialPolicy.setEntitlementVersion(5L);
+    Subscription changedPolicy = new Subscription();
+    changedPolicy.setId(22L);
+    changedPolicy.setTenantId(7L);
+    changedPolicy.setStatus("active");
+    changedPolicy.setEntitlementVersion(6L);
+    when(subscriptionRepository.findByTenantIdForUpdate(7L))
+        .thenReturn(
+            java.util.List.of(initialPolicy),
+            java.util.List.of(),
+            java.util.List.of(changedPolicy));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    JoinPublicProductionRequest request =
+        new JoinPublicProductionRequest(connectScopeId, "join-policy-retry-1");
+
+    JoinPublicProductionResult pending =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    String boundDigest = retainedOperation.get().requestDigest();
+    String intentDigest = retainedOperation.get().intentDigest();
+
+    assertFalse(pending.success());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", pending.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(5L, retainedOperation.get().entitlementVersion());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+
+    JoinPublicProductionResult changedPolicyRetry =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertFalse(changedPolicyRetry.success());
+    assertEquals("IDEMPOTENCY_CONFLICT", changedPolicyRetry.outcomeCode());
+    assertEquals("FAILED", retainedOperation.get().status());
+    assertEquals("IDEMPOTENCY_CONFLICT", retainedOperation.get().outcome());
+    assertEquals(intentDigest, retainedOperation.get().intentDigest());
+    assertEquals(boundDigest, retainedOperation.get().requestDigest());
+    assertEquals(5L, retainedOperation.get().entitlementVersion());
+    assertEquals(true, retainedOperation.get().allowPublicJoin());
+    assertEquals(null, retainedOperation.get().lastAttemptFailureCode());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
         .findByTenantIdForUpdate(7L);
   }
 
