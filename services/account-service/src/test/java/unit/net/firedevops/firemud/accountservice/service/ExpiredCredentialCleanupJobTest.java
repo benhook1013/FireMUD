@@ -215,6 +215,49 @@ class ExpiredCredentialCleanupJobTest {
   }
 
   @Test
+  void cleanupRecordsEmailLoginChallengeFailureWithoutLosingEarlierFamilyResults() {
+    PasswordResetTokenRepository passwordReset = mock(PasswordResetTokenRepository.class);
+    EmailVerificationTokenRepository emailVerification =
+        mock(EmailVerificationTokenRepository.class);
+    AccountEmailLoginChallengeRepository emailLoginChallenge =
+        mock(AccountEmailLoginChallengeRepository.class);
+    when(passwordReset.deleteExpired(any(), eq(5))).thenReturn(2);
+    when(passwordReset.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+    when(emailVerification.deleteExpired(any(), eq(5))).thenReturn(3);
+    when(emailVerification.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+    when(emailLoginChallenge.deleteExpired(any(), eq(5)))
+        .thenThrow(new RuntimeException("email login challenge unavailable"));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ExpiredCredentialCleanupJob job =
+        new ExpiredCredentialCleanupJob(
+            passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 5, 60_000);
+
+    job.cleanupExpiredCredentials();
+
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.deleted")
+                .tag("family", "password_reset")
+                .counter()
+                .count())
+        .isEqualTo(2);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.deleted")
+                .tag("family", "email_verification")
+                .counter()
+                .count())
+        .isEqualTo(3);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.failure")
+                .tag("family", "email_login_challenge")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
+
+  @Test
   void cleanupConfigurationMustBePositive() {
     PasswordResetTokenRepository passwordReset = mock(PasswordResetTokenRepository.class);
     EmailVerificationTokenRepository emailVerification =

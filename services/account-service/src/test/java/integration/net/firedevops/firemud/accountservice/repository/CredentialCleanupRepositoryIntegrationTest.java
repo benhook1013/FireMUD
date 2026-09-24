@@ -4,6 +4,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_EMAIL_LO
 import static net.firedevops.firemud.accountservice.jooq.Tables.EMAIL_VERIFICATION_TOKEN;
 import static net.firedevops.firemud.accountservice.jooq.Tables.PASSWORD_RESET_TOKEN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -110,6 +111,22 @@ class CredentialCleanupRepositoryIntegrationTest {
     assertThat(emailLoginChallengeRepository.deleteExpired(capturedNow, 10)).isZero();
     assertThat(count(ACCOUNT_EMAIL_LOGIN_CHALLENGE.getName(), "expires_at >= ?", capturedNow))
         .isEqualTo(2);
+  }
+
+  @Test
+  void cleanupRejectsInvalidCutoffsAndBoundsAndReportsAnEmptyQueue() {
+    LocalDateTime capturedNow = LocalDateTime.of(2026, 9, 19, 12, 0);
+
+    assertThatThrownBy(() -> passwordResetTokenRepository.deleteExpired(null, 1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("capturedNow");
+    assertThatThrownBy(() -> passwordResetTokenRepository.deleteExpired(capturedNow, 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("batchSize");
+    assertThatThrownBy(() -> passwordResetTokenRepository.findOldestExpiredAt(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("capturedNow");
+    assertThat(passwordResetTokenRepository.findOldestExpiredAt(capturedNow)).isEmpty();
   }
 
   @Test

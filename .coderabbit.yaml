@@ -14,7 +14,7 @@ reviews:
     Prefer factual technical language over generic praise.
   review_status: true
   auto_review:
-    # Request full Hosted reviews via dev-tools/request-coderabbit-review.sh.
+    # Request full Hosted reviews through the unified dev-tools/pr-review controller.
     enabled: false
     auto_incremental_review: false
     drafts: false

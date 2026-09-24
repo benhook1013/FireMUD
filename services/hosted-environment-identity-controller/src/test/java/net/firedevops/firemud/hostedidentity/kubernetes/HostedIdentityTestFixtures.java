@@ -515,10 +515,16 @@ final class HostedIdentityTestFixtures {
       return plan.grpcGameSessionSourceSecretName();
     }
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      return plan.grpcPublicationSourceSecretName(
-          role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
+      return plan.grpcPublicationSourceSecretName(grpcPublicationWorkload(role));
     }
     return secretName(plan, role);
+  }
+
+  private static String grpcPublicationWorkload(String role) {
+    if (!HostedIdentityContract.isGrpcPublicationRole(role)) {
+      throw new IllegalArgumentException("unsupported role");
+    }
+    return role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length());
   }
 
   record SecretClient(

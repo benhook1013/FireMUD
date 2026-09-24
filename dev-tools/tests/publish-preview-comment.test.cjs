@@ -8,6 +8,8 @@ const { publishPreviewComment } = require("../hosted/preview/publish-preview-com
 const context = {
   repo: { owner: "example", repo: "firemud" },
 };
+const BASE_SHA = "a".repeat(40);
+const MERGE_SHA = "b".repeat(40);
 
 function previewComment(id, body, updatedAt) {
   return {
@@ -19,22 +21,78 @@ function previewComment(id, body, updatedAt) {
   };
 }
 
-function makeGithub({ pullRequests, comments, deletedCommentStatuses = {} }) {
+function makeGithub({
+  pullRequests,
+  comments,
+  deletedCommentStatuses = {},
+  liveBaseShas = [],
+  mergeCommitParents = [],
+  refErrors = [],
+  commitErrors = [],
+}) {
   const calls = {
     get: [],
+    refs: [],
+    commits: [],
     paginate: [],
     deleted: [],
     updates: [],
     creates: [],
   };
+  const effectivePullRequests = pullRequests.map((pullRequest) => ({
+    ...pullRequest,
+    ...(pullRequest.base
+      ? { base: { ref: "develop", ...pullRequest.base } }
+      : {}),
+  }));
   let pullRequestIndex = 0;
+  let refIndex = 0;
+  let commitIndex = 0;
   const github = {
     rest: {
       pulls: {
         get: async (params) => {
           calls.get.push(params);
-          const index = Math.min(pullRequestIndex++, pullRequests.length - 1);
-          return { data: pullRequests[index] };
+          const index = Math.min(pullRequestIndex++, effectivePullRequests.length - 1);
+          return { data: effectivePullRequests[index] };
+        },
+      },
+      git: {
+        getRef: async (params) => {
+          calls.refs.push(params);
+          const errorConfig = refErrors[refIndex];
+          const index = Math.min(refIndex++, effectivePullRequests.length - 1);
+          if (errorConfig) {
+            const error = new Error(errorConfig.message || "live ref failure");
+            if (errorConfig.status !== undefined) error.status = errorConfig.status;
+            throw error;
+          }
+          const sha = liveBaseShas[index] ?? effectivePullRequests[index]?.base?.sha;
+          return { data: { object: { sha } } };
+        },
+      },
+      repos: {
+        getCommit: async (params) => {
+          calls.commits.push(params);
+          const errorConfig = commitErrors[commitIndex];
+          const index = Math.min(commitIndex++, effectivePullRequests.length - 1);
+          if (errorConfig) {
+            const error = new Error(errorConfig.message || "merge commit failure");
+            if (errorConfig.status !== undefined) error.status = errorConfig.status;
+            throw error;
+          }
+          const pullRequest = effectivePullRequests[index];
+          const parents =
+            mergeCommitParents[index] ?? [
+              { sha: pullRequest?.base?.sha },
+              { sha: pullRequest?.head?.sha },
+            ];
+          return {
+            data: {
+              sha: pullRequest?.merge_commit_sha,
+              parents,
+            },
+          };
         },
       },
       issues: {
@@ -93,12 +151,25 @@ async function publish(options = {}) {
     comments = [],
     deletedCommentStatuses,
     summaryText = "generated preview summary",
+    previewBaseSha,
+    previewMergeSha,
+    previewImageTag = "image-123",
+    previewHeadSha = "head-123",
+    liveBaseShas,
+    mergeCommitParents,
+    refErrors,
+    commitErrors,
+    environment = {},
     ...publisherOptions
   } = options;
   const { github, calls } = makeGithub({
     pullRequests,
     comments,
     deletedCommentStatuses,
+    liveBaseShas,
+    mergeCommitParents,
+    refErrors,
+    commitErrors,
   });
   const infos = [];
   const core = { info: (message) => infos.push(message) };
@@ -111,12 +182,15 @@ async function publish(options = {}) {
   await withEnvironment(
     {
       PREVIEW_PR_NUMBER: "123",
-      PREVIEW_HEAD_SHA: "head-123",
-      PREVIEW_IMAGE_TAG: "image-123",
+      PREVIEW_HEAD_SHA: previewHeadSha,
+      PREVIEW_BASE_SHA: previewBaseSha,
+      PREVIEW_MERGE_SHA: previewMergeSha,
+      PREVIEW_IMAGE_TAG: previewImageTag,
       PREVIEW_HOSTNAME: "pr-123.preview.firedevops.net",
       DEMO_SMOKE_USERNAME: "demo-user",
       DEMO_SMOKE_EMAIL: "demo@example.test",
       DEMO_SMOKE_PASSWORD: "demo-password",
+      ...environment,
     },
     async () => {
       await publishPreviewComment({
@@ -245,6 +319,35 @@ test("rejects an initially stale expected-open or expected-closed target", async
   assert.equal(expectedClosed.calls.creates.length, 0);
 });
 
+test("rejects an initially stale parent or merge tuple", async () => {
+  for (const pullRequest of [
+    {
+      state: "open",
+      head: { sha: "head-123" },
+      base: { sha: "c".repeat(40) },
+      merge_commit_sha: MERGE_SHA,
+    },
+    {
+      state: "open",
+      head: { sha: "head-123" },
+      base: { sha: BASE_SHA },
+      merge_commit_sha: "d".repeat(40),
+    },
+  ]) {
+    const result = await publish({
+      pullRequests: [pullRequest],
+      previewBaseSha: BASE_SHA,
+      previewMergeSha: MERGE_SHA,
+      previewImageTag: BASE_SHA,
+    });
+
+    assert.equal(result.calls.get.length, 1);
+    assert.equal(result.summaryCalls.length, 0);
+    assert.equal(result.calls.paginate.length, 0);
+    assert.equal(result.calls.creates.length, 0);
+  }
+});
+
 test("accepts the matching expected state and manual-any policy", async () => {
   for (const [statePolicy, state] of [
     ["expected-open", "open"],
@@ -280,6 +383,264 @@ test("final stale check prevents a changed head from deleting or updating commen
   assert.deepEqual(result.calls.deleted, []);
   assert.deepEqual(result.calls.updates, []);
   assert.deepEqual(result.calls.creates, []);
+});
+
+test("final stale check prevents a changed parent or merge tuple from publishing", async () => {
+  for (const changedPullRequest of [
+    {
+      state: "open",
+      head: { sha: "head-123" },
+      base: { sha: "c".repeat(40) },
+      merge_commit_sha: MERGE_SHA,
+    },
+    {
+      state: "open",
+      head: { sha: "head-123" },
+      base: { sha: BASE_SHA },
+      merge_commit_sha: "d".repeat(40),
+    },
+  ]) {
+    const result = await publish({
+      pullRequests: [
+        {
+          state: "open",
+          head: { sha: "head-123" },
+          base: { sha: BASE_SHA },
+          merge_commit_sha: MERGE_SHA,
+        },
+        changedPullRequest,
+      ],
+      comments: [
+        previewComment("203", "<!-- firemud-preview-summary -->\nold", "2026-09-01T00:00:00Z"),
+      ],
+      previewBaseSha: BASE_SHA,
+      previewMergeSha: MERGE_SHA,
+      previewImageTag: `pr-merge-${MERGE_SHA}`,
+    });
+
+    assert.equal(result.calls.get.length, 2);
+    assert.equal(result.summaryCalls.length, 1);
+    assert.equal(result.calls.paginate.length, 1);
+    assert.deepEqual(result.calls.deleted, []);
+    assert.deepEqual(result.calls.updates, []);
+    assert.deepEqual(result.calls.creates, []);
+  }
+});
+
+test("rejects malformed or incomplete optional tuple inputs before reading the pull request", async () => {
+  for (const options of [
+    { previewBaseSha: BASE_SHA },
+    { previewMergeSha: MERGE_SHA },
+    { previewBaseSha: BASE_SHA.toUpperCase(), previewMergeSha: MERGE_SHA },
+    { previewBaseSha: "not-a-sha", previewMergeSha: MERGE_SHA },
+    { previewBaseSha: BASE_SHA, previewMergeSha: MERGE_SHA, previewImageTag: "latest" },
+  ]) {
+    const result = await publish(options);
+
+    assert.equal(result.calls.get.length, 0);
+    assert.equal(result.summaryCalls.length, 0);
+    assert.equal(result.calls.paginate.length, 0);
+  }
+});
+
+test("accepts base-commit and merge-scoped image tags for a complete tuple", async () => {
+  for (const previewImageTag of [BASE_SHA, `pr-merge-${MERGE_SHA}`]) {
+    const result = await publish({
+      pullRequests: [
+        {
+          state: "open",
+          head: { sha: "head-123" },
+          base: { sha: BASE_SHA },
+          merge_commit_sha: MERGE_SHA,
+        },
+      ],
+      previewBaseSha: BASE_SHA,
+      previewMergeSha: MERGE_SHA,
+      previewImageTag,
+    });
+
+    assert.equal(result.calls.get.length, 2);
+    assert.equal(result.summaryCalls.length, 1);
+    assert.equal(result.calls.creates.length, 1);
+  }
+});
+
+test("accepts a lagging PR base SHA when the live base and ordered merge parents match", async () => {
+  const stalePrBaseSha = "c".repeat(40);
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: stalePrBaseSha, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: stalePrBaseSha, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [BASE_SHA, BASE_SHA],
+    mergeCommitParents: [
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+    ],
+  });
+
+  assert.equal(result.calls.get.length, 2);
+  assert.equal(result.calls.refs.length, 2);
+  assert.equal(result.calls.commits.length, 2);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.creates.length, 1);
+});
+
+test("rejects a lagging PR API when the live base ref has advanced", async () => {
+  const advancedBaseSha = "c".repeat(40);
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [advancedBaseSha, advancedBaseSha],
+  });
+
+  assert.equal(result.calls.get.length, 1);
+  assert.equal(result.calls.refs.length, 1);
+  assert.equal(result.calls.commits.length, 0);
+  assert.equal(result.summaryCalls.length, 0);
+  assert.equal(result.calls.paginate.length, 0);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
+});
+
+test("retries transient live-fence failures at both publication fences", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [BASE_SHA, BASE_SHA],
+    refErrors: [{ status: 503 }, null, { status: 503 }],
+    commitErrors: [null, { status: 429 }],
+  });
+
+  assert.equal(result.calls.refs.length, 4);
+  assert.equal(result.calls.commits.length, 3);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.creates.length, 1);
+  assert.match(result.infos.join("\n"), /Transient live base ref failure/);
+  assert.match(result.infos.join("\n"), /Transient live merge commit failure/);
+});
+
+test("does not mutate comments when a transient live-fence read is exhausted", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    comments: [
+      previewComment("204", "<!-- firemud-preview-summary -->\nold", "2026-09-01T00:00:00Z"),
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    refErrors: [{ status: 503 }, { status: 503 }, { status: 503 }],
+  });
+
+  assert.equal(result.calls.get.length, 1);
+  assert.equal(result.calls.refs.length, 3);
+  assert.equal(result.calls.commits.length, 0);
+  assert.equal(result.summaryCalls.length, 0);
+  assert.equal(result.calls.paginate.length, 0);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
+});
+
+test("rejects an exact-head publication when live merge parents are not ordered base then head", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    mergeCommitParents: [
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+      [{ sha: "head-123" }, { sha: BASE_SHA }],
+    ],
+    comments: [
+      previewComment("203", "<!-- firemud-preview-summary -->\nold", "2026-09-01T00:00:00Z"),
+    ],
+  });
+
+  assert.equal(result.calls.get.length, 2);
+  assert.equal(result.calls.refs.length, 2);
+  assert.equal(result.calls.commits.length, 2);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.paginate.length, 1);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
+});
+
+test("preserves head/state-only compatibility when no tuple inputs are supplied", async () => {
+  const result = await publish({
+    pullRequests: [{ state: "open", head: { sha: "head-123" } }],
+    mode: "cleanup",
+    statePolicy: "expected-open",
+  });
+
+  assert.equal(result.calls.get.length, 2);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.creates.length, 1);
 });
 
 test("final expected-closed check ignores a closed-event cleanup after same-head reopen", async () => {
