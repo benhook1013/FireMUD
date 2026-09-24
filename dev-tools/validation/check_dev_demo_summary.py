@@ -664,7 +664,7 @@ def _bootstrap_python_source(bootstrap_manifest: str) -> str:
         )
     start = opener_indices[0] + 1
     try:
-        end = next(index for index in range(start, len(lines)) if lines[index].strip() == "PY")
+        end = next(index for index in range(start, len(lines)) if lines[index] == "PY")
     except StopIteration as exc:
         raise AssertionError(
             "dev-demo bootstrap Python script heredoc is unterminated"
