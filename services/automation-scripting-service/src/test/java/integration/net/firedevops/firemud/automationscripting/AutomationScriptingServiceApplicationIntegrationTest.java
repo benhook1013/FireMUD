@@ -481,9 +481,11 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     audit.setWorldSlug("");
     audit.setRealmSlug("");
     audit.setPointerVersion("");
-    audit.setEventType("onCommand");
+    audit.setScriptId("script-nullable-ingress");
+    audit.setEventType("onLoad");
     audit.setEventSchemaVersion("v1");
     audit.setScriptPatchVersion("patch-nullable-ingress");
+    audit.setRequestDigest("a".repeat(64));
     audit.setScriptEventId(scriptEventId);
     audit.setSourceService("integration-test");
     audit.setTriggerMode("EVENT");
@@ -559,6 +561,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     item.setStatus("DEAD_LETTERED");
     item.setFailureGeneration(7L);
     item.setScriptPinEpoch(1L);
+    item.setScriptPinControlPlaneRequestId("pin-request-concurrent-replay");
     item.setCreatedAt(Instant.now());
     item.setUpdatedAt(Instant.now());
     return item;
