@@ -1148,7 +1148,7 @@ jobs:
             }
 
   validation-gate:
-    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate' }}
+    name: Validation Gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -1178,7 +1178,6 @@ jobs:
           workflow-name: CI — Validation
           workflow-file: ci.yml
           workflow-path: .github/workflows/ci.yml
-          allow-pending: 'true'
 
       - name: Enforce validation success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
