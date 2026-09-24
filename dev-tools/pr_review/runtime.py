@@ -572,10 +572,17 @@ class LiveEvidence:
                 if identity in emitted_cli_sources:
                     continue
                 emitted_cli_sources.add(identity)
+                candidate_sha = capture.metadata.get("candidate_sha", "")
+                published_head_sha = capture.metadata.get("published_head_sha", candidate_sha)
+                current_head = any(
+                    value.casefold() == head.casefold()
+                    for value in (candidate_sha, published_head_sha)
+                    if value
+                )
                 values.append(
                     {
                         "pr": pr,
-                        "head": capture.metadata.get("candidate_sha", ""),
+                        "head": candidate_sha,
                         "checkpoint": f"pending-capture:{run_id}",
                         "completed": False,
                         "attributable": False,
@@ -584,10 +591,10 @@ class LiveEvidence:
                         "raw": len(capture.findings),
                         "corrected_state": False,
                         "provisional": capture.metadata.get("provisional", "false").casefold() == "true",
-                        "held": capture.metadata.get("candidate_sha", "").casefold() == head.casefold(),
+                        "held": current_head,
                         "reason": (
                             "a successful private CLI capture has no public checkpoint and requires adjudication"
-                            if capture.metadata.get("candidate_sha", "").casefold() == head.casefold()
+                            if current_head
                             else "a successful private CLI capture belongs to an older head"
                         ),
                         **self._anchor(capture.metadata),

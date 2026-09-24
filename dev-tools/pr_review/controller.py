@@ -1015,7 +1015,10 @@ class ReviewController:
     ) -> Any:
         selected = self._target(policy.Channel.CLI, expected_pr)
         if allow_unreconciled:
-            if not reason or selected.status != policy.ReviewStatus.UNRECONCILED:
+            if not reason or selected.status not in {
+                policy.ReviewStatus.UNRECONCILED,
+                policy.ReviewStatus.PARENT_MOVED,
+            }:
                 raise ControllerError("provisional CLI requires an unreconciled target and a reason")
             if self._provisional_duplicate(selected):
                 raise ControllerError(

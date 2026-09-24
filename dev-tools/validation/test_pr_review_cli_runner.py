@@ -813,6 +813,31 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(metadata["published_head_sha"], HEAD)
             self.assertEqual(len(metadata["patch_identity"]), 64)
 
+    def test_temp_root_failure_removes_pinned_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            with (
+                patch(
+                    "pr_review.cli_runner.tempfile.mkdtemp",
+                    side_effect=OSError("temporary root unavailable"),
+                ),
+                self.assertRaisesRegex(OSError, "temporary root unavailable"),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            update_ref_calls = [
+                call[0]
+                for call in commands.calls
+                if call[0][:3] == ("git", "-C", str(root)) and "update-ref" in call[0]
+            ]
+            self.assertEqual(len(update_ref_calls), 2)
+            self.assertEqual(update_ref_calls[0][3], "update-ref")
+            self.assertEqual(update_ref_calls[0][5], PARENT)
+            self.assertEqual(update_ref_calls[1][3:5], ("update-ref", "-d"))
+            self.assertEqual(update_ref_calls[1][5], update_ref_calls[0][4])
+
     def test_final_preflight_rejects_conflict_or_missing_base_before_review(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

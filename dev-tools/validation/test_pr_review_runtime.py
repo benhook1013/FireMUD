@@ -1282,6 +1282,73 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(pending[0]["completed"])
             self.assertEqual(pending[0]["raw"], 1)
 
+    def test_pending_cli_capture_with_published_head_matching_live_head_is_held(self) -> None:
+        run_id = "run.UnpublishedCandidate"
+        candidate = "c" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                "\n".join(
+                    (
+                        f"run_id={run_id}",
+                        "repository=owner/repo",
+                        "pull_request=42",
+                        f"candidate_sha={candidate}",
+                        f"published_head_sha={HEAD}",
+                        "candidate_files=1",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+            history = self._history(common, self._payload(), "cli")
+            pending = [item for item in history if item.get("checkpoint") == f"pending-capture:{run_id}"]
+            self.assertEqual(len(pending), 1)
+            self.assertTrue(pending[0]["held"])
+            self.assertIn("requires adjudication", pending[0]["reason"])
+
+    def test_pending_cli_capture_with_old_published_head_is_not_held(self) -> None:
+        run_id = "run.OldPublishedHead"
+        candidate = "c" * 40
+        old_head = "d" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                "\n".join(
+                    (
+                        f"run_id={run_id}",
+                        "repository=owner/repo",
+                        "pull_request=42",
+                        f"candidate_sha={candidate}",
+                        f"published_head_sha={old_head}",
+                        "candidate_files=1",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+            history = self._history(common, self._payload(), "cli")
+            pending = [item for item in history if item.get("checkpoint") == f"pending-capture:{run_id}"]
+            self.assertEqual(len(pending), 1)
+            self.assertFalse(pending[0]["held"])
+            self.assertIn("older head", pending[0]["reason"])
+
     def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
         comments = [
             {

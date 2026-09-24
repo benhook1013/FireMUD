@@ -575,6 +575,75 @@ class ControllerTests(unittest.TestCase):
         ):
             controller.run_cli(allow_unreconciled=True, reason="one")
 
+    def test_provisional_discovery_allows_parent_moved_child_with_reason(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        parent_history = [
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": f"parent-{index}",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            }
+            for index in range(3)
+        ]
+        evidence = {
+            (1, "cli"): parent_history,
+            (2, "cli"): [
+                {
+                    "pr": 2,
+                    "head": HEAD_2,
+                    "checkpoint": "child-before-parent-move",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "child_head": HEAD_2,
+                    "parent_identity": "1",
+                    "parent_head": PARENT,
+                    "merge_base": BASE,
+                    "patch_id": f"patch-{HEAD_2[:4]}",
+                }
+            ],
+        }
+        controller = self.make(
+            values,
+            evidence,
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        self.assertEqual(controller.status()["prs"][1]["reconciliation"], "PARENT_MOVED")
+        controller.cli_adapter = lambda target, **kwargs: (target, kwargs)
+
+        target, options = controller.run_cli(
+            expected_pr=2,
+            allow_unreconciled=True,
+            reason="one provisional pass before parent reconciliation",
+        )
+
+        self.assertEqual(target.snapshot.number, 2)
+        self.assertEqual(
+            options,
+            {
+                "allow_unreconciled": True,
+                "reason": "one provisional pass before parent reconciliation",
+            },
+        )
+        with self.assertRaisesRegex(ControllerError, "provisional CLI requires an unreconciled target and a reason"):
+            controller.run_cli(expected_pr=2, allow_unreconciled=True)
+
     def test_compact_and_json_results_are_structured(self):
         value = {"status": "READY", "pr": 1, "anchor": {"head": HEAD_1}}
         self.assertIn("status=READY", compact_result(value))

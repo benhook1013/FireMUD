@@ -535,6 +535,7 @@ def run_cli_review(
             raise ReviewRunnerError(f"another CLI review is already running (lock: {lock_path})") from error
         hosted_lock_handle = None
         hosted_lock_acquired = False
+        temp_root: Path | None = None
         try:
             repository = target.repository or str(getattr(github, "repo", "unknown/unknown"))
             hosted_record_path = hosted.default_trigger_record_path(
@@ -598,8 +599,25 @@ def run_cli_review(
                 if not ahead.isdigit():
                     raise ReviewRunnerError("could not count candidate commits ahead of the published head")
                 published_status = f"unpublished-commits-ahead:{ahead}"
-            _git(runner, source_root, "update-ref", pinned_ref, merge_base, timeout=git_timeout_seconds)
-            temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
+            # Pinning the merge base and allocating the temporary root are one
+            # cleanup boundary: either setup step can fail, but a successful pin
+            # must never outlive a failed temporary-root allocation.
+            try:
+                _git(runner, source_root, "update-ref", pinned_ref, merge_base, timeout=git_timeout_seconds)
+                temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
+            except Exception:
+                _git(
+                    runner,
+                    source_root,
+                    "update-ref",
+                    "-d",
+                    pinned_ref,
+                    check=False,
+                    timeout=git_timeout_seconds,
+                )
+                if temp_root is not None:
+                    shutil.rmtree(temp_root, ignore_errors=True)
+                raise
             candidate_worktree = temp_root / "candidate"
             try:
                 _git(
@@ -744,7 +762,8 @@ def run_cli_review(
                         timeout=git_timeout_seconds,
                     )
                 _git(runner, source_root, "update-ref", "-d", pinned_ref, check=False, timeout=git_timeout_seconds)
-                shutil.rmtree(temp_root, ignore_errors=True)
+                if temp_root is not None:
+                    shutil.rmtree(temp_root, ignore_errors=True)
         except Exception as error:
             if capture_dir.exists():
                 (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
