@@ -362,10 +362,15 @@ def _history(provider: Any, pr: int, channel: policy.Channel) -> list[Any]:
 
 
 def _latest_review(history: Sequence[Any]) -> Any | None:
-    """Return the latest completed, attributable review, ignoring status records."""
+    """Return the latest policy-effective completed, attributable review."""
 
     for item in reversed(history):
-        if _field(item, "completed") is True and _field(item, "attributable") is True:
+        if (
+            _field(item, "completed") is True
+            and _field(item, "attributable") is True
+            and _field(item, "provisional") is not True
+            and _field(item, "correction") is not True
+        ):
             return item
     return None
 

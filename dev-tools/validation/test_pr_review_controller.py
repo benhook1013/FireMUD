@@ -657,6 +657,37 @@ class ControllerTests(unittest.TestCase):
         result = controller.status()
         self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
 
+    def test_reconciliation_ignores_provisional_and_correction_anchors(self):
+        prior = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "prior",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        newer_provisional = dict(prior, checkpoint="provisional", provisional=True, parent_head="9" * 40)
+        newer_correction = dict(
+            prior,
+            checkpoint="correction",
+            correction=True,
+            parent_head="9" * 40,
+        )
+
+        for newer in (newer_provisional, newer_correction):
+            with self.subTest(checkpoint=newer["checkpoint"]):
+                controller = self.make(
+                    {1: pr(1, HEAD_1, base_tip="9" * 40)},
+                    {(1, "hosted"): [prior, newer]},
+                )
+                controller.set_stack([1])
+                self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
     def test_exact_stack_reconciliation_reopens_review_and_unblocks_descendants(self):
         values = {
             1: pr(1, HEAD_1),
