@@ -918,8 +918,7 @@ class CertificateMaterialServiceTest {
     Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
 
     CertificateMaterialService.RoleMaterial inFlight =
-        materializeGrpcProjection(
-            plan, previousBundlePlan, previousBundle, validator, true, false);
+        materializeGrpcProjection(plan, previousBundlePlan, previousBundle, validator, true, false);
 
     assertEquals(SERIALIZED_IN_FLIGHT, inFlight.state());
     assertEquals(previousBundle.getData(), inFlight.source().getData());
@@ -930,16 +929,14 @@ class CertificateMaterialServiceTest {
       throws Exception {
     EnvironmentIdentityPlan plan = plan();
     SecretMaterialValidator validator = new SecretMaterialValidator();
-    EnvironmentIdentityPlan previousBundlePlan =
-        plan.withGrpcConsumers(previousGrpcConsumers(plan));
-    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+    Secret currentBundle = GrpcMaterialFixture.generate(plan);
 
     MaterialValidationException failure =
         assertThrows(
             MaterialValidationException.class,
             () ->
                 materializeGrpcProjection(
-                    plan, previousBundlePlan, previousBundle, validator, true, true));
+                    plan, plan, currentBundle, validator, true, true));
 
     assertEquals("certificate and private key do not match", failure.getMessage());
     assertFalse(failure.isSanMismatch());

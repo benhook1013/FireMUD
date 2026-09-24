@@ -499,12 +499,7 @@ class LiveEvidence:
             if state.state == "completed" and state.response_id not in hosted_checkpoint_ids:
                 observation = self._uncheckpointed_hosted_observation(pr, state)
                 fingerprint = observation_fingerprint(observation)
-                fingerprinted = any(
-                    observation_fingerprint(item) in expected_hosted_fingerprints
-                    and observation_fingerprint(item) == fingerprint
-                    for item in self.history(pr, "hosted")
-                    if item.get("checkpoint") == observation["checkpoint"]
-                ) or fingerprint in expected_hosted_fingerprints
+                fingerprinted = fingerprint in expected_hosted_fingerprints
                 if not fingerprinted:
                     unmatched_responses.append("completed Hosted response has no checkpoint or prior audit")
 
