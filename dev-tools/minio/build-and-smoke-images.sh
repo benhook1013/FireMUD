@@ -11,10 +11,16 @@ client_image="$2"
 workspace="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 temp_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/firemud-minio-source-build.XXXXXX")"
 network="minio-source-smoke-${RANDOM}-${RANDOM}"
-server_container="minio-source-server"
+server_container="minio-source-server-${RANDOM}-${RANDOM}"
+server_created=false
+network_created=false
 cleanup() {
-  docker rm --force "$server_container" >/dev/null 2>&1 || true
-  docker network rm "$network" >/dev/null 2>&1 || true
+  if [[ "$server_created" == true ]]; then
+    docker rm --force "$server_container" >/dev/null 2>&1 || true
+  fi
+  if [[ "$network_created" == true ]]; then
+    docker network rm "$network" >/dev/null 2>&1 || true
+  fi
   rm -rf -- "$temp_root"
 }
 trap cleanup EXIT
@@ -61,9 +67,11 @@ DOCKER_BUILDKIT=1 docker build --pull=false \
   --file "$workspace/docker/minio/client.Dockerfile" --tag "$client_image" "$temp_root/mc"
 
 docker network create "$network" >/dev/null
+network_created=true
 docker run --detach --name "$server_container" --network "$network" \
   --env MINIO_ROOT_USER=smoke-access-key \
   --env MINIO_ROOT_PASSWORD=smoke-secret-key-123456789 "$server_image" >/dev/null
+server_created=true
 
 ready=false
 attempt=0
@@ -84,12 +92,13 @@ fi
 
 if ! docker run --rm --network "$network" --entrypoint /bin/sh \
   --env MINIO_ROOT_USER=smoke-access-key \
+  --env MINIO_SOURCE_SERVER="$server_container" \
   --env MINIO_ROOT_PASSWORD=smoke-secret-key-123456789 "$client_image" \
   -c 'set -eu
-    mc alias set local http://minio-source-server:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+    mc alias set local "http://$MINIO_SOURCE_SERVER:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
     mc mb --ignore-existing local/firemud-assets
     mc anonymous set private local/firemud-assets
-    anonymous_response="$(busybox wget -S -T 3 -O /dev/null http://minio-source-server:9000/firemud-assets/ 2>&1)" && {
+    anonymous_response="$(busybox wget -S -T 3 -O /dev/null "http://$MINIO_SOURCE_SERVER:9000/firemud-assets/" 2>&1)" && {
       echo "Anonymous listing unexpectedly succeeded for the private bucket." >&2
       exit 1
     }
