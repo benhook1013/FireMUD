@@ -52,7 +52,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("Review or PR details unavailable", result)
         self.assertNotIn("Takes about a minute", result)
         self.assertNotIn('href="../../task-briefs/', result)
-        self.assertIn("Review eligibility unavailable", result)
+        self.assertNotIn("Review eligibility unavailable", result)
         self.assertNotIn("Review front", result)
         self.assertLess(result.index("<h2>Worker lanes</h2>"), result.index("<h2>Stack at a glance</h2>"))
         self.assertLess(result.index("<h2>Stack at a glance</h2>"), result.index("<h2>Configured review queue</h2>"))
@@ -207,7 +207,8 @@ vm.runInNewContext(process.argv[1], {
                   "merged_at": {43: (NOW - timedelta(minutes=12)).isoformat()},
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
-        self.assertIn("<strong>Draft</strong> · Hosted Held · CLI Ready", result)
+        self.assertIn('<span class="sub">CLI ready</span>', result)
+        self.assertNotIn("Hosted Held", result)
         self.assertIn('<li class="merged"><span class="order">02</span>', result)
         self.assertIn('<strong>Merged</strong> <time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time>', result)
@@ -224,6 +225,34 @@ vm.runInNewContext(process.argv[1], {
         self.assertEqual(2, result.count(age_markup))
         self.assertNotIn("Stack record checked", result)
         self.assertNotIn("do not establish taper or merge readiness", result)
+
+    def test_open_review_line_only_shows_controller_ready_channels(self):
+        data = self.fixture()
+        data["stack"].extend({**data["stack"][0], "number": number} for number in range(43, 47))
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}},
+            43: {"channels": {"hosted": "READY", "cli": "HELD"}},
+            44: {"channels": {"hosted": "RATE_LIMITED", "cli": "READY"}},
+            45: {"channels": {"hosted": "READY", "cli": "READY"}},
+        }})
+        github = {"available": True, "states": {number: False for number in range(42, 47)},
+                  "lifecycle": {number: "OPEN" for number in range(42, 47)},
+                  "merged_at": {}, "stats": {}}
+        result = page.render(data, review, NOW, github)
+
+        def row(number):
+            queue = result.split('<ol class="stack">', 1)[1]
+            return queue.split(f'{page.REPO_URL}{number}">', 1)[1].split("</li>", 1)[0]
+
+        self.assertEqual(1, row(42).count('class="sub"'))
+        self.assertIn('<span class="sub">Hosted ready</span>', row(43))
+        self.assertIn('<span class="sub">CLI ready</span>', row(44))
+        self.assertIn('<span class="sub">Hosted ready · CLI ready</span>', row(45))
+        self.assertEqual(1, row(46).count('class="sub"'))
+        self.assertNotIn("Ready for review", result)
+        self.assertNotIn("Parent Moved", result)
+        self.assertNotIn("Review eligibility unavailable", result)
 
     def test_pr_size_colors_only_warn_above_ninety_files(self):
         data = self.fixture()
@@ -251,7 +280,8 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<span class="round-pill" aria-label="3/1">3/1</span>', result)
         self.assertIn('<span class="round-pill zero-accepted older unlinked" '
                       'aria-label="2/0 (older head, unlinked, non-counting)">2/0</span>', result)
-        self.assertIn('.round-pill.older.unlinked.zero-accepted { border-style: dashed; }', result)
+        self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
+        self.assertNotIn('.round-pill.unlinked.zero-accepted', result)
         self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
                       '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
         self.assertLess(result.index('aria-label="0/0"'), result.index('aria-label="3/1"'))
@@ -306,7 +336,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertFalse(snapshot["saved_head_stale"])
         self.assertEqual({42, 43}, set(snapshot["queue"]))
         result = page.render(self.fixture(), snapshot, NOW)
-        self.assertIn("Hosted Ready · CLI Held", result)
+        self.assertIn('<span class="sub">Hosted ready</span>', result)
         self.assertNotIn("raw /", result)
         report["prs"][0]["head"] = "b" * 40
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")

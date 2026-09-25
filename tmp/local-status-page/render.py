@@ -229,13 +229,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         number = item["number"]
         if type(number) is not int or number <= 0:
             raise ValueError("PR numbers must be positive integers")
-        draft = github["states"].get(number)
         lifecycle = github.get("lifecycle", {}).get(number)
-        github_label = (
-            "Merged" if lifecycle == "MERGED" else "Closed" if lifecycle == "CLOSED"
-            else "Draft" if draft is True else "Ready for review" if draft is False
-            else "GitHub stage unavailable"
-        )
         stats = github.get("stats", {}).get(number)
         if stats:
             files_label = f'{stats["changedFiles"]} files'
@@ -258,13 +252,16 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 f'title="{safe(local_time(merged_time))}">{relative_time(merged_time, now)}</time>'
                 if merged_time else "Merge time unavailable"
             )
+            status_html = f'<span class="sub"><strong>Merged</strong> {channel_html}</span>'
         elif lifecycle == "CLOSED":
-            channel_html = "Historical review record"
+            status_html = '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
         elif queue_item:
-            channels = queue_item["channels"]
-            channel_html = safe(f'Hosted {channels["hosted"].replace("_", " ").title()} · CLI {channels["cli"].replace("_", " ").title()}')
+            channels = queue_item.get("channels", {})
+            actionable = [f"{label} ready" for channel, label in (("hosted", "Hosted"), ("cli", "CLI"))
+                          if channels.get(channel) == "READY"] if isinstance(channels, dict) else []
+            status_html = f'<span class="sub">{safe(" · ".join(actionable))}</span>' if actionable else ""
         else:
-            channel_html = "Review eligibility unavailable"
+            status_html = ""
         activity_cards = []
         if queue_item and isinstance(queue_item.get("review_activity"), dict):
             for channel in ("hosted", "cli"):
@@ -315,7 +312,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<li{row_class}><span class="order">{position:02d}</span><div class="pr-main">'
             f'<a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>'
             f'<span class="sub">{size_html}</span>'
-            f'<span class="sub"><strong>{safe(github_label)}</strong>{" " if lifecycle == "MERGED" else " · "}{channel_html}</span>'
+            f'{status_html}'
             f'{activity_grid}'
             f'</div></li>'
         )
@@ -381,9 +378,7 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .round-pill {{ border: 1px solid #adb4be; border-radius: 999px; padding: .12rem .43rem; background: #e4e8ed; font-weight: 650; }}
 .round-pill.older {{ border-style: dashed; background: #f1f2f4; color: #626b77; }}
 .round-pill.unlinked {{ border-color: #b9945a; background: #f3e9d9; color: #79562b; }}
-.round-pill.zero-accepted {{ border-color: #953047; background: #ad3b55; color: #fff; }}
-.round-pill.unlinked.zero-accepted {{ border: 2px solid #c4842d; }}
-.round-pill.older.unlinked.zero-accepted {{ border-style: dashed; }}
+.round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
 .fresh {{ color: #626b77; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
 .cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; }} .card {{ overflow: hidden; }} .card-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; background: #8e2941; color: #f7f2f4; padding: .9rem 1.15rem; }} .card-top .fresh {{ color: #f0e0e6; }}
 .task {{ font-weight: 620; min-height: 3.1em; margin: 1rem 1.15rem; }} dl {{ display: grid; grid-template-columns: 5.5rem 1fr; gap: .55rem .4rem; margin: 0 1.15rem 1.15rem; font-size: .86rem; }} dt {{ color: #626b77; }} dd {{ margin: 0; line-height: 1.4; }}
