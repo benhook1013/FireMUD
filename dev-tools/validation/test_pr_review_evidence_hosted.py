@@ -824,6 +824,37 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertTrue(post_reply_incomplete_state.terminal)
         self.assertTrue(post_reply_incomplete_state.attributed)
 
+        wrapped_reply = {
+            **reply,
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: "
+                "v2:6a355c47ffcf4ddd532604823fb155b76256a51f568b7e5a4e92ef6f3565c6f9 -->\n"
+                "<details>\n"
+                "<summary>✅ Action performed</summary>\n"
+                "Full review finished.\n"
+                "</details>"
+            ),
+        }
+        self.assertEqual(
+            state_for(summary_after_reply, selected_reply=wrapped_reply).state,
+            "failed",
+        )
+        self.assertEqual(state_for(summary, selected_reply=wrapped_reply).state, "ambiguous")
+
+        altered_action = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace("✅ Action performed", "✅ Review complete"),
+        }
+        extra_text = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace(
+                "Full review finished.", "Full review finished.\nAn issue requires attention."
+            ),
+        }
+        self.assertEqual(state_for(summary_after_reply, selected_reply=altered_action).state, "ambiguous")
+        self.assertEqual(state_for(summary_after_reply, selected_reply=extra_text).state, "ambiguous")
+
         later_bot_output = comment(24, "coderabbitai[bot]", "Another review update.", "2026-09-23T00:03:45Z")
         self.assertEqual(
             state_for(summary_after_reply, extra_comments=[intervening_trigger]).state,

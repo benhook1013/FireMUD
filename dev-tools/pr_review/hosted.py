@@ -767,6 +767,31 @@ def _summary_has_explicit_incomplete_coverage(body: str) -> bool:
     return any(reviewed < selected for reviewed, selected in ratios)
 
 
+def _is_finished_action_response(body: str, *, allow_action_wrapper: bool) -> bool:
+    """Match the plain finish reply or one exact, provider-format action wrapper."""
+
+    text = _unquoted(body).strip()
+    if re.fullmatch(r"full\s+review\s+finished\.", text, re.IGNORECASE):
+        return True
+    if not allow_action_wrapper:
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return (
+        len(lines) == 6
+        and lines[0] == "<!-- This is an auto-generated reply by CodeRabbit -->"
+        and re.fullmatch(
+            re.escape(COMMAND_INVOCATION_MARKER) + r"\s+v2:[0-9a-f]{64}\s+-->",
+            lines[1],
+            re.IGNORECASE,
+        )
+        is not None
+        and lines[2] == "<details>"
+        and lines[3] == "<summary>✅ Action performed</summary>"
+        and lines[4] == "Full review finished."
+        and lines[5] == "</details>"
+    )
+
+
 def _summary_has_explicit_incompleteness(body: str) -> bool:
     text = _unquoted(body)
     not_reviewed_counts = [int(match.group(1)) for match in FILE_NOT_REVIEWED_COUNT.finditer(text)]
@@ -869,7 +894,10 @@ def _provider_format_terminal_summary(
     if (
         not is_coderabbit_login(response_author)
         or not isinstance(response_body, str)
-        or re.fullmatch(r"full\s+review\s+finished\.", _unquoted(response_body).strip(), re.IGNORECASE) is None
+        or not _is_finished_action_response(
+            response_body,
+            allow_action_wrapper=require_incomplete_coverage,
+        )
         or response_at is None
         or response_updated is None
         or response_at <= after
