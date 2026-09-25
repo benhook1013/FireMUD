@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
@@ -10,9 +11,13 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.notExists;
+import static org.jooq.impl.DSL.selectOne;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,10 +41,17 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
+  private static final int MAX_CANCELLATION_ROWS = 100;
   private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
       "script_pin_control_plane_request_id conflicts with existing identity";
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
+  private static final Field<LocalDateTime> CURRENT_TIMESTAMP =
+      field("CURRENT_TIMESTAMP", LocalDateTime.class);
+  private static final Field<OffsetDateTime> CURRENT_OFFSET_TIMESTAMP =
+      field("CURRENT_TIMESTAMP", OffsetDateTime.class);
+  private static final Field<OffsetDateTime> HANDOFF_RETENTION_HOLD_UNTIL =
+      field("retention_hold_until", OffsetDateTime.class);
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
@@ -177,6 +189,37 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
+  /**
+   * Selects one bounded cancellation page while holding row locks through the caller's transaction.
+   * The optional scope selectors are exact filters, never wildcards.
+   */
+  public List<ScriptWorkItem>
+      findByTenantIdAndScriptPatchVersionAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+          String tenantId,
+          String scriptPatchVersion,
+          String gameInstanceId,
+          String regionId,
+          Collection<String> statuses) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (regionId != null && !regionId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(MAX_CANCELLATION_ROWS)
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
   public List<ScriptWorkItem>
       findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
           String tenantId, String pluginId, String pluginVersionId, Collection<String> statuses) {
@@ -189,6 +232,36 @@ public class ScriptWorkItemRepository {
             .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
+  }
+
+  /** Selects one bounded plugin-version cancellation page under row locks. */
+  public List<ScriptWorkItem>
+      findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+          String tenantId,
+          String pluginId,
+          String pluginVersionId,
+          String gameInstanceId,
+          String regionId,
+          Collection<String> statuses) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(blankToEmpty(pluginId)))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(blankToEmpty(pluginVersionId)))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (regionId != null && !regionId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(MAX_CANCELLATION_ROWS)
+        .forUpdate()
+        .fetch(this::toEntity);
   }
 
   public List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
@@ -274,6 +347,26 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
+  /**
+   * Claims a bounded page of pending work under PostgreSQL row locks. Retry backoff is evaluated by
+   * the database clock so a scanner cannot claim an authority-fenced item before its next eligible
+   * instant.
+   */
+  public List<ScriptWorkItem> findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+      String status, Pageable pageable) {
+    Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
+    if ("PENDING_EVALUATION".equals(status)) {
+      condition = condition.and(retryEligibilityCondition());
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(limitOrDefault(pageable, 100))
+        .forUpdate()
+        .skipLocked()
+        .fetch(this::toEntity);
+  }
+
   public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
       Collection<Long> ids, String status, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
@@ -284,6 +377,25 @@ public class ScriptWorkItemRepository {
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
+  }
+
+  /** Claims explicitly selected pending rows under the same retry/backoff fence as the scanner. */
+  public List<ScriptWorkItem> findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+      Collection<Long> ids, String status, Pageable pageable) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    Condition condition = SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status));
+    if ("PENDING_EVALUATION".equals(status)) {
+      condition = condition.and(retryEligibilityCondition());
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(limitOrDefault(pageable, 100))
+        .forUpdate()
+        .skipLocked()
+        .fetch(this::toEntity);
   }
 
   public List<ScriptWorkItem> findByStatusInOrderByCreatedAtAscIdAsc(
@@ -336,6 +448,69 @@ public class ScriptWorkItemRepository {
   }
 
   /**
+   * Counts terminal rows older than the supplied evidence watermark that remain blocked by child
+   * evidence or, for dead letters, by the missing recovery-aware deletion proof. This is
+   * observability only and never authorizes deletion.
+   */
+  public long countTerminalRowsBlockedByEvidence(String status, Instant safeWatermark) {
+    Condition agedRows =
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(safeWatermark)));
+    // DEAD_LETTERED cleanup is fail-closed even when no child evidence remains: the current
+    // schema has no recovery-aware parent hold/generation proof, so every aged row is blocked.
+    return "DEAD_LETTERED".equals(status)
+        ? dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows)
+        : dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence().not()));
+  }
+
+  /**
+   * Parent-cleanup proof for the current schema. Replay results always remain attached until a
+   * receipt-retention horizon exists; handoff rows may be removed only when their owner hold is
+   * absent or no longer active. Audit rows are detached separately and therefore do not block the
+   * parent here.
+   */
+  private static Condition noBlockingRetentionEvidence() {
+    return notExists(
+            selectOne()
+                .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
+                .where(
+                    SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                        .TENANT_ID
+                        .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                        .and(
+                            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
+                                SCRIPT_WORK_ITEMS.ID))))
+        .and(
+            notExists(
+                selectOne()
+                    .from(SCRIPT_HANDOFF_EVENTS)
+                    .where(
+                        SCRIPT_HANDOFF_EVENTS
+                            .TENANT_ID
+                            .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                            .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID))
+                            .and(handoffBlocksParent()))));
+  }
+
+  private static Condition handoffBlocksParent() {
+    Condition incompleteOutcome =
+        SCRIPT_HANDOFF_EVENTS
+            .HANDOFF_OUTCOME
+            .isNull()
+            .or(
+                field(
+                        "regexp_replace({0}, '[[:space:]]', '', 'g')",
+                        String.class, SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)
+                    .eq(""));
+    return HANDOFF_RETENTION_HOLD_UNTIL
+        .isNotNull()
+        .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
+        .or(incompleteOutcome);
+  }
+
+  /**
    * Deletes eligible rows while retaining the eligibility decision through child and parent
    * deletion. The transaction keeps the row locks held until all child and parent rows are
    * disposed.
@@ -343,8 +518,8 @@ public class ScriptWorkItemRepository {
   @Transactional
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
     if ("DEAD_LETTERED".equals(status)) {
-      // The live schema has no recovery aggregate, generation/claim state, expected-child ledger,
-      // or evidence-retention horizons. Deleting a dead-letter parent cannot prove that its
+      // The live schema has no recovery aggregate, expected-child ledger, or evidence-retention
+      // horizon. Deleting a dead-letter parent cannot prove that its
       // recovery and supporting evidence are terminal and retention-eligible.
       return 0L;
     }
@@ -414,6 +589,14 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, blankToEmpty(entity.getPluginVersionId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
             .set(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION, entity.getLifecycleRevision())
+            .set(SCRIPT_WORK_ITEMS.FAILURE_GENERATION, entity.getFailureGeneration())
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE,
+                toLocalDateTime(entity.getAuthorityUnavailableSince()))
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT,
+                entity.getAuthorityUnavailableCount())
+            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
@@ -677,17 +860,34 @@ public class ScriptWorkItemRepository {
         .fetchOptional(this::toEntity);
   }
 
-  @Transactional
-  public void deleteAll(Collection<ScriptWorkItem> entities) {
-    if (entities == null || entities.isEmpty()) {
-      return;
-    }
-    List<Long> ids =
-        entities.stream().map(ScriptWorkItem::getId).filter(java.util.Objects::nonNull).toList();
-    if (ids.isEmpty()) {
-      return;
-    }
-    deleteByIds(ids);
+  /**
+   * Claims one dead-letter row for replay using the observed row version and failure generation. A
+   * competing request therefore gets an empty result instead of overwriting a newer recovery
+   * decision.
+   */
+  public Optional<ScriptWorkItem> claimDeadLetterForReplay(
+      Long id,
+      String tenantId,
+      int expectedRowVersion,
+      long expectedFailureGeneration,
+      Instant now) {
+    return dsl.update(SCRIPT_WORK_ITEMS)
+        .set(SCRIPT_WORK_ITEMS.STATUS, "PENDING_EVALUATION")
+        .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE, (LocalDateTime) null)
+        .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT, 0)
+        .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, (LocalDateTime) null)
+        .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(now))
+        .set(SCRIPT_WORK_ITEMS.ROW_VERSION, expectedRowVersion + 1)
+        .where(
+            SCRIPT_WORK_ITEMS
+                .ID
+                .eq(id)
+                .and(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId))
+                .and(SCRIPT_WORK_ITEMS.STATUS.eq("DEAD_LETTERED"))
+                .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(expectedRowVersion))
+                .and(SCRIPT_WORK_ITEMS.FAILURE_GENERATION.eq(expectedFailureGeneration)))
+        .returningResult(SCRIPT_WORK_ITEMS.fields())
+        .fetchOptional(this::toEntity);
   }
 
   /**
@@ -695,31 +895,58 @@ public class ScriptWorkItemRepository {
    * rows are disposed with the parent, while audit rows remain under their independent retention
    * policy and are detached from the deleted work-item through their nullable foreign key.
    */
-  private long deleteByIds(Collection<Long> ids) {
-    return deleteByIds(ids, org.jooq.impl.DSL.noCondition());
-  }
-
   private long deleteByIds(Collection<Long> ids, Condition parentEligibility) {
     if (ids == null || ids.isEmpty()) {
       return 0L;
     }
+    // Lock the complete handoff bundle before deleting any child. The subsequent parent recheck
+    // handles a hold that committed after the initial candidate scan but before these locks.
+    dsl.select(SCRIPT_HANDOFF_EVENTS.ID)
+        .from(SCRIPT_HANDOFF_EVENTS)
+        .where(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.in(ids))
+        .forUpdate()
+        .fetch(SCRIPT_HANDOFF_EVENTS.ID);
+
+    // Re-evaluate every parent's complete receipt/hold eligibility after the child locks are
+    // held. A hold can commit after the initial parent candidate scan but before this lock; only
+    // this second decision may authorize detaching or deleting any child evidence.
+    List<Long> eligibleIds =
+        dsl.select(SCRIPT_WORK_ITEMS.ID)
+            .from(SCRIPT_WORK_ITEMS)
+            .where(SCRIPT_WORK_ITEMS.ID.in(ids).and(parentEligibility))
+            .forUpdate()
+            .fetch(SCRIPT_WORK_ITEMS.ID);
+    if (eligibleIds.isEmpty()) {
+      return 0L;
+    }
     dsl.update(SCRIPT_EVENT_AUDIT)
         .set(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID, (Long) null)
-        .where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.in(ids))
+        .where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.in(eligibleIds))
         .execute();
     dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
-        .where(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.in(ids))
+        .where(
+            SCRIPT_HANDOFF_EVENTS
+                .WORK_ITEM_ID
+                .in(eligibleIds)
+                .and(
+                    HANDOFF_RETENTION_HOLD_UNTIL
+                        .isNull()
+                        .or(HANDOFF_RETENTION_HOLD_UNTIL.le(CURRENT_OFFSET_TIMESTAMP))))
         .execute();
+    // Repeat the full parent eligibility predicate after the locked child cleanup. A concurrent
+    // replay receipt or owner hold must leave the parent in place rather than relying on the
+    // recheck above.
     return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
-        .where(SCRIPT_WORK_ITEMS.ID.in(ids).and(parentEligibility))
+        .where(SCRIPT_WORK_ITEMS.ID.in(eligibleIds).and(parentEligibility))
         .execute();
   }
 
   private static Condition cleanupEligibility(String status, Instant updatedAt) {
     Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
-    return updatedAt == null
-        ? condition
-        : condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
+    if (updatedAt != null) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
+    }
+    return condition.and(noBlockingRetentionEvidence());
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {
@@ -739,6 +966,13 @@ public class ScriptWorkItemRepository {
         .fetch(this::toEntity);
   }
 
+  private static Condition retryEligibilityCondition() {
+    return SCRIPT_WORK_ITEMS
+        .NEXT_ELIGIBLE_AT
+        .isNull()
+        .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(CURRENT_TIMESTAMP));
+  }
+
   private void populate(ScriptWorkItemsRecord record, ScriptWorkItem entity) {
     requireCoherentPluginFence(entity);
     record.setTenantId(entity.getTenantId());
@@ -756,6 +990,10 @@ public class ScriptWorkItemRepository {
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
     record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
     record.setLifecycleRevision(entity.getLifecycleRevision());
+    record.setFailureGeneration(entity.getFailureGeneration());
+    record.setAuthorityUnavailableSince(toLocalDateTime(entity.getAuthorityUnavailableSince()));
+    record.setAuthorityUnavailableCount(entity.getAuthorityUnavailableCount());
+    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setEventType(entity.getEventType());
@@ -805,22 +1043,25 @@ public class ScriptWorkItemRepository {
     return requestId;
   }
 
+  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
+    requireCoherentPluginFence(entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+  }
+
+  private static void requireCoherentPluginFence(
+      long pluginActivationEpoch, long lifecycleRevision) {
+    if (pluginActivationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((pluginActivationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
+  }
+
   private static void requireMatchingPinOwnerEvidence(
       String requestedRequestId, String existingRequestId) {
     if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
       throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
-    }
-  }
-
-  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
-    long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
     }
   }
 
@@ -854,6 +1095,14 @@ public class ScriptWorkItemRepository {
     entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
     Long lifecycleRevision = record.get(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION);
     entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
+    Long failureGeneration = record.get(SCRIPT_WORK_ITEMS.FAILURE_GENERATION);
+    entity.setFailureGeneration(failureGeneration == null ? 0L : failureGeneration);
+    entity.setAuthorityUnavailableSince(
+        toInstant(record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE)));
+    Integer authorityUnavailableCount = record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT);
+    entity.setAuthorityUnavailableCount(
+        authorityUnavailableCount == null ? 0 : authorityUnavailableCount);
+    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setTargetScopeType(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));

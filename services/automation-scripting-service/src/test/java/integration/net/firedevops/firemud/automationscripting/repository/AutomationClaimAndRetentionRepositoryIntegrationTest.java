@@ -237,6 +237,51 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void handlerAuditInsertDiscriminatorPreservesTenantIdentityOnDuplicate() {
+    ScriptEventAudit first = handlerAudit("tenant-handler-audit");
+
+    ScriptEventAuditRepository.IdempotentInsertResult inserted =
+        eventAuditRepository.insertIfAbsentByHandlerIdentity(first);
+
+    assertThat(inserted.inserted()).isTrue();
+    assertThat(inserted.audit().getId()).isNotNull();
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+
+    ScriptEventAudit duplicate = handlerAudit("tenant-handler-audit");
+    duplicate.setFinalOutcome("DUPLICATE_ATTEMPT");
+    duplicate.setFinalReason("duplicate-attempt");
+
+    ScriptEventAuditRepository.IdempotentInsertResult existing =
+        eventAuditRepository.insertIfAbsentByHandlerIdentity(duplicate);
+
+    assertThat(existing.inserted()).isFalse();
+    assertThat(existing.audit().getId()).isEqualTo(inserted.audit().getId());
+    assertThat(existing.audit().getTenantId()).isEqualTo("tenant-handler-audit");
+    assertThat(existing.audit().getScriptEventId()).isEqualTo("handler-event-1");
+    assertThat(existing.audit().getSourceService()).isEqualTo("automation-scripting-service");
+    assertThat(existing.audit().getFinalOutcome()).isEqualTo("HANDLER_ACCEPTED");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+    assertThat(
+            dsl.fetchCount(
+                SCRIPT_EVENT_AUDIT, SCRIPT_EVENT_AUDIT.TENANT_ID.eq("tenant-handler-audit")))
+        .isEqualTo(1);
+
+    ScriptEventAudit conflictingOwnerEvidence = handlerAudit("tenant-handler-audit");
+    conflictingOwnerEvidence.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(
+            () -> eventAuditRepository.insertIfAbsentByHandlerIdentity(conflictingOwnerEvidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                SCRIPT_EVENT_AUDIT.ID.eq(inserted.audit().getId())))
+        .isEqualTo("pin-request-1");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
   void scriptOnlyPluginIdentityDefaultsToEmptyAndLookupFindsTheCanonicalRow() {
     dsl.insertInto(SCRIPT_WORK_ITEMS)
         .set(SCRIPT_WORK_ITEMS.TENANT_ID, "tenant-script-only")
@@ -892,6 +937,96 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
   }
 
+  @Test
+  void handedOffAgeRetentionLeavesParentWhenChildOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-handed-off-age-handoff");
+    handoff.setHandoffOutcome("");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void incompleteChildBlocksOnlyItsCorrelatedParentDuringAgeRetention() {
+    ScriptWorkItem incompleteParent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent incompleteHandoff = retainedHandoff(incompleteParent.getId());
+    incompleteHandoff.setEventId("incomplete-correlated-parent");
+    incompleteHandoff.setHandoffOutcome("");
+    incompleteHandoff = handoffRepository.save(incompleteHandoff);
+
+    ScriptWorkItem completeParent = retainedWorkItem();
+    completeParent.setScriptEventId("complete-correlated-parent");
+    completeParent = workItemRepository.save(completeParent);
+    ScriptHandoffEvent completeHandoff = retainedHandoff(completeParent.getId());
+    completeHandoff.setEventId("complete-correlated-child");
+    handoffRepository.save(completeHandoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isEqualTo(1L);
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(
+            dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(incompleteParent.getId())))
+        .isTrue();
+    assertThat(
+            dsl.fetchExists(
+                SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(incompleteHandoff.getId())))
+        .isTrue();
+  }
+
+  @Test
+  void canceledRowCapRetentionLeavesParentWhenChildOutcomeIsWhitespace() {
+    ScriptWorkItem parent = retainedWorkItem();
+    parent.setScriptEventId("canceled-incomplete-cap");
+    parent.setStatus("CANCELED");
+    parent = workItemRepository.save(parent);
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-canceled-cap-handoff");
+    handoff.setHandoffOutcome(" \t ");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteOldestByStatus("CANCELED", 1)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void handoffAgeRetentionLeavesBlankOutcomeChildForTerminalParent() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-direct-age-handoff");
+    handoff.setHandoffOutcome(" \t ");
+    handoffRepository.save(handoff);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(Instant.now(), Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void handoffAgeRetentionLeavesCompleteChildWhenSiblingOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent complete = retainedHandoff(parent.getId());
+    complete.setEventId("complete-sibling-age-handoff");
+    handoffRepository.save(complete);
+    ScriptHandoffEvent incomplete = retainedHandoff(parent.getId());
+    incomplete.setEventId("incomplete-sibling-age-handoff");
+    incomplete.setCommandOrdinal(1);
+    incomplete.setAutomationDispatchId("dispatch-2");
+    incomplete.setHandoffOutcome("");
+    handoffRepository.save(incomplete);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(Instant.now(), Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+  }
+
   private void markIngressInProgress(Long id, Instant claimStartedAt, int rowVersion) {
     dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
         .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE, "IN_PROGRESS")
@@ -1014,6 +1149,29 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     audit.setFinalReason("accepted");
     audit.setCreatedAt(OLD);
     audit.setUpdatedAt(OLD);
+    return audit;
+  }
+
+  private ScriptEventAudit handlerAudit(String tenantId) {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId(tenantId);
+    audit.setGameInstanceId("instance-handler-audit");
+    audit.setRegionId("region-handler-audit");
+    audit.setRegionEpoch(1L);
+    audit.setEntityId("entity-handler-audit");
+    audit.setPlayableStateScope("INSTANCE");
+    audit.setScriptId("script-handler-audit");
+    audit.setEventType("onEnterRegion");
+    audit.setEventSchemaVersion("v1");
+    audit.setScriptPatchVersion("patch-handler-audit");
+    audit.setScriptPinEpoch(2L);
+    audit.setScriptPinControlPlaneRequestId("pin-request-1");
+    audit.setScriptEventId("handler-event-1");
+    audit.setSourceService("automation-scripting-service");
+    audit.setTriggerMode("EVENT");
+    audit.setFinalStage("HANDLER");
+    audit.setFinalOutcome("HANDLER_ACCEPTED");
+    audit.setFinalReason("accepted");
     return audit;
   }
 

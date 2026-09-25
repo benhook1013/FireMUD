@@ -27,6 +27,18 @@ public class ScriptWorkItem {
   /** Captured plugin lifecycle fence; zero means this is core-script work. */
   private long lifecycleRevision;
 
+  /** Monotonic execution-attempt generation used to fence dead-letter replay. */
+  private long failureGeneration;
+
+  /** First time this item observed a transient authority-unavailable fence result. */
+  private Instant authorityUnavailableSince;
+
+  /** Number of transient authority-unavailable outcomes in the current execution attempt. */
+  private int authorityUnavailableCount;
+
+  /** Earliest instant at which the durable scanner may claim this item again. */
+  private Instant nextEligibleAt;
+
   private String targetScopeType = "";
   private String targetScopeId = "";
   private String eventType;
