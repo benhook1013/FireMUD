@@ -450,6 +450,31 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
     return {"total": len(results), "recent": results[-5:]}
 
 
+def _channel_reasons(history: Sequence[Any], current_head: str) -> list[dict[str, Any]]:
+    """Expose current-head provider coverage limits as visible non-counting status."""
+
+    results: list[dict[str, Any]] = []
+    for item in history:
+        checkpoint = _field(item, "checkpoint", "checkpoint_id")
+        if (
+            _field(item, "over_ceiling") is not True
+            or not isinstance(checkpoint, str)
+            or not checkpoint.startswith("over-ceiling:")
+            or not isinstance(_field(item, "head", "reviewed_head"), str)
+            or _field(item, "head", "reviewed_head").casefold() != current_head.casefold()
+        ):
+            continue
+        reason = _field(item, "reason")
+        results.append(
+            {
+                "reason": reason if isinstance(reason, str) and reason.strip() else "provider file ceiling limits review coverage",
+                "source": checkpoint,
+                "non_counting": True,
+            }
+        )
+    return results
+
+
 def _field(value: Any, name: str, *aliases: str) -> Any:
     if isinstance(value, Mapping):
         for key in (name, *aliases):
@@ -2698,6 +2723,11 @@ class ReviewController:
                     "review_activity": {
                         channel.value: _review_activity(histories[channel][pr], item.head)
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+                    },
+                    "channel_reasons": {
+                        channel.value: reasons
+                        for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+                        if (reasons := _channel_reasons(histories[channel][pr], item.head))
                     },
                     "allocations": {
                         channel.value: allocations[channel][pr]

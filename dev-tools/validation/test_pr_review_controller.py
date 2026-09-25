@@ -2190,6 +2190,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["review_activity"]["cli"]["total"], 1)
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
 
+    def test_status_exposes_current_head_over_ceiling_reason_and_checkpoint_source(self):
+        evidence = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_2,
+                    "checkpoint": "over-ceiling:stale",
+                    "over_ceiling": True,
+                    "reason": "stale file ceiling notice",
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "over-ceiling:5748509184",
+                    "over_ceiling": True,
+                    "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+                },
+            ]
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        result = controller.status_for_pr(1)["prs"][0]
+
+        self.assertEqual(
+            result["channel_reasons"],
+            {
+                "hosted": [
+                    {
+                        "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+                        "source": "over-ceiling:5748509184",
+                        "non_counting": True,
+                    }
+                ]
+            },
+        )
+
     def test_one_private_ordered_stack_and_effective_parent(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
         controller = self.make(values, heads={"feature-1": HEAD_1})
