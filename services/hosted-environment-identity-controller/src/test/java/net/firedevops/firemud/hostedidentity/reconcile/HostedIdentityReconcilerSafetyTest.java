@@ -1712,7 +1712,8 @@ class HostedIdentityReconcilerSafetyTest {
     Object type = propertySchema.get("type");
     if ("string".equals(type)) {
       if (!propertySchema.keySet().equals(Set.of("type", "maxLength", "pattern"))) {
-        throw new AssertionError("unsupported CRD consumer string property schema: " + propertySchema);
+        throw new AssertionError(
+            "unsupported CRD consumer string property schema: " + propertySchema);
       }
       if (value == null) {
         return true;
@@ -1728,7 +1729,8 @@ class HostedIdentityReconcilerSafetyTest {
     if ("integer".equals(type)) {
       if (!propertySchema.keySet().equals(Set.of("type", "format", "minimum"))
           || !"int64".equals(propertySchema.get("format"))) {
-        throw new AssertionError("unsupported CRD consumer integer property schema: " + propertySchema);
+        throw new AssertionError(
+            "unsupported CRD consumer integer property schema: " + propertySchema);
       }
       if (value == null) {
         return true;
