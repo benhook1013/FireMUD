@@ -776,14 +776,63 @@ class HostedEvidenceTests(unittest.TestCase):
             "updatedAt": "2026-09-23T00:02:30Z",
         }
         extra_issue_comment = comment(22, "coderabbitai", "A post-trigger bot comment.", "2026-09-23T00:02:30Z")
-        for invalid_summary in (incomplete, stale, mismatched_head):
+        incomplete_state = state_for(incomplete)
+        self.assertEqual(incomplete_state.state, "failed")
+        self.assertTrue(incomplete_state.terminal)
+        self.assertTrue(incomplete_state.attributed)
+        self.assertEqual(incomplete_state.head_sha, HEAD)
+        self.assertEqual(incomplete_state.response_id, 11)
+        self.assertIn("incomplete file coverage", incomplete_state.reason)
+
+        for invalid_summary in (stale, mismatched_head):
             with self.subTest(summary=invalid_summary["body"]):
-                self.assertNotEqual(state_for(invalid_summary).state, "completed")
-        self.assertNotEqual(
+                self.assertEqual(state_for(invalid_summary).state, "ambiguous")
+        self.assertEqual(
             state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
-            "completed",
+            "ambiguous",
         )
-        self.assertNotEqual(state_for(extra_comments=[extra_issue_comment]).state, "completed")
+        self.assertEqual(state_for(extra_comments=[extra_issue_comment]).state, "ambiguous")
+
+        intervening_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:45Z")
+        self.assertEqual(state_for(extra_comments=[intervening_trigger]).state, "ambiguous")
+
+        bot_review = {
+            "databaseId": 23,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:30Z",
+            "commit": {"oid": HEAD},
+        }
+        self.assertEqual(
+            hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, incomplete, reply], [bot_review]),
+                trigger_record(),
+            ).state,
+            "ambiguous",
+        )
+
+        missing_threads = review_payload([trigger, incomplete, reply])
+        del missing_threads["data"]["repository"]["pullRequest"]["reviewThreads"]
+        self.assertEqual(hosted.trigger_state(REPO, PR, missing_threads, trigger_record()).state, "ambiguous")
+
+        summary_after_reply = {**incomplete, "updatedAt": "2026-09-23T00:03:40Z"}
+        post_reply_incomplete_state = state_for(summary_after_reply)
+        self.assertEqual(post_reply_incomplete_state.state, "failed")
+        self.assertTrue(post_reply_incomplete_state.terminal)
+        self.assertTrue(post_reply_incomplete_state.attributed)
+
+        later_bot_output = comment(24, "coderabbitai[bot]", "Another review update.", "2026-09-23T00:03:45Z")
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[intervening_trigger]).state,
+            "ambiguous",
+        )
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[later_bot_output]).state,
+            "ambiguous",
+        )
 
         limited = {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}
         active = {**reply, "body": "Full review triggered"}
