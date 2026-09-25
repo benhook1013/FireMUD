@@ -319,13 +319,28 @@ jobs:
           if [[ "$ACTION" == deploy ]]; then
             changed_files_json="$(gh api --paginate --slurp \
               "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-            migration_paths="$(jq -r \
-              '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
-                | select(type == "string")
-                | select(test("^services/[^/]+/src/main/resources/db/migration/.+\\.sql$"))]
-              | unique | .[]' <<<"$changed_files_json")"
-            if [[ -n "$migration_paths" ]]; then
+            expected_changed_file_count="$(jq -r \
+              'if (.changed_files | type) == "number" and .changed_files >= 0 and (.changed_files | floor) == .changed_files
+               then .changed_files else empty end' <<<"$pull_request_json")"
+            if [[ ! "$expected_changed_file_count" =~ ^[0-9]+$ ]]; then
               V2_SCHEMA_MIGRATION_CHANGE=true
+            else
+              if ! returned_changed_file_count="$(jq -r \
+                'if type == "array" and all(.[]; type == "array")
+                 then ([flatten[]] | length) else error("malformed pull-request file pages") end' \
+                <<<"$changed_files_json")" ||
+                [[ "$returned_changed_file_count" != "$expected_changed_file_count" ]]; then
+                V2_SCHEMA_MIGRATION_CHANGE=true
+              else
+                migration_paths="$(jq -r \
+                  '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
+                    | select(type == "string")
+                    | select(test("^services/[^/]+/src/main/resources/db/migration/.+\\.sql$"))]
+                  | unique | .[]' <<<"$changed_files_json")"
+                if [[ -n "$migration_paths" ]]; then
+                  V2_SCHEMA_MIGRATION_CHANGE=true
+                fi
+              fi
             fi
           fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then

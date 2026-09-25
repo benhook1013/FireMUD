@@ -1240,21 +1240,29 @@ expected_success_condition = (
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
 
+quiesce_writers = deploy_by_name[
+    "Quiesce Account, Game Session, and Automation migration writers"
+]
+if quiesce_writers.get("id") != "quiesce-writers":
+    raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
 quiesced_writer_warning = deploy_by_name[
-    "Warn about quiesced migration writers after failed deploy"
+    "Warn about migration writer recovery after quiesce or deploy failure"
 ]
 expected_quiesced_writer_warning_condition = (
     "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
-    "steps.deploy-release.outcome == 'failure' }}"
+    "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.deploy-release.outcome == 'failure') }}"
 )
 if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
     raise SystemExit(
-        "quiesced-writer warning must require V2 migration activation and failed Helm deploy"
+        "migration writer recovery warning must require activation and failed quiesce or Helm deploy"
     )
 quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
 for required_warning in (
-    "Account, Game Session, and Automation writer Deployments may remain quiesced",
+    "Account, Game Session, and Automation writer Deployments may be partially quiesced",
     "Inspect their current state before retrying",
+    "writer quiescence fails",
+    "Helm deploy fails partway through",
     "a partial deployment may have re-enabled some writers",
 ):
     if required_warning not in quiesced_writer_warning_run:

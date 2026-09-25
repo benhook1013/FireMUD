@@ -73,7 +73,7 @@ if [[ "$event_name" == push && -n "$event_before_sha" ]]; then
   fi
 fi
 
-if ! changed_paths="$(git diff --name-only "$base_sha" "$head_sha")"; then
+if ! changed_paths="$(git diff --no-renames --name-only "$base_sha" "$head_sha")"; then
   echo "refusing hosted deployment: unable to inspect the exact deployed-to-target Git range" >&2
   exit 1
 fi

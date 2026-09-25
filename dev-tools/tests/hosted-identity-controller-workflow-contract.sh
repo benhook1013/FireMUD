@@ -6344,6 +6344,19 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900)
+    pr_call_count=0
+    if [[ -n "${FAKE_PR_JSON_CALL_COUNT:-}" && -f "$FAKE_PR_JSON_CALL_COUNT" ]]; then
+      pr_call_count="$(<"$FAKE_PR_JSON_CALL_COUNT")"
+    fi
+    pr_call_count=$((pr_call_count + 1))
+    if [[ -n "${FAKE_PR_JSON_CALL_COUNT:-}" ]]; then
+      printf '%s\n' "$pr_call_count" >"$FAKE_PR_JSON_CALL_COUNT"
+    fi
+    changed_file_count="${TEST_PR_CHANGED_FILES_JSON:-1}"
+    if [[ -n "${TEST_PR_CHANGED_FILES_SEQUENCE:-}" ]]; then
+      IFS=, read -r -a changed_file_counts <<<"$TEST_PR_CHANGED_FILES_SEQUENCE"
+      changed_file_count="${changed_file_counts[$((pr_call_count - 1))]:-${changed_file_counts[-1]}}"
+    fi
     mergeable_state_json="$(jq -cn --arg value "${TEST_PR_MERGEABLE_STATE:-clean}" '$value')"
     case "${TEST_PR_MERGEABLE_STATE:-clean}" in
       true|false|null)
@@ -6358,7 +6371,8 @@ case "$resource" in
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      --argjson changed_files "$changed_file_count" \
+      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6453,6 +6467,7 @@ run_deploy_target_fixture() {
   local status
 
   : >"$output"
+  : >"$TEMP_DIR/deploy-target-${scenario}.pr-json-call-count"
   set +e
   (
     cd "$ROOT_DIR"
@@ -6477,6 +6492,9 @@ run_deploy_target_fixture() {
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
       TEST_PR_MERGEABLE="${FAKE_FIXTURE_MERGEABLE:-${TEST_PR_MERGEABLE:-true}}" \
       TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
+      TEST_PR_CHANGED_FILES_JSON="${FAKE_FIXTURE_CHANGED_FILES_JSON:-1}" \
+      TEST_PR_CHANGED_FILES_SEQUENCE="${FAKE_FIXTURE_CHANGED_FILES_SEQUENCE:-}" \
+      FAKE_PR_JSON_CALL_COUNT="$TEMP_DIR/deploy-target-${scenario}.pr-json-call-count" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
       FAKE_PR_FILES_JSON="${FAKE_FIXTURE_PR_FILES_JSON:-}" \
@@ -6512,6 +6530,15 @@ FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/mai
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/README.md"}]]' \
   run_deploy_target_fixture ordinary-migration-directory-file 0 'action=deploy'
 grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-ordinary-migration-directory-file.output"
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+FAKE_FIXTURE_CHANGED_FILES_SEQUENCE='2,1' \
+  run_deploy_target_fixture truncated-pr-file-list 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+FAKE_FIXTURE_CHANGED_FILES_SEQUENCE='"invalid",1' \
+  run_deploy_target_fixture malformed-pr-file-count 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+  run_deploy_target_fixture complete-ordinary-file-list 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-complete-ordinary-file-list.output"
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
   run_deploy_target_fixture standalone-private 1 \
     'Private bridge proof requires hosted-controller identity.'

@@ -130,6 +130,16 @@ git -C "$repo" commit -qm "Delete existing Account V25 migration"
 account_deleted_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_rejected push "$account_edited_sha" "$account_deleted_sha"
 
+git -C "$repo" switch -qc supported-migration-rename "$game_session_v2_sha"
+mkdir -p "$repo/services/account-service/src/main/resources/db/migration"
+git -C "$repo" mv \
+  services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql \
+  services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql
+git -C "$repo" commit -qm "Rename supported Game Session migration to Account migration"
+renamed_supported_migration_sha="$(git -C "$repo" rev-parse HEAD)"
+namespace_for_head "$game_session_v2_sha"
+assert_rejected push "$game_session_v2_sha" "$renamed_supported_migration_sha"
+
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE unsupported (id integer PRIMARY KEY);' \
   >"$repo/services/example/src/main/resources/db/migration/V2__unsupported.sql"

@@ -409,6 +409,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Quiesce Account, Game Session, and Automation migration writers
+        id: quiesce-writers
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
@@ -966,14 +967,14 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Warn about quiesced migration writers after failed deploy
-        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && steps.deploy-release.outcome == 'failure' }}
+      - name: Warn about migration writer recovery after quiesce or deploy failure
+        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && (steps.quiesce-writers.outcome == 'failure' || steps.deploy-release.outcome == 'failure') }}
         run: |
           {
             echo ""
             echo "### Migration writer recovery"
             echo ""
-            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may remain quiesced after the failed Helm deploy. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."
+            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may be partially quiesced because migration activation did not complete. This can happen when writer quiescence fails or the Helm deploy fails partway through. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove dev-demo kubeconfigs
