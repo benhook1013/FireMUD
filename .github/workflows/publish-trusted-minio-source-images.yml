@@ -1,0 +1,259 @@
+name: Publish Trusted MinIO Source Images
+
+on:
+  workflow_run:
+    workflows: [Build Trusted MinIO Source Images]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: publish-trusted-minio-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Trusted Develop MinIO Images
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      SERVER_IMAGE_NAME: ghcr.io/benhook1013/minio-server
+      CLIENT_IMAGE_NAME: ghcr.io/benhook1013/minio-client
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Check out trusted default-branch publisher source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: Verify source run and download exact build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_EVENT: ${{ github.event.workflow_run.event }}
+          SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_EVENT" == push && "$SOURCE_HEAD_BRANCH" == develop && "$SOURCE_CONCLUSION" == success ]] || {
+            echo "Refusing publication from anything except a successful develop push." >&2
+            exit 1
+          }
+          [[ "$SOURCE_HEAD_BRANCH" == "$DEFAULT_BRANCH" ]] || {
+            echo "The trusted publisher currently requires develop to be the default branch." >&2
+            exit 1
+          }
+          [[ "$SOURCE_REPOSITORY" == "$CURRENT_REPOSITORY" ]] || {
+            echo "Refusing an artifact from a different source repository." >&2
+            exit 1
+          }
+          run_json="$(gh api "repos/$CURRENT_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
+          SOURCE_RUN_JSON="$run_json" python3 - "$SOURCE_RUN_ID" "$SOURCE_HEAD_SHA" "$CURRENT_REPOSITORY" <<'PY'
+          import json
+          import os
+          import sys
+
+          run_id, head_sha, repository = sys.argv[1:]
+          run = json.loads(os.environ["SOURCE_RUN_JSON"])
+          expected = {
+              "id": int(run_id),
+              "head_sha": head_sha,
+              "head_branch": "develop",
+              "event": "push",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/build-trusted-minio-source-images.yml",
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(f"trusted source run {key} mismatch: expected {value!r}, got {run.get(key)!r}")
+          if (run.get("head_repository") or {}).get("full_name") != repository:
+              raise SystemExit("trusted source run head repository mismatch")
+          PY
+        shell: bash
+
+      - name: Download source build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: ${{ runner.temp }}/minio-image-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: trusted-minio-images-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+
+      - name: Validate provenance and load exact smoke-tested images
+        env:
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          SOURCE_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/minio-image-artifact"
+          provenance="$artifact_dir/provenance.json"
+          archive="$artifact_dir/images.tar.gz"
+          [[ -f "$provenance" && ! -L "$provenance" && -f "$archive" && ! -L "$archive" ]] || {
+            echo "Required MinIO image provenance or archive is missing or is a symlink." >&2
+            exit 1
+          }
+          python3 - "$provenance" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if set(data) != {"repository", "sourceEvent", "sourceRunId", "sourceRunAttempt", "sourceHeadSha", "server", "client", "builder", "runtime"}:
+              raise SystemExit("MinIO provenance fields did not match the required schema")
+          expected = {
+              "repository": os.environ["SOURCE_REPOSITORY"],
+              "sourceEvent": "push",
+              "sourceRunId": int(os.environ["SOURCE_RUN_ID"]),
+              "sourceRunAttempt": int(os.environ["SOURCE_RUN_ATTEMPT"]),
+              "sourceHeadSha": os.environ["SOURCE_HEAD_SHA"],
+              "builder": "golang:1.21.13-bookworm@sha256:c6a5b9308b3f3095e8fde83c8bf4d68bd101fce606c1a0a1394522542509dda9",
+              "runtime": "alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1",
+          }
+          for key, value in expected.items():
+              if data.get(key) != value:
+                  raise SystemExit(f"MinIO provenance {key} mismatch")
+          expected_images = {
+              "server": ("ghcr.io/benhook1013/minio-server", "0c39917fe562b3c43c77e72327bc4351857c0050", "b5984027386ec1e55c504d27f42ef40a189cdb55"),
+              "client": ("ghcr.io/benhook1013/minio-client", "835afd0a86e9a3ed396b8162eabc98243c342e5f", "fdb36acbb1d793b6cca622a55e6292f0d52309f0"),
+          }
+          for name, (image_name, tag_object, source_commit) in expected_images.items():
+              image = data.get(name)
+              if not isinstance(image, dict) or set(image) != {"image", "imageId", "tagObject", "sourceCommit"}:
+                  raise SystemExit(f"MinIO {name} provenance fields mismatch")
+              if image["image"] != f"{image_name}:build-{data['sourceRunId']}-{data['sourceRunAttempt']}":
+                  raise SystemExit(f"MinIO {name} artifact tag mismatch")
+              if image["tagObject"] != tag_object or image["sourceCommit"] != source_commit:
+                  raise SystemExit(f"MinIO {name} upstream source identity mismatch")
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", image["imageId"]):
+                  raise SystemExit(f"MinIO {name} image ID is not a sha256 digest")
+          PY
+          gzip -dc "$archive" | docker load
+          server_image="ghcr.io/benhook1013/minio-server:build-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          client_image="ghcr.io/benhook1013/minio-client:build-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          server_id="$(docker image inspect --format '{{.Id}}' "$server_image")"
+          client_id="$(docker image inspect --format '{{.Id}}' "$client_image")"
+          expected_server_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["server"]["imageId"])' "$provenance")"
+          expected_client_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["client"]["imageId"])' "$provenance")"
+          [[ "$server_id" == "$expected_server_id" && "$client_id" == "$expected_client_id" ]] || {
+            echo "Loaded MinIO image IDs do not match the tested artifact provenance." >&2
+            exit 1
+          }
+          printf 'SERVER_IMAGE=%s\nCLIENT_IMAGE=%s\n' "$server_image" "$client_image" >> "$GITHUB_ENV"
+          printf 'PUBLISH_TAG=trusted-%s-%s-%s\n' "$SOURCE_HEAD_SHA" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish verified MinIO images
+        id: publish
+        run: |
+          set -euo pipefail
+          docker tag "$SERVER_IMAGE" "$SERVER_IMAGE_NAME:$PUBLISH_TAG"
+          docker tag "$CLIENT_IMAGE" "$CLIENT_IMAGE_NAME:$PUBLISH_TAG"
+          bash ./dev-tools/hosted/shared/push-verified-image.sh "$SERVER_IMAGE_NAME:$PUBLISH_TAG"
+          server_digest="$(sed -n 's/^digest=//p' "$GITHUB_OUTPUT" | tail -n 1)"
+          bash ./dev-tools/hosted/shared/push-verified-image.sh "$CLIENT_IMAGE_NAME:$PUBLISH_TAG"
+          client_digest="$(sed -n 's/^digest=//p' "$GITHUB_OUTPUT" | tail -n 1)"
+          [[ "$server_digest" =~ ^sha256:[0-9a-f]{64}$ && "$client_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            printf 'server_digest=%s\n' "$server_digest"
+            printf 'client_digest=%s\n' "$client_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest published MinIO server digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.SERVER_IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.server_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest published MinIO client digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.CLIENT_IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.client_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Verify credential-free GHCR pulls
+        env:
+          SERVER_DIGEST: ${{ steps.publish.outputs.server_digest }}
+          CLIENT_DIGEST: ${{ steps.publish.outputs.client_digest }}
+        run: |
+          set -euo pipefail
+          anonymous_docker_config="$(mktemp -d "$RUNNER_TEMP/minio-anonymous-docker.XXXXXX")"
+          verify_anonymous_pull() {
+            local image_ref="$1" pull_output
+            if pull_output="$(docker pull "$image_ref" 2>&1)"; then
+              printf '%s\n' "$pull_output"
+              return 0
+            fi
+            printf '%s\n' "$pull_output" >&2
+            if grep -Eqi 'unauthorized|denied|insufficient_scope|authentication required' <<< "$pull_output"; then
+              {
+                echo '### Required action: make the MinIO GHCR packages public'
+                echo
+                echo "Anonymous pull of $image_ref was rejected by GHCR. In GitHub Packages, set minio-server and minio-client container packages to public, then rerun this workflow. PR Smoke has no registry credentials and cannot use private packages."
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              {
+                echo '### Anonymous MinIO image pull could not be verified'
+                echo
+                echo "Pulling $image_ref failed for a reason other than a reported authorization denial. Review the publisher log above and rerun after the registry or network error is resolved; package visibility has not been established."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            return 1
+          }
+          DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$SERVER_IMAGE_NAME@$SERVER_DIGEST"
+          DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"
+
+      - name: Summarize immutable MinIO image references
+        env:
+          SERVER_DIGEST: ${{ steps.publish.outputs.server_digest }}
+          CLIENT_DIGEST: ${{ steps.publish.outputs.client_digest }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo '### Trusted MinIO source image publication'
+            echo
+            echo "- Develop source run SHA: $SOURCE_HEAD_SHA"
+            echo '- MinIO source commit: b5984027386ec1e55c504d27f42ef40a189cdb55'
+            echo '- MinIO Client source commit: fdb36acbb1d793b6cca622a55e6292f0d52309f0'
+            echo "- Server: $SERVER_IMAGE_NAME@$SERVER_DIGEST"
+            echo "- Client: $CLIENT_IMAGE_NAME@$CLIENT_DIGEST"
+            echo '- Both anonymous digest pulls succeeded; each digest has a GitHub Actions provenance attestation.'
+          } >> "$GITHUB_STEP_SUMMARY"

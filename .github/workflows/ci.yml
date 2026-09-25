@@ -390,6 +390,7 @@ jobs:
           bash ./dev-tools/tests/secret-compliance-contract.sh
           bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
+          bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
           python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
