@@ -50,6 +50,7 @@ def public_html(source: str, local_url: str) -> str:
     result = REFRESH_FORM.sub("", result)
     result = REFRESH_SCRIPT.sub("", result)
     result = result.replace("form-action 'self'", "form-action 'none'")
+    result = result.replace("connect-src 'self'", "connect-src 'none'")
     result = re.sub(r"script-src 'sha256-[^']+'", "script-src 'none'", result)
     result = result.replace("Private local snapshot", "Published delivery snapshot")
     result = re.sub(

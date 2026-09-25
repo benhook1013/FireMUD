@@ -3,6 +3,8 @@ import base64
 import hashlib
 import json
 import subprocess
+import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +41,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('href="https://github.com/benhook1013/FireMUD"', result)
         self.assertIn('<form class="refresh-form" action="/refresh" method="post">', result)
         self.assertIn("form-action 'self'", result)
+        self.assertIn("connect-src 'self'", result)
         refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
         self.assertIn(f"script-src 'sha256-{refresh_hash}'", result)
         self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
@@ -63,6 +66,23 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
         self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
         self.assertIn("Manual status checked 60m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
+
+    @patch.object(page, "github_stages")
+    @patch.object(page, "review_snapshot")
+    def test_failed_review_refresh_preserves_existing_page(self, snapshot, github):
+        snapshot.return_value = {"available": False, "reason": "Status fetch unavailable (TimeoutExpired)"}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "status.json"
+            output = Path(directory) / "index.html"
+            data = self.fixture()
+            data["review_tool"] = "/tmp/pr-review"
+            source.write_text(json.dumps(data), encoding="utf-8")
+            output.write_text("last good review snapshot", encoding="utf-8")
+            with patch.object(sys, "argv", ["render.py", "--input", str(source), "--output", str(output)]):
+                with self.assertRaisesRegex(RuntimeError, "existing page preserved"):
+                    page.main()
+            self.assertEqual("last good review snapshot", output.read_text(encoding="utf-8"))
+            github.assert_not_called()
 
     def test_github_stage_and_review_eligibility_are_distinct(self):
         data = self.fixture()

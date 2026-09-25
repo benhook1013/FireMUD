@@ -27,14 +27,32 @@ REFRESH_SCRIPT = """(() => {
   if (!form) return;
   const button = form.querySelector('button');
   const progress = form.querySelector('.refresh-progress');
-  form.addEventListener('submit', () => {
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (button.disabled) return;
     button.disabled = true;
     button.textContent = 'Refreshing…';
     form.classList.add('loading');
     const started = Date.now();
     const update = () => { progress.textContent = `Working for ${Math.floor((Date.now() - started) / 1000)}s…`; };
     update();
-    setInterval(update, 1000);
+    const timer = setInterval(update, 1000);
+    try {
+      const response = await fetch(form.action, { method: 'POST', credentials: 'same-origin' });
+      if (!response.ok) {
+        progress.textContent = response.status === 409
+          ? 'Another refresh is already running. Try again when it finishes.'
+          : `Refresh failed (${response.status}). Try again shortly.`;
+        return;
+      }
+      window.location.reload();
+    } catch {
+      progress.textContent = 'Refresh connection failed. Try again shortly.';
+    } finally {
+      clearInterval(timer);
+      button.disabled = false;
+      button.textContent = 'Refresh review data';
+    }
   });
 })();"""
 
@@ -234,7 +252,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <title>FireMUD · local delivery status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #f2f4f1; color: #16211e; }}
@@ -300,6 +318,8 @@ def main() -> None:
         raise ValueError("review_tool must be an absolute path")
     review_tool = args.review_tool or (Path(configured_tool) if configured_tool else None)
     review = review_snapshot(review_tool, front["number"], front["head"], now)
+    if review_tool is not None and not review["available"] and args.output.exists():
+        raise RuntimeError(f"review status unavailable; existing page preserved: {review['reason']}")
     github = github_stages(now)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
