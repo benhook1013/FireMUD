@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.jsonwebtoken.Claims;
@@ -12,6 +13,18 @@ import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextPropert
 import org.junit.jupiter.api.Test;
 
 class FirstPartyConnectContextServiceTest {
+
+  @Test
+  void parseRejectsContextWhenVerifierSecretIsNotConfigured() {
+    FirstPartyConnectContextProperties properties = new FirstPartyConnectContextProperties();
+    JwtUtil jwtUtil = mock(JwtUtil.class);
+
+    FirstPartyConnectContextService service =
+        new FirstPartyConnectContextService(properties, jwtUtil);
+
+    assertTrue(service.parse("signed-context").isEmpty());
+    verifyNoInteractions(jwtUtil);
+  }
 
   @Test
   void parseReadsJwtClaimsThroughInjectedUtil() {
