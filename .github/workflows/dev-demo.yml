@@ -408,7 +408,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Quiesce V2 schema writers
+      - name: Quiesce Account, Game Session, and Automation migration writers
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig

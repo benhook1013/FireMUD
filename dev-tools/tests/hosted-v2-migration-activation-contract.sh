@@ -91,6 +91,27 @@ git -C "$repo" commit -qm "Delete existing Automation V2 migration"
 deleted_v2_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_rejected push "$edited_v2_sha" "$deleted_v2_sha"
 
+git -C "$repo" switch -qc account-v25 "$supported_v2_sha"
+mkdir -p "$repo/services/account-service/src/main/resources/db/migration"
+printf '%s\n' 'CREATE UNIQUE INDEX profiles_tenant_account_identity ON profiles (tenant_id, account_id);' \
+  >"$repo/services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account V25 migration"
+account_v25_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_activation true push "$supported_v2_sha" "$account_v25_sha"
+
+echo '-- edited retained migration' >>"$repo/services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Edit existing Account V25 migration"
+account_edited_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$account_v25_sha" "$account_edited_sha"
+
+rm "$repo/services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Delete existing Account V25 migration"
+account_deleted_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$account_edited_sha" "$account_deleted_sha"
+
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE unsupported (id integer PRIMARY KEY);' \
   >"$repo/services/example/src/main/resources/db/migration/V2__unsupported.sql"

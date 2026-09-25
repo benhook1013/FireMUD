@@ -74,13 +74,14 @@ if ! changed_paths="$(git diff --name-only "$base_sha" "$head_sha")"; then
 fi
 game_session_v2="services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
 automation_v2="services/automation-scripting-service/src/main/resources/db/migration/V2__script_patch_readiness_single_active.sql"
+account_v25="services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
 migration_changed=false
 while IFS= read -r changed_path; do
   [[ -z "$changed_path" ]] && continue
   if [[ "$changed_path" =~ ^services/[^/]+/src/main/resources/db/migration/[^/]+[.]sql$ ]]; then
     case "$changed_path" in
-      "$game_session_v2"|"$automation_v2")
-        # A V2 activation is safe only for the first addition of the supported
+      "$game_session_v2"|"$automation_v2"|"$account_v25")
+        # A retained-database activation is safe only for the first addition of a supported
         # migration. Re-editing or deleting a retained migration cannot prove
         # Flyway checksum/data compatibility, so stop before namespace mutation.
         if git cat-file -e "${base_sha}:${changed_path}" 2>/dev/null ||
@@ -99,7 +100,7 @@ while IFS= read -r changed_path; do
 done <<<"$changed_paths"
 
 if [[ "$migration_changed" == true ]]; then
-  emit_mode true "$reason_source changes a supported Game Session or Automation V2 migration"
+  emit_mode true "$reason_source first adds a supported Account, Game Session, or Automation migration"
 else
-  emit_mode false "$reason_source does not change either supported V2 migration"
+  emit_mode false "$reason_source does not first add a supported migration"
 fi

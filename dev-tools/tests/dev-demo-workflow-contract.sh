@@ -865,7 +865,7 @@ ordered = (
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
-    "Quiesce V2 schema writers",
+    "Quiesce Account, Game Session, and Automation migration writers",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
     "Wait for dev-demo runtime rollouts",
@@ -1091,7 +1091,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
-    "Quiesce V2 schema writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1101,7 +1101,7 @@ expected_deploy_kubeconfigs = {
     "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
 }
-quiesce = deploy_by_name["Quiesce V2 schema writers"]
+quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
 if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
     raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
 if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
@@ -1117,8 +1117,8 @@ if deploy_names.index("Classify trusted V2 migration activation") > deploy_names
     "Reset dev-demo namespace for clean deploy"
 ):
     raise SystemExit("migration status must be proven before any namespace mutation")
-if positions[ordered.index("Quiesce V2 schema writers")] > positions[ordered.index("Deploy dev-demo release")]:
-    raise SystemExit("dev-demo schema writers must be quiesced before Helm activation")
+if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
+    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
