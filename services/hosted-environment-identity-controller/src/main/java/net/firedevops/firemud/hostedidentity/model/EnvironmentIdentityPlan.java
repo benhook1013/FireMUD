@@ -56,6 +56,13 @@ public record EnvironmentIdentityPlan(
     };
   }
 
+  public String sourceSecretName(String role) {
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      return grpcPublicationSourceSecretNames.get(role);
+    }
+    return secretName(role);
+  }
+
   public String grpcPublicationCertificateName(String workload) {
     return grpcPublicationCertificateNames.get(
         HostedIdentityContract.grpcPublicationRole(workload));

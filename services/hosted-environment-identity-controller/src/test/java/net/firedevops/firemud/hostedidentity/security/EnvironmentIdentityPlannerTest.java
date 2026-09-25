@@ -161,6 +161,28 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void mapsEveryRoleFamilyToItsCanonicalSourceSecretName() {
+    var plan = planner.plan("pr-42");
+
+    assertEquals(
+        plan.ingressSecretName(), plan.sourceSecretName(HostedIdentityContract.INGRESS_ROLE));
+    assertEquals(
+        plan.telnetSecretName(), plan.sourceSecretName(HostedIdentityContract.TELNET_ROLE));
+    assertEquals(
+        plan.gatewayInternalWsSecretName(),
+        plan.sourceSecretName(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
+    assertEquals(
+        plan.tcpProxyBridgeSecretName(),
+        plan.sourceSecretName(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
+    assertEquals(plan.grpcSecretName(), plan.sourceSecretName(HostedIdentityContract.GRPC_ROLE));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      assertEquals(plan.grpcPublicationSourceSecretName(workload), plan.sourceSecretName(role));
+    }
+    assertThrows(IllegalArgumentException.class, () -> plan.sourceSecretName("unsupported"));
+  }
+
+  @Test
   void rejectsNamesOutsideTheFixedEnvironmentSet() {
     assertThrows(IllegalArgumentException.class, () -> planner.plan(null));
     assertThrows(IllegalArgumentException.class, () -> planner.plan(""));
