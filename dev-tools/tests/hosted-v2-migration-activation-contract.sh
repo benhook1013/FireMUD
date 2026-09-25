@@ -79,6 +79,18 @@ git -C "$repo" commit -qm "Automation V2 migration"
 supported_v2_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_activation true push "$game_session_v2_sha" "$supported_v2_sha"
 
+echo 'retained migration edit' >>"$repo/services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Edit existing Game Session V2 migration"
+edited_v2_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$supported_v2_sha" "$edited_v2_sha"
+
+rm "$repo/services/automation-scripting-service/src/main/resources/db/migration/V2__script_patch_readiness_single_active.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Delete existing Automation V2 migration"
+deleted_v2_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$edited_v2_sha" "$deleted_v2_sha"
+
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE unsupported (id integer PRIMARY KEY);' \
   >"$repo/services/example/src/main/resources/db/migration/V2__unsupported.sql"

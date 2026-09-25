@@ -79,7 +79,17 @@ while IFS= read -r changed_path; do
   [[ -z "$changed_path" ]] && continue
   if [[ "$changed_path" =~ ^services/[^/]+/src/main/resources/db/migration/[^/]+[.]sql$ ]]; then
     case "$changed_path" in
-      "$game_session_v2"|"$automation_v2") migration_changed=true ;;
+      "$game_session_v2"|"$automation_v2")
+        # A V2 activation is safe only for the first addition of the supported
+        # migration. Re-editing or deleting a retained migration cannot prove
+        # Flyway checksum/data compatibility, so stop before namespace mutation.
+        if git cat-file -e "${base_sha}:${changed_path}" 2>/dev/null ||
+          ! git cat-file -e "${head_sha}:${changed_path}" 2>/dev/null; then
+          echo "refusing hosted deployment: supported V2 migration is an edit or deletion, so retained-data and Flyway checksum safety is unproven: $changed_path" >&2
+          exit 1
+        fi
+        migration_changed=true
+        ;;
       *)
         echo "refusing hosted deployment: unsupported Flyway migration path in exact range: $changed_path" >&2
         exit 1
