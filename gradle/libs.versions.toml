@@ -23,7 +23,7 @@ springdoc-openapi = "3.1.1"
 stripe-java = "33.4.2"
 spring-cloud-gateway = "5.0.3"
 java-operator-sdk = "6.7.0"
-fabric8-kubernetes-client = "7.9.0"
+fabric8-kubernetes-client = "8.0.0"
 # Keep these pins split: bcprov-jdk18on has 1.85.2, but bcpkix-jdk18on and bcutil-jdk18on 1.85.2 artifacts are unpublished.
 bcprov = "1.86"
 bcpkix = "1.86"
