@@ -634,6 +634,50 @@ class AcceptanceCliTest(unittest.TestCase):
                 self.assertIn("quota_consumed=False", run.stdout)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
 
+    def test_missing_hosted_fingerprint_fixture_audit_classifies_present_blockers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            fingerprint = "f" * 64
+            payload = fixture_payload()
+            payload["evidence"]["1"] = {
+                "hosted": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:42",
+                        "fingerprint": fingerprint,
+                        "active_reservation": True,
+                    }
+                ],
+                "cli": [
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "unmatched", "unmatched_response": True},
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "ambiguous", "ambiguous_response": True},
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "summary-actions:1",
+                        "actionable": True,
+                        "reason": "an actionable summary finding remains",
+                    },
+                ],
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            acceptance = load(fixture, isolated)
+
+            audit = acceptance.evidence.legacy_transition_reauthorization_audit(
+                1,
+                (fingerprint,),
+                {"child_head": HEAD_1, "live_base_ref": "develop", "live_base_tip": BASE},
+            )
+
+            self.assertEqual(audit["complete"], True)
+            self.assertEqual(audit["active_reservations"], ["trigger:42"])
+            self.assertEqual(audit["unmatched_responses"], ["unmatched"])
+            self.assertEqual(audit["ambiguous_responses"], ["ambiguous"])
+            self.assertEqual(audit["unresolved_findings"], ["an actionable summary finding remains"])
+
     def test_default_base_tip_accepts_case_differences_in_fixture_branch_sha(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

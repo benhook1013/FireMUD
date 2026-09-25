@@ -1659,6 +1659,21 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("revision-1", copy.getRevision());
   }
 
+  @Test
+  void crdSchemaParityUsesPatternSearchAndRejectsUnsupportedConstraints() {
+    Map<String, Object> unanchoredPattern =
+        Map.of("type", "string", "maxLength", 32, "pattern", "status");
+    assertTrue(crdSchemaAccepts(unanchoredPattern, "review-status-ready"));
+
+    Map<String, Object> unsupportedStringConstraint =
+        Map.of("type", "string", "maxLength", 32, "pattern", "status", "enum", List.of("status"));
+    assertThrows(AssertionError.class, () -> crdSchemaAccepts(unsupportedStringConstraint, null));
+
+    Map<String, Object> unsupportedIntegerConstraint =
+        Map.of("type", "integer", "format", "int64", "minimum", 1L, "maximum", 2L);
+    assertThrows(AssertionError.class, () -> crdSchemaAccepts(unsupportedIntegerConstraint, 1L));
+  }
+
   private static void assertRoleStatusExamples(
       Map<?, ?> roleProperties, String field, List<?> accepted, List<?> rejected) {
     assertRoleStatusValueParity(roleProperties, field, null, true);
@@ -1694,19 +1709,30 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   private static boolean crdSchemaAccepts(Map<?, ?> propertySchema, Object value) {
-    if (value == null) {
-      return true;
-    }
-    if ("string".equals(propertySchema.get("type"))) {
+    Object type = propertySchema.get("type");
+    if ("string".equals(type)) {
+      if (!propertySchema.keySet().equals(Set.of("type", "maxLength", "pattern"))) {
+        throw new AssertionError("unsupported CRD consumer string property schema: " + propertySchema);
+      }
+      if (value == null) {
+        return true;
+      }
       if (!(value instanceof String stringValue)) {
         return false;
       }
       int maxLength = ((Number) propertySchema.get("maxLength")).intValue();
       String pattern = Objects.toString(propertySchema.get("pattern"));
       return stringValue.length() <= maxLength
-          && Pattern.compile(pattern).matcher(stringValue).matches();
+          && Pattern.compile(pattern).matcher(stringValue).find();
     }
-    if ("integer".equals(propertySchema.get("type"))) {
+    if ("integer".equals(type)) {
+      if (!propertySchema.keySet().equals(Set.of("type", "format", "minimum"))
+          || !"int64".equals(propertySchema.get("format"))) {
+        throw new AssertionError("unsupported CRD consumer integer property schema: " + propertySchema);
+      }
+      if (value == null) {
+        return true;
+      }
       if (!(value instanceof Long || value instanceof Integer)) {
         return false;
       }

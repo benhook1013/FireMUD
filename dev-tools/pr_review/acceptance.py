@@ -409,12 +409,23 @@ class FixtureEvidence:
             or expected_base_tip.casefold() != live.base_tip.casefold()
         ):
             raise AcceptanceFixtureError("fixture PR head or base moved during missing Hosted fingerprint retirement")
+        audit = self.review_stop_audit(
+            pr,
+            {
+                "child_head": expected_head,
+                "parent_identity": expected_base_ref,
+                "parent_head": expected_base_tip,
+            },
+        )
         return {
-            "complete": True,
-            "active_reservations": [],
-            "unmatched_responses": [],
-            "ambiguous_responses": [],
-            "unresolved_findings": [],
+            "complete": audit["complete"],
+            "active_reservations": audit["active_reservations"],
+            "unmatched_responses": [
+                *audit["unmatched_responses"],
+                *audit["historical_unmatched_responses"],
+            ],
+            "ambiguous_responses": audit["ambiguous_responses"],
+            "unresolved_findings": audit["unresolved_findings"],
         }
     def next_result(self, target: ReviewTarget, channel: str) -> Mapping[str, Any] | None:
         """Consume one configured result exactly once across command invocations."""

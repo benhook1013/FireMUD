@@ -29,7 +29,7 @@ from .cli_runner import (
     PullRequestSnapshot,
     ReviewTarget,
 )
-from .hosted import parse_timestamp, prepare_full_trigger
+from .hosted import default_trigger_record_path, parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
 from .state import (
     Judgment,
@@ -1370,7 +1370,7 @@ class ReviewController:
         if self.store.path.name == "pr-review-stack.json" and self.store.path.parent.name == "firemud":
             common = self.store.path.parent.parent
             cli_path = common / "firemud" / "pr-review" / "cli.lock"
-            hosted_path = common / "firemud" / "hosted" / self.repository.replace("/", "--") / f"pr-{pr}" / "request.lock"
+            hosted_path = default_trigger_record_path(self.repository, pr, common).parent / "request.lock"
         else:
             lock_root = self.store.path.parent / ".pr-review-stop-locks"
             cli_path = lock_root / "cli.lock"

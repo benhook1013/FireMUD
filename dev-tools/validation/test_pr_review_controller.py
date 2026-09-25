@@ -18,7 +18,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner
+from pr_review import cli_runner, hosted
 from pr_review.cli import _parser
 from pr_review.controller import (
     ControllerError,
@@ -150,6 +150,20 @@ class ControllerTests(unittest.TestCase):
             evidence=provider,
             repository="owner/repo",
         )
+
+    def test_stop_uses_the_hosted_request_runner_lock_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            controller = ReviewController(
+                store=StateStore(common / "firemud" / "pr-review-stack.json"),
+                repository="owner/repo",
+            )
+
+            cli_path, hosted_path = controller._stop_lock_paths(42)
+
+            self.assertEqual(cli_path, common / "firemud" / "pr-review" / "cli.lock")
+            trigger_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self.assertEqual(hosted_path, trigger_path.parent / "request.lock")
 
     def test_stop_cli_accepts_multiple_exact_ambiguity_fingerprints(self):
         fingerprints = ("f" * 64, "e" * 64)
