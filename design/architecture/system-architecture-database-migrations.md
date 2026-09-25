@@ -193,7 +193,7 @@ The following examples illustrate how to apply the version-aware guidelines to c
 - Diagrams are written to `design/erd/` and the CI workflow collects this
    directory as an artifact.
 
-Migrations run automatically at service startup only after the deployment path's compatibility, data-preflight, and writer-quiescence gates pass. Trusted dev-demo candidate activation skips or blocks when it cannot prove an isolated fresh database or when admission and old-writer absence cannot be established. Retained-data conflicts require recovery by the owning data team, followed by a forward retry; a failed or uncertain proof is not an automatic migration. Other environments must establish the equivalent owner-specific gates before activating a migration.
+Migrations run automatically at service startup only after the deployment path's compatibility, data-preflight, and writer-quiescence gates pass. Trusted dev-demo candidate activation retains the runtime database, closes writer admission, and proves old writers are quiescent before migration activation; retained-data conflicts require recovery by the owning data team, followed by a forward retry. The current hosted PR candidate-preview path blocks changed SQL migrations because it cannot prove an isolated fresh database or absence of old writers; it does not claim fresh-database proof or silently fall back to trusted dev-demo activation. A failed or uncertain proof is not an automatic migration. Other environments must establish the equivalent owner-specific gates before activating a migration.
 
 ---
 

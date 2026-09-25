@@ -322,7 +322,7 @@ jobs:
             migration_paths="$(jq -r \
               '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
                 | select(type == "string")
-                | select(test("^services/[^/]+/src/main/resources/db/migration/[^/]+\\.sql$"))]
+                | select(test("^services/[^/]+/src/main/resources/db/migration/.+\\.sql$"))]
               | unique | .[]' <<<"$changed_files_json")"
             if [[ -n "$migration_paths" ]]; then
               V2_SCHEMA_MIGRATION_CHANGE=true
@@ -536,6 +536,12 @@ jobs:
       pull-requests: read # Revalidate the current pull-request target before deployment.
       issues: write # Publish the required deploy failure state.
     steps:
+      - name: Block unproven PR schema migration activation
+        if: ${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}
+        run: |
+          echo "::error title=Hosted PR migration activation blocked::A changed Flyway migration cannot run in PR preview because this path has no trusted proof of fresh database provenance or zero old writers. Stop before pruning, reclaiming preview capacity, or recreating the namespace; run the trusted post-merge quiesce/preflight path instead." >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -782,12 +788,6 @@ jobs:
             echo "proof_retry_merge_sha=$retry_merge_sha"
             echo "proof_retry_image_tag=$retry_image_tag"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Block unproven PR schema migration activation
-        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && needs.validate-target.outputs.v2_schema_migration_change == 'true' }}
-        run: |
-          echo "::error title=Hosted PR migration activation blocked::A changed Flyway migration cannot run in PR preview because this path has no trusted proof of fresh database provenance or zero old writers. The isolated namespace is not sufficient while its Postgres PVC provenance is unverified. Run the trusted post-merge quiesce/preflight path instead." >&2
-          exit 1
 
       - name: Delete exact preview runtime namespace before recreate
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}

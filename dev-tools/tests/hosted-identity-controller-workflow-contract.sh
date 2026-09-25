@@ -1647,6 +1647,8 @@ for source_field, expected in (
     assert f"require_source_field {source_field} {expected}" in source_script
 assert "Expected %q; actual %q." in source_script
 
+assert "db/migration/.+\\\\.sql$" in target_step["run"]
+
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
@@ -1800,25 +1802,53 @@ assert manager_kubeconfig_jobs == {
     "deploy-runtime", "publish-preview-proof", "destroy-runtime"
 }
 assert "Set up Helm" not in deploy_by_name
-preview_migration_gate = deploy_by_name["Block unproven PR schema migration activation"]
-assert "v2_schema_migration_change == 'true'" in preview_migration_gate["if"]
-assert "PVC provenance is unverified" in preview_migration_gate["run"]
-requested_step_index = next(
-    index
-    for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Create and annotate exact preview runtime namespace"
+preview_migration_gates = [
+    step
+    for step in deploy_steps
+    if "migration" in step.get("name", "").lower()
+]
+assert len(preview_migration_gates) == 1, preview_migration_gates
+preview_migration_gate = preview_migration_gates[0]
+assert preview_migration_gate["name"] == "Block unproven PR schema migration activation"
+assert deploy_steps[0] == preview_migration_gate
+assert preview_migration_gate["if"] == (
+    "${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}"
 )
-clean_revalidate_step_index = next(
+assert "Stop before pruning, reclaiming preview capacity, or recreating the namespace" in preview_migration_gate[
+    "run"
+]
+prune_stale_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
+    if step.get("name") == "Prune stale runtime namespaces"
+)
+capacity_reclaim_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Enforce priority-aware preview capacity"
 )
 clean_delete_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Delete exact preview runtime namespace before recreate"
 )
-preview_migration_gate_step_index = deploy_steps.index(preview_migration_gate)
+requested_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+assert (
+    deploy_steps.index(preview_migration_gate)
+    < prune_stale_step_index
+    < capacity_reclaim_step_index
+    < clean_delete_step_index
+    < requested_step_index
+)
+clean_revalidate_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
+)
 capture_retry_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1843,7 +1873,6 @@ assert (
     allocate_port_step_index
     < clean_revalidate_step_index
     < capture_retry_step_index
-    < preview_migration_gate_step_index
     < clean_delete_step_index
     < requested_step_index
     < apply_step_index
@@ -6478,6 +6507,8 @@ FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/mai
   run_deploy_target_fixture repeatable-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/afterMigrate__validate_runtime_state.sql"}]]' \
   run_deploy_target_fixture callback-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/nested/V3__nested_schema_change.sql"}]]' \
+  run_deploy_target_fixture nested-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/README.md"}]]' \
   run_deploy_target_fixture ordinary-migration-directory-file 0 'action=deploy'
 grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-ordinary-migration-directory-file.output"
