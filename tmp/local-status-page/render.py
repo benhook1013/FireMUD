@@ -103,7 +103,7 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
         return unavailable
     try:
         run = subprocess.run(
-            [sys.executable, str(tool), "status", "--pr", str(pr), "--json"],
+            [sys.executable, str(tool), "status", "--json"],
             cwd=tool.parent.parent,
             capture_output=True,
             text=True,
@@ -121,19 +121,27 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
         return {**unavailable, "reason": reason}
     try:
         report = json.loads(run.stdout)
-        live_head = report["pull_request"]["headRefOid"]
-        if not isinstance(live_head, str) or report["pr_number"] != pr:
-            raise ValueError("status is for a different PR")
+        if not isinstance(report["prs"], list):
+            raise ValueError("invalid review stack")
+        queue = {}
+        for item in report["prs"]:
+            number = item["pr"]
+            if type(number) is not int or number in queue or not isinstance(item["head"], str):
+                raise ValueError("invalid review stack record")
+            queue[number] = item
+        if pr not in queue:
+            raise ValueError("review front missing from stack")
+        live_head = queue[pr]["head"]
         return {
             "available": True,
             "source": source,
             "as_of": now.isoformat(),
             "head": live_head,
             "saved_head_stale": live_head != expected_head,
-            "queue": {item["pr"]: item for item in report["review_stack"]["prs"]},
+            "queue": queue,
         }
     except (ValueError, KeyError, TypeError, AttributeError):
-        return {**unavailable, "reason": "Status fetch malformed or for a different PR head"}
+        return {**unavailable, "reason": "Status fetch malformed or review front missing"}
 
 
 def github_stages(now: datetime) -> dict:
@@ -208,10 +216,18 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             else "GitHub stage unavailable"
         )
         stats = github.get("stats", {}).get(number)
-        size_label = (
-            f'{stats["changedFiles"]} files · +{stats["additions"]:,}/−{stats["deletions"]:,} lines'
-            if stats else "Diff size unavailable"
-        )
+        if stats:
+            files_label = f'{stats["changedFiles"]} files'
+            files_html = (
+                f'<span class="files-over-warning">{files_label}</span>'
+                if stats["changedFiles"] > 90 else files_label
+            )
+            size_html = (
+                f'{files_html} · <span class="additions">+{stats["additions"]:,}</span>/'
+                f'<span class="deletions">−{stats["deletions"]:,}</span> lines'
+            )
+        else:
+            size_html = "Diff size unavailable"
         queue_item = review.get("queue", {}).get(number) if review["available"] else None
         if lifecycle == "MERGED":
             merged_at = github.get("merged_at", {}).get(number)
@@ -274,7 +290,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         rows.append(
             f'<li{row_class}><span class="order">{position:02d}</span><div class="pr-main">'
             f'<a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>'
-            f'<span class="sub">{safe(size_label)}</span>'
+            f'<span class="sub">{size_html}</span>'
             f'<span class="sub"><strong>{safe(github_label)}</strong> · {safe(channel_label)}</span>'
             f'{activity_grid}'
             f'</div></li>'
@@ -290,9 +306,9 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'</dl></article>'
         )
     queue_time = (
-        f'Review and PR details refreshed {safe(local_time(now))}. '
+        f'Refreshed {safe(local_time(now))}'
         if review["available"] and github["available"]
-        else 'Some review or PR details were unavailable when this page was rendered. '
+        else 'Review or PR details unavailable'
     )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
@@ -305,7 +321,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
 header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }} header div {{ max-width: 1160px; margin: auto; }}
 .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem; }}
 .repo-link {{ color: #f7dce4; font-size: .86rem; font-weight: 650; white-space: nowrap; }} .repo-link:hover {{ color: #fff; }}
-h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .2rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
+h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
 .refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
@@ -326,6 +342,7 @@ section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: 
 .order {{ align-self: stretch; background: #8e2941; color: #f7f2f4; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
 a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #742138; }}
 .pr-main > a {{ color: #252a32; font-weight: 650; }} .pr-main > a:hover {{ color: #742138; }} .sub {{ display: block; margin-top: .25rem; color: #626b77; font-size: .78rem; overflow-wrap: anywhere; }}
+.sub .files-over-warning, .sub .deletions {{ color: #a13047; font-weight: 650; }} .sub .additions {{ color: #237451; font-weight: 650; }}
 .activity-grid {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }}
 .activity-card {{ min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }}
 .activity-top {{ display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }}
@@ -344,13 +361,12 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 </style></head><body>
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
-<p>Configured review queue and worker lanes. This is a manual snapshot, not a merge authorization or live monitor.</p>
-<p class="generated">Page updated {safe(local_time(now))} · stack source: local status.json</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>Takes about a minute. Updates review counts and PR sizes; stack order and worker notes stay manual.</span></form></div></header>
+<p>Worker lanes and the PR train.</p>
+<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>{queue_time}</span></form></div></header>
 <main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
 <section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
 <ol class="overview">{"".join(overview)}</ol></section>
-<section><h2>Configured review queue</h2><p class="section-note">{queue_time}Order, titles, and saved heads are maintained manually. Completed counts can include older-head or unlinked results; they do not establish taper or merge readiness. The controller channel status remains authoritative.</p>
+<section><h2>Configured review queue</h2><p class="section-note">{queue_time}</p>
 <ol class="stack">{"".join(rows)}</ol></section>
 <footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script></body></html>"""
 

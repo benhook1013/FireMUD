@@ -46,7 +46,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn(f"script-src 'sha256-{refresh_hash}'", result)
         self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
         self.assertIn('class="refresh-progress" role="status" aria-live="polite"', result)
-        self.assertIn("stack order and worker notes stay manual", result)
+        self.assertIn("Review or PR details unavailable", result)
+        self.assertNotIn("Takes about a minute", result)
         self.assertNotIn('href="../../task-briefs/', result)
         self.assertIn("Review eligibility unavailable", result)
         self.assertNotIn("Review front", result)
@@ -138,15 +139,27 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("<strong>Draft</strong> · Hosted Held · CLI Ready", result)
         self.assertIn('<li class="merged"><span class="order">02</span>', result)
         self.assertIn("<strong>Merged</strong> · 12m ago · 24 Sep 23:48 NZST", result)
-        self.assertIn("5 files · +10/−3 lines", result)
+        self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head)">4/3</span>', result)
         self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
         self.assertIn("1 unlinked to a verified review", result)
         self.assertIn("1 excluded from taper", result)
-        self.assertIn('Review and PR details refreshed 25 Sep 00:00 NZST', result)
+        self.assertEqual(2, result.count('Refreshed 25 Sep 00:00 NZST'))
         self.assertNotIn("Stack record checked", result)
-        self.assertIn("do not establish taper or merge readiness", result)
+        self.assertNotIn("do not establish taper or merge readiness", result)
+
+    def test_pr_size_colors_only_warn_above_ninety_files(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 43})
+        github = {"available": True, "states": {}, "lifecycle": {}, "merged_at": {},
+                  "stats": {42: {"changedFiles": 90, "additions": 10, "deletions": 3},
+                            43: {"changedFiles": 91, "additions": 12, "deletions": 4}}}
+        result = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github)
+        self.assertIn('90 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
+        self.assertIn('<span class="files-over-warning">91 files</span> · '
+                      '<span class="additions">+12</span>/<span class="deletions">−4</span> lines', result)
+        self.assertNotIn('class="files-over-warning">90 files', result)
 
     def test_zero_accepted_badges_keep_evidence_distinctions(self):
         review = page.review_snapshot(None, 42, HEAD, NOW)
@@ -194,34 +207,36 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("malformed", page.review_snapshot(tool, 42, HEAD, NOW)["reason"])
 
     @patch.object(page.subprocess, "run")
-    def test_exact_head_review_snapshot(self, run):
+    def test_queue_wide_review_snapshot_extracts_front_and_rejects_missing_front(self, run):
         report = {
-            "pr_number": 42,
-            "pull_request": {"headRefOid": HEAD},
-            "review_sequence": [
-                {"type": "Hosted", "raw_found": 3, "accepted": 1, "reviewed_sha": "aaaaaaa", "created_at": "2026-09-24T09:00:00Z"},
-                {"type": "Hosted", "raw_found": 0, "accepted": 0, "reviewed_sha": "aaaaaaaa", "created_at": "2026-09-24T10:00:00Z"},
-                {"type": "CLI", "raw_found": 2, "accepted": 0, "reviewed_sha": "bbbbbbbb", "created_at": "2026-09-24T11:00:00Z"},
+            "ordered_prs": [42, 43],
+            "status": "COHERENT",
+            "prs": [
+                {"pr": 42, "head": HEAD, "channels": {"hosted": "READY", "cli": "HELD"}},
+                {"pr": 43, "head": "c" * 40, "channels": {"hosted": "HELD", "cli": "HELD"}},
             ],
-            "threads": {"current": 1, "outdated": 2},
-            "ci": {"aggregate": {"state": "PENDING"}},
-            "mergeability": {"mergeStateStatus": "BLOCKED"},
-            "verdict": "NOT READY",
-            "review_stack": {"prs": [{"pr": 42, "channels": {"hosted": "READY", "cli": "HELD"}}]},
         }
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
         snapshot = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
+        self.assertEqual([sys.executable, "/tmp/pr-review", "status", "--json"], run.call_args.args[0])
         self.assertTrue(snapshot["available"])
+        self.assertEqual(HEAD, snapshot["head"])
+        self.assertFalse(snapshot["saved_head_stale"])
+        self.assertEqual({42, 43}, set(snapshot["queue"]))
         result = page.render(self.fixture(), snapshot, NOW)
         self.assertIn("Hosted Ready · CLI Held", result)
         self.assertNotIn("raw /", result)
-        report["pull_request"]["headRefOid"] = "b" * 40
-        report["review_stack"]["prs"][0]["head"] = "b" * 40
+        report["prs"][0]["head"] = "b" * 40
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
         moved = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
         self.assertTrue(moved["available"])
         self.assertTrue(moved["saved_head_stale"])
         self.assertNotIn("base codex/", page.render(self.fixture(), moved, NOW))
+        report["prs"] = report["prs"][1:]
+        run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
+        missing = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
+        self.assertFalse(missing["available"])
+        self.assertIn("review front missing", missing["reason"])
 
 
 if __name__ == "__main__":
