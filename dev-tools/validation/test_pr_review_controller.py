@@ -302,6 +302,50 @@ class ControllerTests(unittest.TestCase):
                         reason="do not erase consumed progress",
                     )
 
+    def test_invalid_progress_with_matching_completed_results_cannot_be_renewed(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-nondescendant"))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        original_is_ancestor = controller.git.is_ancestor
+
+        def reject_review_ancestry(ancestor, descendant):
+            if (ancestor, descendant) == (HEAD_1, HEAD_2):
+                return False
+            return original_is_ancestor(ancestor, descendant)
+
+        with (
+            patch.object(controller.git, "is_ancestor", side_effect=reject_review_ancestry),
+            self.assertRaisesRegex(ControllerError, "consumed or handed-off"),
+        ):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_2,
+                reason="do not renew after a non-descendant review result",
+            )
+
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-first"),
+                self.allocation_evidence(checkpoint="allocated-second"),
+            )
+        )
+
+        with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="do not renew after ambiguous completed results",
+            )
+
     def test_handed_off_allocation_cannot_be_renewed(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         controller = self.grant_allocation(evidence=evidence)
