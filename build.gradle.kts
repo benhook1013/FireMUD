@@ -24,7 +24,7 @@ plugins {
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.flyway) apply false
-    id("com.diffplug.spotless") version "8.10.2"
+    id("com.diffplug.spotless") version "8.10.3"
     id("checkstyle")
     id("com.github.spotbugs") version "6.5.11"
     jacoco
