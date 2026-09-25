@@ -4,6 +4,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_CONNECT_
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import org.jooq.DSLContext;
@@ -54,6 +55,38 @@ public class AccountConnectScopeRepository {
         .fetchOptional(record -> toScope(record, connectScopeId));
   }
 
+  /**
+   * Reads retained target evidence by its one-way token hash. This record cannot be used as a
+   * connect-scope bearer and deliberately does not reconstruct or expose the plaintext token.
+   */
+  public Optional<ConnectScopeEvidence> findEvidenceByTokenHash(String scopeTokenHash) {
+    if (scopeTokenHash == null || scopeTokenHash.isBlank()) {
+      throw new IllegalArgumentException("JOIN scope token hash is required");
+    }
+    return dsl.selectFrom(ACCOUNT_CONNECT_SCOPE_RECORDS)
+        .where(ACCOUNT_CONNECT_SCOPE_RECORDS.SCOPE_TOKEN_HASH.eq(scopeTokenHash))
+        .fetchOptional(AccountConnectScopeRepository::toEvidence);
+  }
+
+  private static ConnectScopeEvidence toEvidence(Record record) {
+    return new ConnectScopeEvidence(
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.SCOPE_TOKEN_HASH),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.ACCOUNT_ID),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.TARGET_CLASS),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.TENANT_ID),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.REALM_ID),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.WORLD_SLUG),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.REALM_SLUG),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.PLAYABLE_STATE_NAMESPACE_ID),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.PLAYABLE_STATE_SCOPE),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.GAME_INSTANCE_ID),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.CATALOG_REVISION),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.POINTER_VERSION),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.EVALUATED_AT),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.CONNECT_SCOPE_EXPIRES_AT),
+        record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.SNAPSHOT_DIGEST));
+  }
+
   private VerifiedJoinScope toScope(Record record, String connectScopeId) {
     if (!"PUBLIC_PRODUCTION".equals(record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.TARGET_CLASS))) {
       throw new IllegalStateException("JOIN scope is not public production");
@@ -79,4 +112,21 @@ public class AccountConnectScopeRepository {
     }
     return scope;
   }
+
+  public record ConnectScopeEvidence(
+      String scopeTokenHash,
+      long accountId,
+      String targetClass,
+      long tenantId,
+      UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      long gameInstanceId,
+      long catalogRevision,
+      long pointerVersion,
+      String evaluatedAt,
+      String connectScopeExpiresAt,
+      String snapshotDigest) {}
 }

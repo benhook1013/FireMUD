@@ -3,7 +3,9 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoRouteWithPathAndMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,7 +49,8 @@ class GatewayRoutesConfigurationProdTest {
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
-          "design",
+          "design-ping",
+          "design-templates-read",
           "account-auth",
           "account-accounts",
           "account-profiles",
@@ -120,13 +123,21 @@ class GatewayRoutesConfigurationProdTest {
     assertHasPath(gatewayProperties, "admin-remote-followups", "/api/admin/remote-followups/**");
     assertHasPath(gatewayProperties, "admin-tick-remediation", "/api/admin/tick-remediation/**");
     assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
-    assertHasPath(gatewayProperties, "design", "/api/design/**");
+    assertHasPath(gatewayProperties, "design-ping", "/api/design/ping");
+    assertHasMethod(gatewayProperties, "design-ping", "GET");
+    assertHasPath(gatewayProperties, "design-templates-read", "/api/design/templates");
+    assertHasMethod(gatewayProperties, "design-templates-read", "GET");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/**");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/assets");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/templates", "POST");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/assets", "POST");
     assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
     assertHasStripPrefixTwo(gatewayProperties, "admin-ping");
     assertHasStripPrefixTwo(gatewayProperties, "admin-admission-pointers");
     assertHasStripPrefixTwo(gatewayProperties, "admin-remote-followups");
     assertHasStripPrefixTwo(gatewayProperties, "admin-tick-remediation");
-    assertHasStripPrefixTwo(gatewayProperties, "design");
+    assertHasStripPrefixTwo(gatewayProperties, "design-ping");
+    assertHasStripPrefixTwo(gatewayProperties, "design-templates-read");
     assertHasStripPrefixTwo(gatewayProperties, "account-auth");
   }
 }

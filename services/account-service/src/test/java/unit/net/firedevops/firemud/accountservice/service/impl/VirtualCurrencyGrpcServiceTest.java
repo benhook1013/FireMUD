@@ -5,7 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.ArrayList;
+import java.util.List;
 import net.firedevops.firemud.account.v1.AddCurrencyRequest;
 import net.firedevops.firemud.account.v1.AddCurrencyResponse;
 import net.firedevops.firemud.account.v1.GetBalanceRequest;
@@ -18,162 +19,101 @@ import org.mockito.Mockito;
 
 class VirtualCurrencyGrpcServiceTest {
   @Test
-  void getBalanceReturnsResponse() {
+  void getBalanceFailsClosedForRepeatedValidRequestsWithoutReadingBalance() {
     VirtualCurrencyService currencyService = Mockito.mock(VirtualCurrencyService.class);
-    Mockito.when(currencyService.getBalance(1L, 2L, "GOLD")).thenReturn(123L);
     VirtualCurrencyGrpcService service =
         new VirtualCurrencyGrpcService(currencyService, new SimpleMeterRegistry());
+    List<GetBalanceResponse> responses = new ArrayList<>();
 
-    AtomicReference<GetBalanceResponse> ref = new AtomicReference<>();
-    service.getBalance(
+    StreamObserver<GetBalanceResponse> observer = collecting(responses);
+    GetBalanceRequest request =
         GetBalanceRequest.newBuilder()
             .setTenantId("1")
             .setAccountId("2")
             .setCurrencyCode("GOLD")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetBalanceResponse value) {
-            ref.set(value);
-          }
+            .build();
+    service.getBalance(request, observer);
+    service.getBalance(request, observer);
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals(123L, ref.get().getBalance());
-  }
-
-  @Test
-  void getBalanceRuntimeFailureReturnsInternalErrorDetail() {
-    VirtualCurrencyService currencyService = Mockito.mock(VirtualCurrencyService.class);
-    Mockito.when(currencyService.getBalance(1L, 2L, "GOLD"))
-        .thenThrow(new IllegalStateException("boom"));
-    VirtualCurrencyGrpcService service =
-        new VirtualCurrencyGrpcService(currencyService, new SimpleMeterRegistry());
-
-    AtomicReference<GetBalanceResponse> ref = new AtomicReference<>();
-    service.getBalance(
-        GetBalanceRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("2")
-            .setCurrencyCode("GOLD")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetBalanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
-  }
-
-  @Test
-  void getBalanceRejectsZeroTenantIdBeforeLookup() {
-    VirtualCurrencyService currencyService = Mockito.mock(VirtualCurrencyService.class);
-    VirtualCurrencyGrpcService service =
-        new VirtualCurrencyGrpcService(currencyService, new SimpleMeterRegistry());
-
-    AtomicReference<GetBalanceResponse> ref = new AtomicReference<>();
-    service.getBalance(
-        GetBalanceRequest.newBuilder()
-            .setTenantId("0")
-            .setAccountId("2")
-            .setCurrencyCode("GOLD")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetBalanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    assertUnavailable(responses, "GetBalance is unavailable");
     Mockito.verifyNoInteractions(currencyService);
   }
 
   @Test
-  void addCurrencyRejectsZeroAccountIdBeforeMutation() {
+  void addCurrencyFailsClosedForRepeatedValidRequestsWithoutAddingCurrency() {
     VirtualCurrencyService currencyService = Mockito.mock(VirtualCurrencyService.class);
     VirtualCurrencyGrpcService service =
         new VirtualCurrencyGrpcService(currencyService, new SimpleMeterRegistry());
+    List<AddCurrencyResponse> responses = new ArrayList<>();
 
-    AtomicReference<AddCurrencyResponse> ref = new AtomicReference<>();
-    service.addCurrency(
+    StreamObserver<AddCurrencyResponse> observer = collecting(responses);
+    AddCurrencyRequest request =
         AddCurrencyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("0")
+            .setAccountId("2")
             .setCurrencyCode("GOLD")
             .setAmount(10)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(AddCurrencyResponse value) {
-            ref.set(value);
-          }
+            .build();
+    service.addCurrency(request, observer);
+    service.addCurrency(request, observer);
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    assertUnavailable(responses, "AddCurrency is unavailable");
     Mockito.verifyNoInteractions(currencyService);
   }
 
   @Test
-  void spendCurrencyRejectsZeroTenantIdBeforeSpend() {
+  void spendCurrencyFailsClosedForRepeatedValidRequestsWithoutSpendingCurrency() {
     VirtualCurrencyService currencyService = Mockito.mock(VirtualCurrencyService.class);
     VirtualCurrencyGrpcService service =
         new VirtualCurrencyGrpcService(currencyService, new SimpleMeterRegistry());
+    List<SpendCurrencyResponse> responses = new ArrayList<>();
 
-    AtomicReference<SpendCurrencyResponse> ref = new AtomicReference<>();
-    service.spendCurrency(
+    StreamObserver<SpendCurrencyResponse> observer = collecting(responses);
+    SpendCurrencyRequest request =
         SpendCurrencyRequest.newBuilder()
-            .setTenantId("0")
+            .setTenantId("1")
             .setAccountId("2")
             .setCurrencyCode("GOLD")
             .setAmount(5)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(SpendCurrencyResponse value) {
-            ref.set(value);
-          }
+            .build();
+    service.spendCurrency(request, observer);
+    service.spendCurrency(request, observer);
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    assertUnavailable(responses, "SpendCurrency is unavailable");
     Mockito.verifyNoInteractions(currencyService);
+  }
+
+  private static <T> StreamObserver<T> collecting(List<T> responses) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        responses.add(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {}
+
+      @Override
+      public void onCompleted() {}
+    };
+  }
+
+  private static void assertUnavailable(List<?> responses, String message) {
+    assertEquals(2, responses.size());
+    for (Object response : responses) {
+      assertNotNull(response);
+      if (response instanceof GetBalanceResponse getBalanceResponse) {
+        assertEquals("FAILED_PRECONDITION", getBalanceResponse.getError().getCode());
+        assertEquals(message, getBalanceResponse.getError().getMessage());
+      } else if (response instanceof AddCurrencyResponse addCurrencyResponse) {
+        assertEquals("FAILED_PRECONDITION", addCurrencyResponse.getError().getCode());
+        assertEquals(message, addCurrencyResponse.getError().getMessage());
+      } else if (response instanceof SpendCurrencyResponse spendCurrencyResponse) {
+        assertEquals("FAILED_PRECONDITION", spendCurrencyResponse.getError().getCode());
+        assertEquals(message, spendCurrencyResponse.getError().getMessage());
+      } else {
+        throw new AssertionError("Unexpected response type: " + response.getClass());
+      }
+    }
   }
 }

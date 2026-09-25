@@ -65,6 +65,28 @@ final class GatewayRouteTestSupport {
     assertThat(configuredPaths).doesNotContain(path);
   }
 
+  static void assertNoRouteWithPathAndMethod(
+      GatewayProperties gatewayProperties, String path, String method) {
+    assertThat(
+            gatewayProperties.getRoutes().stream()
+                .noneMatch(
+                    route ->
+                        route.getPredicates().stream()
+                                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+                                .flatMap(predicate -> predicate.getArgs().values().stream())
+                                .anyMatch(path::equals)
+                            && (route.getPredicates().stream()
+                                    .noneMatch(
+                                        predicate -> "Method".equalsIgnoreCase(predicate.getName()))
+                                || route.getPredicates().stream()
+                                    .filter(
+                                        predicate -> "Method".equalsIgnoreCase(predicate.getName()))
+                                    .flatMap(predicate -> predicate.getArgs().values().stream())
+                                    .anyMatch(method::equals))))
+        .as("route %s %s must not be configured", method, path)
+        .isTrue();
+  }
+
   static void assertSocialChatAndFriendsAreEdgeGated(GatewayProperties gatewayProperties) {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .doesNotContain("social-chat", "social-friends");

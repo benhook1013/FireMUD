@@ -17,7 +17,6 @@ import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -110,13 +109,15 @@ class AccountControllerTest {
   }
 
   @Test
-  void deleteAccountAllowsScopedTenantAdmin() throws Exception {
+  void deleteAccountDeniesPlatformAdminBeforeServiceMutation() throws Exception {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error.code").value("ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
@@ -145,10 +146,7 @@ class AccountControllerTest {
   }
 
   @Test
-  void exportTenantDataAllowsScopedTenantRole() throws Exception {
-    AccountDto account = new AccountDto(42L, "demo", "demo@example.com", "player", true);
-    when(accountService.exportTenantData(7L, 42L))
-        .thenReturn(new TenantDataExportDto(7L, account, null));
+  void exportTenantDataFailsClosedWithoutReadingAccountService() throws Exception {
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("moderator"))));
 
@@ -157,8 +155,9 @@ class AccountControllerTest {
             get("/accounts/42/tenant-export")
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(status().isNotImplemented());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
@@ -193,7 +192,7 @@ class AccountControllerTest {
   }
 
   @Test
-  void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
+  void deleteAccountDeniesCurrentAccountBeforeServiceMutation() throws Exception {
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
@@ -201,8 +200,10 @@ class AccountControllerTest {
             delete("/accounts/42")
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error.code").value("ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test

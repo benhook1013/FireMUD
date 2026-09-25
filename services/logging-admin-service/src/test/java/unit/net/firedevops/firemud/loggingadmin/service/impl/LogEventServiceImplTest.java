@@ -30,6 +30,7 @@ import org.mockito.Mockito;
 class LogEventServiceImplTest {
   private static final String AUDIT_EVENT_ID = "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3";
   private static final UUID RECEIPT_ID = UUID.fromString("c0c1f03b-31b7-4281-aaf8-2d66f29e8770");
+  private static final long LOG_EVENT_ID = 192L;
 
   private final AccountAuditReceiptRepository repository =
       Mockito.mock(AccountAuditReceiptRepository.class);
@@ -47,7 +48,7 @@ class LogEventServiceImplTest {
 
     assertEquals(AccountAuditReceiptStatus.COMMITTED, result.status());
     assertEquals(AccountAuditReceiptOutcome.ACCEPTED, result.outcome());
-    assertEquals(91L, result.logEventId());
+    assertEquals(LOG_EVENT_ID, result.logEventId());
     verify(repository).insertIfAbsent(eq(request), any(UUID.class));
   }
 
@@ -64,6 +65,26 @@ class LogEventServiceImplTest {
     assertEquals(AccountAuditReceiptStatus.COMMITTED, result.status());
     assertEquals(AccountAuditReceiptOutcome.DUPLICATE, result.outcome());
     assertEquals(42L, result.tenantId());
+    assertEquals(LOG_EVENT_ID, result.logEventId());
+    assertEquals(RECEIPT_ID.toString(), result.receiptId());
+  }
+
+  @Test
+  void changedPayloadReturnsIdempotencyConflict() {
+    CreateLogEventRequest original = request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}");
+    CreateLogEventRequest changed =
+        request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{\"changed\":true}");
+    when(repository.insertIfAbsent(eq(changed), any(UUID.class)))
+        .thenReturn(
+            new AccountAuditReceiptInsertResult(
+                receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED"),
+                false));
+
+    var result = service.createLogEvent(changed);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, result.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, result.outcome());
+    assertEquals(LOG_EVENT_ID, result.logEventId());
   }
 
   @Test
@@ -185,6 +206,7 @@ class LogEventServiceImplTest {
       CreateLogEventRequest request, byte[] payload, String status, String outcome) {
     return new AccountAuditReceipt(
         91L,
+        LOG_EVENT_ID,
         RECEIPT_ID,
         request.scope().databaseValue(),
         request.tenantId(),

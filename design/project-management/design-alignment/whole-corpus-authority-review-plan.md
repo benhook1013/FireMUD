@@ -32,13 +32,15 @@ The 23 original family sections remain the top-level corpus map, but 5B is now p
 4. Update **only the alignment index** for section/subunit status, main PR, completion evidence, and routed obligations. The index keeps the three 5B subunit rows under the two-document tracking model; record their evidence and routed work in the planned **Evidence / routed work** column. Record the whole-5B synthesis as a non-row evidence line associated with those three rows, never as an aggregate 5B status row. The index must not become a PR-shaped ledger. A split implementation PR is linked from the relevant subunit evidence rather than creating a PR section. Keep detailed finding evidence with the relevant review/PR artifacts, not a second live section-status ledger. Any future semantic boundary change must update both maintained documents before assigning new subunits or PRs.
 5. A section is complete only when its refreshed source list and material handoffs have been assessed, valid findings are fixed or explicitly owned elsewhere, and the current review has tapered. For 5B, completion additionally requires all three subunit terminals plus a tapered whole-5B synthesis. Record each subunit's reviewed/allocated source count, evidence, and routed work in the index; record synthesis evidence on its non-row line. At final closeout, compare the union of the refreshed section and subunit lists with the [allocation](./design-capability-allocation.md): every allocated source must be reviewed in an owning section, explicitly handed off by heading, or listed as an exemption with a reason. Merging one PR alone does not establish section or subunit completion.
 
+When Overseer closes broad discovery for a section by explicit judgment before taper, record that as a discovery stop, not section completion or merge readiness. Before handing off the section, reconcile each accepted finding and relevant tracker gap against current behavior: implement unsafe exposed paths in their owning boundary, or assign substantial pre-v1 work to a concrete owner and successor with dependency and activation gate. A tracker link alone does not remediate a live defect. Record deliberately deferred features with their containment, reason and revisit trigger; keep unexecuted PostgreSQL, cross-service and deployment proof attached to the applicable readiness gate. Preserve the difference between whole-corpus coverage, implemented capability and exercised proof in the index and owning trackers.
+
 ## Starting manifests
 
 These recovered manifests are starting review prompts, not frozen inventories or old completion claims. Refresh each when its section starts. Historical statements about what is currently implemented or unresolved must be verified before use. Numbered paths below are review inputs; heading-scoped consumers and adjacent sections remain handoffs rather than duplicate owners.
 
 ### 1A
 
-Unit 1A's substantive boundary is the following 28 identity, membership, entitlement, billing, and hosted-terms sources:
+Unit 1A's substantive boundary is the following 29 identity, membership, entitlement, billing, and hosted-terms sources:
 
 1. `design/architecture/service-responsibility-matrix.md`
 2. `design/architecture/system-architecture-overview.md`
@@ -68,6 +70,7 @@ Unit 1A's substantive boundary is the following 28 identity, membership, entitle
 26. `design/architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md`
 27. `design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md`
 28. `design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md`
+29. `design/architecture/microservices/account-service/README.md`
 
 Review Account's sole authority for global identity, credentials, explicit membership, entitlement, Creator Party and terms evidence; account-global versus tenant-scoped records; public versus private/playtest access; strict and continuity entitlement freshness; authentication path separation; role versus gameplay authority; hosted creator mutation currentness; changed-terms decline and prior-rights continuity; and payment evidence versus runtime entitlement. Unit 1A consumes 5A token/authority primitives and hands gameplay binding to 1B and operator reference execution to 6C. Refresh for material 5A, 6C, 1B, 5B/5D, 3A, or billing/provider changes. Repository licence/terms files remain legal-policy handoffs rather than technical authority sources.
 

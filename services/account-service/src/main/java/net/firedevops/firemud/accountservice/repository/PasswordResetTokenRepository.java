@@ -61,6 +61,22 @@ public class PasswordResetTokenRepository {
     }
   }
 
+  /** Atomically consumes a still-valid token so only one transaction can claim it. */
+  public boolean consumeIfUnexpired(PasswordResetToken token, LocalDateTime capturedNow) {
+    if (token == null || token.getId() == null) {
+      return false;
+    }
+    return dsl.deleteFrom(PASSWORD_RESET_TOKEN)
+            .where(
+                PASSWORD_RESET_TOKEN
+                    .ID
+                    .eq(token.getId())
+                    .and(PASSWORD_RESET_TOKEN.TOKEN.eq(token.getToken()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.ge(capturedNow)))
+            .execute()
+        == 1;
+  }
+
   public void deleteByAccountId(Long accountId) {
     dsl.deleteFrom(PASSWORD_RESET_TOKEN)
         .where(PASSWORD_RESET_TOKEN.ACCOUNT_ID.eq(accountId))

@@ -609,7 +609,9 @@ public class AccountServiceImpl implements AccountService {
     }
 
     if (isConnectScopeExpired(scope)) {
-      return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
+      return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
     }
 
     JoinEvaluation evaluation = evaluateJoin(scope);
@@ -1819,61 +1821,19 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.tenant_export")
   public TenantDataExportDto exportTenantData(Long tenantId, Long accountId) {
-    Account account = requireAccount(accountId);
-    Profile profile =
-        profileRepository.findByAccountIdAndTenantId(accountId, tenantId).orElse(null);
-    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)
-        && profile == null) {
-      throw new IllegalArgumentException("Tenant data not found");
-    }
-    return new TenantDataExportDto(
-        tenantId,
-        accountMapper.toDto(account),
-        profile != null ? profileMapper.toDto(profile) : null);
+    throw new ResponseStatusException(
+        HttpStatus.NOT_IMPLEMENTED,
+        "Tenant-admin export is unavailable until the tenant-wide export contract is implemented");
   }
 
   @Override
   @Transactional
   @Timed(value = "account.delete")
   public void deleteAccount(Long accountId) {
-    Account account = requireAccount(accountId);
-    if (accountJoinOperationRepository.hasRetainedOperation(accountId)) {
-      throw new AccountLifecycleException(
-          "ACCOUNT_DELETE_JOIN_RECEIPT_RETAINED",
-          "Account JOIN receipts require retention and deletion reconciliation");
-    }
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
-        subscriptionRepository.findByAccountId(accountId);
-    Optional<net.firedevops.firemud.accountservice.entity.Subscription> blockingSubscription =
-        subscriptions.stream().filter(this::isNonterminalSubscription).findFirst();
-    if (blockingSubscription.isPresent()) {
-      throw new AccountLifecycleException(
-          "ACCOUNT_DELETE_ACTIVE_BILLING_OWNER",
-          "Account has nonterminal tenant subscriptions; cancel or end subscriptions first");
-    }
-    emailVerificationTokenRepository.deleteByAccountId(accountId);
-    passwordResetTokenRepository.deleteByAccountId(accountId);
-    accountRealmAccessGrantRepository.deleteByAccountId(accountId);
-    externalAccountRepository.deleteByAccountId(accountId);
-    paymentTransactionRepository.deleteByAccountId(accountId);
-    subscriptionRepository.deleteByAccountId(accountId);
-    profileRepository.deleteByAccountId(accountId);
-    accountTenantMembershipRepository.deleteByAccountId(accountId);
-    accountRepository.delete(account);
-  }
-
-  private boolean isNonterminalSubscription(
-      net.firedevops.firemud.accountservice.entity.Subscription subscription) {
-    String status =
-        subscription.getStatus() == null
-            ? ""
-            : subscription.getStatus().trim().toLowerCase(java.util.Locale.ROOT);
-    boolean terminalStatus =
-        switch (status) {
-          case "canceled", "cancelled", "ended", "expired" -> true;
-          default -> false;
-        };
-    return !terminalStatus || subscription.getEndedAt() == null;
+    requireAccount(accountId);
+    throw new AccountLifecycleException(
+        "ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE",
+        "Account deletion is unavailable until its provider reconciliation and data retention workflow is implemented");
   }
 
   @Override
@@ -1909,13 +1869,16 @@ public class AccountServiceImpl implements AccountService {
         passwordResetTokenRepository
             .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
-    if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+    LocalDateTime now = LocalDateTime.now();
+    if (token.getExpiresAt().isBefore(now)) {
       throw new IllegalArgumentException("Token expired");
+    }
+    if (!passwordResetTokenRepository.consumeIfUnexpired(token, now)) {
+      throw new IllegalArgumentException("Invalid token");
     }
     net.firedevops.firemud.accountservice.entity.Account account = token.getAccount();
     account.setPasswordHash(hashPassword(request.newPassword()));
     accountRepository.save(account);
-    passwordResetTokenRepository.delete(token);
   }
 
   @Override
@@ -1961,13 +1924,16 @@ public class AccountServiceImpl implements AccountService {
         emailVerificationTokenRepository
             .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
-    if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+    LocalDateTime now = LocalDateTime.now();
+    if (token.getExpiresAt().isBefore(now)) {
       throw new IllegalArgumentException("Token expired");
+    }
+    if (!emailVerificationTokenRepository.consumeIfUnexpired(token, now)) {
+      throw new IllegalArgumentException("Invalid token");
     }
     Account account = token.getAccount();
     account.setEmailVerified(true);
     accountRepository.save(account);
-    emailVerificationTokenRepository.delete(token);
   }
 
   @Override

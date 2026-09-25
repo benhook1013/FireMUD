@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -669,7 +670,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void expiredPersistedPendingJoinFailsTerminallyWithoutAuthorityOrMembershipTransition() {
+  void expiredPersistedPendingJoinRemainsPendingWithoutAuthorityOrMembershipReads() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -731,9 +732,17 @@ class AccountServiceImplTest {
             .toString();
     retainedOperation.set(
         new AccountJoinOperationRepository.JoinOperation(
+            request.requestId(),
             expiredScope.accountId(),
             expiredScope.tenantId(),
             expiredScope.realmId(),
+            expiredScope.worldSlug(),
+            expiredScope.realmSlug(),
+            expiredScope.playableStateNamespaceId(),
+            expiredScope.playableStateScope(),
+            expiredScope.gameInstanceId(),
+            expiredScope.catalogRevision(),
+            expiredScope.pointerVersion(),
             callerBinding,
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
             expiredScope.snapshotDigest(),
@@ -751,20 +760,26 @@ class AccountServiceImplTest {
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
                 request.requestId(), expiredScope, callerBinding),
             "ENTITLEMENT_UNAVAILABLE",
-            "UNAVAILABLE"));
+            "UNAVAILABLE",
+            0,
+            null,
+            null,
+            java.time.Instant.now()));
 
     JoinPublicProductionResult expiredRetry =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
-    JoinPublicProductionResult terminalReadback =
+    JoinPublicProductionResult repeatedExpiredRetry =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
 
     assertFalse(expiredRetry.success());
-    assertEquals("CONNECT_SCOPE_INVALID", expiredRetry.outcomeCode());
-    assertFalse(terminalReadback.success());
-    assertTrue(terminalReadback.replayed());
-    assertEquals("CONNECT_SCOPE_INVALID", terminalReadback.outcomeCode());
-    assertEquals("FAILED", retainedOperation.get().status());
-    assertEquals("CONNECT_SCOPE_INVALID", retainedOperation.get().outcome());
+    assertFalse(expiredRetry.replayed());
+    assertEquals("AUTH_UNAVAILABLE", expiredRetry.outcomeCode());
+    assertFalse(repeatedExpiredRetry.success());
+    assertFalse(repeatedExpiredRetry.replayed());
+    assertEquals("AUTH_UNAVAILABLE", repeatedExpiredRetry.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
     verifyNoInteractions(
         subscriptionRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
   }
@@ -792,9 +807,17 @@ class AccountServiceImplTest {
     VerifiedJoinScope scope = retainedScope.get();
     retainedOperation.set(
         new AccountJoinOperationRepository.JoinOperation(
+            "join-global-collision-1",
             12L,
             scope.tenantId(),
             scope.realmId(),
+            scope.worldSlug(),
+            scope.realmSlug(),
+            scope.playableStateNamespaceId(),
+            scope.playableStateScope(),
+            scope.gameInstanceId(),
+            scope.catalogRevision(),
+            scope.pointerVersion(),
             "different-caller",
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
             scope.snapshotDigest(),
@@ -812,7 +835,11 @@ class AccountServiceImplTest {
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
                 "join-global-collision-1", scope, "different-caller"),
             null,
-            "NOT_EVALUATED"));
+            "NOT_EVALUATED",
+            0,
+            null,
+            null,
+            java.time.Instant.now()));
 
     AuthenticationException conflict =
         assertThrows(
@@ -897,9 +924,17 @@ class AccountServiceImplTest {
               String intentDigest = invocation.getArgument(3);
               retainedOperation.set(
                   new AccountJoinOperationRepository.JoinOperation(
+                      requestId,
                       scope.accountId(),
                       scope.tenantId(),
                       scope.realmId(),
+                      scope.worldSlug(),
+                      scope.realmSlug(),
+                      scope.playableStateNamespaceId(),
+                      scope.playableStateScope(),
+                      scope.gameInstanceId(),
+                      scope.catalogRevision(),
+                      scope.pointerVersion(),
                       callerBinding,
                       net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
                           scope.connectScopeId()),
@@ -917,7 +952,11 @@ class AccountServiceImplTest {
                       1,
                       intentDigest,
                       null,
-                      "NOT_EVALUATED"));
+                      "NOT_EVALUATED",
+                      0,
+                      null,
+                      null,
+                      java.time.Instant.now()));
               return true;
             })
         .when(accountJoinOperationRepository)
@@ -931,9 +970,17 @@ class AccountServiceImplTest {
               var pending = retainedOperation.get();
               retainedOperation.set(
                   new AccountJoinOperationRepository.JoinOperation(
+                      pending.requestId(),
                       pending.accountId(),
                       pending.tenantId(),
                       pending.realmId(),
+                      pending.worldSlug(),
+                      pending.realmSlug(),
+                      pending.playableStateNamespaceId(),
+                      pending.playableStateScope(),
+                      pending.gameInstanceId(),
+                      pending.catalogRevision(),
+                      pending.pointerVersion(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -950,7 +997,11 @@ class AccountServiceImplTest {
                       pending.intentDigestVersion(),
                       pending.intentDigest(),
                       null,
-                      "AVAILABLE"));
+                      "AVAILABLE",
+                      pending.reconciliationAttemptCount(),
+                      pending.lastReconciliationAttemptAt(),
+                      pending.lastReconciliationAttemptReason(),
+                      pending.nextReconciliationAttemptAt()));
               return null;
             })
         .when(accountJoinOperationRepository)
@@ -965,9 +1016,17 @@ class AccountServiceImplTest {
               String availability = invocation.getArgument(1);
               retainedOperation.set(
                   new AccountJoinOperationRepository.JoinOperation(
+                      pending.requestId(),
                       pending.accountId(),
                       pending.tenantId(),
                       pending.realmId(),
+                      pending.worldSlug(),
+                      pending.realmSlug(),
+                      pending.playableStateNamespaceId(),
+                      pending.playableStateScope(),
+                      pending.gameInstanceId(),
+                      pending.catalogRevision(),
+                      pending.pointerVersion(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -986,7 +1045,11 @@ class AccountServiceImplTest {
                       pending.intentDigestVersion(),
                       pending.intentDigest(),
                       invocation.getArgument(2),
-                      availability));
+                      availability,
+                      pending.reconciliationAttemptCount(),
+                      pending.lastReconciliationAttemptAt(),
+                      pending.lastReconciliationAttemptReason(),
+                      pending.nextReconciliationAttemptAt()));
               return null;
             })
         .when(accountJoinOperationRepository)
@@ -999,9 +1062,17 @@ class AccountServiceImplTest {
               var pending = retainedOperation.get();
               retainedOperation.set(
                   new AccountJoinOperationRepository.JoinOperation(
+                      pending.requestId(),
                       pending.accountId(),
                       pending.tenantId(),
                       pending.realmId(),
+                      pending.worldSlug(),
+                      pending.realmSlug(),
+                      pending.playableStateNamespaceId(),
+                      pending.playableStateScope(),
+                      pending.gameInstanceId(),
+                      pending.catalogRevision(),
+                      pending.pointerVersion(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -1018,7 +1089,11 @@ class AccountServiceImplTest {
                       pending.intentDigestVersion(),
                       pending.intentDigest(),
                       null,
-                      pending.lastAttemptAuthorityAvailability()));
+                      pending.lastAttemptAuthorityAvailability(),
+                      pending.reconciliationAttemptCount(),
+                      pending.lastReconciliationAttemptAt(),
+                      pending.lastReconciliationAttemptReason(),
+                      pending.nextReconciliationAttemptAt()));
               return null;
             })
         .when(accountJoinOperationRepository)
@@ -3896,24 +3971,27 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void exportTenantDataRequiresTenantMembershipOrProfile() {
-    Account account = new Account();
-    account.setId(2L);
-    account.setUsername("demo");
-    account.setEmail("demo@example.com");
-    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
-    when(profileRepository.findByAccountIdAndTenantId(2L, 7L)).thenReturn(Optional.empty());
-    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 7L)).thenReturn(false);
+  void exportTenantDataFailsClosedBeforeReadingAccountOrTenantData() {
+    org.springframework.web.server.ResponseStatusException exception =
+        assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () -> service.exportTenantData(7L, 2L));
 
-    assertThrows(IllegalArgumentException.class, () -> service.exportTenantData(7L, 2L));
+    assertEquals(org.springframework.http.HttpStatus.NOT_IMPLEMENTED, exception.getStatusCode());
+    verifyNoInteractions(accountRepository, profileRepository, accountTenantMembershipRepository);
   }
 
-  @Test
-  void deleteAccountRefusesNonterminalSubscription() {
+  @ParameterizedTest
+  @CsvSource({"active, false", "canceled, true"})
+  void deleteAccountFailsClosedWithoutMutationForAnySubscriptionState(
+      String status, boolean terminal) {
     Account account = new Account();
     account.setId(2L);
     Subscription subscription = new Subscription();
-    subscription.setStatus("active");
+    subscription.setStatus(status);
+    if (terminal) {
+      subscription.setEndedAt(java.time.LocalDateTime.now());
+    }
     subscription.setAccount(account);
     subscription.setTenantId(7L);
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
@@ -3921,32 +3999,41 @@ class AccountServiceImplTest {
 
     AccountLifecycleException ex =
         assertThrows(AccountLifecycleException.class, () -> service.deleteAccount(2L));
-    assertEquals("ACCOUNT_DELETE_ACTIVE_BILLING_OWNER", ex.getCode());
+    assertEquals("ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE", ex.getCode());
+    verify(accountRepository).findById(2L);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .delete(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        subscriptionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
   }
 
   @Test
-  void deleteAccountRemovesAccountOwnedRowsAfterTerminalSubscriptions() {
-    Account account = new Account();
-    account.setId(2L);
-    Subscription subscription = new Subscription();
-    subscription.setStatus("canceled");
-    subscription.setEndedAt(java.time.LocalDateTime.now());
-    subscription.setAccount(account);
-    subscription.setTenantId(7L);
-    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
-    when(subscriptionRepository.findByAccountId(2L)).thenReturn(java.util.List.of(subscription));
+  void deleteAccountStillRequiresAnExistingAccountBeforeReturningUnavailable() {
+    when(accountRepository.findById(404L)).thenReturn(Optional.empty());
 
-    service.deleteAccount(2L);
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> service.deleteAccount(404L));
 
-    org.mockito.Mockito.verify(emailVerificationTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(passwordResetTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(externalAccountRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(paymentTransactionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(subscriptionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(profileRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountTenantMembershipRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRepository).delete(account);
+    assertEquals("Account not found", exception.getMessage());
+    verify(accountRepository).findById(404L);
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        subscriptionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
   }
 
   @Test
@@ -3976,6 +4063,94 @@ class AccountServiceImplTest {
 
     org.mockito.Mockito.verifyNoInteractions(
         passwordResetTokenRepository, emailService, notificationService);
+  }
+
+  @Test
+  void completePasswordResetConsumesTokenBeforeUpdatingPassword() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setPasswordHash("old-hash");
+    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
+        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(7L);
+    token.setAccount(account);
+    token.setToken("tok");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    when(passwordResetTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
+        .thenReturn(true);
+
+    service.completePasswordReset(
+        new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+            "tok", "new-password"));
+
+    assertFalse("old-hash".equals(account.getPasswordHash()));
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(passwordResetTokenRepository, accountRepository);
+    order
+        .verify(passwordResetTokenRepository)
+        .consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+    order.verify(accountRepository).save(account);
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+  }
+
+  @Test
+  void completePasswordResetRejectsAlreadyConsumedTokenBeforePasswordMutation() {
+    Account account = new Account();
+    account.setPasswordHash("old-hash");
+    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
+        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(7L);
+    token.setAccount(account);
+    token.setToken("tok");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    when(passwordResetTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
+        .thenReturn(false);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    "tok", "new-password")));
+
+    assertEquals("old-hash", account.getPasswordHash());
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+  }
+
+  @Test
+  void completePasswordResetRejectsExpiredTokenBeforeConsumption() {
+    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
+        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(7L);
+    token.setToken("tok");
+    token.setExpiresAt(java.time.LocalDateTime.now().minusSeconds(1));
+    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.completePasswordReset(
+                    new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                        "tok", "new-password")));
+
+    assertEquals("Token expired", exception.getMessage());
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
   }
 
   @Test
@@ -4081,14 +4256,78 @@ class AccountServiceImplTest {
   void verifyEmailSetsFlag() {
     Account account = new Account();
     EmailVerificationToken token = new EmailVerificationToken();
+    token.setId(9L);
     token.setAccount(account);
+    token.setToken("tok");
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
     when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    when(emailVerificationTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
+        .thenReturn(true);
 
     service.verifyEmail(new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok"));
 
     assertTrue(account.isEmailVerified());
-    org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(emailVerificationTokenRepository, accountRepository);
+    order
+        .verify(emailVerificationTokenRepository)
+        .consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+    order.verify(accountRepository).save(account);
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+  }
+
+  @Test
+  void verifyEmailRejectsAlreadyConsumedTokenBeforeMarkingAccountVerified() {
+    Account account = new Account();
+    EmailVerificationToken token = new EmailVerificationToken();
+    token.setId(9L);
+    token.setAccount(account);
+    token.setToken("tok");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    when(emailVerificationTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
+        .thenReturn(false);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.verifyEmail(
+                new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok")));
+
+    assertFalse(account.isEmailVerified());
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+  }
+
+  @Test
+  void verifyEmailRejectsExpiredTokenBeforeConsumption() {
+    EmailVerificationToken token = new EmailVerificationToken();
+    token.setId(9L);
+    token.setToken("tok");
+    token.setExpiresAt(java.time.LocalDateTime.now().minusSeconds(1));
+    when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.verifyEmail(
+                    new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok")));
+
+    assertEquals("Token expired", exception.getMessage());
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
   }
 
   @Test

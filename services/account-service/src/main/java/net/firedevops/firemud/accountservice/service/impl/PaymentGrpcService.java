@@ -13,10 +13,10 @@ import net.firedevops.firemud.account.v1.CreateSubscriptionResponse;
 import net.firedevops.firemud.account.v1.PaymentServiceGrpc;
 import net.firedevops.firemud.account.v1.RefundPaymentRequest;
 import net.firedevops.firemud.account.v1.RefundPaymentResponse;
-import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,40 +46,11 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   public void createPaymentIntent(
       CreatePaymentIntentRequest request,
       StreamObserver<CreatePaymentIntentResponse> responseObserver) {
-    try {
-      PaymentIntentDto dto =
-          paymentService.createPaymentIntent(
-              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
-              request.getAmountCents());
-      CreatePaymentIntentResponse response =
-          CreatePaymentIntentResponse.newBuilder()
-              .setIntentId(dto.id().toString())
-              .setClientSecret(dto.clientSecret())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      CreatePaymentIntentResponse response =
-          CreatePaymentIntentResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "CreatePaymentIntent",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      CreatePaymentIntentResponse response =
-          CreatePaymentIntentResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreatePaymentIntent", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        CreatePaymentIntentResponse.newBuilder()
+            .setError(unavailable("CreatePaymentIntent"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -121,67 +92,27 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   @Timed(value = "paymentGrpc.createDonation")
   public void createDonation(
       CreateDonationRequest request, StreamObserver<CreateDonationResponse> responseObserver) {
-    try {
-      PaymentIntentDto dto =
-          paymentService.createDonation(
-              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
-              request.getAmountCents());
-      CreateDonationResponse response =
-          CreateDonationResponse.newBuilder()
-              .setIntentId(dto.id().toString())
-              .setClientSecret(dto.clientSecret())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      CreateDonationResponse response =
-          CreateDonationResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "CreateDonation", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      CreateDonationResponse response =
-          CreateDonationResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateDonation", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        CreateDonationResponse.newBuilder().setError(unavailable("CreateDonation")).build());
+    responseObserver.onCompleted();
   }
 
   @Override
   @Timed(value = "paymentGrpc.refundPayment")
   public void refundPayment(
       RefundPaymentRequest request, StreamObserver<RefundPaymentResponse> responseObserver) {
-    try {
-      paymentService.refundPayment(
-          RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-          RequestIdValidation.requirePositiveLong(request.getPaymentId(), "paymentId"));
-      RefundPaymentResponse response = RefundPaymentResponse.newBuilder().setSuccess(true).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      RefundPaymentResponse response =
-          RefundPaymentResponse.newBuilder()
-              .setSuccess(false)
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "RefundPayment", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      RefundPaymentResponse response =
-          RefundPaymentResponse.newBuilder()
-              .setSuccess(false)
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "RefundPayment", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        RefundPaymentResponse.newBuilder()
+            .setSuccess(false)
+            .setError(unavailable("RefundPayment"))
+            .build());
+    responseObserver.onCompleted();
+  }
+
+  private ErrorDetail unavailable(String operation) {
+    String message = operation + " is unavailable";
+    return meterRegistry == null
+        ? ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").setMessage(message).build()
+        : GrpcAppErrors.error(meterRegistry, logger, operation, "FAILED_PRECONDITION", message);
   }
 }

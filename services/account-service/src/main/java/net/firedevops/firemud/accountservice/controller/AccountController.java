@@ -77,16 +77,18 @@ public class AccountController {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
-    TenantDataExportDto data = accountService.exportTenantData(parsedTenantId, parsedAccountId);
-    return ResponseEntity.ok(ApiResponse.success(data));
+    throw new org.springframework.web.server.ResponseStatusException(
+        HttpStatus.NOT_IMPLEMENTED,
+        "Tenant-admin export is unavailable until the tenant-wide export contract is implemented");
   }
 
   @DeleteMapping("/{accountId}")
   public ResponseEntity<ApiResponse<Void>> deleteAccount(@PathVariable String accountId) {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
-    accountService.deleteAccount(parsedAccountId);
-    return ResponseEntity.ok(ApiResponse.success(null));
+    throw new net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException(
+        "ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE",
+        "Account deletion is unavailable until its provider reconciliation and data retention workflow is implemented");
   }
 
   private void requireCurrentAccountOrGlobalPrivilegedRole(Long accountId) {

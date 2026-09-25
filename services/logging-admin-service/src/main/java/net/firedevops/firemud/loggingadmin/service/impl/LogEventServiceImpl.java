@@ -139,7 +139,7 @@ public class LogEventServiceImpl implements LogEventService {
         receipt.tenantId(),
         receipt.auditEventId(),
         receipt.receiptId().toString(),
-        receipt.id(),
+        receipt.logEventId(),
         receipt.schemaVersion(),
         receipt.payloadDigestVersion(),
         receipt.payloadDigest(),

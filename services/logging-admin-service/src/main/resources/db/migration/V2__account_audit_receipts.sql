@@ -1,5 +1,30 @@
+ALTER TABLE log_events
+    ALTER COLUMN tenant_id DROP NOT NULL;
+
+ALTER TABLE log_events
+    ADD COLUMN scope VARCHAR(16) NOT NULL DEFAULT 'tenant';
+
+ALTER TABLE log_events
+    ADD COLUMN audit_event_id VARCHAR(36);
+
+ALTER TABLE log_events
+    ADD COLUMN tenant_key BIGINT NOT NULL DEFAULT 0;
+
+UPDATE log_events SET tenant_key = tenant_id;
+
+ALTER TABLE log_events
+    ADD CONSTRAINT chk_log_events_scope_tenant
+        CHECK (
+            (scope = 'platform' AND tenant_id IS NULL AND tenant_key = 0)
+            OR (scope = 'tenant' AND tenant_id IS NOT NULL AND tenant_key = tenant_id)
+        );
+
+CREATE UNIQUE INDEX uq_log_events_account_audit_identity
+    ON log_events (scope, tenant_key, audit_event_id);
+
 CREATE TABLE account_audit_receipts (
     id BIGSERIAL PRIMARY KEY,
+    log_event_id BIGINT NOT NULL UNIQUE REFERENCES log_events (id),
     receipt_id UUID NOT NULL UNIQUE,
     scope VARCHAR(16) NOT NULL,
     tenant_id BIGINT,

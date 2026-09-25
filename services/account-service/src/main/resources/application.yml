@@ -45,6 +45,11 @@ firemud:
       cleanup:
         batch-size: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_BATCH_SIZE:100}
         interval-ms: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_INTERVAL_MS:60000}
+    join-reconciliation:
+      batch-size: ${FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BATCH_SIZE:50}
+      max-attempts: ${FIREMUD_ACCOUNT_JOIN_RECONCILIATION_MAX_ATTEMPTS:12}
+      interval-ms: ${FIREMUD_ACCOUNT_JOIN_RECONCILIATION_INTERVAL_MS:30000}
+      backoff-ms: ${FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BACKOFF_MS:30000}
     tokens:
       session-expiration-ms: 3600000
       player-bootstrap-expiration-ms: 300000
@@ -94,8 +99,6 @@ firemud:
         - account.v1.AccountService/RequestEmailLoginOtp
         - account.v1.AccountService/VerifyEmailLoginOtp
         - account.v1.AccountService/Ping
-        - account.v1.AccountService/GetTenantMembershipForRuntime
-        - account.v1.AccountService/GetTenantEntitlementsForRuntime
         - account.v1.AccountService/IssueDirectTextConnectScope
         - account.v1.AccountService/JoinPublicProductionMembership
 

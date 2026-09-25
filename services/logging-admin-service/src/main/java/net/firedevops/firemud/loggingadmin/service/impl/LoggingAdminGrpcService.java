@@ -29,6 +29,8 @@ import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import net.firedevops.firemud.loggingadmin.v1.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.transaction.TransactionException;
@@ -51,21 +53,33 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private final LogQueryService logQueryService;
   private final LogEventService logEventService;
   private final ModerationService moderationService;
+  private final String workloadNamespace;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
+  @Autowired
   public LoggingAdminGrpcService(
       LogQueryService logQueryService,
       LogEventService logEventService,
       ModerationService moderationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.logQueryService = logQueryService;
     this.logEventService = logEventService;
     this.moderationService = moderationService;
     this.meterRegistry = meterRegistry;
+    this.workloadNamespace = workloadNamespace;
+  }
+
+  LoggingAdminGrpcService(
+      LogQueryService logQueryService,
+      LogEventService logEventService,
+      ModerationService moderationService,
+      MeterRegistry meterRegistry) {
+    this(logQueryService, logEventService, moderationService, meterRegistry, "");
   }
 
   @Override
@@ -549,12 +563,17 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     }
   }
 
-  private static void requireAccountAuditCaller(String methodName) {
+  private void requireAccountAuditCaller(String methodName) {
     Set<String> allowedServices = ACCOUNT_AUDIT_CALLER_ALLOWLIST.get(methodName);
     GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
     if (allowedServices == null
         || peerIdentity == null
-        || !allowedServices.contains(peerIdentity.service())) {
+        || workloadNamespace == null
+        || workloadNamespace.isBlank()
+        || !allowedServices.contains(peerIdentity.service())
+        || !peerIdentity
+            .uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service")) {
       throw new AdminAuthorizationException(
           methodName + " requires an allowlisted account-service mTLS peer");
     }

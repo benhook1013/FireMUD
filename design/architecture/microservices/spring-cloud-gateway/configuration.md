@@ -62,7 +62,7 @@ An explicit certificate-instance revocation, identity removal, or emergency trus
 
 - Spring Cloud Gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 - Target route configuration lives in `routes.yml`, imported by `application.yml` and reloaded on startup. Current code remains Java-owned until that convergence lands.
-- **Current hosted-route consequence:** the Java route catalog's coarse `/api/design/**` entry forwards `/api/design/assets` through `StripPrefix=2` to Game Design's live `POST /assets` controller. Because Game Design has no Account hosted-terms/currentness gate, official-hosted asset-upload readiness is blocked until Gateway denies this route or the exact Account-owned gate is implemented and proved.
+- **Current hosted-route consequence:** the Java route catalog exposes only `GET /api/design/ping` and `GET /api/design/templates` to Game Design, with `StripPrefix=2`. It does not expose `POST /api/design/assets` or `POST /api/design/templates`; their service-local controllers still lack the Account hosted-terms/currentness gate, so official-hosted creator-write readiness remains blocked until that exact owner-side gate and proof exist.
 - The target files define the baseline route set for each environment.
 - Explicitly enabled dev/test route APIs may overlay bounded in-memory changes on one disposable runtime; player-facing environments use only the version-controlled baseline and must fail startup if mutation is enabled.
 - The default route configuration defines the core service routes required for local Docker Compose environments.

@@ -2,8 +2,12 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_JOIN_OPERATIONS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
@@ -16,6 +20,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class AccountJoinOperationRepository {
+  private static final int MAX_RECONCILIATION_PAGE_SIZE = 100;
+
   private final DSLContext dsl;
 
   public AccountJoinOperationRepository(DSLContext dsl) {
@@ -45,6 +51,84 @@ public class AccountJoinOperationRepository {
         .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId))
         .forUpdate()
         .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
+  }
+
+  /** Returns a stable, bounded page of due PENDING operations below the caller's attempt cap. */
+  public List<JoinOperation> findDuePendingReconciliation(Instant now, int limit, int maxAttempts) {
+    if (now == null) {
+      throw new IllegalArgumentException("JOIN reconciliation time is required");
+    }
+    if (limit < 1 || limit > MAX_RECONCILIATION_PAGE_SIZE) {
+      throw new IllegalArgumentException("JOIN reconciliation page size must be between 1 and 100");
+    }
+    if (maxAttempts < 1) {
+      throw new IllegalArgumentException("JOIN reconciliation attempt limit must be positive");
+    }
+    return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
+        .where(
+            ACCOUNT_JOIN_OPERATIONS
+                .STATUS
+                .eq("PENDING")
+                .and(ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.lt(maxAttempts))
+                .and(
+                    ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT.le(
+                        toLocalDateTime(now))))
+        .orderBy(
+            ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT.asc(),
+            ACCOUNT_JOIN_OPERATIONS.CREATED_AT.asc(),
+            ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.asc())
+        .limit(limit)
+        .fetch(AccountJoinOperationRepository::toJoinOperation);
+  }
+
+  /**
+   * Records one reconciliation attempt only if the pending row still has the observed attempt count
+   * and remains below the caller's cap. A false result means another worker changed it.
+   */
+  public boolean recordReconciliationAttempt(
+      String requestId,
+      int expectedAttemptCount,
+      int maxAttempts,
+      Instant attemptedAt,
+      String reason,
+      Instant nextAttemptAt) {
+    if (requestId == null || requestId.isBlank()) {
+      throw new IllegalArgumentException("JOIN request ID is required");
+    }
+    if (expectedAttemptCount < 0 || maxAttempts < 1 || expectedAttemptCount >= maxAttempts) {
+      throw new IllegalArgumentException("JOIN reconciliation attempt count is outside its limit");
+    }
+    if (attemptedAt == null || nextAttemptAt == null || nextAttemptAt.isBefore(attemptedAt)) {
+      throw new IllegalArgumentException("JOIN reconciliation attempt times are invalid");
+    }
+    if (reason == null || reason.isBlank() || reason.trim().length() > 128) {
+      throw new IllegalArgumentException(
+          "JOIN reconciliation reason must contain 1 to 128 characters");
+    }
+    int updated =
+        dsl.update(ACCOUNT_JOIN_OPERATIONS)
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT,
+                ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.plus(1))
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.LAST_RECONCILIATION_ATTEMPT_AT,
+                toLocalDateTime(attemptedAt))
+            .set(ACCOUNT_JOIN_OPERATIONS.LAST_RECONCILIATION_ATTEMPT_REASON, reason.trim())
+            .set(
+                ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT,
+                toLocalDateTime(nextAttemptAt))
+            .set(ACCOUNT_JOIN_OPERATIONS.UPDATED_AT, toLocalDateTime(attemptedAt))
+            .where(
+                ACCOUNT_JOIN_OPERATIONS
+                    .REQUEST_ID
+                    .eq(requestId)
+                    .and(ACCOUNT_JOIN_OPERATIONS.STATUS.eq("PENDING"))
+                    .and(
+                        ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.eq(
+                            expectedAttemptCount))
+                    .and(ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.lt(maxAttempts)))
+            .execute();
+    return updated == 1;
   }
 
   public boolean hasRetainedOperation(long accountId) {
@@ -209,9 +293,17 @@ public class AccountJoinOperationRepository {
   }
 
   public record JoinOperation(
+      String requestId,
       long accountId,
       long tenantId,
       UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      long gameInstanceId,
+      long catalogRevision,
+      long pointerVersion,
       String callerBinding,
       String scopeTokenHash,
       String connectScopeDigest,
@@ -228,14 +320,26 @@ public class AccountJoinOperationRepository {
       int intentDigestVersion,
       String intentDigest,
       String lastAttemptFailureCode,
-      String lastAttemptAuthorityAvailability) {}
+      String lastAttemptAuthorityAvailability,
+      int reconciliationAttemptCount,
+      Instant lastReconciliationAttemptAt,
+      String lastReconciliationAttemptReason,
+      Instant nextReconciliationAttemptAt) {}
 
   private static JoinOperation toJoinOperation(
       net.firedevops.firemud.accountservice.jooq.tables.records.AccountJoinOperationsRecord row) {
     return new JoinOperation(
+        row.getRequestId(),
         row.getAccountId(),
         row.getTenantId(),
         row.getRealmId(),
+        row.getWorldSlug(),
+        row.getRealmSlug(),
+        row.getPlayableStateNamespaceId(),
+        row.getPlayableStateScope(),
+        row.getGameInstanceId(),
+        row.getCatalogRevision(),
+        row.getPointerVersion(),
         row.getVerifiedCallerBinding(),
         row.getScopeTokenHash(),
         row.getConnectScopeDigest(),
@@ -252,6 +356,12 @@ public class AccountJoinOperationRepository {
         row.getIntentDigestVersion(),
         row.getIntentDigest(),
         row.getLastAttemptFailureCode(),
-        row.getLastAttemptAuthorityAvailability());
+        row.getLastAttemptAuthorityAvailability(),
+        row.getReconciliationAttemptCount(),
+        row.getLastReconciliationAttemptAt() == null
+            ? null
+            : toInstant(row.getLastReconciliationAttemptAt()),
+        row.getLastReconciliationAttemptReason(),
+        toInstant(row.getNextReconciliationAttemptAt()));
   }
 }
