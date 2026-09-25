@@ -321,6 +321,19 @@ for workload in "${workloads[@]}"; do
       tls.crt "$workload_cert" tls.key "$workload_key" ca.crt "$workload_ca"; then
       projection_complete=true
       break
+    else
+      snapshot_status=$?
+      case "$snapshot_status" in
+        1|2) ;;
+        3)
+          echo "failed to fetch cert-manager Secret snapshot ${namespace}/${secret_name}; refusing to wait for a Kubernetes read failure" >&2
+          exit 1
+          ;;
+        *)
+          echo "unexpected Secret snapshot status ${snapshot_status} for ${namespace}/${secret_name}" >&2
+          exit 1
+          ;;
+      esac
     fi
     sleep 5
   done
