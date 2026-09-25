@@ -83,6 +83,10 @@ account_v25="services/account-service/src/main/resources/db/migration/V25__scope
 migration_changed=false
 while IFS= read -r changed_path; do
   [[ -z "$changed_path" ]] && continue
+  if [[ "$changed_path" =~ ^services/[^/]+/src/main/(java/db/migration/.+\.java|kotlin/db/migration/.+\.kt)$ ]]; then
+    echo "refusing hosted deployment: Flyway migration classes are unsupported; migrations must use the supported SQL allowlist: $changed_path" >&2
+    exit 1
+  fi
   if [[ "$changed_path" =~ ^services/[^/]+/src/main/resources/db/migration/.+[.]sql$ ]]; then
     case "$changed_path" in
       "$game_session_v2"|"$automation_v2"|"$account_v25")

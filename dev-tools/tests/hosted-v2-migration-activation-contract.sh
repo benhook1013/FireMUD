@@ -162,6 +162,38 @@ assert_activation true repository_dispatch "" "$supported_v2_sha"
 namespace_for_head "$supported_v2_sha"
 assert_rejected repository_dispatch "" "$unsupported_sha"
 
+namespace_for_head "$ordinary_sha"
+git -C "$repo" switch -qc java-migration-class "$ordinary_sha"
+mkdir -p "$repo/services/example/src/main/java/db/migration/nested"
+printf '%s\n' 'class UnsafeMigration {}' \
+  >"$repo/services/example/src/main/java/db/migration/nested/UnsafeMigration.java"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Add Java Flyway migration class"
+java_migration_class_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$ordinary_sha" "$java_migration_class_sha"
+
+git -C "$repo" switch -qc kotlin-migration-class "$ordinary_sha"
+mkdir -p "$repo/services/example/src/main/kotlin/db/migration/nested"
+printf '%s\n' 'class UnsafeMigration' \
+  >"$repo/services/example/src/main/kotlin/db/migration/nested/UnsafeMigration.kt"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Add Kotlin Flyway migration class"
+kotlin_migration_class_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$ordinary_sha" "$kotlin_migration_class_sha"
+
+git -C "$repo" switch -qc unrelated-migration-test-sources "$ordinary_sha"
+mkdir -p "$repo/services/example/src/test/java/db/migration" \
+  "$repo/services/example/src/test/kotlin/db/migration"
+printf '%s\n' 'class ExampleTest {}' \
+  >"$repo/services/example/src/test/java/db/migration/ExampleTest.java"
+printf '%s\n' 'class ExampleTest' \
+  >"$repo/services/example/src/test/kotlin/db/migration/ExampleTest.kt"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Add unrelated migration test sources"
+test_sources_sha="$(git -C "$repo" rev-parse HEAD)"
+namespace_for_head "$ordinary_sha"
+assert_activation false push "$ordinary_sha" "$test_sources_sha"
+
 FAKE_NAMESPACE_JSON=''
 export FAKE_NAMESPACE_JSON
 assert_rejected repository_dispatch "" "$supported_v2_sha"

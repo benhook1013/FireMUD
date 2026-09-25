@@ -335,7 +335,7 @@ jobs:
                 migration_paths="$(jq -r \
                   '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
                     | select(type == "string")
-                    | select(test("^services/[^/]+/src/main/resources/db/migration/.+\\.sql$"))]
+                    | select(test("^services/[^/]+/src/main/(resources/db/migration/.+\\.sql|java/db/migration/.+\\.java|kotlin/db/migration/.+\\.kt)$"))]
                   | unique | .[]' <<<"$changed_files_json")"
                 if [[ -n "$migration_paths" ]]; then
                   V2_SCHEMA_MIGRATION_CHANGE=true

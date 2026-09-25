@@ -1647,7 +1647,9 @@ for source_field, expected in (
     assert f"require_source_field {source_field} {expected}" in source_script
 assert "Expected %q; actual %q." in source_script
 
-assert "db/migration/.+\\\\.sql$" in target_step["run"]
+assert "resources/db/migration/.+\\\\.sql" in target_step["run"]
+assert "java/db/migration/.+\\\\.java" in target_step["run"]
+assert "kotlin/db/migration/.+\\\\.kt" in target_step["run"]
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -6527,6 +6529,16 @@ FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/mai
   run_deploy_target_fixture callback-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/nested/V3__nested_schema_change.sql"}]]' \
   run_deploy_target_fixture nested-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/common-saga/src/main/resources/db/migration/saga/V1__saga_baseline.sql"}]]' \
+  run_deploy_target_fixture common-saga-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/main/java/db/migration/nested/UnsafeMigration.java"}]]' \
+  run_deploy_target_fixture java-flyway-migration-class 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/main/kotlin/db/migration/nested/UnsafeMigration.kt"}]]' \
+  run_deploy_target_fixture kotlin-flyway-migration-class 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_CHANGED_FILES_JSON=2 \
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/test/java/db/migration/ExampleTest.java"},{"filename":"services/example/src/test/kotlin/db/migration/ExampleTest.kt"}]]' \
+  run_deploy_target_fixture migration-test-sources 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-migration-test-sources.output"
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/README.md"}]]' \
   run_deploy_target_fixture ordinary-migration-directory-file 0 'action=deploy'
 grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-ordinary-migration-directory-file.output"
