@@ -186,21 +186,24 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
-  void sourceSecretNameRejectsMissingPublicationSourceEntry() {
+  void rejectsPublicationSourceSecretRoleMapsWithMissingOrExtraRoles() {
     var plan = planner.plan("pr-42");
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
     var sourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
     sourceSecretNames.remove(role);
-    var incompletePlan =
-        copyPlan(
-            plan,
-            plan.grpcPublicationCertificateNames(),
-            plan.grpcPublicationSecretNames(),
-            sourceSecretNames);
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcPublicationCertificateNames(),
+        plan.grpcPublicationSecretNames(),
+        sourceSecretNames);
 
-    IllegalArgumentException failure =
-        assertThrows(IllegalArgumentException.class, () -> incompletePlan.sourceSecretName(role));
-    assertEquals("missing source Secret for gRPC publication role: " + role, failure.getMessage());
+    var extraSourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
+    extraSourceSecretNames.put("grpc-publication-unsupported-service", "unsupported-source-secret");
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcPublicationCertificateNames(),
+        plan.grpcPublicationSecretNames(),
+        extraSourceSecretNames);
   }
 
   @Test
@@ -212,22 +215,34 @@ class EnvironmentIdentityPlannerTest {
     var missingCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
     missingCertificateNames.remove(role);
     assertInvalidPublicationRoleMaps(
-        plan, missingCertificateNames, plan.grpcPublicationSecretNames());
+        plan,
+        missingCertificateNames,
+        plan.grpcPublicationSecretNames(),
+        plan.grpcPublicationSourceSecretNames());
 
     var extraCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
     extraCertificateNames.put(unsupportedRole, "unsupported-certificate");
     assertInvalidPublicationRoleMaps(
-        plan, extraCertificateNames, plan.grpcPublicationSecretNames());
+        plan,
+        extraCertificateNames,
+        plan.grpcPublicationSecretNames(),
+        plan.grpcPublicationSourceSecretNames());
 
     var missingSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
     missingSecretNames.remove(role);
     assertInvalidPublicationRoleMaps(
-        plan, plan.grpcPublicationCertificateNames(), missingSecretNames);
+        plan,
+        plan.grpcPublicationCertificateNames(),
+        missingSecretNames,
+        plan.grpcPublicationSourceSecretNames());
 
     var extraSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
     extraSecretNames.put(unsupportedRole, "unsupported-secret");
     assertInvalidPublicationRoleMaps(
-        plan, plan.grpcPublicationCertificateNames(), extraSecretNames);
+        plan,
+        plan.grpcPublicationCertificateNames(),
+        extraSecretNames,
+        plan.grpcPublicationSourceSecretNames());
   }
 
   @Test
@@ -245,15 +260,14 @@ class EnvironmentIdentityPlannerTest {
   private static void assertInvalidPublicationRoleMaps(
       EnvironmentIdentityPlan plan,
       Map<String, String> certificateNames,
-      Map<String, String> secretNames) {
+      Map<String, String> secretNames,
+      Map<String, String> sourceSecretNames) {
     IllegalArgumentException failure =
         assertThrows(
             IllegalArgumentException.class,
-            () ->
-                copyPlan(
-                    plan, certificateNames, secretNames, plan.grpcPublicationSourceSecretNames()));
+            () -> copyPlan(plan, certificateNames, secretNames, sourceSecretNames));
     assertEquals(
-        "gRPC publication certificate and Secret maps must contain exactly the supported roles",
+        "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles",
         failure.getMessage());
   }
 

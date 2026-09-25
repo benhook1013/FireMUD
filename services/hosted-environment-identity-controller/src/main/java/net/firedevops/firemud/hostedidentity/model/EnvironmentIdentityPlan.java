@@ -43,9 +43,10 @@ public record EnvironmentIdentityPlan(
             .map(HostedIdentityContract::grpcPublicationRole)
             .collect(Collectors.toUnmodifiableSet());
     if (!grpcPublicationCertificateNames.keySet().equals(expectedGrpcPublicationRoles)
-        || !grpcPublicationSecretNames.keySet().equals(expectedGrpcPublicationRoles)) {
+        || !grpcPublicationSecretNames.keySet().equals(expectedGrpcPublicationRoles)
+        || !grpcPublicationSourceSecretNames.keySet().equals(expectedGrpcPublicationRoles)) {
       throw new IllegalArgumentException(
-          "gRPC publication certificate and Secret maps must contain exactly the supported roles");
+          "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
     }
   }
 
