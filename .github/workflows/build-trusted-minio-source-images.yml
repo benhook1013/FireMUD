@@ -41,6 +41,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Build and smoke exact MinIO sources
         id: smoke
         run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
