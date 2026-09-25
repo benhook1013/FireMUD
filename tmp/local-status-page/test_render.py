@@ -46,7 +46,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn(f"script-src 'sha256-{refresh_hash}'", result)
         self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
         self.assertIn('class="refresh-progress" role="status" aria-live="polite"', result)
-        self.assertIn("stack and worker-note check times stay manual", result)
+        self.assertIn("stack order and worker notes stay manual", result)
         self.assertNotIn('href="../../task-briefs/', result)
         self.assertIn("Review eligibility unavailable", result)
         self.assertNotIn("Review front", result)
@@ -65,11 +65,12 @@ class StatusPageTest(unittest.TestCase):
     def test_stale_and_future_timestamps_are_explicit(self):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
         self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
-        self.assertIn("Manual status checked 60m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
+        self.assertIn("Manual status checked 1h 0m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
+        self.assertEqual("25 Sep 00:00 NZST", page.local_time(NOW))
 
     @patch.object(page, "github_stages")
     @patch.object(page, "review_snapshot")
-    def test_failed_review_refresh_preserves_existing_page(self, snapshot, github):
+    def test_failed_live_refresh_preserves_existing_page(self, snapshot, github):
         snapshot.return_value = {"available": False, "reason": "Status fetch unavailable (TimeoutExpired)"}
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "status.json"
@@ -83,6 +84,12 @@ class StatusPageTest(unittest.TestCase):
                     page.main()
             self.assertEqual("last good review snapshot", output.read_text(encoding="utf-8"))
             github.assert_not_called()
+            snapshot.return_value = {"available": True}
+            github.return_value = {"available": False}
+            with patch.object(sys, "argv", ["render.py", "--input", str(source), "--output", str(output)]):
+                with self.assertRaisesRegex(RuntimeError, "GitHub PR details unavailable"):
+                    page.main()
+            self.assertEqual("last good review snapshot", output.read_text(encoding="utf-8"))
 
     def test_github_stage_and_review_eligibility_are_distinct(self):
         data = self.fixture()
@@ -103,24 +110,30 @@ class StatusPageTest(unittest.TestCase):
                        "latest": {"Hosted": None, "CLI": None}, "threads": {"current": 0, "outdated": 0},
                        "ci": "PENDING", "merge": "BLOCKED", "verdict": "NOT READY"})
         github = {"available": True, "states": {42: True, 43: False},
+                  "lifecycle": {42: "OPEN", 43: "MERGED"},
+                  "merged_at": {43: (NOW - timedelta(minutes=12)).isoformat()},
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
         self.assertIn("<strong>Draft</strong> · Hosted Held · CLI Ready", result)
-        self.assertIn("<strong>Ready for review</strong> · Hosted Parent Moved · CLI Parent Moved", result)
+        self.assertIn('<li class="merged"><span class="order">02</span>', result)
+        self.assertIn("<strong>Merged</strong> · 12m ago · 24 Sep 23:48 NZST", result)
         self.assertIn("5 files · +10/−3 lines", result)
         self.assertIn('<strong>Hosted</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head)">4/3</span>', result)
         self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
         self.assertIn("1 unlinked to a verified review", result)
         self.assertIn("1 excluded from taper", result)
-        self.assertIn('<span class="fresh">Stack record checked 60m ago', result)
+        self.assertIn('Review and PR details refreshed 25 Sep 00:00 NZST', result)
+        self.assertNotIn("Stack record checked", result)
         self.assertIn("do not establish taper or merge readiness", result)
 
     @patch.object(page.subprocess, "run")
     def test_github_stage_fetch_fails_closed(self, run):
-        run.return_value = subprocess.CompletedProcess([], 0, '[{"number":42,"isDraft":true,"changedFiles":5,"additions":10,"deletions":3}]', "")
+        run.return_value = subprocess.CompletedProcess([], 0, '[{"number":42,"state":"MERGED","isDraft":false,"mergedAt":"2026-09-24T12:00:00Z","changedFiles":5,"additions":10,"deletions":3}]', "")
         github = page.github_stages(NOW)
-        self.assertEqual({42: True}, github["states"])
+        self.assertEqual({42: False}, github["states"])
+        self.assertEqual({42: "MERGED"}, github["lifecycle"])
+        self.assertEqual({42: "2026-09-24T12:00:00Z"}, github["merged_at"])
         self.assertEqual({"changedFiles": 5, "additions": 10, "deletions": 3}, github["stats"][42])
         run.side_effect = subprocess.TimeoutExpired([], 20)
         self.assertFalse(page.github_stages(NOW)["available"])

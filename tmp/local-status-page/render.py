@@ -15,6 +15,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from itertools import groupby
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = ROOT / "status.json"
@@ -22,6 +23,7 @@ DEFAULT_OUTPUT = ROOT / "output" / "index.html"
 REPO_URL = "https://github.com/benhook1013/FireMUD/pull/"
 REPO_HOME = "https://github.com/benhook1013/FireMUD"
 REPO = "benhook1013/FireMUD"
+LOCAL_TIMEZONE = ZoneInfo("Pacific/Auckland")
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -68,15 +70,30 @@ def safe(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def local_time(value: datetime) -> str:
+    local = value.astimezone(LOCAL_TIMEZONE)
+    return f"{local.day} {local.strftime('%b %H:%M %Z')}"
+
+
+def relative_time(value: datetime, now: datetime) -> str:
+    minutes = max(0, int((now - value).total_seconds() // 60))
+    if minutes == 0:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    if minutes < 24 * 60:
+        return f"{minutes // 60}h {minutes % 60}m ago"
+    return f"{minutes // (24 * 60)}d ago"
+
+
 def time_label(value: str, now: datetime, subject: str = "Manual status") -> str:
     observed = utc(value)
     age = now - observed
     if age < timedelta(minutes=-5):
-        return f"{safe(subject)} future-dated · {safe(value)}"
+        return f"{safe(subject)} future-dated"
     if age > timedelta(hours=24):
-        return f"{safe(subject)} stale · {safe(value)}"
-    minutes = max(0, int(age.total_seconds() // 60))
-    return f"{safe(subject)} checked {minutes}m ago · {safe(value)}"
+        return f"{safe(subject)} stale · checked {relative_time(observed, now)}"
+    return f"{safe(subject)} checked {relative_time(observed, now)}"
 
 
 def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetime) -> dict:
@@ -123,7 +140,7 @@ def github_stages(now: datetime) -> dict:
     """Fetch live GitHub PR stage and diff size once for the open queue."""
     try:
         run = subprocess.run(
-            ["gh", "pr", "list", "--repo", REPO, "--state", "open", "--limit", "200", "--json", "number,isDraft,changedFiles,additions,deletions"],
+            ["gh", "pr", "list", "--repo", REPO, "--state", "all", "--limit", "200", "--json", "number,state,isDraft,mergedAt,changedFiles,additions,deletions"],
             capture_output=True,
             text=True,
             timeout=20,
@@ -135,16 +152,22 @@ def github_stages(now: datetime) -> dict:
         if not isinstance(items, list):
             raise ValueError("GitHub query returned no PR list")
         states = {}
+        lifecycle = {}
+        merged_at = {}
         stats = {}
         for item in items:
-            if type(item["number"]) is not int or type(item["isDraft"]) is not bool:
+            if (type(item["number"]) is not int or type(item["isDraft"]) is not bool
+                    or item["state"] not in ("OPEN", "MERGED", "CLOSED")):
                 raise ValueError("GitHub query returned an invalid PR stage")
             states[item["number"]] = item["isDraft"]
+            lifecycle[item["number"]] = item["state"]
+            if item["state"] == "MERGED" and isinstance(item.get("mergedAt"), str):
+                merged_at[item["number"]] = item["mergedAt"]
             if all(type(item.get(key)) is int and item[key] >= 0 for key in ("changedFiles", "additions", "deletions")):
                 stats[item["number"]] = {key: item[key] for key in ("changedFiles", "additions", "deletions")}
-        return {"available": True, "as_of": now.isoformat(), "states": states, "stats": stats}
+        return {"available": True, "as_of": now.isoformat(), "states": states, "lifecycle": lifecycle, "merged_at": merged_at, "stats": stats}
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
-        return {"available": False, "as_of": now.isoformat(), "states": {}, "stats": {}}
+        return {"available": False, "as_of": now.isoformat(), "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
 
 
 def render(data: dict, review: dict, now: datetime, github: dict | None = None) -> str:
@@ -169,21 +192,34 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<h3>{safe(stage)}</h3><p>{links}</p></li>'
         )
     rows = []
-    github = github or {"available": False, "states": {}, "stats": {}}
+    github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
     for position, item in enumerate(stack, 1):
         number = item["number"]
         if type(number) is not int or number <= 0:
             raise ValueError("PR numbers must be positive integers")
-        label = time_label(item["verified_at"], now, "Stack record")
         draft = github["states"].get(number)
-        github_label = "Draft" if draft is True else "Ready for review" if draft is False else "GitHub stage unavailable"
+        lifecycle = github.get("lifecycle", {}).get(number)
+        github_label = (
+            "Merged" if lifecycle == "MERGED" else "Closed" if lifecycle == "CLOSED"
+            else "Draft" if draft is True else "Ready for review" if draft is False
+            else "GitHub stage unavailable"
+        )
         stats = github.get("stats", {}).get(number)
         size_label = (
             f'{stats["changedFiles"]} files · +{stats["additions"]:,}/−{stats["deletions"]:,} lines'
             if stats else "Diff size unavailable"
         )
         queue_item = review.get("queue", {}).get(number) if review["available"] else None
-        if queue_item:
+        if lifecycle == "MERGED":
+            merged_at = github.get("merged_at", {}).get(number)
+            merged_time = utc(merged_at) if merged_at else None
+            channel_label = (
+                f"{relative_time(merged_time, now)} · {local_time(merged_time)}"
+                if merged_time else "Merge time unavailable"
+            )
+        elif lifecycle == "CLOSED":
+            channel_label = "Historical review record"
+        elif queue_item:
             channels = queue_item["channels"]
             channel_label = f'Hosted {channels["hosted"].replace("_", " ").title()} · CLI {channels["cli"].replace("_", " ").title()}'
         else:
@@ -231,13 +267,14 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     f'<span class="activity-note">{safe(" · ".join(notes))}</span></div>'
                 )
         activity_grid = f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
+        row_class = ' class="merged"' if lifecycle == "MERGED" else ' class="closed"' if lifecycle == "CLOSED" else ""
         rows.append(
-            f'<li><span class="order">{position:02d}</span><div class="pr-main">'
+            f'<li{row_class}><span class="order">{position:02d}</span><div class="pr-main">'
             f'<a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>'
             f'<span class="sub">{safe(size_label)}</span>'
             f'<span class="sub"><strong>{safe(github_label)}</strong> · {safe(channel_label)}</span>'
             f'{activity_grid}'
-            f'</div><span class="fresh">{label}</span></li>'
+            f'</div></li>'
         )
     cards = []
     for lane in lanes:
@@ -249,6 +286,11 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<dt>Blocker / gate</dt><dd>{safe(lane["blocker"])}</dd>'
             f'</dl></article>'
         )
+    queue_time = (
+        f'Review and PR details refreshed {safe(local_time(now))}. '
+        if review["available"] and github["available"]
+        else 'Some review or PR details were unavailable when this page was rendered. '
+    )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -274,8 +316,10 @@ section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: 
 .overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #fff; border: 1px solid #d5dfd6; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #172b1b0b; }}
 .overview .stage-order {{ grid-row: 1 / span 2; background: #123b35; color: #f4f6ed; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
 .overview h3 {{ line-height: 1.25; padding: .8rem .9rem 0; }} .overview p {{ margin: .45rem 0 0; padding: 0 .9rem .8rem; font-size: .9rem; }}
-.stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr) auto; gap: 0 1rem; align-items: start; border-bottom: 1px solid #e6ebe6; }} .stack li:last-child {{ border: 0; }}
-.order {{ grid-row: 1 / span 2; align-self: stretch; background: #123b35; color: #f4f6ed; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 0; }} .stack .fresh {{ padding: .9rem 1rem .85rem 0; }}
+.stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); gap: 0 1rem; align-items: start; border-bottom: 1px solid #e6ebe6; }} .stack li:last-child {{ border: 0; }}
+.stack li.merged {{ background: #f4effa; }} .stack li.merged .order {{ background: #69528e; }}
+.stack li.closed {{ background: #f1f3f1; }} .stack li.closed .order {{ background: #68746c; }}
+.order {{ align-self: stretch; background: #123b35; color: #f4f6ed; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
 a {{ color: #0a6350; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #093e35; }}
 .pr-main > a {{ color: #16211e; font-weight: 650; }} .pr-main > a:hover {{ color: #093e35; }} .sub {{ display: block; margin-top: .25rem; color: #5b6a62; font-size: .78rem; overflow-wrap: anywhere; }}
 .activity-grid {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }}
@@ -290,16 +334,16 @@ a {{ color: #0a6350; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; }} .card {{ overflow: hidden; }} .card-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; background: #123b35; color: #f4f6ed; padding: .9rem 1.15rem; }} .card-top .fresh {{ color: #dce9dc; }}
 .task {{ font-weight: 620; min-height: 3.1em; margin: 1rem 1.15rem; }} dl {{ display: grid; grid-template-columns: 5.5rem 1fr; gap: .55rem .4rem; margin: 0 1.15rem 1.15rem; font-size: .86rem; }} dt {{ color: #627168; }} dd {{ margin: 0; line-height: 1.4; }}
 footer {{ color: #65736a; font-size: .8rem; margin-top: 2.5rem; }}
-@media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .stack li {{ grid-template-columns: 2.5rem minmax(0,1fr); }} .stack .fresh {{ grid-column: 2; padding: 0 1rem .85rem 0; white-space: normal; overflow-wrap: anywhere; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
+@media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 </style></head><body>
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
 <p>Configured review queue and worker lanes. This is a manual snapshot, not a merge authorization or live monitor.</p>
-<p class="generated">Rendered {safe(now.isoformat())} · stack source: local status.json</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>Takes about a minute. Updates review counts and PR sizes; stack and worker-note check times stay manual.</span></form></div></header>
+<p class="generated">Page updated {safe(local_time(now))} · stack source: local status.json</p>
+<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>Takes about a minute. Updates review counts and PR sizes; stack order and worker notes stay manual.</span></form></div></header>
 <main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
 <section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
 <ol class="overview">{"".join(overview)}</ol></section>
-<section><h2>Configured review queue</h2><p class="section-note">Completed counts can include older-head or unlinked results; they do not establish taper or merge readiness. The controller channel status remains authoritative. File and line totals come from GitHub at render time. Heads are individually timestamped and may be stale.</p>
+<section><h2>Configured review queue</h2><p class="section-note">{queue_time}Order, titles, and saved heads are maintained manually. Completed counts can include older-head or unlinked results; they do not establish taper or merge readiness. The controller channel status remains authoritative.</p>
 <ol class="stack">{"".join(rows)}</ol></section>
 <footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script></body></html>"""
 
@@ -321,6 +365,9 @@ def main() -> None:
     if review_tool is not None and not review["available"] and args.output.exists():
         raise RuntimeError(f"review status unavailable; existing page preserved: {review['reason']}")
     github = github_stages(now)
+    if not github["available"] and args.output.exists():
+        raise RuntimeError("GitHub PR details unavailable; existing page preserved")
+    now = datetime.now(timezone.utc)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".status-", delete=False) as temporary:
