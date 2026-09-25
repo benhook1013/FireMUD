@@ -339,6 +339,10 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     }
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
     if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
+      if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
+        throw new IllegalArgumentException(
+            "IDEMPOTENCY_CONFLICT: world instance was terminated under a different request id");
+      }
       return snapshot(worldInstance);
     }
     if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {

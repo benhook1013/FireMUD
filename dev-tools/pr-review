@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Canonical unified PR-review command."""
+
+from pr_review.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

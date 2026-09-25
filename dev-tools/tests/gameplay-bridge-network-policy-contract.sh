@@ -21,6 +21,16 @@ gateway = next(
     if document.get("kind") == "NetworkPolicy"
     and document.get("metadata", {}).get("name") == "spring-cloud-gateway-ingress"
 )
+if gateway["spec"].get("podSelector") != {"matchLabels": {"app": "spring-cloud-gateway"}}:
+    raise SystemExit(
+        "Gateway NetworkPolicy must select the spring-cloud-gateway app pods: "
+        f"{gateway['spec'].get('podSelector')}"
+    )
+if gateway["spec"].get("policyTypes") != ["Ingress"]:
+    raise SystemExit(
+        "Gateway NetworkPolicy must declare exactly Ingress policy type: "
+        f"{gateway['spec'].get('policyTypes')}"
+    )
 ingress = gateway["spec"]["ingress"]
 tcp_proxy_rules = [
     rule
@@ -92,19 +102,53 @@ proxy_egress = next(
     if document.get("kind") == "NetworkPolicy"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service-egress"
 )
-elasticsearch_rules = [
-    rule
-    for rule in proxy_egress["spec"]["egress"]
-    if rule.get("to") == [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}]
-]
-expected_elasticsearch_rule = {
-    "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
-    "ports": [{"protocol": "TCP", "port": 9200}],
-}
-if elasticsearch_rules != [expected_elasticsearch_rule]:
+if proxy_egress["spec"].get("podSelector") != {"matchLabels": {"app": "tcp-proxy-service"}}:
     raise SystemExit(
-        "base TCP Proxy policy must contain exactly one narrow Elasticsearch TCP/9200 rule: "
-        f"{elasticsearch_rules}"
+        "TCP Proxy NetworkPolicy must select the tcp-proxy-service app pods: "
+        f"{proxy_egress['spec'].get('podSelector')}"
+    )
+if proxy_egress["spec"].get("policyTypes") != ["Egress"]:
+    raise SystemExit(
+        "TCP Proxy NetworkPolicy must declare exactly Egress policy type: "
+        f"{proxy_egress['spec'].get('policyTypes')}"
+    )
+expected_proxy_egress = [
+    {
+        "to": [
+            {
+                "namespaceSelector": {
+                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                },
+                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+            }
+        ],
+        "ports": [
+            {"protocol": "UDP", "port": 53},
+            {"protocol": "TCP", "port": 53},
+        ],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
+        "ports": [{"protocol": "TCP", "port": 9200}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
+        "ports": [{"protocol": "TCP", "port": 8443}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+        "ports": [{"protocol": "TCP", "port": 6565}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+        "ports": [{"protocol": "TCP", "port": 4317}],
+    },
+]
+if proxy_egress["spec"].get("egress") != expected_proxy_egress:
+    raise SystemExit(
+        "base TCP Proxy policy must contain exactly the DNS, Elasticsearch, "
+        "Gateway, Game Session, and OTel egress allowlist: "
+        f"{proxy_egress['spec'].get('egress')}"
     )
 ip_block_rules = [
     rule

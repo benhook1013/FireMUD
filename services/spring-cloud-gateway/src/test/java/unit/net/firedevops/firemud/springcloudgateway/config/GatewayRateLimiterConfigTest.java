@@ -8,8 +8,6 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 
 class GatewayRateLimiterConfigTest {
-  private static final String X_FORWARDED_FOR = "X-Forwarded-For";
-
   @Test
   void prefersGatewayOwnedClientIpHeader() {
     KeyResolver resolver = new GatewayRateLimiterConfig().gatewayClientIpKeyResolver();
@@ -17,7 +15,7 @@ class GatewayRateLimiterConfigTest {
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/api/account/auth/player-bootstrap")
                 .header("X-Client-IP", "198.51.100.10")
-                .header(X_FORWARDED_FOR, "203.0.113.99")
+                .header("X-Forwarded-For", "203.0.113.99")
                 .build());
 
     String key = resolver.resolve(exchange).block();
@@ -26,16 +24,17 @@ class GatewayRateLimiterConfigTest {
   }
 
   @Test
-  void fallsBackToForwardedForWhenGatewayOwnedHeaderMissing() {
+  void ignoresUncanonicalizedForwardedForWhenGatewayOwnedHeaderMissing() {
     KeyResolver resolver = new GatewayRateLimiterConfig().gatewayClientIpKeyResolver();
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
-            MockServerHttpRequest.get("/api/account/auth/player-bootstrap")
-                .header(X_FORWARDED_FOR, "203.0.113.77, 10.0.0.1")
+            MockServerHttpRequest.get("/api/account/auth/verify-email")
+                .header("X-Forwarded-For", "203.0.113.77, 10.0.0.1")
+                .remoteAddress(new java.net.InetSocketAddress("192.0.2.44", 0))
                 .build());
 
     String key = resolver.resolve(exchange).block();
 
-    assertThat(key).isEqualTo("203.0.113.77");
+    assertThat(key).isEqualTo("192.0.2.44");
   }
 }

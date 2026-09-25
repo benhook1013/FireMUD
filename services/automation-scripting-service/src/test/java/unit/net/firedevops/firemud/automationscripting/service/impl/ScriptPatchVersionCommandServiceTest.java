@@ -61,6 +61,20 @@ class ScriptPatchVersionCommandServiceTest {
   }
 
   @Test
+  void notifyUpdateRejectsEmptyScriptListWithoutCreatingReadiness() {
+    assertThatThrownBy(() -> service.notifyUpdate("1", "v1-script.1", List.of()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("zero_handler_manifest_unverifiable");
+
+    verifyNoInteractions(
+        repository,
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
   void notifyUpdateReloadsScriptsForPatchVersionAndRefreshesSchedules() {
     ScriptDefinition def = new ScriptDefinition();
     def.setTenantId(1L);

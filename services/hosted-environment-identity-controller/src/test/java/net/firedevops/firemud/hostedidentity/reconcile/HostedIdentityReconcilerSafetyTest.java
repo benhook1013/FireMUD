@@ -6,6 +6,9 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -49,7 +52,10 @@ import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -57,7 +63,10 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -81,6 +90,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.yaml.snakeyaml.Yaml;
 
 @ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityReconcilerSafetyTest {
@@ -172,38 +182,101 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void accountAndPublicationProjectionsMustBeAcceptedBeforeReadiness() {
-    List<SecretProjectionService.ProjectionResult> projections =
-        new java.util.ArrayList<>(
-            java.util.stream.Stream.concat(
-                    java.util.stream.Stream.of(
-                        SecretProjectionService.ProjectionResult.synced("ingress"),
-                        SecretProjectionService.ProjectionResult.synced("telnet"),
-                        SecretProjectionService.ProjectionResult.synced("gateway"),
-                        SecretProjectionService.ProjectionResult.synced("bridge"),
-                        SecretProjectionService.ProjectionResult.synced("grpc")),
-                    java.util.stream.Stream.concat(
-                        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                            .map(
-                                workload ->
-                                    "game-logic-service".equals(workload)
-                                        ? SecretProjectionService.ProjectionResult.awaiting(
-                                            "predecessor-not-accepted", workload)
-                                        : SecretProjectionService.ProjectionResult.synced(
-                                            workload)),
-                        java.util.stream.Stream.of(
-                            SecretProjectionService.ProjectionResult.synced("account-service"))))
-                .toList());
+  void workloadIdentityProjectionMustBeAcceptedBeforeReadiness() {
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    when(fixture.rollout.sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyMap(),
+            any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+    Map<String, SecretProjectionService.ProjectionResult> acknowledgedProjections =
+        new java.util.LinkedHashMap<>();
+    when(fixture.projections.acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              String role = invocation.getArgument(2, String.class);
+              String revision = invocation.getArgument(3, String.class);
+              SecretProjectionService.ProjectionResult result =
+                  HostedIdentityContract.grpcPublicationRole("game-logic-service").equals(role)
+                      ? SecretProjectionService.ProjectionResult.awaiting(
+                          "awaiting-acceptance", revision)
+                      : SecretProjectionService.ProjectionResult.synced(revision);
+              acknowledgedProjections.put(role, result);
+              return result;
+            });
 
-    assertReadinessStatus(
-        HostedIdentityReconciler.readinessStatus(
-            projections,
-            new DeploymentRolloutService.RolloutResult(true, true, true),
-            new ServedEnvironmentProbe.ProbeResult(true, "served")),
-        HostedEnvironmentIdentityStatus.Phase.Syncing,
-        "AwaitingAcceptance",
-        "predecessor-not-accepted",
-        false);
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Syncing, status.getPhase());
+    assertEquals("AwaitingAcceptance", status.getConditions().get(0).getReason());
+    assertEquals("awaiting-acceptance", status.getConditions().get(0).getMessage());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        status.getGrpcPublication().keySet());
+    assertTrue(status.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 7,
+        acknowledgedProjections.size());
+    assertEquals(
+        "awaiting-acceptance",
+        acknowledgedProjections
+            .get(HostedIdentityContract.grpcPublicationRole("game-logic-service"))
+            .state());
+    assertTrue(
+        acknowledgedProjections.entrySet().stream()
+            .filter(
+                entry ->
+                    !entry
+                        .getKey()
+                        .equals(HostedIdentityContract.grpcPublicationRole("game-logic-service")))
+            .allMatch(entry -> entry.getValue().isSynced()));
+    verify(fixture.rollout)
+        .sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyMap(),
+            any());
+    verify(fixture.probes)
+        .probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString());
   }
 
   @Test
@@ -1107,6 +1180,30 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void retirementDeletesEverySecretAndCertificateFromCanonicalNameLists() {
+    RetirementDeletionFixture fixture = new RetirementDeletionFixture();
+    List<String> secretNames = HostedIdentityScopeService.identitySecretNames(fixture.plan);
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationSecretName = fixture.plan.grpcPublicationSourceSecretName(workload);
+      assertTrue(secretNames.contains(publicationSecretName));
+      assertTrue(secretNames.contains(publicationSecretName + "-previous"));
+    }
+    List<Resource<Secret>> secrets =
+        secretNames.stream()
+            .map(name -> fixture.secret(name, HostedIdentityContract.GRPC_ROLE))
+            .toList();
+    List<Resource<GenericKubernetesResource>> certificates =
+        HostedIdentityScopeService.requiredCertificateNames(fixture.plan).stream()
+            .map(fixture::certificate)
+            .toList();
+
+    fixture.retire();
+
+    secrets.forEach(secret -> verify(secret).delete());
+    certificates.forEach(certificate -> verify(certificate).delete());
+  }
+
+  @Test
   void retirementObservesNamespaceTerminationBeforeDeletingScopeObjects() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
     Namespace terminating = fixture.buildIdentityNamespace(true);
@@ -1401,6 +1498,441 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void grpcPublicationRollbackIsRejectedBeforeRecreatingMissingRuntimeProjection() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationRole = HostedIdentityContract.grpcPublicationRole(workload);
+      var persistedRole = new HostedEnvironmentIdentityStatus.RoleStatus();
+      persistedRole.setRevision("sha256:" + "a".repeat(64));
+      boolean rollbackTarget = publicationRole.equals(role);
+      String fixtureFingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
+      persistedRole.setSourceGeneration(rollbackTarget ? 4L : 1L);
+      persistedRole.setSourceObjectGeneration(rollbackTarget ? 2L : 1L);
+      persistedRole.setSpkiSha256((rollbackTarget ? "b" : fixtureFingerprintDigit).repeat(64));
+      persistedRole.setProvenance("cert-manager");
+      persistedRole.setState("source-ready");
+      publicationHistory.put(publicationRole, persistedRole);
+    }
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    fixture.resource.setStatus(status);
+
+    Secret olderSourceSecret =
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded("older")))
+            .build();
+    CertificateMaterialService.RoleMaterial olderSource =
+        new CertificateMaterialService.RoleMaterial(
+            role,
+            olderSourceSecret,
+            new SecretMaterialValidator.MaterialSummary(
+                "c".repeat(64), "d".repeat(64), Instant.EPOCH, Instant.MAX, "e".repeat(64)),
+            3,
+            2,
+            "cert-manager",
+            SOURCE_READY);
+    when(fixture.batch.grpcPublication("game-design-service")).thenReturn(olderSource);
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertEquals(
+        "certificate source generation rolled back for role "
+            + role
+            + " (source generation 3 < prior generation 4)",
+        blocked.getConditions().get(0).getMessage());
+    assertEquals(4L, blocked.getGrpcPublication().get(role).getSourceGeneration());
+    verifyNoInteractions(fixture.projections);
+  }
+
+  @Test
+  void grpcPublicationHistoryAllowsLegacyAbsenceAndRejectsMalformedPartialMap() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus legacyStatus = new HostedEnvironmentIdentityStatus();
+    resource.setStatus(legacyStatus);
+    assertNull(HostedIdentityReconciler.previousRole(resource, role));
+
+    HostedEnvironmentIdentityStatus malformedStatus = new HostedEnvironmentIdentityStatus();
+    malformedStatus.setGrpcPublication(
+        Map.of(role, new HostedEnvironmentIdentityStatus.RoleStatus()));
+    resource.setStatus(malformedStatus);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, role));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
+  }
+
+  @Test
+  void grpcPublicationHistoryAcceptsSchemaValidEmptyRoleStatus() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      publicationHistory.put(
+          HostedIdentityContract.grpcPublicationRole(workload),
+          new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    status.setGrpcPublication(publicationHistory);
+    resource.setStatus(status);
+
+    assertNotNull(HostedIdentityReconciler.previousRole(resource, role));
+  }
+
+  @Test
+  void publicationRoleStatusValidationMatchesTheCrdConsumerSchema() throws IOException {
+    Map<?, ?> roleProperties = publicationRoleStatusProperties();
+    assertEquals(
+        Set.of(
+            "revision",
+            "sourceGeneration",
+            "sourceObjectGeneration",
+            "spkiSha256",
+            "provenance",
+            "state"),
+        roleProperties.keySet());
+
+    HostedEnvironmentIdentityStatus.RoleStatus empty =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    assertTrue(empty.isSchemaValid(), "all consumer status fields are optional in the CRD");
+
+    assertRoleStatusExamples(
+        roleProperties,
+        "revision",
+        List.of("A", "a".repeat(128), "A._:+/@=-"),
+        List.of("", "-invalid", "a".repeat(129)));
+    assertRoleStatusExamples(
+        roleProperties, "sourceGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
+    assertRoleStatusExamples(
+        roleProperties, "sourceObjectGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
+    assertRoleStatusExamples(
+        roleProperties,
+        "spkiSha256",
+        List.of("a".repeat(64)),
+        List.of("A".repeat(64), "a".repeat(63)));
+    assertRoleStatusExamples(
+        roleProperties,
+        "provenance",
+        List.of("A", "A".repeat(128), "Cert_manager-v2"),
+        List.of("", "9source", "_source", "A".repeat(129)));
+    assertRoleStatusExamples(
+        roleProperties,
+        "state",
+        List.of("A", "A".repeat(64), "Ready_v2.-"),
+        List.of("", "9state", "_state", "A".repeat(65)));
+
+    HostedEnvironmentIdentityStatus.RoleStatus source =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    source.setRevision("revision-1");
+    source.setSourceGeneration(1L);
+    source.setSourceObjectGeneration(2L);
+    source.setSpkiSha256("a".repeat(64));
+    source.setProvenance("cert-manager");
+    source.setState("source-ready");
+    HostedEnvironmentIdentityStatus.RoleStatus copy = source.copy();
+    assertNotSame(source, copy);
+    assertEquals(source.getRevision(), copy.getRevision());
+    assertEquals(source.getSourceGeneration(), copy.getSourceGeneration());
+    assertEquals(source.getSourceObjectGeneration(), copy.getSourceObjectGeneration());
+    assertEquals(source.getSpkiSha256(), copy.getSpkiSha256());
+    assertEquals(source.getProvenance(), copy.getProvenance());
+    assertEquals(source.getState(), copy.getState());
+    source.setRevision("changed");
+    assertEquals("revision-1", copy.getRevision());
+  }
+
+  private static void assertRoleStatusExamples(
+      Map<?, ?> roleProperties, String field, List<?> accepted, List<?> rejected) {
+    assertRoleStatusValueParity(roleProperties, field, null, true);
+    for (Object value : accepted) {
+      assertRoleStatusValueParity(roleProperties, field, value, true);
+    }
+    for (Object value : rejected) {
+      assertRoleStatusValueParity(roleProperties, field, value, false);
+    }
+  }
+
+  private static void assertRoleStatusValueParity(
+      Map<?, ?> roleProperties, String field, Object value, boolean expected) {
+    Map<?, ?> propertySchema = schemaMap(roleProperties.get(field));
+    boolean schemaValid = crdSchemaAccepts(propertySchema, value);
+    assertEquals(expected, schemaValid, "the CRD example expectation for " + field);
+
+    HostedEnvironmentIdentityStatus.RoleStatus roleStatus =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    switch (field) {
+      case "revision" -> roleStatus.setRevision((String) value);
+      case "sourceGeneration" -> roleStatus.setSourceGeneration((Long) value);
+      case "sourceObjectGeneration" -> roleStatus.setSourceObjectGeneration((Long) value);
+      case "spkiSha256" -> roleStatus.setSpkiSha256((String) value);
+      case "provenance" -> roleStatus.setProvenance((String) value);
+      case "state" -> roleStatus.setState((String) value);
+      default -> throw new IllegalArgumentException("unsupported role status field: " + field);
+    }
+    assertEquals(
+        schemaValid,
+        roleStatus.isSchemaValid(),
+        "RoleStatus model validation must match the CRD for " + field + " value " + value);
+  }
+
+  private static boolean crdSchemaAccepts(Map<?, ?> propertySchema, Object value) {
+    if (value == null) {
+      return true;
+    }
+    if ("string".equals(propertySchema.get("type"))) {
+      if (!(value instanceof String stringValue)) {
+        return false;
+      }
+      int maxLength = ((Number) propertySchema.get("maxLength")).intValue();
+      String pattern = Objects.toString(propertySchema.get("pattern"));
+      return stringValue.length() <= maxLength
+          && Pattern.compile(pattern).matcher(stringValue).matches();
+    }
+    if ("integer".equals(propertySchema.get("type"))) {
+      if (!(value instanceof Long || value instanceof Integer)) {
+        return false;
+      }
+      long minimum = ((Number) propertySchema.get("minimum")).longValue();
+      return ((Number) value).longValue() >= minimum;
+    }
+    throw new AssertionError("unsupported CRD consumer status property schema: " + propertySchema);
+  }
+
+  private static Map<?, ?> publicationRoleStatusProperties() throws IOException {
+    Map<?, ?> root;
+    try (var reader =
+        Files.newBufferedReader(findRepositoryFile("k8s/hosted-identity-controller/crd.yaml"))) {
+      root = schemaMap(new Yaml().load(reader));
+    }
+    Map<?, ?> spec = schemaMap(root.get("spec"));
+    List<?> versions = (List<?>) spec.get("versions");
+    Map<?, ?> version = schemaMap(versions.get(0));
+    Map<?, ?> openApiSchema = schemaMap(schemaMap(version.get("schema")).get("openAPIV3Schema"));
+    Map<?, ?> statusProperties =
+        schemaMap(
+            schemaMap(schemaMap(openApiSchema.get("properties")).get("status")).get("properties"));
+    Map<?, ?> consumerSchema = schemaMap(statusProperties.get("ingress"));
+    Map<?, ?> publicationSchema = schemaMap(statusProperties.get("grpcPublication"));
+    assertEquals(
+        consumerSchema,
+        publicationSchema.get("additionalProperties"),
+        "grpcPublication entries must use the shared consumer status schema");
+    return schemaMap(consumerSchema.get("properties"));
+  }
+
+  private static Map<?, ?> schemaMap(Object value) {
+    if (value instanceof Map<?, ?> map) {
+      return map;
+    }
+    throw new AssertionError("expected CRD schema mapping but found " + value);
+  }
+
+  private static Path findRepositoryFile(String relativePath) {
+    Path directory = Path.of("").toAbsolutePath();
+    while (directory != null) {
+      Path candidate = directory.resolve(relativePath);
+      if (Files.isRegularFile(candidate)) {
+        return candidate;
+      }
+      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
+        break;
+      }
+      directory = directory.getParent();
+    }
+    throw new AssertionError("could not locate repository file " + relativePath);
+  }
+
+  @Test
+  void grpcPublicationHistoryRejectsNullRoleStatusWithExactCanonicalRoleSet() {
+    String nullRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      publicationHistory.put(
+          role, role.equals(nullRole) ? null : new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    HostedEnvironmentIdentity resource = resource();
+    resource.setStatus(status);
+
+    assertEquals(5, publicationHistory.size());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        publicationHistory.keySet());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, nullRole));
+    assertEquals(
+        "grpc publication status contains an invalid entry for role " + nullRole,
+        failure.getMessage());
+  }
+
+  @Test
+  void grpcPublicationHistoryRejectsUnexpectedKeyReplacingCanonicalRole() {
+    String replacedRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      publicationHistory.put(role, new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    publicationHistory.remove(replacedRole);
+    publicationHistory.put("unexpected-role", new HostedEnvironmentIdentityStatus.RoleStatus());
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    HostedEnvironmentIdentity resource = resource();
+    resource.setStatus(status);
+
+    assertEquals(5, publicationHistory.size());
+    assertFalse(publicationHistory.containsKey(replacedRole));
+    assertTrue(publicationHistory.containsKey("unexpected-role"));
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, replacedRole));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
+  }
+
+  @Test
+  void malformedGrpcPublicationHistoryIsNormalizedWithoutBecomingHighWaterEvidence() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    String invalidRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    String nullRole = HostedIdentityContract.grpcPublicationRole("world-management-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    HostedEnvironmentIdentityStatus.RoleStatus validHistory =
+        HostedStatusService.role(
+            "sha256:" + "a".repeat(64), 4L, 2L, "b".repeat(64), "cert-manager", "source-ready");
+    HostedEnvironmentIdentityStatus.RoleStatus invalidHistory =
+        HostedStatusService.role(
+            "invalid revision", 99L, 2L, "c".repeat(64), "cert-manager", "source-ready");
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> malformedPublication =
+        new java.util.LinkedHashMap<>();
+    malformedPublication.put(role, validHistory);
+    malformedPublication.put(invalidRole, invalidHistory);
+    malformedPublication.put(nullRole, null);
+    malformedPublication.put("unexpected-role", new HostedEnvironmentIdentityStatus.RoleStatus());
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    priorStatus.setGrpcPublication(malformedPublication);
+    fixture.resource.setStatus(priorStatus);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(fixture.resource, role));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertEquals("False", blocked.getConditions().get(0).getStatus());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        blocked.getGrpcPublication().keySet());
+    assertEquals(4L, blocked.getGrpcPublication().get(role).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(invalidRole).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(invalidRole).getRevision());
+    assertNull(blocked.getGrpcPublication().get(nullRole).getSourceGeneration());
+    assertNull(
+        blocked
+            .getGrpcPublication()
+            .get(HostedIdentityContract.grpcPublicationRole("game-logic-service"))
+            .getSourceGeneration());
+    assertNull(
+        blocked
+            .getGrpcPublication()
+            .get(HostedIdentityContract.grpcPublicationRole("automation-scripting-service"))
+            .getSourceGeneration());
+    assertTrue(blocked.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
+    verifyNoInteractions(fixture.projections);
+  }
+
+  @Test
+  void invalidRevisionWithHighGenerationIsRejectedAndCannotBecomePublicationBaseline() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationRole = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus history =
+          HostedStatusService.role(
+              "sha256:" + "a".repeat(64), 1L, 1L, "b".repeat(64), "cert-manager", "source-ready");
+      publicationHistory.put(publicationRole, history);
+    }
+    publicationHistory.get(role).setRevision("invalid revision");
+    publicationHistory.get(role).setSourceGeneration(99L);
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    priorStatus.setGrpcPublication(publicationHistory);
+    fixture.resource.setStatus(priorStatus);
+
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        publicationHistory.keySet());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(fixture.resource, role));
+    assertEquals(
+        "grpc publication status contains an invalid entry for role " + role, failure.getMessage());
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertNull(blocked.getGrpcPublication().get(role).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(role).getRevision());
+    verifyNoInteractions(fixture.projections);
+  }
+
+  @Test
   void everyManagedTransportRoleRequiresIndependentLeafKeyMaterial() {
     var ingress = material(1, 1, "1".repeat(64), "ingress");
     var telnet = material(1, 1, "2".repeat(64), "telnet");
@@ -1594,10 +2126,36 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Map<String, String>> workloadIdentityRevisions =
+        ArgumentCaptor.forClass(Map.class);
     verify(fixture.rollout)
-        .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), anyMap(), any());
+        .sync(
+            any(),
+            any(),
+            anyString(),
+            gatewayRevision.capture(),
+            anyString(),
+            workloadIdentityRevisions.capture(),
+            any());
     assertEquals(
         "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
+    assertEquals(
+        Map.of(
+            "grpc-publication-game-design-service",
+            "revision-grpc-publication-game-design-service",
+            "grpc-publication-world-management-service",
+            "revision-grpc-publication-world-management-service",
+            "grpc-publication-entity-management-service",
+            "revision-grpc-publication-entity-management-service",
+            "grpc-publication-game-logic-service",
+            "revision-grpc-publication-game-logic-service",
+            "grpc-publication-automation-scripting-service",
+            "revision-grpc-publication-automation-scripting-service",
+            HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_GAME_SESSION_ROLE),
+        workloadIdentityRevisions.getValue());
     verify(fixture.runtime, times(2))
         .validateTcpProxyService(fixture.client, fixture.plan, expected);
   }
@@ -1743,15 +2301,7 @@ class HostedIdentityReconcilerSafetyTest {
           .thenAnswer(
               invocation -> {
                 String workload = invocation.getArgument(0, String.class);
-                String fingerprintDigit =
-                    switch (workload) {
-                      case "game-design-service" -> "6";
-                      case "world-management-service" -> "7";
-                      case "entity-management-service" -> "8";
-                      case "game-logic-service" -> "9";
-                      case "automation-scripting-service" -> "a";
-                      default -> throw new IllegalArgumentException(workload);
-                    };
+                String fingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
                 return material(
                     plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
               });
@@ -1836,6 +2386,10 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   private static final class RetirementDeletionFixture {
+    private final EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(
+                initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE))
+            .plan("pr-42");
     private final KubernetesClient client = mock(KubernetesClient.class);
     private final Resource<Namespace> identityNamespace = mock(Resource.class);
     private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
@@ -1971,11 +2525,41 @@ class HostedIdentityReconcilerSafetyTest {
       return secret;
     }
 
+    private Resource<GenericKubernetesResource> certificate(String name) {
+      Resource<GenericKubernetesResource> certificate = mock(Resource.class);
+      when(identityCertificates.withName(name)).thenReturn(certificate);
+      GenericKubernetesResource resource = new GenericKubernetesResource();
+      resource.setMetadata(
+          new ObjectMetaBuilder()
+              .withName(name)
+              .withNamespace("pr-42-identity")
+              .withLabels(
+                  Map.of(
+                      HostedIdentityContract.MANAGED_BY_LABEL,
+                      HostedIdentityContract.CONTROLLER_NAME,
+                      HostedIdentityContract.ENVIRONMENT_LABEL,
+                      "pr-42"))
+              .build());
+      when(certificate.get()).thenReturn(resource);
+      return certificate;
+    }
+
     private UpdateControl<HostedEnvironmentIdentity> retire() {
       HostedEnvironmentIdentity resource = resource();
       resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
       return reconciler.reconcile(resource, mock(Context.class));
     }
+  }
+
+  private static String grpcPublicationFixtureFingerprintDigit(String workload) {
+    return switch (workload) {
+      case "game-design-service" -> "6";
+      case "world-management-service" -> "7";
+      case "entity-management-service" -> "8";
+      case "game-logic-service" -> "9";
+      case "automation-scripting-service" -> "a";
+      default -> throw new IllegalArgumentException(workload);
+    };
   }
 
   private static HostedIdentityProperties initializedProperties(

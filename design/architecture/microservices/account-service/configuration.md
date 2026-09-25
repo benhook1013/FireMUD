@@ -37,8 +37,8 @@ Additional variables configure outbound email delivery and payment behavior:
 | `SMTP_USERNAME` | Username for SMTP auth | *(empty)* |
 | `SMTP_PASSWORD` | Password for SMTP auth | *(empty)* |
 | `SMTP_FROM` | From address for transactional emails | `no-reply@firemud.local` |
-| `FIREMUD_MAIL_VERIFICATION_URL` | Public URL for email verification links | `http://localhost:8080/auth/verify-email?token=%s` |
-| `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
+| `FIREMUD_MAIL_VERIFICATION_URL` | First-party, non-reserved browser landing URL for email verification links; `%s` is the single-use token in the fragment, not an API query | `http://localhost:5173/verify-email#token=%s` |
+| `FIREMUD_MAIL_RESET_URL` | First-party, non-reserved browser landing URL for password reset links; `%s` is the single-use token in the fragment, not an API query | `http://localhost:5173/reset-password#token=%s` |
 | `FIREMUD_PAYMENT_STRIPE_API_KEY` | Stripe API key used for payments | *(none)* |
 | `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Unsupported creator-share substrate; implementations must ignore this variable and it cannot enable provider mutation. No legacy value is an approved fee policy. Any future FireMUD-managed creator-player fee remains target-only under [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md). | *(unsupported; unset)* |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev or explicitly ephemeral stacks only (legacy compatibility; not for player-facing environments) | *(none)* |

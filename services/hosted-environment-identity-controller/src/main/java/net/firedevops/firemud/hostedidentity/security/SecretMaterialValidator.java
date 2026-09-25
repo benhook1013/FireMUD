@@ -256,7 +256,8 @@ public class SecretMaterialValidator {
     }
     if (!actual.equals(expected) || !actualUris.equals(expectedUris)) {
       throw new MaterialValidationException(
-          "certificate SANs do not exactly match the derived names");
+          "certificate SANs do not exactly match the derived names",
+          MaterialValidationException.Reason.SAN_MISMATCH);
     }
   }
 
@@ -460,12 +461,29 @@ public class SecretMaterialValidator {
   }
 
   public static class MaterialValidationException extends IllegalArgumentException {
+    public enum Reason {
+      VALIDATION_FAILURE,
+      SAN_MISMATCH
+    }
+
+    private final Reason reason;
+
     public MaterialValidationException(String message) {
+      this(message, Reason.VALIDATION_FAILURE);
+    }
+
+    public MaterialValidationException(String message, Reason reason) {
       super(message);
+      this.reason = reason;
     }
 
     public MaterialValidationException(String message, Throwable cause) {
       super(message, cause);
+      this.reason = Reason.VALIDATION_FAILURE;
+    }
+
+    public boolean isSanMismatch() {
+      return reason == Reason.SAN_MISMATCH;
     }
   }
 }

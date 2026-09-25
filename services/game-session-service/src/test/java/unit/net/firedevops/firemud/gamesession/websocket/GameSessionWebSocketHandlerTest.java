@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -38,6 +39,8 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -1028,6 +1031,141 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+  }
+
+  @Test
+  void freshFirstPartyPlayDoesNotReplayRetainedBufferFromAnEarlierLogout() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    SessionContext freshBinding =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "fresh-connect-token"));
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(freshBinding));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(freshBinding), eq(List.of()), eq(false)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq("en-NZ"),
+            any(PresentationProperties.class),
+            any()))
+        .thenReturn("OK PLAY");
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+    verify(lookHandler)
+        .describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH);
+  }
+
+  @Test
+  void resumedPlayRefreshesLookWhenNoRetainedBufferExists() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    SessionContext binding =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), true, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(binding));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(binding), eq(List.of()), eq(false)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq("en-NZ"),
+            any(PresentationProperties.class),
+            any()))
+        .thenReturn("OK PLAY");
+    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(lookHandler)
+        .describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true,true,1", "true,false,0", "false,true,0", "false,false,0"})
+  void reconnectPlayEmitsPromptOnlyWhenBothPromptSettingsAreEnabled(
+      boolean promptEnabled, boolean emitAfterReconnectRestore, int expectedPromptEmissions)
+      throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    SessionContext binding =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    PresentationProperties presentation =
+        new PresentationProperties(
+            "en-NZ",
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(promptEnabled, emitAfterReconnectRestore, 150L));
+    PlayerOutput prompt = PlayerOutput.prompt("fresh prompt");
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web"));
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), true, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(binding));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(binding), eq(List.of()), eq(false)))
+        .thenReturn(List.of());
+    when(settingsResolver.presentation(binding)).thenReturn(presentation);
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq("en-NZ"),
+            eq(presentation),
+            eq(binding)))
+        .thenReturn("OK PLAY");
+    when(promptComposer.compose(binding)).thenReturn(Optional.of(prompt));
+    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(promptComposer, times(expectedPromptEmissions)).compose(binding);
+    verify(outputProjector, times(expectedPromptEmissions))
+        .projectPlayerOutput(eq(session), eq(prompt), eq("en-NZ"), eq(presentation));
+    verify(promptBurstCoordinator, times(expectedPromptEmissions)).recordPromptEmission("41");
   }
 
   @Test

@@ -281,6 +281,30 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  public SessionContext withoutJwt() {
+    if (jwt == null) {
+      return this;
+    }
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        null,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        connectScopeId,
+        connectRequestId);
+  }
+
   public boolean hasGameplayBinding() {
     return gameInstanceId > 0
         || characterId > 0

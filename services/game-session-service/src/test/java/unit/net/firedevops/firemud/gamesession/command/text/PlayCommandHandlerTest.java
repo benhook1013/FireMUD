@@ -11,6 +11,8 @@ import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -31,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -128,6 +131,18 @@ class PlayCommandHandlerTest {
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(firstPartyConnectContextRegistry.find(Mockito.anyLong())).thenReturn(Optional.empty());
+    when(entityManagementClient.listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class)))
+        .thenAnswer(
+            invocation -> {
+              String instanceId = invocation.getArgument(2);
+              PlayableStateScope scope = invocation.getArgument(3);
+              String name = "41".equals(instanceId) ? "Emberline" : "demo";
+              return roster(actor("123", name, scope));
+            });
   }
 
   @Test
@@ -135,14 +150,10 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7001")
-                    .setName("demo")
-                    .build()));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
 
@@ -233,14 +244,10 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7001")
-                    .setName("demo")
-                    .build()));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(moderationPolicyClient.evaluateGameplayAdmission(22L, 123L))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -263,14 +270,10 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("9007")
-                    .setName("Emberline")
-                    .build()));
+    stubOwnedRoster(
+        "2",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("9007", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 2L, 9007L))
         .thenReturn(Optional.empty());
 
@@ -348,14 +351,10 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("abc")
-                    .setName("Emberline")
-                    .build()));
+    stubOwnedRoster(
+        "2",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("abc", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -379,6 +378,172 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playRejectsMissingOwnedActorWithoutSynthesizingIdentity() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster("1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+    Mockito.verify(entityManagementClient, never())
+        .findCharacterByName(
+            Mockito.any(), Mockito.any(PlayableStateScope.class), Mockito.anyString());
+  }
+
+  @Test
+  void playRejectsAmbiguousOwnedRosterWhenActorIsNotSelected() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+  }
+
+  @Test
+  void playRejectsAnotherAccountsActorEvenWhenNameMatches() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    Character foreign =
+        actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED).toBuilder()
+            .setAccountId("999")
+            .build();
+    stubOwnedRoster("2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, foreign);
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "production", "Emberline"),
+                "PLAY sandbox production Emberline"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"tenant", "scope"})
+  void playRejectsRosterRowsOutsideSelectedTenantOrScope(String mismatch) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    Character valid = actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    Character mismatched =
+        "tenant".equals(mismatch)
+            ? valid.toBuilder().setTenantId("23").build()
+            : valid.toBuilder()
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+                .build();
+    stubOwnedRoster("1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, mismatched);
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+  }
+
+  @Test
+  void playRejectsStaleRetainedActorWhenSelectedRosterNoLongerContainsIt() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-7",
+            "jwt-token",
+            null,
+            0L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+    Mockito.verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void playRejectsEntityRosterErrorWithoutBinding() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    Mockito.doReturn(
+            ListCharactersByAccountResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").build())
+                .build())
+        .when(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+  }
+
+  @Test
+  void playReadsAccountMembershipGrantAndEntitlementBeforeActorRoster() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "41",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Emberline"),
+                "PLAY sandbox preview Emberline"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    org.mockito.InOrder order = Mockito.inOrder(accountClient, entityManagementClient);
+    order
+        .verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
+    order
+        .verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("sandbox"),
+            Mockito.eq("preview"),
+            Mockito.anyString());
+    order
+        .verify(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+    order
+        .verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+  }
+
+  @Test
   void playResumeDoesNotPublishSpawnEvent() {
     SessionContext context =
         new SessionContext(
@@ -398,6 +563,10 @@ class PlayCommandHandlerTest {
             1L,
             "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -420,14 +589,10 @@ class PlayCommandHandlerTest {
     SessionContext clearedExisting =
         new SessionContext(9L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "old-jwt", 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7001")
-                    .setName("demo")
-                    .build()));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.of(clearedExisting));
 
@@ -482,14 +647,10 @@ class PlayCommandHandlerTest {
             1L,
             "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7001")
-                    .setName("demo")
-                    .build()));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7001", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.of(existingWithoutRoom));
 
@@ -775,14 +936,10 @@ class PlayCommandHandlerTest {
                 new FirstPartyConnectContext(
                     123L, 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
                     "gw-1")));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7002")
-                    .setName("Sora")
-                    .build()));
+    stubOwnedRoster(
+        "41",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
@@ -825,14 +982,10 @@ class PlayCommandHandlerTest {
             "scope-persisted",
             "req-persisted");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName(
-            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
-        .thenReturn(
-            Optional.of(
-                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                    .setId("7002")
-                    .setName("Sora")
-                    .build()));
+    stubOwnedRoster(
+        "41",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
@@ -881,8 +1034,11 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
     Mockito.verify(entityManagementClient, never())
-        .findCharacterByName(
-            Mockito.any(), Mockito.any(PlayableStateScope.class), Mockito.anyString());
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
   }
 
   @Test
@@ -1047,8 +1203,9 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
-  @Test
-  void playInvisibleRealmWithUnavailableGrantFailsClosed() {
+  @ParameterizedTest
+  @ValueSource(strings = {"AUTH_UNAVAILABLE", "FAILED_PRECONDITION"})
+  void playInvisibleRealmWithUnavailableGrantFailsClosed(String errorCode) {
     markPreviewRealmInvisible();
     SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1062,7 +1219,7 @@ class PlayCommandHandlerTest {
             GetRealmAccessGrantForRuntimeResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE)
+                        .setCode(errorCode)
                         .setMessage(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE)
                         .build())
                 .build());
@@ -1252,8 +1409,9 @@ class PlayCommandHandlerTest {
         .clearGameplayBinding(context, "tenant_unavailable");
   }
 
-  @Test
-  void playWhenMembershipAuthorityUnavailableFailsClosed() {
+  @ParameterizedTest
+  @ValueSource(strings = {"AUTH_UNAVAILABLE", "FAILED_PRECONDITION"})
+  void playWhenMembershipAuthorityUnavailableFailsClosed(String errorCode) {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1263,7 +1421,7 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE)
+                        .setCode(errorCode)
                         .setMessage(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE))
                 .build());
 
@@ -1311,6 +1469,33 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void playWhenEntitlementRuntimeReadIsDisabledPreservesExistingBinding() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").build())
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
   }
 
   @Test
@@ -1399,6 +1584,41 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private void assertIdentityUnavailableWithoutMutation(PlayCommandHandlingResult result) {
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(scriptEventPublisher, never())
+        .publishCommandEvent(Mockito.any(), Mockito.any(GameplayCommand.class));
+    Mockito.verify(scriptEventPublisher, never())
+        .publishSpawnEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  private void stubOwnedRoster(
+      String gameInstanceId, PlayableStateScope scope, Character... characters) {
+    Mockito.doReturn(roster(characters))
+        .when(entityManagementClient)
+        .listCharactersByAccount("22", "123", gameInstanceId, scope);
+  }
+
+  private static ListCharactersByAccountResponse roster(Character... characters) {
+    return ListCharactersByAccountResponse.newBuilder()
+        .addAllCharacters(List.of(characters))
+        .build();
+  }
+
+  private static Character actor(String id, String name, PlayableStateScope scope) {
+    return Character.newBuilder()
+        .setId(id)
+        .setTenantId("22")
+        .setAccountId("123")
+        .setName(name)
+        .setPlayableStateScope(scope)
+        .build();
   }
 
   private void markPreviewRealmInvisible() {

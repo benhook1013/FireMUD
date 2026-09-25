@@ -853,6 +853,25 @@ spec:
   ports:
     - port: 443
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: firemud
+spec:
+  template:
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: hobby-gateway-internal-ws
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -996,6 +1015,201 @@ spec:
         - name: jwt-jwks
           secret:
             secretName: jwt-jwks
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-design-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: game-design-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-game-design-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: world-management-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: world-management-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-world-management-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: entity-management-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: entity-management-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-entity-management-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-logic-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: game-logic-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-game-logic-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: automation-scripting-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: automation-scripting-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-automation-scripting-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
@@ -1415,6 +1629,69 @@ for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
     diagnostic = [check for check in report["checkResults"] if check["policyId"] == policy_id]
     if len(diagnostic) != 1 or diagnostic[0]["required"]:
         raise SystemExit(f"{policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
+PY
+
+# Exercise the command boundary with a malformed publication workload render.
+MALFORMED_PUBLICATION_RENDER="$TMP_DIR/hobby-publication-malformed.yaml"
+MALFORMED_PUBLICATION_REPORT="$TMP_DIR/hobby-publication-malformed-report.json"
+python3 - "$RENDERED_MANIFEST" "$MALFORMED_PUBLICATION_RENDER" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+documents = [
+    document
+    for document in yaml.safe_load_all(source.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+publication = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+)
+grpc_volume = next(
+    volume
+    for volume in publication["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "grpc-tls"
+)
+grpc_volume["secret"]["secretName"] = " "
+target.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+set +e
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF=contract-hobby-malformed-publication \
+  FIREMUD_PREFLIGHT_RENDER_PATH="$MALFORMED_PUBLICATION_RENDER" \
+  FIREMUD_PREFLIGHT_OUTPUT="$MALFORMED_PUBLICATION_REPORT" \
+  python3 "$SCRIPT" hobby-self-hosted >"$TMP_DIR/hobby-publication-malformed.out"
+malformed_publication_status=$?
+set -e
+if [ "$malformed_publication_status" -eq 0 ]; then
+  echo "ci-static accepted a malformed publication Secret render" >&2
+  exit 1
+fi
+python3 - "$MALFORMED_PUBLICATION_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+publication_secret = next(
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-SECRETS-001"
+)
+if (
+    publication_secret["status"] != "fail"
+    or "malformed grpc-tls Secret volume" not in publication_secret["message"]
+):
+    raise SystemExit(
+        "ci-static malformed publication render did not fail PREFLIGHT-SECRETS-001: "
+        f"{publication_secret}"
+    )
 PY
 
 # A ConfigMap-backed player-facing fixture remains deferred and must fail required binding checks.
@@ -1856,7 +2133,23 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
 production_preflight_status=$?
 set -e
 if [ "$production_preflight_status" -ne 0 ]; then
-  echo "production preflight rejected the checked-in Gateway bridge wiring" >&2
+  python3 - "$PRODUCTION_REPORT" <<'PY' >&2
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+if not report_path.is_file():
+    raise SystemExit("production preflight failed without writing its report")
+report = json.loads(report_path.read_text(encoding="utf-8"))
+failures = [
+    f"{check.get('policyId', '<unknown>')}: {check.get('message', '<no message>')}"
+    for check in report.get("checkResults", [])
+    if check.get("status") == "fail"
+]
+detail = "; ".join(failures) if failures else "report contains no failed checks"
+raise SystemExit(f"production preflight rejected the checked-in manifest: {detail}")
+PY
   exit 1
 fi
 python3 - "$PRODUCTION_REPORT" <<'PY'
@@ -2343,6 +2636,184 @@ try:
                 "invalid Secret data value was not retryable: "
                 f"{invalid_issue}, {invalid_retryable}, {invalid_timed_out}"
             )
+
+    bridge_expected_bindings = {
+        "internalBindings": {
+            "certificates": {
+                "gatewayInternalWsListenerRef": (
+                    "cert-manager://staging/staging-gateway-internal-ws"
+                ),
+                "tcpProxyBridgeClientRef": (
+                    "cert-manager://staging/staging-tcp-proxy-bridge"
+                ),
+            }
+        }
+    }
+    bridge_secret_names = (
+        "staging-gateway-internal-ws",
+        "staging-tcp-proxy-bridge",
+    )
+    complete_bridge_secret_data = {
+        "tls.crt": "encoded-cert",
+        "tls.key": "encoded-key",
+        "ca.crt": "encoded-ca",
+    }
+
+    def bridge_secret_lookup(responses, calls):
+        def lookup(args, **kwargs):
+            if (
+                kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS
+                or len(args) != 8
+                or args[:4] != ["kubectl", "get", "secret", "-n"]
+                or args[6:] != ["-o", "json"]
+            ):
+                raise SystemExit(
+                    "bridge Secret lookup did not use the namespaced JSON API request"
+                )
+            namespace, secret_name = args[4:6]
+            calls.append((namespace, secret_name))
+            if secret_name not in responses:
+                raise SystemExit(
+                    f"bridge Secret lookup used an unexpected binding: {secret_name}"
+                )
+            status, payload, stderr = responses[secret_name]
+            stdout = "" if payload is None else json.dumps(payload)
+            return module.subprocess.CompletedProcess(args, status, stdout, stderr)
+
+        return lookup
+
+    expected_bridge_calls = [
+        ("staging", secret_name) for secret_name in bridge_secret_names
+    ]
+    ready_bridge_calls = []
+    ready_bridge_responses = {
+        secret_name: (0, {"data": complete_bridge_secret_data}, "")
+        for secret_name in bridge_secret_names
+    }
+    with patch.object(
+        module.subprocess,
+        "run",
+        bridge_secret_lookup(ready_bridge_responses, ready_bridge_calls),
+    ):
+        ready_bridge_issues = module.bridge_certificate_secret_issues(
+            bridge_expected_bindings
+        )
+    if ready_bridge_issues or ready_bridge_calls != expected_bridge_calls:
+        raise SystemExit(
+            "ordinary operator bridge Secret gate did not accept and query both complete bindings: "
+            f"{ready_bridge_issues}, {ready_bridge_calls}"
+        )
+
+    bridge_failure_cases = (
+        (
+            "missing Secret",
+            {
+                bridge_secret_names[0]: (
+                    1,
+                    None,
+                    'Error from server (NotFound): secrets "staging-gateway-internal-ws" not found',
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+            },
+            "gatewayInternalWsListenerRef",
+            "Missing required Secret in cluster",
+        ),
+        (
+            "missing key",
+            {
+                bridge_secret_names[0]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {
+                        "data": {
+                            "tls.crt": "encoded-cert",
+                            "tls.key": "encoded-key",
+                        }
+                    },
+                    "",
+                ),
+            },
+            "tcpProxyBridgeClientRef",
+            "missing keys: ca.crt",
+        ),
+        (
+            "operator API failure",
+            {
+                bridge_secret_names[0]: (
+                    1,
+                    None,
+                    'Error from server (Forbidden): secrets "staging-gateway-internal-ws" is forbidden',
+                ),
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                ),
+            },
+            "gatewayInternalWsListenerRef",
+            "could not be verified",
+        ),
+    )
+    for case_name, responses, expected_path, expected_message in bridge_failure_cases:
+        bridge_failure_calls = []
+        with patch.object(
+            module.subprocess,
+            "run",
+            bridge_secret_lookup(responses, bridge_failure_calls),
+        ):
+            bridge_issues = module.bridge_certificate_secret_issues(
+                bridge_expected_bindings
+            )
+        if (
+            len(bridge_issues) != 1
+            or expected_path not in bridge_issues[0]
+            or expected_message not in bridge_issues[0]
+            or bridge_failure_calls != expected_bridge_calls
+        ):
+            raise SystemExit(
+                f"ordinary operator bridge Secret gate did not fail closed for {case_name}: "
+                f"{bridge_issues}, {bridge_failure_calls}"
+            )
+
+    invalid_bridge_expected_bindings = copy.deepcopy(bridge_expected_bindings)
+    invalid_bridge_expected_bindings["internalBindings"]["certificates"][
+        "gatewayInternalWsListenerRef"
+    ] = "secret://staging/not-a-certificate-binding"
+    invalid_bridge_calls = []
+    with patch.object(
+        module.subprocess,
+        "run",
+        bridge_secret_lookup(
+            {
+                bridge_secret_names[1]: (
+                    0,
+                    {"data": complete_bridge_secret_data},
+                    "",
+                )
+            },
+            invalid_bridge_calls,
+        ),
+    ):
+        invalid_bridge_issues = module.bridge_certificate_secret_issues(
+            invalid_bridge_expected_bindings
+        )
+    if (
+        len(invalid_bridge_issues) != 1
+        or "gatewayInternalWsListenerRef" not in invalid_bridge_issues[0]
+        or invalid_bridge_calls != [("staging", bridge_secret_names[1])]
+    ):
+        raise SystemExit(
+            "invalid bridge certificate binding was not rejected without a live lookup: "
+            f"{invalid_bridge_issues}, {invalid_bridge_calls}"
+        )
 
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 0
@@ -3483,6 +3954,148 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+
+gateway_listener_expected = yaml.safe_load(
+    current_expected_path.read_text(encoding="utf-8")
+)
+gateway_listener_ref = module.parse_binding_ref(
+    module.get(
+        gateway_listener_expected,
+        "internalBindings.certificates.gatewayInternalWsListenerRef",
+    )
+)
+if (
+    gateway_listener_ref is None
+    or gateway_listener_ref[0] != "cert-manager"
+    or len(gateway_listener_ref[2]) != 1
+):
+    raise SystemExit("fixture did not resolve the Gateway listener Secret binding")
+gateway_listener_namespace = gateway_listener_ref[1]
+gateway_listener_secret_name = gateway_listener_ref[2][0]
+
+
+def gateway_listener_failure_issues(documents):
+    _, issues = module.validate_gateway_ws_values(
+        documents,
+        gateway_listener_expected,
+    )
+    return issues
+
+
+def expect_gateway_listener_failure(description, documents, expected_fragment):
+    issues = gateway_listener_failure_issues(documents)
+    if not any(expected_fragment in issue for issue in issues):
+        raise SystemExit(
+            f"{description} did not fail with the expected Gateway listener diagnostic: {issues}"
+        )
+
+
+def find_gateway_deployment(documents):
+    return next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+
+
+wrong_gateway_listener_documents = copy.deepcopy(rendered_documents)
+wrong_gateway_listener_volume = next(
+    volume
+    for volume in find_gateway_deployment(wrong_gateway_listener_documents)["spec"][
+        "template"
+    ]["spec"]["volumes"]
+    if volume.get("name") == "gateway-ws-server-tls"
+)
+wrong_gateway_listener_volume["secret"]["secretName"] = "decoy-gateway-listener"
+expect_gateway_listener_failure(
+    "a Gateway listener Secret that differs from its expected binding",
+    wrong_gateway_listener_documents,
+    f"must reference Secret {gateway_listener_namespace}/{gateway_listener_secret_name}",
+)
+
+missing_gateway_listener_volume_documents = copy.deepcopy(rendered_documents)
+missing_gateway_listener_pod_spec = find_gateway_deployment(
+    missing_gateway_listener_volume_documents
+)["spec"]["template"]["spec"]
+missing_gateway_listener_pod_spec["volumes"] = [
+    volume
+    for volume in missing_gateway_listener_pod_spec["volumes"]
+    if volume.get("name") != "gateway-ws-server-tls"
+]
+expect_gateway_listener_failure(
+    "a missing Gateway listener Secret volume",
+    missing_gateway_listener_volume_documents,
+    "exactly one gateway-ws-server-tls Secret volume",
+)
+
+duplicate_gateway_listener_volume_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_listener_pod_spec = find_gateway_deployment(
+    duplicate_gateway_listener_volume_documents
+)["spec"]["template"]["spec"]
+duplicate_gateway_listener_pod_spec["volumes"].append(
+    copy.deepcopy(
+        next(
+            volume
+            for volume in duplicate_gateway_listener_pod_spec["volumes"]
+            if volume.get("name") == "gateway-ws-server-tls"
+        )
+    )
+)
+expect_gateway_listener_failure(
+    "duplicate Gateway listener Secret volumes",
+    duplicate_gateway_listener_volume_documents,
+    "exactly one gateway-ws-server-tls Secret volume",
+)
+
+wrong_gateway_listener_namespace_documents = copy.deepcopy(rendered_documents)
+find_gateway_deployment(wrong_gateway_listener_namespace_documents)["metadata"][
+    "namespace"
+] = "other"
+expect_gateway_listener_failure(
+    "a Gateway Deployment in the wrong namespace",
+    wrong_gateway_listener_namespace_documents,
+    f"Gateway Deployment namespace does not match listener Secret binding namespace {gateway_listener_namespace}",
+)
+
+missing_gateway_deployment_documents = [
+    document
+    for document in rendered_documents
+    if not (
+        document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+]
+expect_gateway_listener_failure(
+    "a missing Gateway Deployment",
+    missing_gateway_deployment_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
+duplicate_gateway_deployment_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_deployment_documents.append(
+    copy.deepcopy(find_gateway_deployment(duplicate_gateway_deployment_documents))
+)
+expect_gateway_listener_failure(
+    "duplicate Gateway Deployments in the expected namespace",
+    duplicate_gateway_deployment_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
+duplicate_gateway_deployment_other_namespace_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_deployment_other_namespace = copy.deepcopy(
+    find_gateway_deployment(duplicate_gateway_deployment_other_namespace_documents)
+)
+duplicate_gateway_deployment_other_namespace["metadata"]["namespace"] = "other"
+duplicate_gateway_deployment_other_namespace_documents.append(
+    duplicate_gateway_deployment_other_namespace
+)
+expect_gateway_listener_failure(
+    "a correct Gateway Deployment plus a same-name Deployment in another namespace",
+    duplicate_gateway_deployment_other_namespace_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
 strategy_issue = "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 strategy_mutation = copy.deepcopy(rendered_documents)
 strategy_deployment = next(
@@ -9215,6 +9828,640 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+publication_expected = module.load_yaml(
+    root / "design/operations/environments/production/expected-bindings.yaml"
+)
+publication_documents = [
+    {
+        "kind": "Deployment",
+        "metadata": {"name": workload, "namespace": "firemud"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [
+                        {
+                            "name": "grpc-tls",
+                            "secret": {
+                                "secretName": f"firemud-grpc-{workload}",
+                                "items": [
+                                    {"key": "tls.crt", "path": "tls.crt"},
+                                    {"key": "tls.key", "path": "tls.key"},
+                                ],
+                            },
+                        },
+                        {
+                            "name": "grpc-trust",
+                            "secret": {
+                                "secretName": module.PUBLICATION_GRPC_TRUST_SECRET_NAME,
+                                "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                            },
+                        }
+                    ],
+                    "containers": [
+                        {
+                            "name": workload,
+                            "env": [
+                                {
+                                    "name": path_name,
+                                    "value": path,
+                                }
+                                for path_name, path in zip(
+                                    module.GRPC_TLS_PATH_NAMES,
+                                    (
+                                        "/tls/tls.crt",
+                                        "/tls/tls.key",
+                                        "/grpc-trust/ca.crt",
+                                    ),
+                                )
+                            ],
+                            "volumeMounts": [
+                                {
+                                    "name": "grpc-tls",
+                                    "mountPath": "/tls",
+                                    "readOnly": True,
+                                },
+                                {
+                                    "name": "grpc-trust",
+                                    "mountPath": "/grpc-trust",
+                                    "readOnly": True,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    for workload in module.PUBLICATION_GRPC_WORKLOADS
+]
+publication_requirements = module.publication_workload_secret_requirements(
+    publication_expected, publication_documents
+)
+expected_publication_names = {
+    f"firemud-grpc-{workload}"
+    for workload in module.PUBLICATION_GRPC_WORKLOADS
+}
+if {name for name, _, _ in publication_requirements} != (
+    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
+):
+    raise SystemExit(
+        "publication Secret requirements do not follow the five leaf bindings and shared trust binding"
+    )
+publication_keys = {name: keys for name, _, keys in publication_requirements}
+if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
+    raise SystemExit("publication Secret requirements did not use the expected-binding namespace")
+if any(
+    publication_keys[name] != {"tls.crt", "tls.key", "ca.crt"}
+    for name in expected_publication_names
+) or publication_keys[module.PUBLICATION_GRPC_TRUST_SECRET_NAME] != {"ca.crt"}:
+    raise SystemExit(
+        "source publication Secret requirements omitted certificate-manager CA material"
+    )
+
+def publication_static_issues(documents):
+    return module.publication_workload_secret_issues(
+        publication_expected,
+        documents,
+        lookup_cluster_secrets=False,
+    )
+
+
+def expect_publication_static_failure(description, documents, expected_fragment=None):
+    issues = publication_static_issues(documents)
+    if not issues:
+        raise SystemExit(f"publication preflight accepted {description}")
+    if expected_fragment is not None and not any(
+        expected_fragment in issue for issue in issues
+    ):
+        raise SystemExit(
+            f"publication preflight rejected {description} for the wrong reason: {issues}"
+        )
+
+
+swapped_leaf_documents = copy.deepcopy(publication_documents)
+first_leaf = swapped_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"]
+second_leaf = swapped_leaf_documents[1]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"]
+swapped_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+    "secretName"
+] = second_leaf
+swapped_leaf_documents[1]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+    "secretName"
+] = first_leaf
+expect_publication_static_failure(
+    "two distinct publication leaf Secrets assigned to the wrong workloads",
+    swapped_leaf_documents,
+    f"grpc-tls Secret must be firemud-grpc-{module.PUBLICATION_GRPC_WORKLOADS[0]}",
+)
+
+
+workload_mtls_ref = module.parse_binding_ref(
+    module.get(
+        publication_expected,
+        "internalBindings.certificates.workloadMtlsRef",
+    )
+)
+if workload_mtls_ref is None or len(workload_mtls_ref[2]) != 1:
+    raise SystemExit("production fixture did not resolve a single workload mTLS Secret name")
+workload_mtls_secret_name = workload_mtls_ref[2][0]
+
+bound_workload_mtls_collision_documents = copy.deepcopy(publication_documents)
+bound_workload_mtls_collision_documents[0]["spec"]["template"]["spec"]["volumes"][
+    0
+]["secret"]["secretName"] = workload_mtls_secret_name
+expect_publication_static_failure(
+    "the workload mTLS Secret reused as a publication leaf Secret",
+    bound_workload_mtls_collision_documents,
+    "distinct from the workload mTLS Secret",
+)
+
+fallback_workload_mtls_collision_documents = copy.deepcopy(publication_documents)
+fallback_workload_mtls_collision_documents[0]["spec"]["template"]["spec"]["volumes"][
+    0
+]["secret"]["secretName"] = "firemud-grpc-tls"
+expect_publication_static_failure(
+    "the shared firemud-grpc-tls trust Secret reused as a publication leaf Secret",
+    fallback_workload_mtls_collision_documents,
+    "shared trust Secret firemud-grpc-tls",
+)
+
+
+missing_grpc_mount_documents = copy.deepcopy(publication_documents)
+missing_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+] = []
+expect_publication_static_failure("a missing grpc-tls container mount", missing_grpc_mount_documents)
+
+writable_grpc_mount_documents = copy.deepcopy(publication_documents)
+writable_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][0]["readOnly"] = False
+expect_publication_static_failure("a writable grpc-tls container mount", writable_grpc_mount_documents)
+
+outside_grpc_path_documents = copy.deepcopy(publication_documents)
+outside_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "/alternate/tls.crt"
+expect_publication_static_failure("a gRPC TLS path outside grpc-tls", outside_grpc_path_documents)
+
+non_absolute_grpc_path_documents = copy.deepcopy(publication_documents)
+non_absolute_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "tls/tls.crt"
+expect_publication_static_failure(
+    "a non-absolute gRPC TLS path",
+    non_absolute_grpc_path_documents,
+)
+
+missing_grpc_path_documents = copy.deepcopy(publication_documents)
+missing_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+].pop()
+expect_publication_static_failure(
+    "a missing gRPC TLS path env variable",
+    missing_grpc_path_documents,
+)
+
+overlapping_secret_mount_documents = copy.deepcopy(publication_documents)
+overlapping_spec = overlapping_secret_mount_documents[0]["spec"]["template"]["spec"]
+overlapping_spec["volumes"].append(
+    {"name": "alternate-secret", "secret": {"secretName": "alternate-identity"}}
+)
+overlapping_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "alternate-secret",
+        "mountPath": "/tls/tls.key",
+        "readOnly": True,
+    }
+)
+expect_publication_static_failure(
+    "another volume mount covering a gRPC TLS path",
+    overlapping_secret_mount_documents,
+)
+
+writable_secret_overlay_documents = copy.deepcopy(publication_documents)
+writable_overlay_spec = writable_secret_overlay_documents[0]["spec"]["template"]["spec"]
+writable_overlay_spec["volumes"].append(
+    {"name": "writable-secret-overlay", "secret": {"secretName": "alternate-identity"}}
+)
+writable_overlay_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "writable-secret-overlay",
+        "mountPath": "/tls/tls.key",
+        "readOnly": False,
+    }
+)
+expect_publication_static_failure(
+    "a writable Secret overlay on a gRPC TLS path",
+    writable_secret_overlay_documents,
+)
+
+config_map_overlay_documents = copy.deepcopy(publication_documents)
+config_map_overlay_spec = config_map_overlay_documents[0]["spec"]["template"]["spec"]
+config_map_overlay_spec["volumes"].append(
+    {"name": "config-map-overlay", "configMap": {"name": "grpc-config"}}
+)
+config_map_overlay_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "config-map-overlay",
+        "mountPath": "/grpc-trust/ca.crt",
+        "readOnly": True,
+    }
+)
+expect_publication_static_failure(
+    "a ConfigMap overlay on a gRPC TLS path",
+    config_map_overlay_documents,
+)
+
+grpc_subpath_documents = copy.deepcopy(publication_documents)
+grpc_subpath_mount = grpc_subpath_documents[0]["spec"]["template"]["spec"][
+    "containers"
+][0]["volumeMounts"][0]
+grpc_subpath_mount["subPath"] = "tls.crt"
+expect_publication_static_failure(
+    "a grpc-tls subPath mount",
+    grpc_subpath_documents,
+)
+
+grpc_subpath_expr_documents = copy.deepcopy(publication_documents)
+grpc_subpath_expr_mount = grpc_subpath_expr_documents[0]["spec"]["template"]["spec"][
+    "containers"
+][0]["volumeMounts"][0]
+grpc_subpath_expr_mount["subPathExpr"] = "$(TLS_FILE)"
+expect_publication_static_failure(
+    "a grpc-tls subPathExpr mount",
+    grpc_subpath_expr_documents,
+)
+
+unrelated_secret_mount_documents = copy.deepcopy(publication_documents)
+unrelated_spec = unrelated_secret_mount_documents[0]["spec"]["template"]["spec"]
+unrelated_spec["volumes"].append(
+    {"name": "unrelated-secret", "secret": {"secretName": "unrelated-secret"}}
+)
+unrelated_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "unrelated-secret",
+        "mountPath": "/var/run/unrelated-secret",
+        "readOnly": True,
+    }
+)
+unrelated_secret_requirements = module.publication_workload_secret_requirements(
+    publication_expected,
+    unrelated_secret_mount_documents,
+)
+if unrelated_secret_requirements != publication_requirements:
+    raise SystemExit("an unrelated non-overlapping Secret mount changed publication requirements")
+
+ancestor_secret_mount_documents = copy.deepcopy(publication_documents)
+ancestor_spec = ancestor_secret_mount_documents[0]["spec"]["template"]["spec"]
+ancestor_spec["volumes"].append(
+    {"name": "ancestor-secret", "secret": {"secretName": "ancestor-identity"}}
+)
+ancestor_spec["containers"][0]["volumeMounts"].append(
+    {"name": "ancestor-secret", "mountPath": "/", "readOnly": True}
+)
+ancestor_secret_requirements = module.publication_workload_secret_requirements(
+    publication_expected,
+    ancestor_secret_mount_documents,
+)
+if ancestor_secret_requirements != publication_requirements:
+    raise SystemExit("an ancestor Secret mount shadowing no gRPC TLS file was rejected")
+
+ambiguous_container_documents = copy.deepcopy(publication_documents)
+ambiguous_container_spec = ambiguous_container_documents[0]["spec"]["template"]["spec"]
+ambiguous_container_spec["containers"].append(copy.deepcopy(ambiguous_container_spec["containers"][0]))
+expect_publication_static_failure(
+    "ambiguous owning publication containers",
+    ambiguous_container_documents,
+)
+
+ambiguous_mount_documents = copy.deepcopy(publication_documents)
+ambiguous_mount_spec = ambiguous_mount_documents[0]["spec"]["template"]["spec"]
+ambiguous_mount_spec["containers"][0]["volumeMounts"].append(
+    copy.deepcopy(ambiguous_mount_spec["containers"][0]["volumeMounts"][0])
+)
+expect_publication_static_failure("ambiguous grpc-tls mounts", ambiguous_mount_documents)
+
+non_absolute_grpc_mount_documents = copy.deepcopy(publication_documents)
+non_absolute_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][0]["mountPath"] = "tls"
+expect_publication_static_failure(
+    "a non-absolute grpc-tls mountPath",
+    non_absolute_grpc_mount_documents,
+)
+
+ambiguous_env_documents = copy.deepcopy(publication_documents)
+ambiguous_env_spec = ambiguous_env_documents[0]["spec"]["template"]["spec"]
+ambiguous_env_spec["containers"][0]["env"].append(
+    copy.deepcopy(ambiguous_env_spec["containers"][0]["env"][0])
+)
+expect_publication_static_failure("ambiguous gRPC TLS path env entries", ambiguous_env_documents)
+
+malformed_grpc_path_documents = copy.deepcopy(publication_documents)
+malformed_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "/tls/../outside/tls.crt"
+expect_publication_static_failure("a non-canonical gRPC TLS path", malformed_grpc_path_documents)
+
+default_mode_publication_documents = copy.deepcopy(publication_documents)
+default_mode_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["defaultMode"] = 0o440
+default_mode_requirements = module.publication_workload_secret_requirements(
+    publication_expected, default_mode_publication_documents
+)
+if len(default_mode_requirements) != len(module.PUBLICATION_GRPC_WORKLOADS) + 1:
+    raise SystemExit("publication grpc-tls Secret defaultMode was not accepted")
+
+for forbidden_secret_key in ("optional", "unexpected"):
+    forbidden_secret_documents = copy.deepcopy(publication_documents)
+    forbidden_secret_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+        "secret"
+    ][forbidden_secret_key] = []
+    forbidden_secret_issues = module.publication_workload_secret_issues(
+        publication_expected,
+        forbidden_secret_documents,
+        lookup_cluster_secrets=False,
+    )
+    if (
+        len(forbidden_secret_issues) != 1
+        or "malformed grpc-tls Secret volume" not in forbidden_secret_issues[0]
+    ):
+        raise SystemExit(
+            f"publication grpc-tls Secret accepted forbidden key {forbidden_secret_key}: "
+            f"{forbidden_secret_issues}"
+        )
+
+for invalid_leaf_items in (
+    [{"key": "tls.crt", "path": "tls.crt"}],
+    [
+        {"key": "tls.crt", "path": "tls.crt"},
+        {"key": "tls.key", "path": "tls.key"},
+        {"key": "ca.crt", "path": "ca.crt"},
+    ],
+    [{"key": "tls.crt", "path": "tls.crt"}, {"key": "ca.crt", "path": "tls.key"}],
+):
+    invalid_leaf_documents = copy.deepcopy(publication_documents)
+    invalid_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+        "items"
+    ] = invalid_leaf_items
+    expect_publication_static_failure(
+        "a leaf Secret without exactly tls.crt and tls.key",
+        invalid_leaf_documents,
+        "malformed grpc-tls Secret volume",
+    )
+
+if publication_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"]["items"] != [
+    {"key": "tls.crt", "path": "tls.crt"},
+    {"key": "tls.key", "path": "tls.key"},
+]:
+    raise SystemExit("runtime publication leaf projection exposed keys beyond tls.crt/tls.key")
+
+for invalid_trust_case in ("missing", "wrong-secret", "extra-key", "wrong-path"):
+    invalid_trust_documents = copy.deepcopy(publication_documents)
+    trust_volume = invalid_trust_documents[0]["spec"]["template"]["spec"]["volumes"][1]
+    if invalid_trust_case == "missing":
+        invalid_trust_documents[0]["spec"]["template"]["spec"]["volumes"].pop(1)
+    elif invalid_trust_case == "wrong-secret":
+        trust_volume["secret"]["secretName"] = "hobby-game-design-ca"
+    elif invalid_trust_case == "extra-key":
+        trust_volume["secret"]["items"].append(
+            {"key": "tls.crt", "path": "tls.crt"}
+        )
+    else:
+        trust_volume["secret"]["items"][0]["path"] = "wrong-ca.crt"
+    expect_publication_static_failure(
+        f"a {invalid_trust_case} or malformed shared grpc-trust binding",
+        invalid_trust_documents,
+        "grpc-trust volume",
+    )
+
+missing_trust_mount_documents = copy.deepcopy(publication_documents)
+missing_trust_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+].pop(1)
+expect_publication_static_failure(
+    "a missing grpc-trust mount",
+    missing_trust_mount_documents,
+    "exactly one grpc-trust mount",
+)
+
+writable_trust_mount_documents = copy.deepcopy(publication_documents)
+writable_trust_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][1]["readOnly"] = False
+expect_publication_static_failure(
+    "a writable grpc-trust mount",
+    writable_trust_mount_documents,
+    "read-only grpc-trust mount",
+)
+
+malformed_static_publication_documents = copy.deepcopy(publication_documents)
+malformed_static_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = " "
+with (
+    patch.object(
+        module,
+        "secret_keys_lookup_failure",
+        side_effect=AssertionError("ci-static attempted a live Secret lookup"),
+    ),
+):
+    static_publication_issues = module.publication_workload_secret_issues(
+        publication_expected,
+        malformed_static_publication_documents,
+        lookup_cluster_secrets=False,
+    )
+if (
+    len(static_publication_issues) != 1
+    or "malformed grpc-tls Secret volume" not in static_publication_issues[0]
+):
+    raise SystemExit(
+        "ci-static publication render validation did not reject a malformed Secret volume: "
+        f"{static_publication_issues}"
+    )
+
+malformed_volumes_documents = copy.deepcopy(publication_documents)
+malformed_volumes_documents[0]["spec"]["template"]["spec"]["volumes"] = "not-a-list"
+malformed_volumes_issues = module.publication_workload_secret_issues(
+    publication_expected,
+    malformed_volumes_documents,
+    lookup_cluster_secrets=False,
+)
+if (
+    len(malformed_volumes_issues) != 1
+    or "no valid pod volumes list" not in malformed_volumes_issues[0]
+):
+    raise SystemExit(
+        "ci-static publication render validation did not report malformed pod volumes: "
+        f"{malformed_volumes_issues}"
+    )
+
+missing_workload_documents = publication_documents[:-1]
+if not any(
+    "Expected exactly one rendered Deployment" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, missing_workload_documents
+    )
+):
+    raise SystemExit("missing publication workload did not fail closed")
+
+ambiguous_workload_documents = publication_documents + [
+    copy.deepcopy(publication_documents[0])
+]
+if not any(
+    "Expected exactly one rendered Deployment" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, ambiguous_workload_documents
+    )
+):
+    raise SystemExit("ambiguous publication workload did not fail closed")
+
+missing_grpc_volume_documents = copy.deepcopy(publication_documents)
+missing_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"] = []
+if not any(
+    "Expected exactly one grpc-tls volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, missing_grpc_volume_documents
+    )
+):
+    raise SystemExit("missing grpc-tls volume did not fail closed")
+
+ambiguous_grpc_volume_documents = copy.deepcopy(publication_documents)
+ambiguous_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"].append(
+    copy.deepcopy(ambiguous_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"][0])
+)
+if not any(
+    "Expected exactly one grpc-tls volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, ambiguous_grpc_volume_documents
+    )
+):
+    raise SystemExit("ambiguous grpc-tls volume did not fail closed")
+
+malformed_grpc_volume_documents = copy.deepcopy(publication_documents)
+malformed_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = " "
+if not any(
+    "malformed grpc-tls Secret volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, malformed_grpc_volume_documents
+    )
+):
+    raise SystemExit("malformed grpc-tls Secret volume did not fail closed")
+
+duplicate_secret_documents = copy.deepcopy(publication_documents)
+duplicate_secret_documents[1]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = duplicate_secret_documents[0]["spec"]["template"]["spec"][
+    "volumes"
+][0]["secret"]["secretName"]
+if not any(
+    "grpc-tls Secret must be firemud-grpc-world-management-service" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, duplicate_secret_documents
+    )
+):
+    raise SystemExit(
+        "reused publication grpc-tls Secret did not fail the workload ownership check"
+    )
+
+namespace_mismatch_documents = copy.deepcopy(publication_documents)
+namespace_mismatch_documents[0]["metadata"]["namespace"] = "other-namespace"
+if not any(
+    "does not match expected Secret namespace" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, namespace_mismatch_documents
+    )
+):
+    raise SystemExit("publication workload namespace mismatch did not fail closed")
+
+publication_success_fixture = {
+    name: keys for name, _, keys in publication_requirements
+}
+queried_publication_secrets = []
+
+def publication_secret_lookup(name, namespace, required):
+    queried_publication_secrets.append((name, namespace, required))
+    return (
+        (None, False, False)
+        if required <= publication_success_fixture[name]
+        else (f"Required Secret {namespace}/{name} is missing keys", True, False)
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=publication_secret_lookup,
+):
+    if module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    ):
+        raise SystemExit("complete publication Secret fixture failed preflight")
+if {name for name, _, _ in queried_publication_secrets} != (
+    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
+):
+    raise SystemExit("preflight did not query precisely the mounted publication Secrets")
+if any(namespace != "firemud" for _, namespace, _ in queried_publication_secrets):
+    raise SystemExit("preflight queried a publication Secret in the wrong namespace")
+
+missing_publication_name = publication_requirements[0][0]
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Missing required Secret in cluster: {namespace}/{name}", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_secret_issues = module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    )
+if len(missing_secret_issues) != 1 or "Missing required Secret" not in missing_secret_issues[0]:
+    raise SystemExit(
+        f"missing publication Secret fixture did not fail closed: {missing_secret_issues}"
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Required Secret {namespace}/{name} is missing keys: tls.key", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_key_issues = module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    )
+if len(missing_key_issues) != 1 or "missing keys: tls.key" not in missing_key_issues[0]:
+    raise SystemExit(
+        f"missing publication Secret key fixture did not fail closed: {missing_key_issues}"
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Required Secret {namespace}/{name} is missing keys: ca.crt", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_ca_issues = module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    )
+if len(missing_ca_issues) != 1 or "missing keys: ca.crt" not in missing_ca_issues[0]:
+    raise SystemExit(
+        f"publication Secret missing ca.crt did not fail closed: {missing_ca_issues}"
+    )
+
 namespace = "pr-42"
 release = "pr-42"
 node_port = 32007
@@ -9227,6 +10474,25 @@ spec:
   type: ClusterIP
   ports:
     - port: 443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: __NAMESPACE__
+spec:
+  template:
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: __RELEASE__-gateway-internal-ws
 ---
 apiVersion: v1
 kind: Service

@@ -8,15 +8,10 @@ import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PingService;
-import net.firedevops.firemud.gamesession.service.SessionIdParsing;
-import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
@@ -31,35 +26,28 @@ import org.springframework.util.StringUtils;
 @GrpcService
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
-  private static final String SUSPENDED_STATUS = "SUSPENDED";
   private static final String DUPLICATE_DISCONNECT_METRIC =
       "gamesession.notifydisconnect.duplicate";
   private static final String MISSING_CONTEXT_METRIC =
       "gamesession.notifydisconnect.missing_context";
 
   private final GameInstanceRepository repository;
-  private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
   private final DisconnectDeduplicationService disconnectDeduplicationService;
-  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Injected repository/services are internal Spring collaborators")
   public TcpProxyServiceImpl(
       GameInstanceRepository repository,
-      SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
-      DisconnectDeduplicationService disconnectDeduplicationService,
-      GameplayPresenceLifecycleService gameplayPresenceLifecycleService) {
+      DisconnectDeduplicationService disconnectDeduplicationService) {
     this.repository = repository;
-    this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
     this.disconnectDeduplicationService = disconnectDeduplicationService;
-    this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
   }
 
   @Override
@@ -102,54 +90,16 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       }
     }
 
-    if (StringUtils.hasText(request.getSessionId())) {
-      SessionIdParsing.parse(request.getSessionId())
-          .optionalValue()
-          .ifPresent(
-              sessionId ->
-                  gameplayPresenceLifecycleService.recordDisconnected(
-                      sessionId, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
-    }
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
       meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
-      return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
+      return GrpcAppErrors.ok("Disconnect hint accepted (no proxy bootstrap metadata)");
     }
     SessionValidationResult validation =
         validateGameInstance(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
       return validation.errorDetail();
     }
-    GameInstance instance = validation.instance();
-    GameInstanceDto suspendedState =
-        new GameInstanceDto(
-            instance.getId(),
-            instance.getTenantId(),
-            instance.getRuntimeVersion(),
-            instance.getScriptPatchVersion(),
-            instance.getScriptPinEpoch(),
-            instance.getScriptPatchPinnedControlPlaneRequestId(),
-            instance.getGameTemplateId(),
-            instance.getLaunchDescriptorId(),
-            instance.getVersionId(),
-            instance.getReleaseBundleId(),
-            instance.getVersionStateEpoch(),
-            instance.getGenerationConfigRevision(),
-            instance.getRemapSetId(),
-            instance.getOwnerAccountId(),
-            SUSPENDED_STATUS);
-    try {
-      sessionStateService.saveState(suspendedState);
-      return GrpcAppErrors.ok("Disconnect recorded");
-    } catch (RuntimeException ex) {
-      logger.error(
-          "Failed to save suspended session state tenantId={} gameInstanceId={} proxyConnectionId={} disconnectSequence={}",
-          request.getTenantId(),
-          gameInstanceIdText,
-          request.getProxyConnectionId(),
-          request.getDisconnectSequence(),
-          ex);
-      return GrpcAppErrors.error(meterRegistry, "INTERNAL", "Failed to update session state");
-    }
+    return GrpcAppErrors.ok("Disconnect hint accepted");
   }
 
   private SessionValidationResult validateGameInstance(

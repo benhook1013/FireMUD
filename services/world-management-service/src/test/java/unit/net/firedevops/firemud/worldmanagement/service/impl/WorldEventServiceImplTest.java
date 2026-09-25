@@ -52,7 +52,7 @@ class WorldEventServiceImplTest {
     WorldEventDto request =
         new WorldEventDto(null, 1L, 41L, 7L, "WEATHER_CHANGE", "rainy", null, false, null);
 
-    assertThrows(IllegalStateException.class, () -> service.scheduleEvent(request));
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
 
     verifyNoInteractions(regionInstanceRepository, eventRepository);
   }
@@ -88,6 +88,21 @@ class WorldEventServiceImplTest {
   }
 
   @Test
+  void scheduleRegionEventRejectsNullEventGameInstanceScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(41L);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, null, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
   void scheduleRegionEventRejectsNullRegionScope() {
     RegionInstance regionInstance = new RegionInstance();
     regionInstance.setId(7L);
@@ -96,6 +111,51 @@ class WorldEventServiceImplTest {
     when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
     WorldEventDto request =
         new WorldEventDto(null, 1L, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleRegionEventRejectsNullRegionGameInstanceScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(null);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleRegionEventRejectsAnotherGameInstanceScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(42L);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleRegionEventRejectsNullEventAndRegionScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(null);
+    regionInstance.setGameInstanceId(null);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, null, null, 7L, "REGION_NOTICE", "notice", null, false, null);
 
     assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
 

@@ -254,6 +254,14 @@ jobs:
           path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           export-to-github-env: 'false'
 
+      - name: Write standalone certificate-writer credentials
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'standalone' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig
+          export-to-github-env: 'false'
+
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
@@ -309,6 +317,20 @@ jobs:
         run: |
           echo "DEV_DEMO_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
+
+      - name: Prepare dev-demo shared gRPC TLS secret
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'standalone' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+        run: |
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh --shared-only "${{ needs.dev-demo-plan.outputs.namespace }}"
+
+      - name: Ensure dev-demo standalone gRPC certificates
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'standalone' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig
+        run: |
+          bash ./dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Ensure dev-demo gRPC TLS secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'standalone' }}
@@ -928,6 +950,7 @@ jobs:
           rm -f -- \
             "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \
+            "$RUNNER_TEMP/dev-demo-standalone-certificate-writer.kubeconfig" \
             "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
   dev-demo-destroy:

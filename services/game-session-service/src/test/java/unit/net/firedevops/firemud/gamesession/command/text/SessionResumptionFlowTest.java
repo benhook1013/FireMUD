@@ -205,8 +205,13 @@ class SessionResumptionFlowTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
+                        .setTenantId("22")
+                        .setAccountId("77")
                         .setName("Emberline")
                         .setLevel(12)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     sessionAuthenticationService =
@@ -392,16 +397,9 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
-    verify(scriptEventPublisher)
+    Mockito.verify(scriptEventPublisher, Mockito.never())
         .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 77L
-                        && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:77"),
-            Mockito.eq("TAKEOVER"));
+            Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -424,9 +422,9 @@ class SessionResumptionFlowTest {
                 context ->
                     context.sessionId() == 1L
                         && context.gameInstanceId() == 1L
-                        && context.characterId() == 77L
+                        && context.characterId() == 7001L
                         && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("logout:1:1:77"),
+            Mockito.eq("logout:1:1:7001"),
             Mockito.eq("LOGOUT"));
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
@@ -472,12 +470,18 @@ class SessionResumptionFlowTest {
     assertTrue(secondLogin.commandResult().accepted());
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
-    assertEquals("WORLD_ACCESS_DENIED", deniedPlay.commandResult().errorCode());
+    assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertFalse(lookAfterDeniedReconnect.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertTrue(sessionAuthenticationService.isAuthenticated("1"));
+    assertEquals(
+        77L, sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow().accountId());
+    TextCommandInterpretationResult joinAfterDeniedPlay =
+        interpreter.interpret("1", "JOIN demo", false);
+    assertEquals("AUTH_UNAVAILABLE", joinAfterDeniedPlay.commandResult().errorCode());
   }
 
   @Test
@@ -528,7 +532,8 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
-    assertTrue(charsAfterCutover.commandResult().accepted());
+    assertFalse(charsAfterCutover.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", charsAfterCutover.commandResult().errorCode());
   }
 
   @Test
@@ -553,7 +558,7 @@ class SessionResumptionFlowTest {
     interpreter.interpret("1", command, false);
     interpreter.interpret(
         "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"), false);
-    sessionContextService.evictIdentity(22L, 1L, 77L);
+    sessionContextService.evictIdentity(22L, 1L, 7001L);
 
     TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
 
@@ -574,6 +579,7 @@ class SessionResumptionFlowTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;

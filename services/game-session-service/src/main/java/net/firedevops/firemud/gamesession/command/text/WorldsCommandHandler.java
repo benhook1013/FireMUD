@@ -8,8 +8,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -31,7 +29,6 @@ import org.springframework.util.StringUtils;
 @Component
 public class WorldsCommandHandler {
   private final GameplayWorldCatalog worldCatalog;
-  private final EntityManagementClient entityManagementClient;
   private final AccountClient accountClient;
   private final DirectTextConnectScopeSessionStore connectScopeSessionStore;
 
@@ -42,8 +39,7 @@ public class WorldsCommandHandler {
       AccountClient accountClient,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+    Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.connectScopeSessionStore =
         Objects.requireNonNull(
@@ -53,8 +49,7 @@ public class WorldsCommandHandler {
   WorldsCommandHandler(
       GameplayWorldCatalog worldCatalog, EntityManagementClient entityManagementClient) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+    Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.accountClient = null;
     this.connectScopeSessionStore = new DirectTextConnectScopeSessionStore();
   }
@@ -75,7 +70,8 @@ public class WorldsCommandHandler {
     if (connectScopeSessionStore != null) {
       connectScopeSessionStore.clearWorldScopes(sessionContext, worldSelector);
     }
-    Optional<GameplayWorldCatalog.WorldView> maybeWorld = worldCatalog.resolveWorld(worldSelector);
+    Optional<GameplayWorldCatalog.WorldView> maybeWorld =
+        worldCatalog.resolvePublicWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return RealmBrowseResult.invalidSelector();
     }
@@ -83,7 +79,7 @@ public class WorldsCommandHandler {
     GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
     List<RealmBrowseViewOutput.RealmEntry> visibleEntries = new ArrayList<>();
     List<DirectTextConnectScopeSessionStore.ScopedRealm> issuedScopes = new ArrayList<>();
-    for (GameplayWorldCatalog.RealmView realm : worldCatalog.visibleRealms(world)) {
+    for (GameplayWorldCatalog.RealmView realm : worldCatalog.publicVisibleRealms(world)) {
       if (realm.publicProductionRealm()) {
         if (accountClient == null || connectScopeSessionStore == null) {
           return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -247,15 +243,17 @@ public class WorldsCommandHandler {
       SessionContext sessionContext, String worldSelector, String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        worldCatalog.resolveWorld(worldSelector);
+        worldCatalog.resolvePublicWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }
     GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
     java.util.Optional<GameplayWorldCatalog.RealmView> maybeRealm =
         StringUtils.hasText(realmSelector)
-            ? worldCatalog.resolveRealm(world, realmSelector)
-            : worldCatalog.requiresExplicitRealmSelection(world)
+            ? worldCatalog
+                .resolveRealm(world, realmSelector)
+                .filter(GameplayWorldCatalog.RealmView::publicProductionRealm)
+            : worldCatalog.publicVisibleRealms(world).size() > 1
                 ? java.util.Optional.empty()
                 : worldCatalog.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
@@ -265,31 +263,9 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.realmSelectionRequired(world.slug());
     }
 
-    GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
-    ListCharactersByAccountResponse response =
-        entityManagementClient.listCharactersByAccount(
-            Long.toString(realm.tenantId()),
-            Long.toString(sessionContext.accountId()),
-            Long.toString(realm.gameInstanceId()),
-            toPlayableStateScope(realm));
-    if (response.hasError()) {
-      return CharacterBrowseResult.unavailable();
-    }
-    java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
-        new java.util.ArrayList<>(response.getCharactersCount());
-    for (int i = 0; i < response.getCharactersCount(); i++) {
-      net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
-      entries.add(
-          new CharacterBrowseViewOutput.CharacterEntry(
-              i + 1, character.getId(), character.getName(), character.getLevel()));
-    }
-    return CharacterBrowseResult.success(
-        new CharacterBrowseViewOutput(
-            world.slug(),
-            realm.slug(),
-            realm.stateScope(),
-            realm.characterCreationPolicy(),
-            entries));
+    // Fail closed until Account supplies target-bound admission evidence and Entity lists by
+    // playable-state namespace with the published entry-policy snapshot.
+    return CharacterBrowseResult.unavailable();
   }
 
   public sealed interface CharacterBrowseResult
@@ -298,10 +274,6 @@ public class WorldsCommandHandler {
           CharacterBrowseResult.InvalidRealm,
           CharacterBrowseResult.RealmSelectionRequired,
           CharacterBrowseResult.Unavailable {
-    static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
-      return new Success(output);
-    }
-
     static CharacterBrowseResult invalidWorld() {
       return new InvalidWorld();
     }
@@ -327,17 +299,5 @@ public class WorldsCommandHandler {
     record RealmSelectionRequired(String worldSlug) implements CharacterBrowseResult {}
 
     record Unavailable() implements CharacterBrowseResult {}
-  }
-
-  private PlayableStateScope toPlayableStateScope(GameplayWorldCatalog.RealmView realm) {
-    String scope =
-        realm.stateScope() == null
-            ? ""
-            : realm.stateScope().trim().toUpperCase(java.util.Locale.ROOT);
-    return switch (scope) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    };
   }
 }
