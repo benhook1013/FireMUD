@@ -215,8 +215,10 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<strong>Hosted</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head)">4/3</span>', result)
         self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
-        self.assertIn("1 unlinked to a verified review", result)
-        self.assertIn("1 excluded from taper", result)
+        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads</span>', result)
+        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
+                      '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
+        self.assertNotIn('class="activity-note"', result)
         age_markup = ('Refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
                       'title="25 Sep 00:00 NZST">just now</time>')
         self.assertEqual(2, result.count(age_markup))
@@ -250,8 +252,14 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<span class="round-pill zero-accepted older unlinked" '
                       'aria-label="2/0 (older head, unlinked, non-counting)">2/0</span>', result)
         self.assertIn('.round-pill.older.unlinked.zero-accepted { border-style: dashed; }', result)
-        self.assertIn('1 unlinked to a verified review', result)
-        self.assertIn('1 excluded from taper', result)
+        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
+                      '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
+        self.assertLess(result.index('aria-label="0/0"'), result.index('aria-label="3/1"'))
+        self.assertLess(result.index('aria-label="3/1"'), result.index('aria-label="2/0 (older head'))
+        review["queue"][42]["review_activity"]["hosted"]["recent"] = []
+        without_notes = page.render(self.fixture(), review, NOW)
+        self.assertIn('<span class="activity-caption">Recent, oldest to newest</span>', without_notes)
+        self.assertNotIn('Recent, oldest to newest ·</span>', without_notes)
 
     @patch.object(page.subprocess, "run")
     def test_github_stage_fetch_fails_closed(self, run):

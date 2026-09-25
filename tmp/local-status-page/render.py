@@ -294,18 +294,20 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 non_counting_count = sum(result["non_counting"] for result in recent)
                 notes = []
                 if older_count:
-                    notes.append(f"{older_count} shown from older heads")
+                    notes.append(f"{older_count} from older heads")
                 if unlinked_count:
                     notes.append(f"{unlinked_count} unlinked to a verified review")
                 if non_counting_count:
                     notes.append(f"{non_counting_count} excluded from taper")
+                caption = "Recent, oldest to newest"
+                if notes:
+                    caption += " · " + " · ".join(notes)
                 channel_name = "CLI" if channel == "cli" else "Hosted"
                 activity_cards.append(
                     f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
                     f'<span>{safe(activity["total"])} completed</span></div>'
-                    f'<span class="activity-caption">Recent, oldest to newest</span>'
-                    f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>'
-                    f'<span class="activity-note">{safe(" · ".join(notes))}</span></div>'
+                    f'<span class="activity-caption">{safe(caption)}</span>'
+                    f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
                 )
         activity_grid = f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
         row_class = ' class="merged"' if lifecycle == "MERGED" else ' class="closed"' if lifecycle == "CLOSED" else ""
@@ -374,7 +376,7 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .activity-grid {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }}
 .activity-card {{ min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }}
 .activity-top {{ display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }}
-.activity-caption, .activity-note {{ display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }}
+.activity-caption {{ display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }}
 .round-pills {{ display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }}
 .round-pill {{ border: 1px solid #adb4be; border-radius: 999px; padding: .12rem .43rem; background: #e4e8ed; font-weight: 650; }}
 .round-pill.older {{ border-style: dashed; background: #f1f2f4; color: #626b77; }}
