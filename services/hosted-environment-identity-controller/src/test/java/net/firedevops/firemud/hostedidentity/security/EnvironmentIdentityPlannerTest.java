@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.junit.jupiter.api.Test;
 
 class EnvironmentIdentityPlannerTest {
@@ -180,6 +182,45 @@ class EnvironmentIdentityPlannerTest {
       assertEquals(plan.grpcPublicationSourceSecretName(workload), plan.sourceSecretName(role));
     }
     assertThrows(IllegalArgumentException.class, () -> plan.sourceSecretName("unsupported"));
+  }
+
+  @Test
+  void sourceSecretNameRejectsMissingPublicationSourceEntry() {
+    var plan = planner.plan("pr-42");
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    var sourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
+    sourceSecretNames.remove(role);
+    var incompletePlan =
+        new EnvironmentIdentityPlan(
+            plan.name(),
+            plan.controlNamespace(),
+            plan.identityNamespace(),
+            plan.runtimeNamespace(),
+            plan.hostname(),
+            plan.ingressCertificateName(),
+            plan.ingressSecretName(),
+            plan.telnetCertificateName(),
+            plan.telnetSecretName(),
+            plan.gatewayInternalWsCertificateName(),
+            plan.gatewayInternalWsSecretName(),
+            plan.gatewayInternalWsDnsName(),
+            plan.tcpProxyBridgeCertificateName(),
+            plan.tcpProxyBridgeSecretName(),
+            plan.tcpProxyBridgeUriSan(),
+            plan.grpcCertificateName(),
+            plan.grpcSecretName(),
+            plan.ingressIssuer(),
+            plan.telnetIssuer(),
+            plan.grpcIssuer(),
+            plan.caSecretName(),
+            plan.grpcConsumers(),
+            plan.grpcPublicationCertificateNames(),
+            plan.grpcPublicationSecretNames(),
+            sourceSecretNames);
+
+    IllegalArgumentException failure =
+        assertThrows(IllegalArgumentException.class, () -> incompletePlan.sourceSecretName(role));
+    assertEquals("missing source Secret for gRPC publication role: " + role, failure.getMessage());
   }
 
   @Test

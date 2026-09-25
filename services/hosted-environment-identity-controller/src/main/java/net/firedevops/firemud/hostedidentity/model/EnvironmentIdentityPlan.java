@@ -58,7 +58,12 @@ public record EnvironmentIdentityPlan(
 
   public String sourceSecretName(String role) {
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      return grpcPublicationSourceSecretNames.get(role);
+      String sourceSecretName = grpcPublicationSourceSecretNames.get(role);
+      if (sourceSecretName == null) {
+        throw new IllegalArgumentException(
+            "missing source Secret for gRPC publication role: " + role);
+      }
+      return sourceSecretName;
     }
     return secretName(role);
   }
