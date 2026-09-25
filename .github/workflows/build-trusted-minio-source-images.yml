@@ -21,8 +21,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    name: Select Trusted MinIO Source Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_build: ${{ steps.classify.outputs.should_build }}
+    steps:
+      - name: Check out PR commits for path classification
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether dedicated validation is required
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          should_build=true
+          if [[ "$EVENT_NAME" == pull_request && ( "$BASE_REF" == main || "$BASE_REF" == develop ) ]]; then
+            changed_paths="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+            has_source_change=false
+            has_workflow_change=false
+            while IFS= read -r path; do
+              case "$path" in
+                docker/minio/*|dev-tools/minio/*) has_source_change=true ;;
+                .github/workflows/build-trusted-minio-source-images.yml) has_workflow_change=true ;;
+              esac
+            done <<< "$changed_paths"
+
+            if [[ "$has_source_change" == true && "$has_workflow_change" == false ]]; then
+              should_build=false
+            fi
+          fi
+
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
   build-and-smoke:
     name: Build and Smoke Pinned MinIO Sources
+    needs: classify
+    if: needs.classify.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -47,10 +94,11 @@ jobs:
       - name: Build and smoke exact MinIO sources
         id: smoke
         env:
-          EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: 'true'
+          EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
 
       - name: Upload exact smoke-tested image artifact
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: trusted-minio-images-${{ github.run_id }}-${{ github.run_attempt }}
