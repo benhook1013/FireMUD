@@ -1,3 +1,4 @@
+import dataclasses
 import fcntl
 import hashlib
 import json
@@ -21,6 +22,7 @@ from pr_review.cli_runner import (
     PullRequestSnapshot,
     ReviewRunnerError,
     ReviewTarget,
+    StaleReviewTargetError,
     SubprocessRunner,
     UnreconciledReviewError,
     WrongTargetError,
@@ -35,6 +37,8 @@ BASE = "a" * 40
 PARENT = BASE
 HEAD = "c" * 40
 CANDIDATE = "d" * 40
+CONTEXT = "f" * 40
+ADVANCED = "9" * 40
 OLDER_BASE = "e" * 40
 
 
@@ -79,6 +83,7 @@ class FakeCommands:
         review_output="review output\n",
         parent_is_ancestor=True,
         merge_base=None,
+        merge_conflict=False,
     ):
         self.root = root
         self.delay = delay
@@ -96,6 +101,7 @@ class FakeCommands:
         self.review_output = review_output
         self.parent_is_ancestor = parent_is_ancestor
         self.merge_base = merge_base or PARENT
+        self.merge_conflict = merge_conflict
         self.timeout_calls = []
 
     def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
@@ -137,11 +143,25 @@ class FakeCommands:
                 return CompletedProcess(args, 0, "", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", PARENT]:
                 return CompletedProcess(args, 0 if self.parent_is_ancestor else 1, "", "")
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                if self.merge_conflict:
+                    return CompletedProcess(args, 1, "", "conflict\n")
+                return CompletedProcess(args, 0, f"{CONTEXT}\n", "")
+            if "commit-tree" in git_args:
+                return CompletedProcess(args, 0, f"{CONTEXT}\n", "")
+            if git_args[:3] == ["show", "-s", "--format=%P"]:
+                return CompletedProcess(args, 0, f"{BASE} {HEAD}\n", "")
             return CompletedProcess(args, 0, "", "")
         raise AssertionError(f"unexpected command: {args}")
 
 
-def target(*, reconciled=True, ancestor_links_valid=True, merge_base=""):
+def target(
+    *,
+    reconciled=True,
+    ancestor_links_valid=True,
+    merge_base="",
+    default_base_front=False,
+):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
     return ReviewTarget(
         snapshot,
@@ -150,6 +170,10 @@ def target(*, reconciled=True, ancestor_links_valid=True, merge_base=""):
         ancestor_links_valid=ancestor_links_valid,
         merge_base=merge_base,
         repository="owner/repo",
+        default_base_front=default_base_front,
+        default_test_merge_base_sha=BASE if default_base_front else "",
+        default_test_merge_head_sha=HEAD if default_base_front else "",
+        default_test_merge_tree_sha=CONTEXT if default_base_front else "",
     )
 
 
@@ -486,6 +510,84 @@ class CliReviewRunnerTests(unittest.TestCase):
                     source_root=root,
                     runner=FakeCommands(root, parent_is_ancestor=False, merge_base=OLDER_BASE),
                 )
+
+    def test_direct_default_front_reviews_a_current_composed_base_head_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, parent_is_ancestor=False, merge_base=OLDER_BASE)
+
+            result = run_cli_review(
+                target(default_base_front=True, merge_base=OLDER_BASE),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            pinned_ref = f"refs/firemud/pr-review-base/{result.run_id}"
+            command_args = [call[0] for call in commands.calls]
+            self.assertEqual(result.candidate_sha, HEAD)
+            self.assertEqual(metadata["review_context_sha"], CONTEXT)
+            self.assertEqual(metadata["review_base_sha"], BASE)
+            self.assertIn(("git", "-C", str(root), "update-ref", pinned_ref, BASE), command_args)
+            self.assertTrue(
+                any(
+                    args[:6] == ("git", "-C", str(root), "worktree", "add", "--detach") and args[-1] == CONTEXT
+                    for args in command_args
+                )
+            )
+
+    def test_direct_default_front_requires_the_selected_test_merge_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            selected = dataclasses.replace(
+                target(default_base_front=True),
+                default_test_merge_tree_sha="",
+            )
+
+            with self.assertRaisesRegex(ReviewRunnerError, "no verified current base/head test merge"):
+                run_cli_review(
+                    selected,
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
+
+            self.assertFalse(any(args and args[0] == "coderabbit" for args, _ in commands.calls))
+
+    def test_direct_default_front_rejects_a_base_move_before_starting_the_cli_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            advanced = PullRequestSnapshot(
+                42,
+                "OPEN",
+                "develop",
+                ADVANCED,
+                HEAD,
+                changed_files=1,
+                mergeable="MERGEABLE",
+            )
+            original_pull = github.pull_request
+            snapshots = iter((original_pull(42), advanced))
+            github.pull_request = lambda _number: next(snapshots)
+            parent_tips = iter((PARENT, ADVANCED))
+            github.branch_head = lambda _ref: next(parent_tips)
+            commands = FakeCommands(root, parent_is_ancestor=False)
+
+            with self.assertRaisesRegex(StaleReviewTargetError, "base advanced during CLI preflight"):
+                run_cli_review(
+                    target(default_base_front=True),
+                    github=github,
+                    source_root=root,
+                    runner=commands,
+                )
+
+            self.assertFalse(any(args and args[0] == "coderabbit" for args, _ in commands.calls))
 
     def test_successful_capture_contains_duration_artifact_and_loads(self):
         complete = {

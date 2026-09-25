@@ -26,6 +26,7 @@ from pr_review.controller import (
     LivePullRequest,
     PullRequestSnapshot,
     ReviewController,
+    StaleReviewTarget,
     WrongStackTarget,
     compact_result,
     json_result,
@@ -46,6 +47,8 @@ class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
         self.remote_heads_calls = 0
+        self.test_merge_calls = []
+        self.test_merge_error = None
 
     def remote_heads(self):
         self.remote_heads_calls += 1
@@ -65,6 +68,12 @@ class FakeGit:
 
     def patch_identity(self, merge_base, head):
         return f"patch-{head[:4]}"
+
+    def test_merge_tree(self, base, head):
+        self.test_merge_calls.append((base, head))
+        if self.test_merge_error is not None:
+            raise self.test_merge_error
+        return MERGE_1
 
 
 class FakeGitHub:
@@ -124,7 +133,16 @@ class AuditedEvidence(dict):
         return audit
 
 
-def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_repository="owner/repo"):
+def pr(
+    number,
+    head,
+    base_ref="develop",
+    base_tip=BASE,
+    *,
+    merged=False,
+    head_repository="owner/repo",
+    mergeable="MERGEABLE",
+):
     return LivePullRequest(
         number,
         head,
@@ -132,6 +150,7 @@ def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_re
         base_tip,
         f"feature-{number}",
         merged=merged,
+        mergeable=mergeable,
         head_repository=head_repository,
     )
 
@@ -326,6 +345,93 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["reviewed_head"], HEAD_1)
         self.assertEqual(stopped["stop_head"], HEAD_1)
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_direct_human_stop_ignores_only_audit_proven_terminal_rate_limit(self):
+        old_head = "7" * 40
+        cooldown_until = "2999-01-01T00:00:00Z"
+        latest = self.allocation_evidence(checkpoint="latest-hosted")
+        rate_limit = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger:42",
+            "rate_limited": True,
+            "trigger_id": 42,
+            "response_id": 43,
+            "terminal": True,
+            "attributable": True,
+            "cooldown_until": cooldown_until,
+        }
+        provider = AuditedEvidence(
+            {(1, "hosted"): [latest, rate_limit]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "terminal_rate_limits": [
+                    {
+                        "trigger_id": 42,
+                        "response_id": 43,
+                        "captured_head": old_head,
+                        "cooldown_until": cooldown_until,
+                        "terminal": True,
+                        "attributable": True,
+                    }
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="the prior Hosted response was a terminal rate limit",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_direct_human_stop_does_not_ignore_unproven_rate_limit_history(self):
+        old_head = "7" * 40
+        provider = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": old_head,
+                        "checkpoint": "trigger:42",
+                        "rate_limited": True,
+                        "trigger_id": 42,
+                        "response_id": 43,
+                        "terminal": True,
+                        "attributable": True,
+                        "cooldown_until": "2999-01-01T00:00:00Z",
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved review evidence"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="a rate-limit flag without audit identity must still block",
+            )
 
     def test_hosted_stop_is_blocked_by_current_head_cli_accepted_finding(self):
         controller = self.make(
@@ -1455,6 +1561,22 @@ class ControllerTests(unittest.TestCase):
             ["git", "-C", str(DefaultGitProvider().root), *patch_diff_args("a" * 40, "b" * 40)],
         )
 
+    def test_default_git_provider_returns_tree_for_exact_clean_test_merge(self):
+        results = [
+            CompletedProcess(["git"], 0, b"", b""),
+            CompletedProcess(["git"], 0, b"", b""),
+            CompletedProcess(["git"], 0, f"{MERGE_1}\n".encode(), b""),
+            CompletedProcess(["git"], 0, "tree\n", ""),
+        ]
+        with patch("pr_review.controller.subprocess.run", side_effect=results) as run:
+            actual = DefaultGitProvider(timeout_seconds=11).test_merge_tree(BASE, HEAD_1)
+
+        self.assertEqual(actual, MERGE_1)
+        self.assertEqual(
+            run.call_args_list[2].args[0],
+            ["git", "-C", str(DefaultGitProvider().root), "merge-tree", "--write-tree", BASE, HEAD_1],
+        )
+
     def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
         with patch(
             "pr_review.controller.subprocess.run",
@@ -1552,6 +1674,153 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["prs"][1]["reconciliation"], "PARENT_MOVED")
         with self.assertRaises(ControllerError):
             controller.resolve_hosted_target()
+
+    def test_direct_default_base_advance_keeps_unchanged_owned_patch_reviewable(self):
+        advanced_base = "9" * 40
+        old_review = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "hosted-before-default-advance",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 1,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip=advanced_base)},
+            {(1, "hosted"): [old_review]},
+            heads={"develop": advanced_base, "feature-1": HEAD_1},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.set_stack([1])
+
+        status = controller.status()["prs"][0]
+        target = controller.resolve_hosted_target()
+
+        self.assertEqual(status["reconciliation"], "COHERENT")
+        self.assertEqual(status["channels"]["hosted"], "READY")
+        self.assertTrue(target.default_base_front)
+        self.assertEqual(controller.git.test_merge_calls[-1], (advanced_base, HEAD_1))
+        self.assertTrue(target.has_current_default_test_merge_proof())
+        self.assertEqual(target.parent.head_sha, advanced_base)
+        self.assertEqual(target.snapshot.head_sha, HEAD_1)
+
+    def test_direct_default_front_holds_when_local_test_merge_conflicts(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip=advanced_base, mergeable="MERGEABLE")},
+            heads={"develop": advanced_base, "feature-1": HEAD_1},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.git.test_merge_error = ControllerError("overlapping changes conflict")
+        controller.set_stack([1])
+
+        status = controller.status()["prs"][0]
+
+        self.assertEqual(status["reconciliation"], "UNRECONCILED")
+        self.assertIn("test merge is unproven", status["reason"])
+        self.assertIn("overlapping changes conflict", status["reason"])
+        with self.assertRaisesRegex(ControllerError, "unreconciled|cannot run"):
+            controller.resolve_hosted_target()
+
+    def test_direct_default_base_advance_holds_conflicts_and_changed_owned_patch(self):
+        advanced_base = "9" * 40
+        for label, mergeable, prior_patch in (
+            ("conflict", "CONFLICTING", f"patch-{HEAD_1[:4]}"),
+            ("patch-change", "MERGEABLE", "old-owned-patch"),
+        ):
+            with self.subTest(case=label):
+                old_review = {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": f"hosted-before-default-advance-{label}",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": prior_patch,
+                }
+                controller = self.make(
+                    {1: pr(1, HEAD_1, base_tip=advanced_base, mergeable=mergeable)},
+                    {(1, "hosted"): [old_review]},
+                    heads={"develop": advanced_base, "feature-1": HEAD_1},
+                )
+                controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+                    (BASE, HEAD_1),
+                    (BASE, advanced_base),
+                }
+                controller.set_stack([1])
+
+                result = controller.status()["prs"][0]
+
+                self.assertIn(result["reconciliation"], {"PARENT_MOVED", "UNRECONCILED"})
+                with self.assertRaises(ControllerError):
+                    controller.resolve_hosted_target()
+
+    def test_default_base_advance_reselects_after_stale_hosted_preflight(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            heads={"develop": BASE, "feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        calls = []
+
+        def adapter(target, **kwargs):
+            calls.append((target, kwargs))
+            if len(calls) == 1:
+                controller.git.heads["develop"] = advanced_base
+                controller.github.values[1] = pr(1, HEAD_1, base_tip=advanced_base)
+                raise StaleReviewTarget("default base advanced before posting")
+            return target
+
+        controller.hosted_adapter = adapter
+
+        selected = controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(selected.snapshot.head_sha, HEAD_1)
+        self.assertEqual(selected.parent.head_sha, advanced_base)
+        self.assertTrue(selected.default_base_front)
+
+    def test_default_base_advance_does_not_relax_stacked_child_ancestry(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {
+                1: pr(1, HEAD_1, base_tip=advanced_base),
+                2: pr(2, HEAD_2, "feature-1", HEAD_1),
+            },
+            heads={"develop": advanced_base, "feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.set_stack([1, 2])
+
+        result = controller.status()
+
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(result["prs"][1]["reconciliation"], "UNRECONCILED")
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target(expected_pr=2)
 
     def test_wrong_target_expectation_is_checked_before_adapter(self):
         values = {1: pr(1, HEAD_1)}
@@ -2172,6 +2441,7 @@ class ControllerTests(unittest.TestCase):
                 "patch_id": f"patch-{HEAD_1[:4]}",
             }
         )
+        controller.git.is_ancestor = lambda ancestor, child: ancestor != old_parent
         self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
 
     def test_legacy_transition_write_fails_closed_when_transition_list_changes_concurrently(self):
@@ -3040,6 +3310,7 @@ class ControllerTests(unittest.TestCase):
 
                 _, reconciliation = controller._reconciliation(controller._state())
 
+                self.assertEqual(reconciliation.status, "COHERENT")
                 self.assertEqual(reconciliation.status_for(2), "COHERENT")
                 self.assertEqual(reconciliation.status_for(2, "cli"), expected_channel_status)
 

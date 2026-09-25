@@ -28,6 +28,7 @@ from .cli_runner import (
     EffectiveParent,
     PullRequestSnapshot,
     ReviewTarget,
+    StaleReviewTargetError,
 )
 from .hosted import default_trigger_record_path, parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
@@ -51,7 +52,12 @@ class WrongStackTarget(ControllerError):
     """The requested PR is not the target selected by the configured stack."""
 
 
+class StaleReviewTarget(ControllerError):
+    """A direct-to-default target's base advanced before review could begin."""
+
+
 GIT_TIMEOUT_SECONDS = 30
+MAX_BASE_RESELECTIONS = 2
 LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
 
 
@@ -69,6 +75,8 @@ class GitProvider(Protocol):
     def merge_base(self, left: str, right: str) -> str: ...
 
     def patch_identity(self, merge_base: str, head: str) -> str: ...
+
+    def test_merge_tree(self, base: str, head: str) -> str: ...
 
 
 class GitHubProvider(Protocol):
@@ -185,6 +193,40 @@ class DefaultGitProvider:
             return result.stdout
 
         return patch_identity(run_diff, merge_base, head)
+
+    def test_merge_tree(self, base: str, head: str) -> str:
+        """Return the clean merge tree for one exact base/head tuple."""
+
+        normalized_base = _sha(base, "test-merge base")
+        normalized_head = _sha(head, "test-merge head")
+        self._ensure_commit(normalized_base)
+        self._ensure_commit(normalized_head)
+        result = self._run_process(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "merge-tree",
+                "--write-tree",
+                normalized_base,
+                normalized_head,
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ControllerError("current default base and PR head do not produce a clean test merge")
+        try:
+            output = result.stdout.decode("utf-8") if isinstance(result.stdout, bytes) else result.stdout
+        except UnicodeDecodeError as error:
+            raise ControllerError("current default base and PR head test merge returned malformed output") from error
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if not lines:
+            raise ControllerError("current default base and PR head test merge returned no tree")
+        tree = _sha(lines[0], "test-merge tree")
+        tree_type = self._run("cat-file", "-t", tree)
+        if tree_type != "tree":
+            raise ControllerError("current default base and PR head test merge returned a non-tree object")
+        return tree
 
 
 class EmptyEvidence:
@@ -451,6 +493,7 @@ class ReviewController:
         self.hosted_adapter = hosted_adapter
         self.cli_adapter = cli_adapter
         self.isolated_fixture = isolated_fixture
+        self._default_test_merge_proofs: dict[int, tuple[str, str, str]] = {}
 
     def _require_github(self) -> GitHubProvider:
         if self.github is None:
@@ -586,11 +629,13 @@ class ReviewController:
     def _reconciliation(self, state: ReviewState) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         remote_heads = self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
+        ancestry_errors: set[tuple[str, str]] = set()
 
         def is_ancestor(parent: str, child: str) -> bool:
             try:
                 return self.git.is_ancestor(parent, child)
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                ancestry_errors.add((parent.casefold(), child.casefold()))
                 return False
 
         baseline = stack.reconcile_stack(
@@ -600,6 +645,48 @@ class ReviewController:
             default_tip,
             is_ancestor=is_ancestor,
         )
+        direct_default_fronts: set[int] = set()
+        default_test_merge_failures: dict[int, str] = {}
+        self._default_test_merge_proofs = {}
+        baseline_reasons = dict(baseline.reasons)
+        baseline_statuses = dict(baseline.statuses)
+        for pr in state.ordered_prs:
+            item = live[pr]
+            link = baseline.links[pr]
+            if (
+                item.merged
+                or link.parent_pr is not None
+                or link.parent_ref != self.default_base_ref
+                or item.base_ref != self.default_base_ref
+                or item.base_tip.casefold() != default_tip.casefold()
+                or item.state != "OPEN"
+                or item.mergeable != "MERGEABLE"
+            ):
+                continue
+            try:
+                merge_tree = self._test_merge_tree(item.base_tip, item.head)
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                reason = f"current default-base test merge is unproven: {error}"
+                default_test_merge_failures[pr] = reason
+                baseline_statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+                baseline_reasons[pr] = reason
+                continue
+            self._default_test_merge_proofs[pr] = (item.base_tip, item.head, merge_tree)
+            reason = baseline_reasons.get(pr, "")
+            ancestry_pair = (link.parent_head.casefold(), item.head.casefold())
+            is_base_advance_ancestry_failure = (
+                reason == "effective parent head is not an ancestor of the child head"
+                and ancestry_pair not in ancestry_errors
+            )
+            if is_base_advance_ancestry_failure:
+                # The local merge-tree proof above binds this exception to the
+                # exact current default-base/PR-head tuple. A direct front need
+                # not first rewrite its branch to contain unrelated default commits.
+                baseline_statuses[pr] = stack.ReconciliationStatus.COHERENT
+                baseline_reasons.pop(pr, None)
+            if baseline_statuses.get(pr, stack.ReconciliationStatus.COHERENT) == stack.ReconciliationStatus.COHERENT:
+                direct_default_fronts.add(pr)
+        baseline = dataclasses.replace(baseline, reasons=baseline_reasons, statuses=baseline_statuses)
         unsupported: set[int] = set()
         reasons = dict(baseline.reasons)
         statuses = dict(baseline.statuses)
@@ -666,6 +753,20 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
                 if latest is not None:
+                    if (
+                        pr in direct_default_fronts
+                        and _field(latest, "child_head") == current.child_head
+                        and _field(latest, "parent_identity") == current.parent_identity
+                        and _field(latest, "merge_base") == current.merge_base
+                        and _field(latest, "patch_id", "patch_identity") == current.patch_id
+                        and isinstance(_field(latest, "parent_head"), str)
+                        and is_ancestor(_field(latest, "parent_head"), current.parent_head)
+                    ):
+                        # Do not turn an unrelated default-tip advance into an
+                        # anchored-parent movement when the exact reviewed head
+                        # and owned patch are unchanged. The channel-specific
+                        # classification below still checks every review record.
+                        continue
                     parent_head = _field(latest, "parent_head")
                     if (
                         isinstance(parent_head, str)
@@ -685,6 +786,25 @@ class ReviewController:
         reasons = dict(result.reasons)
         statuses = dict(result.statuses)
         channel_statuses = dict(result.channel_statuses)
+
+        for pr in direct_default_fronts:
+            item = live[pr]
+            link = result.links[pr]
+            if (
+                link.parent_pr is None
+                and link.parent_ref == self.default_base_ref
+                and item.base_ref == self.default_base_ref
+                and item.base_tip.casefold() == link.parent_head.casefold()
+                and item.state == "OPEN"
+                and item.mergeable == "MERGEABLE"
+                and reasons.get(pr) == "effective parent head is not an ancestor of the child head"
+                and (link.parent_head.casefold(), item.head.casefold()) not in ancestry_errors
+            ):
+                statuses[pr] = stack.ReconciliationStatus.COHERENT
+                reasons.pop(pr, None)
+        for pr, reason in default_test_merge_failures.items():
+            statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+            reasons[pr] = reason
 
         def set_anchor_status(pr: int, status: stack.ReconciliationStatus, reason: str) -> None:
             # Topology failures apply to both review channels. Evidence identity
@@ -807,6 +927,18 @@ class ReviewController:
                     )
                     continue
                 if classification == stack.ReconciliationStatus.PARENT_MOVED:
+                    if (
+                        pr in direct_default_fronts
+                        and values["child_head"].casefold() == current.child_head.casefold()
+                        and values["parent_identity"] == current.parent_identity
+                        and values["merge_base"].casefold() == current.merge_base.casefold()
+                        and values["patch_id"] == current.patch_id
+                        and is_ancestor(values["parent_head"], current.parent_head)
+                    ):
+                        # Same head, merge base, and owned diff means the only
+                        # movement is the default branch tip. Existing review
+                        # evidence remains about the exact unchanged PR patch.
+                        continue
                     if pr in reconciled:
                         channel_status = (
                             stack.ReconciliationStatus.EQUIVALENT_HISTORY
@@ -848,8 +980,15 @@ class ReviewController:
             overall = stack.ReconciliationStatus.PARENT_MOVED
         elif any(value == stack.ReconciliationStatus.UNRECONCILED for value in statuses.values()):
             overall = stack.ReconciliationStatus.UNRECONCILED
-        else:
+        elif result.status in {
+            stack.ReconciliationStatus.PATCH_CHANGED,
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+        }:
+            # These statuses are normally channel-specific in channel_statuses;
+            # retain them if a future reconciliation provider promotes one.
             overall = result.status
+        else:
+            overall = stack.ReconciliationStatus.COHERENT
         return live, dataclasses.replace(
             result,
             status=overall,
@@ -955,6 +1094,13 @@ class ReviewController:
         if not isinstance(patch_id, str) or not patch_id:
             raise ControllerError("Git provider returned an empty patch identity")
         return AnchorFacts(pr, item.head, link.identity, link.parent_head, merge_base, patch_id)
+
+    def _test_merge_tree(self, base: str, head: str) -> str:
+        verifier = getattr(self.git, "test_merge_tree", None)
+        if not callable(verifier):
+            raise ControllerError("Git provider cannot verify a current base/head test merge")
+        tree = verifier(_sha(base, "test-merge base"), _sha(head, "test-merge head"))
+        return _sha(tree, "test-merge tree")
 
     @staticmethod
     def _legacy_transition_record(value: Any, pr: int, current_head: str) -> None:
@@ -1559,11 +1705,36 @@ class ReviewController:
             raise ControllerError("review-stop evidence audit observed a stale stack identity")
 
         terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
+        terminal_rate_limits = audit.get("terminal_rate_limits", [])
         retained_ambiguities = audit.get("retained_ambiguous", [])
         if not isinstance(terminal_ambiguities, Sequence) or isinstance(terminal_ambiguities, (str, bytes)):
             raise ControllerError("review-stop audit has malformed terminal ambiguity evidence")
+        if not isinstance(terminal_rate_limits, Sequence) or isinstance(terminal_rate_limits, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed terminal rate-limit evidence")
         if not isinstance(retained_ambiguities, Sequence) or isinstance(retained_ambiguities, (str, bytes)):
             raise ControllerError("review-stop audit has malformed retained ambiguity evidence")
+        normalized_rate_limits: list[dict[str, Any]] = []
+        rate_limit_trigger_ids: set[int] = set()
+        rate_limit_response_ids: set[int] = set()
+        for item in terminal_rate_limits:
+            if (
+                not isinstance(item, Mapping)
+                or type(item.get("trigger_id")) is not int
+                or item["trigger_id"] <= 0
+                or type(item.get("response_id")) is not int
+                or item["response_id"] <= 0
+                or not isinstance(item.get("captured_head"), str)
+                or re.fullmatch(r"[0-9a-fA-F]{40}", item["captured_head"]) is None
+                or parse_timestamp(item.get("cooldown_until")) is None
+                or item.get("terminal") is not True
+                or item.get("attributable") is not True
+                or item["trigger_id"] in rate_limit_trigger_ids
+                or item["response_id"] in rate_limit_response_ids
+            ):
+                raise ControllerError("review-stop audit has malformed terminal rate-limit identity")
+            rate_limit_trigger_ids.add(item["trigger_id"])
+            rate_limit_response_ids.add(item["response_id"])
+            normalized_rate_limits.append(dict(item))
         terminal_fingerprints = [
             item.get("fingerprint")
             for item in terminal_ambiguities
@@ -1632,6 +1803,7 @@ class ReviewController:
             raise ControllerError("review stop is blocked by unretained terminal ambiguity")
 
         normalized_audit = dict(audit)
+        normalized_audit["terminal_rate_limits"] = tuple(normalized_rate_limits)
         normalized_audit["historical_terminal_fingerprints"] = tuple(sorted(historical_terminal_fingerprints))
         for field, description in (
             ("active_reservations", "active review or reservation"),
@@ -1739,6 +1911,10 @@ class ReviewController:
         non_blocking_ambiguity_fingerprints = set(retained_fingerprints) | set(
             audit.get("historical_terminal_fingerprints", ())
         )
+        non_blocking_rate_limits = {
+            item["trigger_id"]: item
+            for item in audit.get("terminal_rate_limits", ())
+        } if allow_historical_terminal_ambiguity else {}
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
             valid_review_indexes = [
@@ -1758,6 +1934,18 @@ class ReviewController:
                 else None
             )
             for index, (value, evidence_value) in enumerate(zip(history, parsed_history, strict=True)):
+                trigger_id = _field(value, "trigger_id")
+                rate_limit_proof = non_blocking_rate_limits.get(trigger_id)
+                audited_terminal_rate_limit = (
+                    isinstance(rate_limit_proof, Mapping)
+                    and _field(value, "checkpoint", "checkpoint_id") == f"trigger:{trigger_id}"
+                    and _field(value, "response_id") == rate_limit_proof["response_id"]
+                    and _field(value, "head", "reviewed_head") == rate_limit_proof["captured_head"]
+                    and _field(value, "cooldown_until") == rate_limit_proof["cooldown_until"]
+                    and _field(value, "terminal") is True
+                    and _field(value, "attributable") is True
+                    and _field(value, "rate_limited") is True
+                )
                 if evidence_value.provisional and index > last_valid_review_index:
                     provisional_head = evidence_value.head.casefold()
                     relevant_heads = {current.child_head.casefold()}
@@ -1785,16 +1973,15 @@ class ReviewController:
                             raise ControllerError(
                                 "accepted findings need a published corrected head before review can stop"
                             )
-                if any(
-                    _field(value, flag) is True
-                    for flag in (
-                        "held",
-                        "unstable",
-                        "rate_limited",
-                        "unreconciled",
-                        "parent_moved",
-                        "over_ceiling",
-                    )
+                blocker_flags = (
+                    "held",
+                    "unstable",
+                    "unreconciled",
+                    "parent_moved",
+                    "over_ceiling",
+                )
+                if any(_field(value, flag) is True for flag in blocker_flags) or (
+                    not audited_terminal_rate_limit and _field(value, "rate_limited") is True
                 ):
                     if (
                         _field(value, "terminal_ambiguous") is True
@@ -1847,6 +2034,8 @@ class ReviewController:
                     raise ControllerError(f"{selected.value} channel has unresolved review evidence")
                 checkpoint_id = _field(value, "checkpoint", "checkpoint_id")
                 if isinstance(checkpoint_id, str) and checkpoint_id.startswith(("trigger:", "pending-capture:")):
+                    if audited_terminal_rate_limit:
+                        continue
                     if (
                         _field(value, "terminal_ambiguous") is True
                         and _field(value, "fingerprint") in non_blocking_ambiguity_fingerprints
@@ -2237,6 +2426,12 @@ class ReviewController:
         item = live[pr]
         link = reconciliation.links[pr]
         anchor = self._anchor(pr, item, link)
+        test_merge = self._default_test_merge_proofs.get(pr)
+        if test_merge is not None and (
+            test_merge[0].casefold() != item.base_tip.casefold()
+            or test_merge[1].casefold() != item.head.casefold()
+        ):
+            test_merge = None
         selected_target = ReviewTarget(
             item.runner_snapshot(),
             EffectiveParent(link.parent_ref, link.parent_head, link.parent_pr),
@@ -2255,6 +2450,17 @@ class ReviewController:
             patch_identity=anchor.patch_id,
             merge_base=anchor.merge_base,
             repository=self.repository,
+            default_base_front=(
+                link.parent_pr is None
+                and link.parent_ref == self.default_base_ref
+                and item.base_ref == self.default_base_ref
+                and item.base_tip.casefold() == link.parent_head.casefold()
+                and item.mergeable == "MERGEABLE"
+                and test_merge is not None
+            ),
+            default_test_merge_base_sha=test_merge[0] if test_merge is not None else "",
+            default_test_merge_head_sha=test_merge[1] if test_merge is not None else "",
+            default_test_merge_tree_sha=test_merge[2] if test_merge is not None else "",
         )
         return Target(selected, pr, decision.status, decision.reason, selected_target, anchor, decision.provisional)
 
@@ -2374,11 +2580,19 @@ class ReviewController:
     def run_hosted(self, *, expected_pr: int | None = None, **kwargs: Any) -> Any:
         selected = self._target(policy.Channel.HOSTED, expected_pr)
         self._ensure_runnable(selected)
-        if not self.isolated_fixture:
-            prepare_full_trigger(selected.pr, expected_pr)
         if self.hosted_adapter is None:
             raise ControllerError("Hosted adapter is not configured")
-        return self.hosted_adapter(selected.target, expect_pr=expected_pr, **kwargs)
+        for attempt in range(MAX_BASE_RESELECTIONS + 1):
+            if not self.isolated_fixture:
+                prepare_full_trigger(selected.pr, expected_pr)
+            try:
+                return self.hosted_adapter(selected.target, expect_pr=expected_pr, **kwargs)
+            except StaleReviewTarget:
+                if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
+                    raise
+                selected = self._target(policy.Channel.HOSTED, selected.pr)
+                self._ensure_runnable(selected)
+        raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
 
     def _provisional_duplicate(self, selected: Target) -> bool:
         for value in _history(self._evidence_provider, selected.pr, policy.Channel.CLI):
@@ -2399,26 +2613,38 @@ class ReviewController:
         **kwargs: Any,
     ) -> Any:
         selected = self._target(policy.Channel.CLI, expected_pr)
-        if allow_unreconciled:
-            if not reason or selected.status not in {
-                policy.ReviewStatus.UNRECONCILED,
-                policy.ReviewStatus.PARENT_MOVED,
+        for attempt in range(MAX_BASE_RESELECTIONS + 1):
+            if allow_unreconciled:
+                if not reason or selected.status not in {
+                    policy.ReviewStatus.UNRECONCILED,
+                    policy.ReviewStatus.PARENT_MOVED,
+                }:
+                    raise ControllerError("provisional CLI requires an unreconciled target and a reason")
+                if self._provisional_duplicate(selected):
+                    raise ControllerError(
+                        "one provisional CLI discovery is already recorded for this exact child/parent identity"
+                    )
+            elif selected.status in {
+                policy.ReviewStatus.RATE_LIMITED,
+                policy.ReviewStatus.COMPLETE,
+                policy.ReviewStatus.JUDGMENT_REQUIRED,
             }:
-                raise ControllerError("provisional CLI requires an unreconciled target and a reason")
-            if self._provisional_duplicate(selected):
-                raise ControllerError(
-                    "one provisional CLI discovery is already recorded for this exact child/parent identity"
+                raise ControllerError(f"CLI review cannot run: {selected.status.value}")
+            self._ensure_runnable(selected, provisional=allow_unreconciled)
+            if self.cli_adapter is None:
+                raise ControllerError("CLI adapter is not configured")
+            try:
+                return self.cli_adapter(
+                    selected.target,
+                    allow_unreconciled=allow_unreconciled,
+                    reason=reason,
+                    **kwargs,
                 )
-        elif selected.status in {
-            policy.ReviewStatus.RATE_LIMITED,
-            policy.ReviewStatus.COMPLETE,
-            policy.ReviewStatus.JUDGMENT_REQUIRED,
-        }:
-            raise ControllerError(f"CLI review cannot run: {selected.status.value}")
-        self._ensure_runnable(selected, provisional=allow_unreconciled)
-        if self.cli_adapter is None:
-            raise ControllerError("CLI adapter is not configured")
-        return self.cli_adapter(selected.target, allow_unreconciled=allow_unreconciled, reason=reason, **kwargs)
+            except StaleReviewTargetError as error:
+                if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
+                    raise ControllerError(str(error)) from error
+                selected = self._target(policy.Channel.CLI, selected.pr)
+        raise AssertionError("bounded CLI reselection loop exhausted unexpectedly")
 
     def evidence(self, pr: int | None = None) -> dict[str, Any]:
         state = self._state()
