@@ -872,7 +872,9 @@ done
   fi
 )
 
-if ! (
+set +e
+(
+  set -e
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
@@ -916,12 +918,7 @@ if ! (
     echo "unexpected static preflight invocation: $*" >&2
     return 1
   }
-  main_status=0
-  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main || main_status=$?
-  if [[ "$main_status" -ne 0 ]]; then
-    echo "Shared-base validator main failed with status $main_status" >&2
-    exit "$main_status"
-  fi
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
   if [[ "$python3_invoked" != "true" ]]; then
     echo "Shared-base validation skipped static preflight" >&2
     exit 1
@@ -942,15 +939,57 @@ if ! (
     echo "Expected both stage/prod image validations, got ${#docker_image_inspect_calls[@]}" >&2
     exit 1
   fi
-) >"$OUTPUT_FILE" 2>&1; then
+) >"$OUTPUT_FILE" 2>&1
+shared_base_status=$?
+set -e
+if [[ "$shared_base_status" -ne 0 ]]; then
   echo "Shared-base main-path validation contract failed" >&2
   cat "$OUTPUT_FILE" >&2
-  exit 1
+  exit "$shared_base_status"
 fi
 
 if grep -Fq "Skipping ci-static preflight" "$OUTPUT_FILE"; then
   echo "Shared-base main path skipped static policy enforcement" >&2
   cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+early_main_trace="$(mktemp)"
+trap 'rm -f "$OUTPUT_FILE" "$early_main_trace"' EXIT
+set +e
+(
+  set -e
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  require_cmd() {
+    :
+  }
+  check_stage_has_no_backup_schedules_unless_enabled() {
+    echo "stage marker check failed" >&2
+    return 23
+  }
+  check_images_exist() {
+    printf 'later image check succeeded: %s\n' "$1" >>"$early_main_trace"
+    return 0
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+) >"$OUTPUT_FILE" 2>&1
+early_main_status=$?
+set -e
+
+if [[ "$early_main_status" -eq 0 ]]; then
+  echo "Validator main masked an early stage-marker failure" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+grep -Fq "stage marker check failed" "$OUTPUT_FILE" || {
+  echo "Early stage-marker failure did not reach validator main" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
+if [[ -s "$early_main_trace" ]]; then
+  echo "Validator main continued to successful later image checks after a stage-marker failure" >&2
+  cat "$early_main_trace" >&2
   exit 1
 fi
 
