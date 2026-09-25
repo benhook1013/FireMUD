@@ -1,3 +1,5 @@
+{{- $frontend := .Values.previewStack.frontend | default dict }}
+{{- $frontendEnabled := $frontend.enabled | default false }}
 {{- if and .Values.previewStack.enabled .Values.previewStack.ingress.enabled }}
 {{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 apiVersion: networking.k8s.io/v1
@@ -6,9 +8,14 @@ metadata:
   name: firemud-preview
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
-  {{- if ne $hostedControllerMode "true" }}
+  {{- if or (ne $hostedControllerMode "true") $frontendEnabled }}
   annotations:
+    {{- if ne $hostedControllerMode "true" }}
     cert-manager.io/cluster-issuer: {{ .Values.previewStack.ingress.clusterIssuer | quote }}
+    {{- end }}
+    {{- if $frontendEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-firemud-preview-auth-path-rewrite@kubernetescrd" .Release.Namespace | quote }}
+    {{- end }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.previewStack.ingress.className | quote }}
@@ -20,6 +27,50 @@ spec:
     - host: {{ .Values.preview.hostname | quote }}
       http:
         paths:
+          {{- if $frontendEnabled }}
+          - path: /frontend-assets
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-cloud-gateway
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-cloud-gateway
+                port:
+                  number: 80
+          - path: /ws/game
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-cloud-gateway
+                port:
+                  number: 80
+          - path: /assets
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-cloud-gateway
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          {{- else }}
           - path: /
             pathType: Prefix
             backend:
@@ -27,4 +78,18 @@ spec:
                 name: spring-cloud-gateway
                 port:
                   number: 80
+          {{- end }}
+{{- end }}
+{{- if and .Values.previewStack.enabled .Values.previewStack.ingress.enabled $frontendEnabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: firemud-preview-auth-path-rewrite
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  replacePathRegex:
+    regex: ^/auth(/.*)?$
+    replacement: /api/account/auth$1
 {{- end }}

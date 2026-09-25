@@ -57,8 +57,8 @@ firemud:
       connect-token-expiration-ms: 30000
   mail:
     from: no-reply@firemud.local
-    verification-url: http://localhost:8080/auth/verify-email?token=%s
-    reset-url: http://localhost:8080/reset-password?token=%s
+    verification-url: http://localhost:5173/verify-email#token=%s
+    reset-url: http://localhost:5173/reset-password#token=%s
   payment:
     stripe-api-key: test-key
     platform-fee-percent: 5
@@ -81,7 +81,7 @@ firemud:
           path-pattern: /auth/complete-password-reset
         - method: POST
           path-pattern: /auth/request-email-verification
-        - method: GET
+        - method: POST
           path-pattern: /auth/verify-email
         - method: POST
           path-pattern: /auth/recover-username

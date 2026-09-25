@@ -41,6 +41,78 @@
   color: #333;
 }
 
+.email-link-page {
+  box-sizing: border-box;
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 1.5rem;
+  text-align: left;
+}
+
+.email-link-panel {
+  width: min(100%, 32rem);
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+  border: 1px solid #d7dce2;
+  border-radius: 0.75rem;
+  background: #fff;
+  color: #18212b;
+  box-shadow: 0 1rem 3rem rgb(20 32 44 / 10%);
+}
+
+.email-link-panel h1 {
+  margin-top: 0;
+  font-size: clamp(1.75rem, 5vw, 2.25rem);
+  line-height: 1.2;
+}
+
+.email-link-panel p {
+  line-height: 1.6;
+}
+
+.email-link-panel form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.email-link-field {
+  display: grid;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.email-link-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #778391;
+  border-radius: 0.35rem;
+  color: #18212b;
+  font: inherit;
+}
+
+.email-link-panel button {
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: #184f80;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+}
+
+.email-link-panel button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.email-link-panel :focus-visible {
+  outline: 3px solid #e59a22;
+  outline-offset: 3px;
+}
+
 @media (prefers-color-scheme: dark) {
   .read-the-docs {
     color: #ccc;
