@@ -62,13 +62,16 @@ public final class DefaultGameplayPresenceLifecycleService
 
   @Override
   public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
-    sessionRoutingNormalizationService
-        .resolveProjectedSessionContext(Long.toString(sessionId))
-        .filter(SessionContext::hasGameplayRegionBindingOrFalse)
-        .ifPresent(
-            context ->
-                scriptEventPublisher.publishRegionExitEvent(
-                    context, disconnectEventId(context, disposition), disposition.name()));
+    // A controller takeover displaces a socket, not the character from its current region.
+    if (disposition != AccountRecentPresenceDisposition.TAKEOVER) {
+      sessionRoutingNormalizationService
+          .resolveProjectedSessionContext(Long.toString(sessionId))
+          .filter(SessionContext::hasGameplayRegionBindingOrFalse)
+          .ifPresent(
+              context ->
+                  scriptEventPublisher.publishRegionExitEvent(
+                      context, disconnectEventId(context, disposition), disposition.name()));
+    }
     accountRecentPresenceService.recordDisconnect(sessionId, disposition);
     gameplayPresenceService.removeBySessionId(sessionId);
   }

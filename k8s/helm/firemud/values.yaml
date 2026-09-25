@@ -14,3 +14,17 @@ previewStack:
     clusterIssuer: firemud-ca-issuer
     # Hosted preview and dev-demo values must select their canonical trust environment explicitly.
     trustEnvironment: pr-preview
+  # Keep the static host and its public routes disabled until its image is
+  # published and the hosted preview values select that immutable release.
+  frontend:
+    enabled: false
+    image:
+      repository: ""
+      tag: ""
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi

@@ -1,7 +1,9 @@
 package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class HostedEnvironmentIdentityStatus {
   private Long observedGeneration;
@@ -12,6 +14,7 @@ public class HostedEnvironmentIdentityStatus {
   private RoleStatus gatewayInternalWs;
   private RoleStatus tcpProxyBridge;
   private RoleStatus grpc;
+  private Map<String, RoleStatus> grpcPublication;
   private RuntimeProfile profile;
 
   public Long getObservedGeneration() {
@@ -83,6 +86,24 @@ public class HostedEnvironmentIdentityStatus {
     this.grpc = copyRole(grpc);
   }
 
+  public Map<String, RoleStatus> getGrpcPublication() {
+    if (grpcPublication == null) {
+      return null;
+    }
+    Map<String, RoleStatus> copy = new LinkedHashMap<>();
+    grpcPublication.forEach((role, status) -> copy.put(role, copyRole(status)));
+    return copy;
+  }
+
+  public void setGrpcPublication(Map<String, RoleStatus> grpcPublication) {
+    if (grpcPublication == null) {
+      this.grpcPublication = null;
+      return;
+    }
+    this.grpcPublication = new LinkedHashMap<>();
+    grpcPublication.forEach((role, status) -> this.grpcPublication.put(role, copyRole(status)));
+  }
+
   public RuntimeProfile getProfile() {
     return copyProfile(profile);
   }
@@ -104,17 +125,7 @@ public class HostedEnvironmentIdentityStatus {
   }
 
   private static RoleStatus copyRole(RoleStatus source) {
-    if (source == null) {
-      return null;
-    }
-    RoleStatus copy = new RoleStatus();
-    copy.setRevision(source.getRevision());
-    copy.setSourceGeneration(source.getSourceGeneration());
-    copy.setSourceObjectGeneration(source.getSourceObjectGeneration());
-    copy.setSpkiSha256(source.getSpkiSha256());
-    copy.setProvenance(source.getProvenance());
-    copy.setState(source.getState());
-    return copy;
+    return source == null ? null : source.copy();
   }
 
   private static RuntimeProfile copyProfile(RuntimeProfile source) {
@@ -203,6 +214,30 @@ public class HostedEnvironmentIdentityStatus {
 
     public void setState(String state) {
       this.state = state;
+    }
+
+    public boolean isSchemaValid() {
+      return schemaString(revision, 128, "[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}")
+          && (sourceGeneration == null || sourceGeneration >= 1)
+          && (sourceObjectGeneration == null || sourceObjectGeneration >= 1)
+          && schemaString(spkiSha256, 64, "[0-9a-f]{64}")
+          && schemaString(provenance, 128, "[A-Za-z][A-Za-z0-9_.-]{0,127}")
+          && schemaString(state, 64, "[A-Za-z][A-Za-z0-9_.-]{0,63}");
+    }
+
+    public RoleStatus copy() {
+      RoleStatus copy = new RoleStatus();
+      copy.setRevision(revision);
+      copy.setSourceGeneration(sourceGeneration);
+      copy.setSourceObjectGeneration(sourceObjectGeneration);
+      copy.setSpkiSha256(spkiSha256);
+      copy.setProvenance(provenance);
+      copy.setState(state);
+      return copy;
+    }
+
+    private static boolean schemaString(String value, int maxLength, String pattern) {
+      return value == null || (value.length() <= maxLength && value.matches(pattern));
     }
   }
 

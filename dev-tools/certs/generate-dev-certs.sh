@@ -65,7 +65,8 @@ DNS.2 = ${workload}.${runtime_namespace}
 DNS.3 = ${workload}.${runtime_namespace}.svc
 DNS.4 = ${workload}.${runtime_namespace}.svc.cluster.local
 EOF
-  openssl genrsa -out "$output_key" 2048 >/dev/null 2>&1
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key" \
+    >/dev/null 2>&1
   openssl req -new -key "$output_key" -config "$workload_config" -out "$workload_request"
   openssl x509 -req -in "$workload_request" -CA "$ca_cert" -CAkey "$ca_key" \
     -CAserial "$workload_serial" -out "$output_cert" -days 365 -sha256 \

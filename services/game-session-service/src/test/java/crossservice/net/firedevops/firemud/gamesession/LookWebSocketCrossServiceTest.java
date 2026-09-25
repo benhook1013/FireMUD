@@ -64,7 +64,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK WORLDS");
     assertThat(responses.get(1).trim())
-        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
+        .isEqualTo(GameplayTranscriptMatchers.canonicalLook() + "\n\nEmberline>");
     assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
 
     GameplayAsyncAssertions.assertMetricEventually(
@@ -98,7 +98,7 @@ class LookWebSocketCrossServiceTest {
                     && response.contains("Room: Candle-lit Antechamber")
                     && response.contains("Short:")
                     && !response.contains("Long:")
-                    && response.endsWith("demo> "));
+                    && response.endsWith("Emberline> "));
   }
 
   @Test

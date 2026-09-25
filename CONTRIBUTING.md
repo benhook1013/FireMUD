@@ -79,6 +79,6 @@ Hooks run `spotlessApply` on commit and then run file-scoped fixes/checks for Ma
 - Reference related issue numbers in your PR description.
 - Link to relevant design documents when adding new features.
 - Keep commits focused and descriptive so reviewers can understand the intent.
-- Expect automated review signals on pull requests: CodeRabbit provides advisory review comments and walkthrough summaries, and Codecov publishes patch-coverage status for service coverage uploads. Treat these as part of normal PR hygiene alongside human review.
+- Pull requests receive automated checks and, where applicable, Codecov patch-coverage status. CodeRabbit automatic reviews are disabled; requested reviews are routed through the [unified PR-review controller](design/developer-workflows/pr-lifecycle.md).
 
 Following these guidelines helps keep the project consistent and makes the review process smoother. We appreciate your contributions!

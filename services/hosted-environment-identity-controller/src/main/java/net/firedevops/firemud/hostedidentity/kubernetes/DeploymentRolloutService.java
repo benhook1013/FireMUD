@@ -7,6 +7,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
@@ -61,6 +62,14 @@ public class DeploymentRolloutService {
     if (grpcWorkloadIdentityRevisions == null) {
       throw new IllegalArgumentException("gRPC workload identity revisions are required");
     }
+    if (!grpcWorkloadIdentityRevisions.isEmpty()) {
+      for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+        if (plan.grpcConsumers().contains(workload)) {
+          throw new IllegalArgumentException(
+              "gRPC consumer overlaps publication workload: " + workload);
+        }
+      }
+    }
     Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
     revisionsByDeployment
         .computeIfAbsent(TCP_PROXY_DEPLOYMENT, ignored -> new LinkedHashMap<>())
@@ -86,7 +95,9 @@ public class DeploymentRolloutService {
         }
         revisionsByDeployment
             .computeIfAbsent(workload, ignored -> new LinkedHashMap<>())
-            .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision);
+            .put(
+                HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                combinedGrpcWorkloadRevision(grpcRevision, revision, "publication-leaf"));
       }
       String accountRevision =
           grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
@@ -96,7 +107,9 @@ public class DeploymentRolloutService {
       revisionsByDeployment
           .computeIfAbsent(
               HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD, ignored -> new LinkedHashMap<>())
-          .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, accountRevision);
+          .put(
+              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+              combinedGrpcWorkloadRevision(grpcRevision, accountRevision, "account-leaf"));
       String gameSessionRevision =
           grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
       if (gameSessionRevision == null) {
@@ -106,7 +119,9 @@ public class DeploymentRolloutService {
       revisionsByDeployment
           .computeIfAbsent(
               HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD, ignored -> new LinkedHashMap<>())
-          .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, gameSessionRevision);
+          .put(
+              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+              combinedGrpcWorkloadRevision(grpcRevision, gameSessionRevision, "game-session-leaf"));
     }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
     for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
@@ -120,15 +135,31 @@ public class DeploymentRolloutService {
       readinessByDeployment.put(entry.getKey(), ready);
     }
     boolean telnetReady = readinessByDeployment.getOrDefault(TCP_PROXY_DEPLOYMENT, false);
-    var grpcConsumers = plan.grpcConsumers().stream();
+    var requiredGrpcConsumers = new LinkedHashSet<>(plan.grpcConsumers());
     if (!grpcWorkloadIdentityRevisions.isEmpty()) {
-      grpcConsumers =
-          java.util.stream.Stream.concat(
-              grpcConsumers, HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream());
+      requiredGrpcConsumers.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+      requiredGrpcConsumers.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
+      requiredGrpcConsumers.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
     }
     boolean grpcReady =
-        grpcConsumers.allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
+        requiredGrpcConsumers.stream()
+            .allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
     return new RolloutResult(telnetReady && grpcReady, telnetReady, grpcReady);
+  }
+
+  /** Encodes shared trust and one workload leaf without delimiter ambiguity. */
+  private static String combinedGrpcWorkloadRevision(
+      String grpcRevision, String leafRevision, String leafKind) {
+    return "v1|shared-grpc|"
+        + grpcRevision.length()
+        + "|"
+        + grpcRevision
+        + "|"
+        + leafKind
+        + "|"
+        + leafRevision.length()
+        + "|"
+        + leafRevision;
   }
 
   /**

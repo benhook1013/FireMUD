@@ -109,7 +109,7 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestSupportsVersionScope() {
+  void getDraftDesignDigestRejectsUnmappedVersionScope() {
     PingService pingService = Mockito.mock(PingService.class);
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptDesignDigestService scriptDesignDigestService =
@@ -119,10 +119,6 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForVersion("1", "7"))
-        .thenReturn(
-            new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "7", "version:7", "digest-script", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -154,12 +150,12 @@ class AutomationScriptingGrpcServiceTest {
                   public void onCompleted() {}
                 }));
 
-    assertEquals("7", ref.get().getVersionId());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(scriptDesignDigestService);
   }
 
   @Test
-  void getDraftDesignDigestSupportsBoundScriptPatchScope() {
+  void getDraftDesignDigestRejectsPatchDigestThatOmitsBaseVersion() {
     PingService pingService = Mockito.mock(PingService.class);
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptDesignDigestService scriptDesignDigestService =
@@ -169,10 +165,6 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", "patch:é:1"))
-        .thenReturn(
-            new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "patch:é:1", "patch:patch:é:1", "digest-script-patch", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -204,10 +196,8 @@ class AutomationScriptingGrpcServiceTest {
                   public void onCompleted() {}
                 }));
 
-    assertEquals("1", ref.get().getTenantId());
-    assertEquals("7", ref.get().getBaseVersionId());
-    assertEquals("patch:é:1", ref.get().getScriptPatchVersion());
-    assertEquals("patch:patch:é:1", ref.get().getAppliedCommitId());
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(scriptDesignDigestService);
   }
 
   @Test
@@ -692,6 +682,47 @@ class AutomationScriptingGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateRejectsEmptyAffectedScriptsWithoutReportingSuccess() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<NotifyScriptVersionUpdateResponse> ref = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setScriptPatchVersion("patch-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("zero_handler_manifest_unverifiable", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(versionService);
   }
 
   @Test

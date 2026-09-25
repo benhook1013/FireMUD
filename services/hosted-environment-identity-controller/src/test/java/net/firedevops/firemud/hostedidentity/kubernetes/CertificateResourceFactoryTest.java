@@ -95,6 +95,7 @@ class CertificateResourceFactoryTest {
     assertEquals(
         java.util.List.of("spiffe://firemud/ns/pr-42/sa/tcp-proxy-service"),
         certificateSpec.get("uris"));
+    assertFalse(certificateSpec.containsKey("dnsNames"));
     assertEquals(
         java.util.List.of("digital signature", "key encipherment", "client auth"),
         certificateSpec.get("usages"));
@@ -127,6 +128,9 @@ class CertificateResourceFactoryTest {
     assertEquals(
         java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
         certificateSpec.get("usages"));
+    assertCertificateDefaults(certificateSpec);
+    assertEquals("720h", certificateSpec.get("duration"));
+    assertEquals("5h", certificateSpec.get("renewBefore"));
     assertSecretTemplate(
         certificateSpec, plan, HostedIdentityContract.grpcPublicationRole("game-design-service"));
   }
@@ -218,6 +222,7 @@ class CertificateResourceFactoryTest {
 
     assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, null));
     assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, null));
+    assertInvalidRenewalWindow(() -> factory.grpcPublication(plan, "game-design-service", null));
 
     for (Duration invalidRenewBefore :
         java.util.List.of(
@@ -228,6 +233,8 @@ class CertificateResourceFactoryTest {
             HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION)) {
       assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, invalidRenewBefore));
       assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, invalidRenewBefore));
+      assertInvalidRenewalWindow(
+          () -> factory.grpcPublication(plan, "game-design-service", invalidRenewBefore));
     }
   }
 
@@ -243,6 +250,8 @@ class CertificateResourceFactoryTest {
                 HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK))) {
       assertDoesNotThrow(() -> factory.gatewayInternalWs(plan, validRenewBefore));
       assertDoesNotThrow(() -> factory.tcpProxyBridge(plan, validRenewBefore));
+      assertDoesNotThrow(
+          () -> factory.grpcPublication(plan, "game-design-service", validRenewBefore));
     }
   }
 

@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -274,7 +275,8 @@ public final class LoginCommandHandler {
         verifiedContext.accountId(),
         "first-party:" + verifiedContext.accountId(),
         null,
-        verifiedContext.gameInstanceId());
+        verifiedContext.gameInstanceId(),
+        verifiedContext);
     return new LoginCommandHandlingResult(
         enqueueResult,
         List.of(
@@ -291,6 +293,18 @@ public final class LoginCommandHandler {
       String loginName,
       String jwt,
       long bootstrapGameInstanceId) {
+    persistSessionContext(
+        sessionId, tenantId, accountId, loginName, jwt, bootstrapGameInstanceId, null);
+  }
+
+  private void persistSessionContext(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      String jwt,
+      long bootstrapGameInstanceId,
+      FirstPartyConnectContext verifiedBootstrapContext) {
     if (sessionContextService == null) {
       return;
     }
@@ -300,9 +314,36 @@ public final class LoginCommandHandler {
             .filter(context -> context.tenantId() == tenantId)
             .orElse(null);
     boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
-    // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
-    // only when it is still bound to the newly authenticated account. A different account starts
-    // with a fresh authenticated context so gameplay identity and routing cannot cross accounts.
+    boolean unauthenticatedBootstrap =
+        existing != null && existing.accountId() == 0L && !existing.hasGameplayBinding();
+    long retainedBootstrapGameInstanceId = bootstrapGameInstanceId;
+    String retainedWorldSlug = null;
+    String retainedRealmSlug = null;
+    long retainedPointerVersion = 0L;
+    String retainedPlayableStateScope = null;
+    String retainedConnectScopeId = null;
+    String retainedConnectRequestId = null;
+    if (unauthenticatedBootstrap) {
+      retainedBootstrapGameInstanceId =
+          existing.bootstrapGameInstanceId() > 0L
+              ? existing.bootstrapGameInstanceId()
+              : bootstrapGameInstanceId;
+      retainedWorldSlug = existing.worldSlug();
+      retainedRealmSlug = existing.realmSlug();
+      retainedPointerVersion = existing.pointerVersion();
+      retainedPlayableStateScope = existing.playableStateScope();
+    }
+    if (verifiedBootstrapContext != null) {
+      retainedBootstrapGameInstanceId = verifiedBootstrapContext.gameInstanceId();
+      retainedWorldSlug = verifiedBootstrapContext.worldSlug();
+      retainedRealmSlug = verifiedBootstrapContext.realmSlug();
+      retainedPointerVersion = verifiedBootstrapContext.pointerVersion();
+      retainedConnectScopeId = verifiedBootstrapContext.connectScopeId();
+      retainedConnectRequestId = verifiedBootstrapContext.connectRequestId();
+    }
+    // LOGIN promotes an unauthenticated shell while keeping only its server-derived bootstrap
+    // context. Reauthentication under a different account clears that context with old gameplay
+    // identity; only a same-account login may preserve a candidate gameplay binding for PLAY.
     SessionContext context =
         !sameAuthenticatedAccount
             ? new SessionContext(
@@ -316,7 +357,13 @@ public final class LoginCommandHandler {
                 null,
                 jwt,
                 null,
-                bootstrapGameInstanceId)
+                retainedBootstrapGameInstanceId,
+                retainedWorldSlug,
+                retainedRealmSlug,
+                retainedPointerVersion,
+                retainedPlayableStateScope,
+                retainedConnectScopeId,
+                retainedConnectRequestId)
             : new SessionContext(
                 sessionId,
                 tenantId,

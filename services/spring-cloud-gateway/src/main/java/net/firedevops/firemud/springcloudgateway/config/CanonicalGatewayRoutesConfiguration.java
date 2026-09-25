@@ -84,11 +84,89 @@ public class CanonicalGatewayRoutesConfiguration {
                 2,
                 "GET"),
             route(
-                "account-auth",
+                "account-auth-login",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
-                "/api/account/auth/**",
-                2),
+                "/api/account/auth/login",
+                2,
+                "POST"),
+            route(
+                "account-auth-player-bootstrap",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/player-bootstrap",
+                2,
+                "POST"),
+            route(
+                "account-auth-bootstrap-worlds",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/bootstrap/worlds",
+                2,
+                "GET"),
+            route(
+                "account-auth-bootstrap-realms",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/bootstrap/worlds/{worldSlug}/realms",
+                2,
+                "GET"),
+            route(
+                "account-auth-bootstrap-characters",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
+                2,
+                "GET"),
+            route(
+                "account-auth-bootstrap-join",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/bootstrap/join",
+                2,
+                "POST"),
+            route(
+                "account-auth-connect-token",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/connect-token",
+                2,
+                "POST"),
+            route(
+                "account-auth-request-password-reset",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/request-password-reset",
+                2,
+                "POST"),
+            route(
+                "account-auth-complete-password-reset",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/complete-password-reset",
+                2,
+                "POST"),
+            route(
+                "account-auth-request-email-verification",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/request-email-verification",
+                2,
+                "POST"),
+            route(
+                "account-auth-verify-email",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/verify-email",
+                2,
+                "POST"),
+            route(
+                "account-auth-recover-username",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI", "http://account-service:8080"),
+                "/api/account/auth/recover-username",
+                2,
+                "POST"),
             route(
                 "account-accounts",
                 environment.getProperty(

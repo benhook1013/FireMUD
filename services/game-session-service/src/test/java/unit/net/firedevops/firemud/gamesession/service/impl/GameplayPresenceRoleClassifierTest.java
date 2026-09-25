@@ -72,6 +72,29 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
+  void classifyRoleKeepsGlobalControlPlaneRolesAsPlayerAfterJoin() {
+    Logger logger = mock(Logger.class);
+    String jwt =
+        JWT_UTIL.generateToken(
+            "202",
+            java.util.Map.of(
+                "accountId",
+                "202",
+                "globalRoles",
+                java.util.List.of("platformAdmin", "support", "billingAdmin"),
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("player"))));
+
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            logger);
+
+    assertEquals(GameplayPresenceRole.PLAYER, role);
+  }
+
+  @Test
   void classifyRoleReturnsAdminForTenantAdminRole() {
     Logger logger = mock(Logger.class);
     String jwt =
@@ -93,7 +116,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleUsesTheHighestAvailableGameplayRole() {
+  void classifyRoleUsesTheHighestAvailableTenantScopedGameplayRole() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
@@ -129,7 +152,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleReturnsGodForScopedGodRole() {
+  void classifyRoleReturnsGodForTenantScopedGodRole() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(

@@ -382,6 +382,25 @@ class LoginCommandHandlerTest {
   void bareLoginAcceptsVerifiedFirstPartyAccountDifferentFromGameOwner() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "shell-world",
+            "shell-realm",
+            7L,
+            "SHARED",
+            "shell-scope",
+            "shell-request"));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
@@ -406,8 +425,68 @@ class LoginCommandHandlerTest {
     verify(commandService).enqueue("1", "LOGIN", false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertEquals(99L, captor.getValue().accountId());
+    SessionContext saved = captor.getValue();
+    assertEquals(99L, saved.accountId());
+    assertEquals(1L, saved.bootstrapGameInstanceId());
+    assertEquals("demo", saved.worldSlug());
+    assertEquals("production", saved.realmSlug());
+    assertEquals(1L, saved.pointerVersion());
+    assertEquals("SHARED", saved.playableStateScope());
+    assertEquals("scope-1", saved.connectScopeId());
+    assertEquals("req-1", saved.connectRequestId());
+    assertEquals(0L, saved.characterId());
+    assertEquals(0L, saved.gameInstanceId());
     assertEquals(77L, instance.getOwnerAccountId());
+  }
+
+  @Test
+  void credentialLoginPreservesBootstrapTargetButDropsSubjectBoundConnectScope() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            3L,
+            "SHARED",
+            "subject-99-scope",
+            "subject-99-request"));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate("other@example.com", "swordfish"))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext saved = captor.getValue();
+    assertEquals(99L, saved.accountId());
+    assertEquals(1L, saved.bootstrapGameInstanceId());
+    assertEquals("demo", saved.worldSlug());
+    assertEquals("production", saved.realmSlug());
+    assertEquals(3L, saved.pointerVersion());
+    assertEquals("SHARED", saved.playableStateScope());
+    assertNull(saved.connectScopeId());
+    assertNull(saved.connectRequestId());
+    assertEquals(0L, saved.characterId());
+    assertEquals(0L, saved.gameInstanceId());
   }
 
   @Test

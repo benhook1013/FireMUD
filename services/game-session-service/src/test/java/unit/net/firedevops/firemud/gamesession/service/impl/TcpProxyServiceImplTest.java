@@ -8,7 +8,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
@@ -19,7 +18,6 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.slf4j.MDC;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -28,7 +26,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class TcpProxyServiceImplTest {
   @Test
-  void notifyDisconnectSavesSuspendedState() {
+  void notifyDisconnectWithUnprovedBindingLeavesLifecycleStateUnchanged() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -45,12 +43,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -75,12 +68,10 @@ class TcpProxyServiceImplTest {
         });
 
     assertEquals("OK", ref.get().getError().getCode());
-    ArgumentCaptor<GameInstanceDto> stateCaptor = ArgumentCaptor.forClass(GameInstanceDto.class);
-    Mockito.verify(sessionStateService).saveState(stateCaptor.capture());
-    assertEquals("SUSPENDED", stateCaptor.getValue().status());
-    assertEquals("patch", stateCaptor.getValue().scriptPatchVersion());
-    assertEquals(3L, stateCaptor.getValue().scriptPinEpoch());
-    assertEquals("pin-request-3", stateCaptor.getValue().scriptPinControlPlaneRequestId());
+    assertEquals("RUNNING", entity.getStatus());
+    Mockito.verify(repository).findById(12L);
+    Mockito.verifyNoMoreInteractions(repository);
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -103,19 +94,14 @@ class TcpProxyServiceImplTest {
               assertEquals("7", MDC.get("tenantId"));
               assertEquals("12", MDC.get("gameInstanceId"));
               assertEquals(null, MDC.get("characterId"));
-              return null;
+              return Optional.of(entity);
             })
-        .when(sessionStateService)
-        .saveState(Mockito.any());
+        .when(repository)
+        .findById(12L);
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -127,6 +113,7 @@ class TcpProxyServiceImplTest {
         observerFor(ref));
 
     assertEquals("OK", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
     assertEquals(null, MDC.get("tenantId"));
     assertEquals(null, MDC.get("gameInstanceId"));
     assertEquals(null, MDC.get("characterId"));
@@ -147,12 +134,7 @@ class TcpProxyServiceImplTest {
         .thenReturn(true);
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -184,6 +166,7 @@ class TcpProxyServiceImplTest {
         .contains(
             "NotifyDisconnect returned app error INVALID_ARGUMENT: tenantId must be a number");
     Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService);
     Mockito.verifyNoInteractions(repository);
   }
 
@@ -202,12 +185,7 @@ class TcpProxyServiceImplTest {
         .thenReturn(true);
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -223,6 +201,7 @@ class TcpProxyServiceImplTest {
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService);
     Mockito.verifyNoInteractions(repository);
   }
 
@@ -241,12 +220,7 @@ class TcpProxyServiceImplTest {
         .thenReturn(true);
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -262,6 +236,7 @@ class TcpProxyServiceImplTest {
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService);
     Mockito.verifyNoInteractions(repository);
   }
 
@@ -283,12 +258,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     NotifyDisconnectRequest request =
         NotifyDisconnectRequest.newBuilder()
@@ -308,7 +278,7 @@ class TcpProxyServiceImplTest {
     assertEquals("OK", second.get().getError().getCode());
     assertEquals(
         1.0, meterRegistry.get("gamesession.notifydisconnect.duplicate").counter().count());
-    Mockito.verify(sessionStateService, Mockito.times(1)).saveState(Mockito.any());
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -329,12 +299,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     NotifyDisconnectRequest firstRequest =
         NotifyDisconnectRequest.newBuilder()
@@ -361,7 +326,7 @@ class TcpProxyServiceImplTest {
     assertEquals("OK", second.get().getError().getCode());
     assertEquals(
         1.0, meterRegistry.get("gamesession.notifydisconnect.duplicate").counter().count());
-    Mockito.verify(sessionStateService, Mockito.times(1)).saveState(Mockito.any());
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -380,12 +345,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(NotifyDisconnectRequest.newBuilder().build(), observerFor(ref));
@@ -393,7 +353,7 @@ class TcpProxyServiceImplTest {
     assertEquals("OK", ref.get().getError().getCode());
     assertEquals(
         1.0, meterRegistry.get("gamesession.notifydisconnect.missing_context").counter().count());
-    Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -412,12 +372,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -432,12 +387,7 @@ class TcpProxyServiceImplTest {
     assertEquals("OK", ref.get().getError().getCode());
     assertEquals(
         1.0, meterRegistry.get("gamesession.notifydisconnect.missing_context").counter().count());
-    Mockito.verify(gameplayPresenceLifecycleService)
-        .recordDisconnected(
-            12L,
-            net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition
-                .TRANSPORT_LOSS);
-    Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(sessionStateService, gameplayPresenceLifecycleService);
     Mockito.verifyNoInteractions(repository);
   }
 
@@ -457,12 +407,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -498,12 +443,7 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            repository,
-            sessionStateService,
-            meterRegistry,
-            pingService,
-            disconnectDeduplicationService,
-            gameplayPresenceLifecycleService);
+            repository, meterRegistry, pingService, disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(

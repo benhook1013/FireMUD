@@ -9,12 +9,10 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
+import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -69,7 +67,7 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedRealmsBrowse() {
+  void realmsBrowseFailsClosedWhenAccountScopeIssuerIsUnavailable() {
     gameplayCatalogProperties.setWorlds(List.of(world("sandbox", 1L, 2L, false)));
     SessionContext context =
         new SessionContext(
@@ -83,34 +81,14 @@ class WorldsTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(RealmBrowseViewOutput.class);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "REALMS".equals(gameplayCommand.getCommandName())
-                        && "REALMS sandbox".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedCharsBrowse() {
+  void unavailableCharsDoesNotReadRosterOrPublishGameplayEvent() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
-    when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("7001")
-                        .setName("Emberline")
-                        .setLevel(12)
-                        .build())
-                .build());
     SessionContext context =
         new SessionContext(
             7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -123,18 +101,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(CharacterBrowseViewOutput.class);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "CHARS".equals(gameplayCommand.getCommandName())
-                        && "CHARS demo".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
   }
 
   @Test
@@ -226,6 +195,15 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(realmsResult.commandResult().accepted()).isTrue();
     assertThat(firstJoinResult.commandResult().accepted()).isFalse();
     assertThat(retryJoinResult.commandResult().accepted()).isTrue();
+    assertThat(retryJoinResult.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isInstanceOfSatisfying(
+            NoticeOutput.class,
+            notice -> {
+              assertThat(notice.text()).isEqualTo("Membership join confirmed.");
+              assertThat(notice.text()).doesNotContain("CHARS", "PLAY");
+            });
     assertThat(realmsResult.outputs())
         .singleElement()
         .extracting(output -> output.payload())
@@ -285,6 +263,7 @@ class WorldsTextCommandDispatchHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

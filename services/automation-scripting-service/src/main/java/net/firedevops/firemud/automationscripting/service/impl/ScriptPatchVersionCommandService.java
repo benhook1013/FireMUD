@@ -58,8 +58,7 @@ public class ScriptPatchVersionCommandService {
         tenantId,
         affectedScripts.size());
     if (affectedScripts.isEmpty()) {
-      logger.info("No scripts provided for patch {}", scriptPatchVersion);
-      return false;
+      throw new IllegalArgumentException("zero_handler_manifest_unverifiable");
     }
     Set<String> requestedNames = new HashSet<>(affectedScripts);
     if (requestedNames.size() != affectedScripts.size()) {
