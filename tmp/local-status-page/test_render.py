@@ -78,7 +78,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<li class="merged"><span class="stage-order">01</span>', overview)
         self.assertIn('<li><span class="stage-order">02</span>', overview)
         self.assertNotIn('<li class="merged"><span class="stage-order">02</span>', overview)
-        self.assertIn('.overview li.merged { background: #e9e1eb; }', result)
+        self.assertIn('.overview li.merged { background: #dbcbe2; }', result)
         github["available"] = False
         unavailable = page.render(data, review, NOW, github)
         self.assertNotIn('<li class="merged"><span class="stage-order">01</span>', unavailable)

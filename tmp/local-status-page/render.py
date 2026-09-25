@@ -317,11 +317,11 @@ section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: 
 .stack, .card {{ background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; box-shadow: 0 3px 12px #252b390c; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
 .overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #252b390c; }}
-.overview li.merged {{ background: #e9e1eb; }}
+.overview li.merged {{ background: #dbcbe2; }}
 .overview .stage-order {{ grid-row: 1 / span 2; background: #8e2941; color: #f7f2f4; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
 .overview h3 {{ line-height: 1.25; padding: .8rem .9rem 0; }} .overview p {{ margin: .45rem 0 0; padding: 0 .9rem .8rem; font-size: .9rem; }}
 .stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); gap: 0 1rem; align-items: start; border-bottom: 1px solid #d5d9df; }} .stack li:last-child {{ border: 0; }}
-.stack li.merged {{ background: #e9e1eb; }}
+.stack li.merged {{ background: #dbcbe2; }}
 .stack li.closed {{ background: #e8eaed; }}
 .order {{ align-self: stretch; background: #8e2941; color: #f7f2f4; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
 a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #742138; }}
