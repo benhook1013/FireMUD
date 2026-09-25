@@ -1,0 +1,54 @@
+name: Build Trusted MinIO Source Images
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-trusted-minio-source-images.yml'
+      - 'docker/minio/**'
+      - 'dev-tools/minio/**'
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/build-trusted-minio-source-images.yml'
+      - 'docker/minio/**'
+      - 'dev-tools/minio/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-minio-build-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: Build and Smoke Pinned MinIO Sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      SERVER_IMAGE: ghcr.io/benhook1013/minio-server:build-${{ github.run_id }}-${{ github.run_attempt }}
+      CLIENT_IMAGE: ghcr.io/benhook1013/minio-client:build-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build and smoke exact MinIO sources
+        id: smoke
+        run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
+
+      - name: Upload exact smoke-tested image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trusted-minio-images-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/minio-image-artifact
+          if-no-files-found: error
+          retention-days: 3
