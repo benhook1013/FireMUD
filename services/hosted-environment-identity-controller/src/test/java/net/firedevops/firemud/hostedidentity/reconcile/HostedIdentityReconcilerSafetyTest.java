@@ -1620,15 +1620,9 @@ class HostedIdentityReconcilerSafetyTest {
         List.of("A", "a".repeat(128), "A._:+/@=-"),
         List.of("", "-invalid", "a".repeat(129)));
     assertRoleStatusExamples(
-        roleProperties,
-        "sourceGeneration",
-        List.of(1L, Long.MAX_VALUE),
-        List.of(0L, -1L));
+        roleProperties, "sourceGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
     assertRoleStatusExamples(
-        roleProperties,
-        "sourceObjectGeneration",
-        List.of(1L, Long.MAX_VALUE),
-        List.of(0L, -1L));
+        roleProperties, "sourceObjectGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
     assertRoleStatusExamples(
         roleProperties,
         "spkiSha256",
@@ -1731,12 +1725,10 @@ class HostedIdentityReconcilerSafetyTest {
     Map<?, ?> spec = schemaMap(root.get("spec"));
     List<?> versions = (List<?>) spec.get("versions");
     Map<?, ?> version = schemaMap(versions.get(0));
-    Map<?, ?> openApiSchema =
-        schemaMap(schemaMap(version.get("schema")).get("openAPIV3Schema"));
+    Map<?, ?> openApiSchema = schemaMap(schemaMap(version.get("schema")).get("openAPIV3Schema"));
     Map<?, ?> statusProperties =
         schemaMap(
-            schemaMap(schemaMap(openApiSchema.get("properties")).get("status"))
-                .get("properties"));
+            schemaMap(schemaMap(openApiSchema.get("properties")).get("status")).get("properties"));
     Map<?, ?> consumerSchema = schemaMap(statusProperties.get("ingress"));
     Map<?, ?> publicationSchema = schemaMap(statusProperties.get("grpcPublication"));
     assertEquals(
