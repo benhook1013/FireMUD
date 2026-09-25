@@ -37,6 +37,8 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
   private static final String FIRST_PARTY_CONNECT_SECRET = "cross-service-connect-context-secret";
+  private static final String SORA_EMAIL = "sora@example.com";
+  private static final String NYX_EMAIL = "nyx@example.com";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -73,6 +75,18 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
+    assertThat(entityStub().lastListCharactersByAccountRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+              assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
+              assertThat(request.getGameInstanceId())
+                  .isEqualTo(Long.toString(DEMO_WORLD_INSTANCE_ID));
+              assertThat(request.getPlayableStateScope())
+                  .isEqualTo(
+                      net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                          .PLAYABLE_STATE_SCOPE_SHARED);
+            });
     assertThat(socialStub().lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -90,6 +104,29 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketPlayDeniesBeforeReadingEntityRosterWhenAccountAdmissionIsDenied() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    STACK.accountStub().denyGameplayAdmission();
+
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "account-denied-play-" + sessionId,
+            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            client ->
+                client.awaitMatching(
+                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
+                    "Account admission denial before Entity roster lookup"))) {
+      assertThat(scenario.driver().responses())
+          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    }
+
+    assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();
+  }
+
+  @Test
   void websocketSayPushesRoomListenerViewToLiveRecipient() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -101,7 +138,7 @@ class CommunicationWebSocketCrossServiceTest {
             "actor-say-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-say-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            namedAdmission(SORA_EMAIL, "Sora"))) {
       scenario.actor().send("SAY hello travelers");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalSayText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalSayListenerText());
@@ -679,9 +716,9 @@ class CommunicationWebSocketCrossServiceTest {
             "actor-conn",
             GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
             "target-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT),
+            namedAdmission(SORA_EMAIL, "Sora"),
             "observer-conn",
-            GameplayWebSocketScenarios.demoAdmission("Nyx", READY_LOOK_TEXT))) {
+            namedAdmission(NYX_EMAIL, "Nyx"))) {
       scenario.actor().send("WHISPER Sora Keep quiet");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalWhisperText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
@@ -701,7 +738,7 @@ class CommunicationWebSocketCrossServiceTest {
             "actor-tell-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-tell-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            namedAdmission(SORA_EMAIL, "Sora"))) {
       scenario.actor().send("TELL Sora Meet me at the forge");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalTellText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalTellTargetText());
@@ -877,14 +914,29 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
-    return STACK.freshGameplayBaseline(
-        TENANT_ID,
-        DEMO_WORLD_INSTANCE_ID,
-        ACCOUNT_ID,
-        7L,
-        ACCOUNT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    long sessionId =
+        STACK.freshGameplayBaseline(
+            TENANT_ID,
+            DEMO_WORLD_INSTANCE_ID,
+            ACCOUNT_ID,
+            7L,
+            ACCOUNT_ID,
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    entityStub().resetCharacterRosterState();
+    STACK.accountStub().mapAccountId(SORA_EMAIL, Long.parseLong(ChatTestFixtures.PLAYER_SORA));
+    STACK.accountStub().mapAccountId(NYX_EMAIL, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    return sessionId;
+  }
+
+  private static GameplayWebSocketScenarios.Admission namedAdmission(
+      String email, String characterName) {
+    return GameplayWebSocketScenarios.Admission.named(
+        email,
+        GameplayWebSocketScenarios.DEMO_PASSWORD,
+        GameplayWebSocketScenarios.DEMO_WORLD,
+        characterName,
+        READY_LOOK_TEXT);
   }
 
   private void seedLiveTargetSession() {

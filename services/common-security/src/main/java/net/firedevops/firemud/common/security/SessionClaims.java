@@ -66,18 +66,12 @@ public record SessionClaims(
   }
 
   public boolean hasGameplayElevatedRole(String tenantId) {
-    if (containsAnyRoleIgnoreCase(globalRoles, "platformAdmin", "moderator", "god")) {
-      return true;
-    }
     return StringUtils.hasText(tenantId)
         && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), "tenantAdmin", "moderator", "god");
   }
 
-  /** Returns whether a global or requested tenant-scoped role matches a gameplay role. */
+  /** Returns whether a requested tenant-scoped role matches a gameplay role. */
   public boolean hasGameplayRole(String tenantId, String... expectedRoles) {
-    if (containsAnyRoleIgnoreCase(globalRoles, expectedRoles)) {
-      return true;
-    }
     return StringUtils.hasText(tenantId)
         && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), expectedRoles);
   }

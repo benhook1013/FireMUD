@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -48,15 +50,16 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
-    return resolveWorld(worldSelector)
+    return resolvePublicWorld(worldSelector)
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
 
-  public Optional<WorldView> resolveWorld(String selector) {
+  /** Resolves only realms currently safe to expose through the public browse projections. */
+  public Optional<WorldView> resolvePublicWorld(String selector) {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> worlds = publicVisibleWorlds();
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= worlds.size()) {
@@ -66,9 +69,36 @@ public final class GameplayWorldCatalog {
       // Fall back to slug matching.
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return worlds.stream()
-        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    List<WorldView> matches =
+        worlds.stream()
+            .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+  }
+
+  public Optional<WorldView> resolveWorld(String selector) {
+    if (selector == null || selector.isBlank()) {
+      return Optional.empty();
+    }
+    List<WorldView> worlds = visibleWorlds();
+    try {
+      int index = Integer.parseInt(selector);
+      List<WorldView> publicWorlds = publicVisibleWorlds();
+      if (index >= 1 && index <= publicWorlds.size()) {
+        return Optional.of(publicWorlds.get(index - 1));
+      }
+      // Numeric selectors are the public menu's aliases. Non-public admission remains
+      // available by its explicit world slug until Account supplies caller-bound authority.
+      return Optional.empty();
+    } catch (NumberFormatException ignored) {
+      // Fall back to slug matching.
+    }
+    String normalized = selector.trim().toLowerCase(Locale.ROOT);
+    List<WorldView> matches =
+        worlds.stream()
+            .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<RealmView> resolveRealm(WorldView world, String selector) {
@@ -174,18 +204,28 @@ public final class GameplayWorldCatalog {
     return world.realms().stream().filter(RealmView::visible).toList();
   }
 
+  public List<RealmView> publicVisibleRealms(WorldView world) {
+    return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
+  }
+
   public List<WorldView> visibleWorlds() {
     return normalizeWorlds(worldSupplier.get()).stream()
         .filter(this::hasVisibleRealmEntries)
         .toList();
   }
 
+  public List<WorldView> publicVisibleWorlds() {
+    return normalizeWorlds(worldSupplier.get()).stream()
+        .filter(world -> !publicVisibleRealms(world).isEmpty())
+        .toList();
+  }
+
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> worlds = publicVisibleWorlds();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (int i = 0; i < worlds.size(); i++) {
       WorldView world = worlds.get(i);
-      RealmView defaultRealm = defaultRealm(world);
+      RealmView defaultRealm = publicVisibleRealms(world).getFirst();
       entries.add(
           new WorldsViewOutput.WorldEntry(
               i + 1,
@@ -198,7 +238,7 @@ public final class GameplayWorldCatalog {
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
-    List<RealmView> realms = visibleRealms(world);
+    List<RealmView> realms = publicVisibleRealms(world);
     ArrayList<RealmBrowseViewOutput.RealmEntry> entries = new ArrayList<>(realms.size());
     for (int i = 0; i < realms.size(); i++) {
       RealmView realm = realms.get(i);
@@ -250,14 +290,25 @@ public final class GameplayWorldCatalog {
   }
 
   private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
-    Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
-    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (!hasCompleteAuthorityPointer(pointer)) {
+    List<GameplayAdmissionPointerSnapshot> completePointers =
+        pointers.stream().filter(GameplayWorldCatalog::hasCompleteAuthorityPointer).toList();
+    Map<String, Set<Long>> tenantsByWorldSlug = new LinkedHashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+      tenantsByWorldSlug
+          .computeIfAbsent(normalizeSlug(pointer.worldSlug()), ignored -> new HashSet<>())
+          .add(pointer.tenantId());
+    }
+
+    Map<TenantWorldKey, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+      String normalizedWorldSlug = normalizeSlug(pointer.worldSlug());
+      if (tenantsByWorldSlug.get(normalizedWorldSlug).size() > 1) {
         continue;
       }
+      TenantWorldKey key = new TenantWorldKey(pointer.tenantId(), normalizedWorldSlug);
       MutableWorldAccumulator world =
           worlds.computeIfAbsent(
-              pointer.worldSlug(),
+              key,
               ignored ->
                   new MutableWorldAccumulator(pointer.worldSlug(), pointer.worldDisplayName()));
       world
@@ -278,6 +329,12 @@ public final class GameplayWorldCatalog {
                             .toList()))
             .toList());
   }
+
+  private static String normalizeSlug(String slug) {
+    return slug.toLowerCase(Locale.ROOT);
+  }
+
+  private record TenantWorldKey(long tenantId, String normalizedSlug) {}
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
     return GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointer)

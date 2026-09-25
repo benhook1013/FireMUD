@@ -94,3 +94,8 @@ Entry format:
   - Context: on PR #2844, a metadata Validation Gate began at 04:06 UTC while the matching substantive gate appeared only at 04:18 UTC after its dependency graph and runner queue; the preservation action reached attempt 47 before it could observe that gate.
   - Observation: the old 23-minute polling budget could fail a metadata gate even while the matching substantive workflow was active. The Actions workflow-run API returned an empty `pull_requests` association for that real run, so active-run diagnostics cannot require a populated association; the canonical run title and non-skipped change-detection job provide the matching evidence.
   - Expected pattern: preserve separate metadata concurrency, extend only a bounded wait for a verified same-PR/base/head substantive run or gate, and never treat absent, pending, failed, or ambiguous gate proof as success.
+
+- `2026-09-25`: Admission fixture actors must carry the complete typed scope
+  - Context: a Game Session correction rejected unowned or ambiguous `PLAY` actors, while a shared Docker-backed WebSocket integration fixture still returned actor rows with protobuf-default playable scope.
+  - Observation: local integration tests skipped without Docker, but CI executed them and many otherwise unrelated scenarios failed at the first `PLAY` with `PLAY_IDENTITY_UNAVAILABLE`; the fixture's missing scope and bare selection obscured the intended assertions.
+  - Expected pattern: when actor-entry validation changes, update shared fixtures with complete tenant, account, actor, and playable-scope evidence; use explicit selection for success cases and retain a separate ambiguity-denial case. Treat compiled/skipped local tests as unproved until the composed CI cases execute.

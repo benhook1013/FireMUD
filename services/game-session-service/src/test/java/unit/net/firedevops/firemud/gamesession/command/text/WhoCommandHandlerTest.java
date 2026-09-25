@@ -57,12 +57,7 @@ class WhoCommandHandlerTest {
         jwtUtil.generateToken(
             "1",
             java.util.Map.of(
-                "accountId",
-                "1",
-                "globalRoles",
-                java.util.List.of("platformAdmin"),
-                "scopedRoles",
-                java.util.Map.of()));
+                "accountId", "1", "scopedRoles", java.util.Map.of("22", java.util.List.of("god"))));
 
     gameplayPresenceService.registerConnected(
         new SessionContext(1L, 22L, 1L, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt));

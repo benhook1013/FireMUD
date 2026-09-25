@@ -10,13 +10,13 @@ import org.junit.jupiter.api.Test;
 class SessionClaimsTest {
 
   @Test
-  void hasGameplayElevatedRoleRecognizesGlobalGodAndScopedModerator() {
+  void hasGameplayElevatedRoleRecognizesOnlyRequestedTenantScopedRoles() {
     SessionClaims globalGod =
         new SessionClaims("11", List.of("god"), Map.of("7", List.of("player")), false, null, null);
     SessionClaims scopedModerator =
         new SessionClaims("11", List.of(), Map.of("7", List.of("moderator")), false, null, null);
 
-    assertTrue(globalGod.hasGameplayElevatedRole("7"));
+    assertFalse(globalGod.hasGameplayElevatedRole("7"));
     assertTrue(scopedModerator.hasGameplayElevatedRole("7"));
   }
 
@@ -29,7 +29,7 @@ class SessionClaimsTest {
   }
 
   @Test
-  void hasGameplayRoleChecksGlobalAndRequestedTenantScopeOnly() {
+  void hasGameplayRoleChecksRequestedTenantScopeOnly() {
     SessionClaims claims =
         new SessionClaims(
             "11",
@@ -39,8 +39,16 @@ class SessionClaimsTest {
             null,
             null);
 
-    assertTrue(claims.hasGameplayRole("7", "platformAdmin"));
+    assertFalse(claims.hasGameplayRole("7", "platformAdmin"));
     assertTrue(claims.hasGameplayRole("7", "moderator"));
     assertFalse(claims.hasGameplayRole("7", "god"));
+  }
+
+  @Test
+  void controlPlanePrivilegedRoleCheckStillRecognizesGlobalRoles() {
+    SessionClaims claims =
+        new SessionClaims("11", List.of("platformAdmin"), Map.of(), false, null, null);
+
+    assertTrue(claims.hasPrivilegedRole());
   }
 }

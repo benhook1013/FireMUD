@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,141 @@ class GameplayWorldCatalogTest {
 
     assertThat(catalog.visibleWorlds()).isEmpty();
     assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
+  void visibleWorldsSuppressesCaseInsensitiveWorldSlugCollisionsAcrossTenants() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L),
+                pointer("DEMO", "Other Demo World", "event", "Event Realm", 8L, 12L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.browseRealms("DEMO")).isEmpty();
+  }
+
+  @Test
+  void resolveWorldFailsClosedWhenNormalizedSlugMatchesMultipleWorldViews() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(worldWithTargetRealm("preview", true), worldWithTargetRealm("preview", true)));
+
+    assertThat(catalog.resolveWorld(" DeMo ")).isEmpty();
+  }
+
+  @Test
+  void uniqueWorldRemainsVisibleAndResolvable() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).hasSize(1);
+    assertThat(catalog.browseView().worlds()).extracting("slug").containsExactly("demo");
+    assertThat(catalog.resolveWorld("DEMO")).isPresent();
+  }
+
+  @Test
+  void publicBrowseOmitsPrivateOnlyWorldsAndPrivateRealmMetadata() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-world",
+                    "Private World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            7L,
+                            17L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW"))),
+                new GameplayWorldCatalog.WorldView(
+                    "mixed-world",
+                    "Mixed World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            7L,
+                            11L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW"),
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            7L,
+                            17L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+
+    assertThat(catalog.browseView().worlds()).extracting("slug").containsExactly("mixed-world");
+    assertThat(catalog.browseRealms("mixed-world").orElseThrow().realms())
+        .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+        .containsExactly("production");
+    assertThat(catalog.browseRealms("private-world")).isEmpty();
+  }
+
+  @Test
+  void numericWorldAliasUsesPublicMenuWhileExplicitSlugRetainsAdmissionResolution() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-world",
+                    "Private World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            7L,
+                            17L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW"))),
+                new GameplayWorldCatalog.WorldView(
+                    "public-world",
+                    "Public World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            7L,
+                            11L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW")))));
+
+    assertThat(catalog.resolveWorld("1"))
+        .map(GameplayWorldCatalog.WorldView::slug)
+        .contains("public-world");
+    assertThat(catalog.resolveWorld("private-world")).isPresent();
+    assertThat(catalog.resolvePublicWorld("1"))
+        .map(GameplayWorldCatalog.WorldView::slug)
+        .contains("public-world");
   }
 
   @Test

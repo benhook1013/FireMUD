@@ -1,13 +1,19 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
@@ -15,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyServi
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -24,6 +31,7 @@ import org.springframework.data.redis.core.ValueOperations;
 @SuppressWarnings("unchecked")
 class RedisMovementEffectIdempotencyServiceTest {
   private static final Duration TTL = Duration.ofMillis(1000L);
+  private static final String DISTINCTIVE_JWT = "distinctive-raw-backend-jwt-for-test";
 
   private final RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations =
@@ -44,7 +52,7 @@ class RedisMovementEffectIdempotencyServiceTest {
   }
 
   @Test
-  void applyPreservesRoutingBundleWhenUpdatingRoom() {
+  void applyPreservesRoutingBundleWhenUpdatingRoom() throws Exception {
     SessionContext current =
         new SessionContext(
             41L,
@@ -55,7 +63,7 @@ class RedisMovementEffectIdempotencyServiceTest {
             "demo",
             1L,
             "R-1021",
-            "jwt-token",
+            DISTINCTIVE_JWT,
             "en-NZ",
             1L,
             "demo",
@@ -75,11 +83,19 @@ class RedisMovementEffectIdempotencyServiceTest {
     assertEquals("production", updated.realmSlug());
     assertEquals(7L, updated.pointerVersion());
     assertEquals("SHARED", updated.playableStateScope());
+    assertNull(updated.jwt());
     verify(valueOperations).set("sessionctx:22:41:context", updated, TTL);
     verify(valueOperations).set("sessionctx:session:41:context", updated, TTL);
     verify(valueOperations).set("sessionctx:22:identity:1:7001:context", updated, TTL);
     verify(valueOperations).set("sessionctx:22:identity:1:name:demo:context", updated, TTL);
     verify(valueOperations).set("sessionctx:22:41:movement-effect:tfx-1", updated, TTL);
+
+    ArgumentCaptor<SessionContext> storedContexts = ArgumentCaptor.forClass(SessionContext.class);
+    verify(valueOperations, Mockito.times(5)).set(anyString(), storedContexts.capture(), eq(TTL));
+    for (SessionContext stored : storedContexts.getAllValues()) {
+      assertNull(stored.jwt());
+      assertFalse(serialize(stored).contains(DISTINCTIVE_JWT));
+    }
   }
 
   @Test
@@ -90,7 +106,8 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", withAccountId(current, 999L), "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(current, result.context());
+    assertEquals(current.withoutJwt(), result.context());
+    assertNull(result.context().jwt());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(redisTemplate, never()).delete(anyString());
   }
@@ -105,7 +122,8 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
 
     assertEquals(MoveEffectApplyStatus.REPLAYED, result.status());
-    assertEquals(replayed, result.context());
+    assertEquals(replayed.withoutJwt(), result.context());
+    assertNull(result.context().jwt());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(redisTemplate, never()).delete(anyString());
   }
@@ -129,7 +147,8 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", baselineContext(), "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(legacyCurrent, result.context());
+    assertEquals(legacyCurrent.withoutJwt(), result.context());
+    assertNull(result.context().jwt());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 
@@ -143,7 +162,8 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(legacyReplay, result.context());
+    assertEquals(legacyReplay.withoutJwt(), result.context());
+    assertNull(result.context().jwt());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 
@@ -157,7 +177,7 @@ class RedisMovementEffectIdempotencyServiceTest {
         "demo",
         1L,
         "R-1021",
-        "jwt-token",
+        DISTINCTIVE_JWT,
         "en-NZ",
         1L,
         "demo",
@@ -206,5 +226,13 @@ class RedisMovementEffectIdempotencyServiceTest {
         context.playableStateScope(),
         context.connectScopeId(),
         context.connectRequestId());
+  }
+
+  private String serialize(SessionContext context) throws Exception {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    try (ObjectOutputStream objectOutput = new ObjectOutputStream(output)) {
+      objectOutput.writeObject(context);
+    }
+    return output.toString(StandardCharsets.ISO_8859_1);
   }
 }
