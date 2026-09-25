@@ -171,8 +171,7 @@ The following examples illustrate how to apply the version-aware guidelines to c
 
 ## CI/CD Execution
 
-- Flyway runs automatically when a service container starts.
-  If any migration fails, the application startup aborts so issues are caught early.
+- Flyway runs automatically when a migration-bearing service container starts only after the deployment path has established its compatibility, data-preflight, and writer-quiescence gates. If any migration fails, application startup aborts so issues are caught early; this is not an unconditional or PR-controlled activation.
 - In development you can run `./gradlew flywayMigrate` for a single service.
 - Execute this task from the service directory or prefix the project name (e.g.,
   `./gradlew :account-service:flywayMigrate`).
@@ -187,8 +186,8 @@ The following examples illustrate how to apply the version-aware guidelines to c
   and rerun the migration. A concurrently created or invalid index may be retried only after the
   same preflight passes; an invalid index is not evidence that the uniqueness contract is safe.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
-- During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. This step is fully automated.
-- On startup the container executes Flyway against its database schema before the Spring application fully starts.
+- During deployment GitHub Actions builds and pushes the Docker image and Kubernetes restarts the service after the required gates are established; the execution is automated, but activation remains gated.
+- On startup the container executes Flyway against its database schema before the Spring application fully starts, within that gated deployment path.
 - The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
 - Diagrams are written to `design/erd/` and the CI workflow collects this
    directory as an artifact.

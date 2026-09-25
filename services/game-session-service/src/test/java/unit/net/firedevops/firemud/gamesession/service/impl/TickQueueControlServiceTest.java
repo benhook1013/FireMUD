@@ -149,8 +149,7 @@ class TickQueueControlServiceTest {
 
     verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look|east");
     verify(gameplayCommandRepository)
-        .markAcceptedCommandStaged(
-            eq(1L), eq(2L), eq("cmd-123"), any(Instant.class));
+        .markAcceptedCommandStaged(eq(1L), eq(2L), eq("cmd-123"), any(Instant.class));
   }
 
   @Test
