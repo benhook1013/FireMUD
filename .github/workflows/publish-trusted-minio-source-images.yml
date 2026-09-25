@@ -216,6 +216,20 @@ jobs:
         run: |
           set -euo pipefail
           anonymous_docker_config="$(mktemp -d "$RUNNER_TEMP/minio-anonymous-docker.XXXXXX")"
+          remove_local_image_reference() {
+            local image_ref="$1"
+            docker image rm "$image_ref" >/dev/null 2>&1 || true
+            if docker image inspect "$image_ref" >/dev/null 2>&1; then
+              echo "Local MinIO image reference remains before anonymous pull: $image_ref" >&2
+              return 1
+            fi
+          }
+          remove_local_image_reference "$SERVER_IMAGE"
+          remove_local_image_reference "$SERVER_IMAGE_NAME:$PUBLISH_TAG"
+          remove_local_image_reference "$SERVER_IMAGE_NAME@$SERVER_DIGEST"
+          remove_local_image_reference "$CLIENT_IMAGE"
+          remove_local_image_reference "$CLIENT_IMAGE_NAME:$PUBLISH_TAG"
+          remove_local_image_reference "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"
           verify_anonymous_pull() {
             local image_ref="$1" pull_output
             if pull_output="$(docker pull "$image_ref" 2>&1)"; then

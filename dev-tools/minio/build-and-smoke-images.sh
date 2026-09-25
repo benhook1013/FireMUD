@@ -119,7 +119,7 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   } >> "$GITHUB_OUTPUT"
 fi
 
-if [[ -n "${RUNNER_TEMP:-}" ]]; then
+if [[ "${EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT:-}" == true && -n "${RUNNER_TEMP:-}" ]]; then
   artifact_dir="$RUNNER_TEMP/minio-image-artifact"
   mkdir -p "$artifact_dir"
   docker save "$server_image" "$client_image" | gzip -1 > "$artifact_dir/images.tar.gz"

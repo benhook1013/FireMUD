@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
 VERIFY_SMOKE="$ROOT_DIR/dev-tools/verify-smoke-images.sh"
 OVERLAY="$ROOT_DIR/docker/docker-compose.pr-local-minio.override.yml"
+TRUSTED_PUBLISH_WORKFLOW="$ROOT_DIR/.github/workflows/publish-trusted-minio-source-images.yml"
+TRUSTED_BUILD_WORKFLOW="$ROOT_DIR/.github/workflows/build-trusted-minio-source-images.yml"
 
 require_contains() {
   local contents="$1"
@@ -47,6 +49,10 @@ fi
 require_contains "$job" 'id: minio-source'
 require_contains "$job" "needs.image-meta.outputs.runtime_smoke_required == 'true'"
 require_contains "$job" 'bash ./dev-tools/minio/build-and-smoke-images.sh'
+if grep -Fq 'EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT' <<<"$job"; then
+  echo "PR Full-Stack Smoke must not opt in to trusted MinIO image artifact export." >&2
+  exit 1
+fi
 require_contains "$job" '"$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE"'
 require_count "$job" 'SMOKE_MINIO_SERVER_IMAGE_ID: >-' 3
 require_count "$job" 'SMOKE_MINIO_CLIENT_IMAGE_ID: >-' 3
@@ -57,6 +63,26 @@ require_contains "$job" "steps.minio-source.outputs.server_image_id != ''"
 require_contains "$job" "steps.minio-source.outputs.client_image_id != ''"
 require_contains "$job" 'run: bash ./dev-tools/verify-smoke-images.sh'
 require_contains "$job" 'bash ./dev-tools/verify-smoke-images.sh'
+
+trusted_publisher="$(<"$TRUSTED_PUBLISH_WORKFLOW")"
+require_contains "$trusted_publisher" 'docker image rm "$image_ref"'
+require_contains "$trusted_publisher" 'docker image inspect "$image_ref"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE_NAME:$PUBLISH_TAG"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE_NAME@$SERVER_DIGEST"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE_NAME:$PUBLISH_TAG"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
+require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$SERVER_IMAGE_NAME@$SERVER_DIGEST"'
+require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
+
+trusted_builder="$(<"$TRUSTED_BUILD_WORKFLOW")"
+require_contains "$trusted_builder" 'EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: '\''true'\'''
+require_contains "$trusted_builder" 'run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"'
+
+runtime_workflow="$(<"$WORKFLOW")"
+require_contains "$runtime_workflow" "      - 'dev-tools/minio/**'"
+require_count "$runtime_workflow" '"dev-tools/minio/"' 2
 
 overlay="$(<"$OVERLAY")"
 require_contains "$overlay" 'minio:'

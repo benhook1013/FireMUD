@@ -46,6 +46,8 @@ jobs:
 
       - name: Build and smoke exact MinIO sources
         id: smoke
+        env:
+          EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: 'true'
         run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
 
       - name: Upload exact smoke-tested image artifact
