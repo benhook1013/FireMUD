@@ -128,6 +128,92 @@ class RuntimeTest(unittest.TestCase):
             )
         self.assertIn("response has no preceding full-review trigger", audit["unmatched_responses"])
 
+    def test_stop_audit_keeps_old_unanchored_checkpoint_historical_but_holds_current_one(self) -> None:
+        old_head = "7" * 40
+
+        def run_audit(reviewed_head: str):
+            checkpoint = {
+                "databaseId": 12,
+                "author": {"login": "maintainer"},
+                "body": (
+                    f"Hosted: 5 found / 5 accepted · `{reviewed_head[:12]}` · 1 files\n"
+                    "<!-- firemud-hosted-review: 55 -->"
+                ),
+                "createdAt": "2026-09-24T00:02:00Z",
+                "updatedAt": "2026-09-24T00:02:00Z",
+            }
+            payload = self._payload([checkpoint], head=HEAD)
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            observer = LiveEvidence("owner/repo", live)
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                    allow_historical_unmatched=True,
+                )
+
+        old_audit = run_audit(old_head)
+        self.assertIn(
+            "a public Hosted checkpoint has no unique attributable trigger",
+            old_audit["historical_unmatched_responses"],
+        )
+        self.assertEqual(old_audit["unmatched_responses"], [])
+        self.assertEqual(old_audit["ambiguous_responses"], [])
+
+        current_audit = run_audit(HEAD)
+        self.assertIn(
+            "a public Hosted checkpoint has no unique attributable trigger",
+            current_audit["ambiguous_responses"],
+        )
+        self.assertEqual(current_audit["historical_unmatched_responses"], [])
+
+    def test_stop_audit_keeps_unmatched_old_response_historical_but_holds_current_response(self) -> None:
+        old_head = "7" * 40
+
+        def run_audit(reviewed_head: str):
+            review = {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\nActionable comments posted: 5",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-24T00:02:00Z",
+                "commit": {"oid": reviewed_head},
+            }
+            payload = self._payload(reviews=[review], head=HEAD)
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            observer = LiveEvidence("owner/repo", live)
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                    allow_historical_unmatched=True,
+                )
+
+        old_audit = run_audit(old_head)
+        self.assertIn("response has no preceding full-review trigger", old_audit["historical_unmatched_responses"])
+        self.assertEqual(old_audit["ambiguous_responses"], [])
+
+        current_audit = run_audit(HEAD)
+        self.assertIn("response has no preceding full-review trigger", current_audit["ambiguous_responses"])
+
     def test_retirement_audit_refreshes_cached_public_and_channel_history(self) -> None:
         stale_payload = self._payload()
         current_trigger = {
@@ -1224,7 +1310,7 @@ class RuntimeTest(unittest.TestCase):
                 unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
         self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
 
-    def test_review_stop_audit_pins_every_exact_terminal_ambiguity_and_reuses_transition_fingerprints(self) -> None:
+    def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         response_at = "2026-09-23T00:03:00Z"
         second_trigger_at = "2026-09-23T00:04:00Z"
@@ -1310,7 +1396,7 @@ class RuntimeTest(unittest.TestCase):
         }
         state_by_trigger = {10: state, 20: second_state}
 
-        def run_review_stop(selected_audit=expected_audit, pins=(), prior_fingerprints=()):
+        def run_review_stop(selected_audit=expected_audit, pins=()):
             observer._payloads.clear()
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
@@ -1335,14 +1421,18 @@ class RuntimeTest(unittest.TestCase):
                     42,
                     anchor,
                     pins,
-                    prior_hosted_fingerprints=prior_fingerprints,
                 )
                 expected_anchor = {
                     "child_head": HEAD,
                     "live_base_ref": "develop",
                     "live_base_tip": BASE,
                 }
-                audit.assert_called_once_with(42, prior_fingerprints, expected_anchor)
+                audit.assert_called_once_with(
+                    42,
+                    (),
+                    expected_anchor,
+                    allow_historical_unmatched=True,
+                )
                 return result
 
         observed = run_review_stop()
@@ -1351,10 +1441,8 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual([(item["trigger_id"], item["response_id"]) for item in ambiguous], [(10, 11), (20, 21)])
         self.assertTrue(observed["blockers"])
 
-        prior_fingerprints = ("d" * 64,)
         retained = run_review_stop(
             pins=tuple(item["fingerprint"] for item in ambiguous),
-            prior_fingerprints=prior_fingerprints,
         )
         self.assertEqual(retained["retained_ambiguous"], ambiguous)
         self.assertEqual(retained["active_reservations"], [])

@@ -269,7 +269,6 @@ class FixtureEvidence:
         pr: int,
         expected_anchor: Mapping[str, Any],
         retained_ambiguous_fingerprints: Sequence[str] = (),
-        prior_hosted_fingerprints: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Expose complete fixture evidence through the live stop-audit contract."""
 
@@ -295,12 +294,6 @@ class FixtureEvidence:
             raise AcceptanceFixtureError("fixture stop audit received a malformed terminal ambiguity fingerprint")
         if len(set(pins)) != len(pins):
             raise AcceptanceFixtureError("fixture stop audit received duplicate terminal ambiguity fingerprints")
-        prior = tuple(prior_hosted_fingerprints)
-        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in prior):
-            raise AcceptanceFixtureError("fixture stop audit received a malformed prior Hosted fingerprint")
-        if len(set(prior)) != len(prior):
-            raise AcceptanceFixtureError("fixture stop audit received duplicate prior Hosted fingerprints")
-
         histories = {channel: tuple(self.history(pr, channel)) for channel in ("hosted", "cli")}
         terminal = [
             {"channel": channel, **dict(value)}
@@ -318,23 +311,61 @@ class FixtureEvidence:
 
         active_reservations: list[Any] = []
         unmatched_responses: list[Any] = []
+        historical_unmatched_responses: list[Any] = []
         ambiguous_responses: list[Any] = []
         unresolved_findings: list[Any] = []
         checkpoints: list[dict[str, Any]] = []
+
+        def is_historical_unanchored_checkpoint(channel: str, value: Mapping[str, Any]) -> bool:
+            head = value.get("head", value.get("reviewed_head"))
+            checkpoint = value.get("checkpoint", value.get("checkpoint_id"))
+            return (
+                channel == "hosted"
+                and value.get("completed") is True
+                and value.get("attributable") is True
+                and value.get("anchored") is False
+                and value.get("provisional") is not True
+                and value.get("correction") is not True
+                and isinstance(head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", head) is not None
+                and head.casefold() != expected_head.casefold()
+                and isinstance(checkpoint, str)
+                and bool(checkpoint)
+                and not checkpoint.startswith(
+                    (
+                        "trigger:",
+                        "trigger-uncheckpointed:",
+                        "pending-capture:",
+                        "review-threads:",
+                        "summary-actions:",
+                        "over-ceiling:",
+                    )
+                )
+            )
+
         for channel, values in histories.items():
             for value in values:
                 if not isinstance(value, Mapping):
                     raise AcceptanceFixtureError("fixture stop evidence entries must be objects")
+                historical_unanchored = is_historical_unanchored_checkpoint(channel, value)
                 if value.get("active_reservation") is True or value.get("active_review") is True:
                     active_reservations.append(value.get("checkpoint", "active fixture review"))
                 if value.get("unmatched_response") is True and value.get("fingerprint") not in retained_fingerprints:
-                    unmatched_responses.append(value.get("checkpoint", "unmatched fixture response"))
+                    destination = historical_unmatched_responses if historical_unanchored else unmatched_responses
+                    destination.append(value.get("checkpoint", "unmatched fixture response"))
                 if value.get("ambiguous_response") is True and value.get("fingerprint") not in retained_fingerprints:
                     ambiguous_responses.append(value.get("checkpoint", "ambiguous fixture response"))
                 if any(
                     value.get(flag) is True
                     for flag in ("held", "unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
-                ) and value.get("fingerprint") not in retained_fingerprints:
+                ) and value.get("fingerprint") not in retained_fingerprints and not (
+                    historical_unanchored
+                    and value.get("held") is True
+                    and not any(
+                        value.get(flag) is True
+                        for flag in ("unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
+                    )
+                ):
                     unresolved_findings.append(value.get("reason") or value.get("checkpoint", "unresolved fixture finding"))
                 if value.get("completed") is True and value.get("attributable") is True:
                     checkpoints.append({"channel": channel, **dict(value)})
@@ -345,6 +376,7 @@ class FixtureEvidence:
             "anchor": dict(expected_anchor),
             "active_reservations": active_reservations,
             "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
             "checkpoints": checkpoints,

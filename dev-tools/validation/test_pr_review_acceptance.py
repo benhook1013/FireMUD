@@ -942,6 +942,69 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertNotEqual(blocked_next.returncode, 0)
             self.assertIn("PARENT_MOVED", blocked_next.stderr)
 
+    def test_direct_human_stop_preserves_old_unanchored_checkpoint_without_taper_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": BASE,
+                    "checkpoint": "legacy-hosted-6-5",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": False,
+                    "held": True,
+                    "unmatched_response": True,
+                    "accepted": 5,
+                    "raw": 6,
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "latest-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "raw": 0,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                },
+            ]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+
+            stopped = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--checkpoint",
+                "latest-hosted",
+                "--reason",
+                "stop discovery while retaining historical findings",
+                "--json",
+            )
+
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(json.loads(stopped.stdout)["stop_basis"], "direct_human")
+            status = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(status.returncode, 0, status.stderr)
+            self.assertEqual(json.loads(status.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
 
 if __name__ == "__main__":
     unittest.main()

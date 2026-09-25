@@ -402,7 +402,6 @@ class LiveEvidence:
         pr: int,
         expected_anchor: Mapping[str, Any],
         retained_ambiguous_fingerprints: Sequence[str] = (),
-        prior_hosted_fingerprints: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Refresh complete review evidence for a human-directed channel stop.
 
@@ -423,15 +422,6 @@ class LiveEvidence:
             raise ControllerError("retained Hosted ambiguity requires an exact immutable fingerprint")
         if len(set(pins)) != len(pins):
             raise ControllerError("retained Hosted ambiguity fingerprints must be unique")
-        prior_fingerprints = tuple(prior_hosted_fingerprints)
-        if any(
-            not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
-            for fingerprint in prior_fingerprints
-        ):
-            raise ControllerError("prior Hosted transition evidence requires exact immutable fingerprints")
-        if len(set(prior_fingerprints)) != len(prior_fingerprints):
-            raise ControllerError("prior Hosted transition fingerprints must be unique")
-
         # All earlier commands may have populated these caches. A stop decision
         # is an authorization boundary, so refresh the paginated public snapshot
         # and both channel histories before inspecting the pin.
@@ -466,18 +456,20 @@ class LiveEvidence:
         ):
             raise ControllerError("pull-request head or parent moved from the review stop anchor")
 
-        # The established audit validates all paginated identities, trigger to
+        # The established audit validates paginated identities, trigger to
         # response linkage, public checkpoints, pending captures, and unresolved
-        # review findings. Its anchor records live GitHub parent identity as well
-        # as the exact head supplied by the controller's fresh stack selection.
+        # review findings. Stop mode retains only unmatched records proven to
+        # belong to another head as historical; current-head or unknown results
+        # remain blockers. No transition fingerprints are reauthorized here.
         audit = self.legacy_transition_reauthorization_audit(
             pr,
-            prior_fingerprints,
+            (),
             {
                 "child_head": child_head,
                 "live_base_ref": current.base_ref_name,
                 "live_base_tip": parent_head,
             },
+            allow_historical_unmatched=True,
         )
         payload = self._payload(pr)
         channel_history = {
@@ -549,6 +541,7 @@ class LiveEvidence:
             "blockers": blockers,
             "active_reservations": active_reservations,
             "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": list(audit.get("historical_unmatched_responses", ())),
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
             "checkpoints": checkpoints,
@@ -561,8 +554,10 @@ class LiveEvidence:
         pr: int,
         expected_hosted_fingerprints: tuple[str, ...],
         expected_anchor: dict[str, Any],
+        *,
+        allow_historical_unmatched: bool = False,
     ) -> dict[str, Any]:
-        """Prove completeness and attribution of all currently available Hosted evidence."""
+        """Audit complete Hosted history, optionally preserving older unmatched results for a stop."""
 
         # Retirement is the final authorization boundary. Earlier command checks may
         # have populated these caches, so refresh the complete public snapshot and
@@ -601,6 +596,42 @@ class LiveEvidence:
             or pull["baseRefOid"].casefold() != expected_base_tip.casefold()
         ):
             raise ControllerError("GitHub PR head or base moved during missing Hosted fingerprint retirement")
+
+        historical_unmatched_responses: list[str] = []
+
+        def record_unmatched(message: str, *, historical: bool = False, ambiguous: bool = False) -> None:
+            if allow_historical_unmatched and ambiguous:
+                ambiguous_responses.append(message)
+            elif allow_historical_unmatched and historical:
+                historical_unmatched_responses.append(message)
+            else:
+                unmatched_responses.append(message)
+
+        def response_matches_expected_head(response_id: int, response_item: Mapping[str, Any]) -> bool | None:
+            """Return whether a public result names the stop head, or None if unknown."""
+
+            def checkpoint_names_another_head(reviewed_sha: Any) -> bool | None:
+                if not isinstance(reviewed_sha, str) or re.fullmatch(r"[0-9a-fA-F]{7,40}", reviewed_sha) is None:
+                    return None
+                return not expected_head.casefold().startswith(reviewed_sha.casefold())
+
+            matching = checkpoints_by_response.get(response_id, [])
+            if len(matching) == 1:
+                reviewed_sha = matching[0].reviewed_sha
+                if isinstance(reviewed_sha, str) and reviewed_sha:
+                    names_another_head = checkpoint_names_another_head(reviewed_sha)
+                    if names_another_head is not None:
+                        return not names_another_head
+            commit = (response_item.get("commit") or {}).get("oid")
+            if isinstance(commit, str) and hosted.EXACT_SHA.fullmatch(commit):
+                return commit.casefold() == expected_head.casefold()
+            body = response_item.get("body")
+            if isinstance(body, str):
+                if hosted._matches_head(body, expected_head):
+                    return True
+                if hosted._scope_head(body) is not None:
+                    return False
+            return None
         latest = self.live.pull_request(pr)
         if (
             latest.number != pr
@@ -694,7 +725,13 @@ class LiveEvidence:
         for response_id, response_at in responses:
             previous = [item for item in commands if item[1] < response_at]
             if not previous:
-                unmatched_responses.append("response has no preceding full-review trigger")
+                response_item = response_by_id[response_id][0]
+                response_is_current = response_matches_expected_head(response_id, response_item)
+                record_unmatched(
+                    "response has no preceding full-review trigger",
+                    historical=response_is_current is False,
+                    ambiguous=response_is_current is not False,
+                )
                 continue
             latest_time = previous[-1][1]
             nearest = [item for item in previous if item[1] == latest_time]
@@ -739,7 +776,12 @@ class LiveEvidence:
                 fingerprint = observation_fingerprint(observation)
                 fingerprinted = fingerprint in expected_hosted_fingerprints
                 if not fingerprinted:
-                    unmatched_responses.append("completed Hosted response has no checkpoint or prior audit")
+                    is_current_head = record["head_sha"].casefold() == expected_head.casefold()
+                    record_unmatched(
+                        "completed Hosted response has no checkpoint or prior audit",
+                        historical=not is_current_head,
+                        ambiguous=is_current_head,
+                    )
 
         for trigger_id, _ in commands:
             if trigger_id in records_by_trigger:
@@ -772,8 +814,15 @@ class LiveEvidence:
                 response_id = github.immutable_database_id(response_item)
                 matching_checkpoints = checkpoints_by_response.get(response_id, []) if response_id is not None else []
                 if not matching_checkpoints:
-                    unmatched_responses.append(
-                        "an unrecorded completed Hosted response has no matching public checkpoint"
+                    response_is_current = (
+                        response_matches_expected_head(response_id, response_item)
+                        if response_id is not None
+                        else None
+                    )
+                    record_unmatched(
+                        "an unrecorded completed Hosted response has no matching public checkpoint",
+                        historical=response_is_current is False,
+                        ambiguous=response_is_current is not False,
                     )
                 elif len(matching_checkpoints) != 1:
                     ambiguous_responses.append(
@@ -839,7 +888,18 @@ class LiveEvidence:
         represented_checkpoints.update(legacy_represented_checkpoint_ids)
         for checkpoint in hosted_checkpoints:
             if str(checkpoint.comment_id) not in represented_checkpoints:
-                unmatched_responses.append("a public Hosted checkpoint has no unique attributable trigger")
+                reviewed_sha = checkpoint.reviewed_sha
+                names_another_head = (
+                    not expected_head.casefold().startswith(reviewed_sha.casefold())
+                    if isinstance(reviewed_sha, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{7,40}", reviewed_sha) is not None
+                    else None
+                )
+                record_unmatched(
+                    "a public Hosted checkpoint has no unique attributable trigger",
+                    historical=names_another_head is True,
+                    ambiguous=names_another_head is not True,
+                )
         unresolved_findings = [
             str(item.get("checkpoint", "Hosted finding"))
             for item in hosted_history
@@ -852,6 +912,7 @@ class LiveEvidence:
             "complete": True,
             "active_reservations": active_reservations,
             "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
         }

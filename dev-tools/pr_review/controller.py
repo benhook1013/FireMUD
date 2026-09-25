@@ -1487,7 +1487,8 @@ class ReviewController:
         pr: int,
         current: AnchorFacts,
         retained_ambiguous_fingerprints: tuple[str, ...],
-        prior_hosted_fingerprints: tuple[str, ...],
+        *,
+        allow_historical_unmatched: bool = False,
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
@@ -1497,7 +1498,6 @@ class ReviewController:
                     pr,
                     current.as_dict(),
                     retained_ambiguous_fingerprints=retained_ambiguous_fingerprints,
-                    prior_hosted_fingerprints=prior_hosted_fingerprints,
                 )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
@@ -1515,7 +1515,7 @@ class ReviewController:
         elif callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
             try:
                 audit = provider.legacy_transition_reauthorization_audit(
-                    pr, prior_hosted_fingerprints, current.as_dict()
+                    pr, (), current.as_dict()
                 )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
@@ -1538,6 +1538,11 @@ class ReviewController:
                 raise ControllerError(f"review-stop audit has malformed {field}")
             if values:
                 raise ControllerError(f"review stop is blocked by an {description}")
+        historical_unmatched = audit.get("historical_unmatched_responses", [])
+        if not isinstance(historical_unmatched, Sequence) or isinstance(historical_unmatched, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed historical unmatched-response evidence")
+        if historical_unmatched and not allow_historical_unmatched:
+            raise ControllerError("review stop is blocked by historical unmatched evidence outside a direct Hosted stop")
         terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
         retained_ambiguities = audit.get("retained_ambiguous", [])
         if not isinstance(terminal_ambiguities, Sequence) or isinstance(terminal_ambiguities, (str, bytes)):
@@ -1619,6 +1624,7 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         *,
         checkpoint_pin: str | None,
+        allow_historical_unmatched: bool = False,
         retained_ambiguous_fingerprints: tuple[str, ...] = (),
         ambiguity_reason: str | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
@@ -1626,13 +1632,11 @@ class ReviewController:
             selected: self._policy_history(state, pr, selected, reconciliation)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
-        transition = self._legacy_transition_for(state, pr, current)
-        prior_hosted_fingerprints = transition.hosted_fingerprints if transition is not None else ()
         audit = self._stop_audit(
             pr,
             current,
             retained_ambiguous_fingerprints,
-            prior_hosted_fingerprints,
+            allow_historical_unmatched=allow_historical_unmatched,
         )
         retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
             histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
@@ -1698,6 +1702,49 @@ class ReviewController:
                         _field(value, "terminal_ambiguous") is True
                         and _field(value, "fingerprint") in retained_fingerprints
                     ):
+                        continue
+                    checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                    historical_unanchored_checkpoint = (
+                        evidence_value.completed is True
+                        and evidence_value.attributable is True
+                        and evidence_value.anchored is False
+                        and evidence_value.provisional is False
+                        and not evidence_value.correction
+                        and isinstance(checkpoint, str)
+                        and bool(checkpoint)
+                        and not checkpoint.startswith(
+                            (
+                                "trigger:",
+                                "trigger-uncheckpointed:",
+                                "pending-capture:",
+                                "review-threads:",
+                                "summary-actions:",
+                                "over-ceiling:",
+                            )
+                        )
+                        and isinstance(evidence_value.head, str)
+                        and re.fullmatch(r"[0-9a-fA-F]{40}", evidence_value.head) is not None
+                        and evidence_value.head.casefold() != current.child_head.casefold()
+                        and _field(value, "unstable") is not True
+                        and _field(value, "rate_limited") is not True
+                        and _field(value, "active_review") is not True
+                        and _field(value, "active_reservation") is not True
+                        and _field(value, "actionable") is not True
+                    )
+                    other_blocker_flags = any(
+                        _field(value, flag) is True
+                        for flag in (
+                            "unstable",
+                            "rate_limited",
+                            "unreconciled",
+                            "parent_moved",
+                            "over_ceiling",
+                            "active_review",
+                            "active_reservation",
+                            "actionable",
+                        )
+                    )
+                    if allow_historical_unmatched and historical_unanchored_checkpoint and not other_blocker_flags:
                         continue
                     raise ControllerError(f"{selected.value} channel has unresolved review evidence")
                 checkpoint_id = _field(value, "checkpoint", "checkpoint_id")
@@ -1794,6 +1841,10 @@ class ReviewController:
                 current,
                 reconciliation_result,
                 checkpoint_pin=allocation.stop_checkpoint,
+                allow_historical_unmatched=(
+                    allocation.stop_basis == "direct_human"
+                    and allocation.channel == policy.Channel.HOSTED.value
+                ),
                 retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                 ambiguity_reason=allocation.retained_ambiguous_reason,
             )
@@ -2499,6 +2550,26 @@ class ReviewController:
             if not self._current_branches_match(state, live, reconciliation, pr, remote_heads):
                 raise ControllerError("review stop requires a coherent exact-current stack topology")
             current = self._anchor(pr, item, reconciliation.links[pr])
+            basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
+            candidate_history = self._policy_history(state, pr, selected, reconciliation)
+            if previous is not None and previous.stop_basis is None and previous.handoff_checkpoint is None:
+                prior_view = self._allocation_progress(
+                    previous,
+                    candidate_history,
+                    current,
+                    reconciliation.status_for(pr, selected.value),
+                    state=state,
+                    reconciliation_result=reconciliation,
+                )
+                candidate_latest, _ = self._latest_stop_checkpoint(
+                    pr, selected, candidate_history, checkpoint
+                )
+                if (
+                    prior_view["status"] == "EXHAUSTED_PENDING"
+                    and prior_view["reason"] == "review allocation exhausted; an explicit stop decision is required"
+                    and prior_view["checkpoint"] == _field(candidate_latest, "checkpoint", "checkpoint_id")
+                ):
+                    basis = "allocated"
             latest, retained, checked_histories = self._check_stop_evidence(
                 state,
                 pr,
@@ -2506,6 +2577,9 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=checkpoint,
+                allow_historical_unmatched=(
+                    basis == "direct_human" and selected == policy.Channel.HOSTED
+                ),
                 retained_ambiguous_fingerprints=retained_fingerprint_values,
                 ambiguity_reason=ambiguity_reason,
             )
@@ -2523,22 +2597,6 @@ class ReviewController:
                 if prior_view["status"] == "STOPPED":
                     raise ControllerError("review discovery is already stopped for this PR and channel")
 
-            basis = "direct_human"
-            if previous is not None and previous.stop_basis is None and previous.handoff_checkpoint is None:
-                prior_view = self._allocation_progress(
-                    previous,
-                    history,
-                    current,
-                    reconciliation.status_for(pr, selected.value),
-                    state=state,
-                    reconciliation_result=reconciliation,
-                )
-                if (
-                    prior_view["status"] == "EXHAUSTED_PENDING"
-                    and prior_view["reason"] == "review allocation exhausted; an explicit stop decision is required"
-                    and prior_view["checkpoint"] == _field(latest, "checkpoint", "checkpoint_id")
-                ):
-                    basis = "allocated"
             if previous is not None:
                 original = previous
             else:
