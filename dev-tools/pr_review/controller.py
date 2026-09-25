@@ -2504,9 +2504,7 @@ class ReviewController:
                     and prior_view["checkpoint"] == _field(latest, "checkpoint", "checkpoint_id")
                 ):
                     basis = "allocated"
-            if previous is not None and previous.stop_basis is None and basis == "allocated":
-                original = previous
-            elif previous is not None:
+            if previous is not None:
                 original = previous
             else:
                 checkpoints = tuple(

@@ -377,7 +377,7 @@ class LiveEvidence:
             or hosted.parse_timestamp(response_at) is None
             or response_at != state.response_created_at
             or not isinstance(response_body, str)
-            or not github.is_coderabbit_login(((response.get("author") or {}).get("login")))
+            or not github.is_coderabbit_login((response.get("author") or {}).get("login"))
         ):
             return None
         observation = {
