@@ -127,6 +127,11 @@ def _parser() -> argparse.ArgumentParser:
     stop.add_argument("--checkpoint")
     stop.add_argument("--retain-ambiguous-fingerprint", action="append", default=[])
     stop.add_argument("--ambiguity-reason")
+    stop.add_argument(
+        "--acknowledge-over-ceiling",
+        action="store_true",
+        help="acknowledge only current-head over-ceiling skip evidence for a direct human stop; requires --head",
+    )
     stop.add_argument("--json", action="store_true", dest="as_json")
     summary_disposition = decide_commands.add_parser(
         "summary-disposition",
@@ -480,6 +485,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 retain_ambiguous_fingerprints=args.retain_ambiguous_fingerprint,
                 ambiguity_reason=args.ambiguity_reason,
+                acknowledge_over_ceiling=args.acknowledge_over_ceiling,
             ), 0
         if args.decide_command == "reconcile":
             return controller.decide_reconciliation(

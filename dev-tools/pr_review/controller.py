@@ -1613,6 +1613,12 @@ class ReviewController:
         return reason.strip()
 
     @staticmethod
+    def _stop_reason_acknowledges_over_ceiling(reason: str | None) -> bool:
+        return isinstance(reason, str) and reason.startswith(
+            "[acknowledged current over-ceiling limitation] "
+        )
+
+    @staticmethod
     def _stop_summary_fingerprints(state: ReviewState, pr: int) -> tuple[str, ...]:
         return tuple(
             sorted(
@@ -1695,6 +1701,7 @@ class ReviewController:
         *,
         allow_historical_unmatched: bool = False,
         allow_historical_terminal_ambiguity: bool = False,
+        acknowledged_over_ceiling_checkpoints: Sequence[str] = (),
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
@@ -1844,6 +1851,11 @@ class ReviewController:
             values = normalized_audit.get(field, [])
             if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
                 raise ControllerError(f"review-stop audit has malformed {field}")
+            if field == "unresolved_findings" and acknowledged_over_ceiling_checkpoints:
+                allowed = set(acknowledged_over_ceiling_checkpoints)
+                if any(not isinstance(value, str) for value in values):
+                    raise ControllerError("review-stop audit has malformed unresolved findings")
+                values = [value for value in values if value not in allowed]
             if field in {"active_reservations", "ambiguous_responses"} and historical_terminal_fingerprints:
                 expected = (
                     ("ambiguous", len(historical_terminal_fingerprints))
@@ -1923,12 +1935,38 @@ class ReviewController:
         allow_historical_terminal_ambiguity: bool = False,
         retained_ambiguous_fingerprints: tuple[str, ...] = (),
         ambiguity_reason: str | None = None,
+        acknowledge_over_ceiling: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
+        acknowledged_over_ceiling_checkpoints: tuple[str, ...] = ()
+        if acknowledge_over_ceiling:
+            acknowledged: list[str] = []
+            for history in histories.values():
+                for value in history:
+                    checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                    if (
+                        _field(value, "over_ceiling") is True
+                        and isinstance(checkpoint, str)
+                        and checkpoint.startswith("over-ceiling:")
+                        and _field(value, "head", "reviewed_head") == current.child_head
+                        and not any(
+                            _field(value, flag) is True
+                            for flag in (
+                                "held", "unstable", "unreconciled", "parent_moved",
+                                "rate_limited", "active_review", "active_reservation", "actionable",
+                            )
+                        )
+                    ):
+                        acknowledged.append(checkpoint)
+            if not acknowledged or len(set(acknowledged)) != len(acknowledged):
+                raise ControllerError(
+                    "over-ceiling acknowledgment requires unique current-head over-ceiling evidence"
+                )
+            acknowledged_over_ceiling_checkpoints = tuple(acknowledged)
         cache_key = (
             pr,
             current.child_head,
@@ -1937,6 +1975,7 @@ class ReviewController:
             current.merge_base,
             current.patch_id,
             tuple(retained_ambiguous_fingerprints),
+            tuple(acknowledged_over_ceiling_checkpoints),
             allow_historical_unmatched,
             allow_historical_terminal_ambiguity,
         )
@@ -1949,6 +1988,7 @@ class ReviewController:
                 retained_ambiguous_fingerprints,
                 allow_historical_unmatched=allow_historical_unmatched,
                 allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+                acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
             )
             if stop_audit_cache is not None:
                 stop_audit_cache[cache_key] = audit
@@ -2030,6 +2070,21 @@ class ReviewController:
                 if any(_field(value, flag) is True for flag in blocker_flags) or (
                     not audited_terminal_rate_limit and _field(value, "rate_limited") is True
                 ):
+                    checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                    if (
+                        acknowledge_over_ceiling
+                        and checkpoint in acknowledged_over_ceiling_checkpoints
+                        and evidence_value.head == current.child_head
+                        and _field(value, "over_ceiling") is True
+                        and not any(
+                            _field(value, flag) is True
+                            for flag in (
+                                "held", "unstable", "unreconciled", "parent_moved",
+                                "rate_limited", "active_review", "active_reservation", "actionable",
+                            )
+                        )
+                    ):
+                        continue
                     if (
                         _field(value, "terminal_ambiguous") is True
                         and _field(value, "fingerprint") in non_blocking_ambiguity_fingerprints
@@ -2180,6 +2235,9 @@ class ReviewController:
                 allow_historical_terminal_ambiguity=allocation.stop_basis == "direct_human",
                 retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                 ambiguity_reason=allocation.retained_ambiguous_reason,
+                acknowledge_over_ceiling=self._stop_reason_acknowledges_over_ceiling(
+                    allocation.stop_reason
+                ),
                 stop_audit_cache=stop_audit_cache,
             )
         except ControllerError as exc:
@@ -3226,6 +3284,7 @@ class ReviewController:
         checkpoint: str | None = None,
         retain_ambiguous_fingerprints: Sequence[str] = (),
         ambiguity_reason: str | None = None,
+        acknowledge_over_ceiling: bool = False,
     ) -> dict[str, Any]:
         """Record a direct human stop or consume a granted one-result allocation."""
 
@@ -3235,6 +3294,12 @@ class ReviewController:
             raise ControllerError("review stop channel must be hosted or cli") from exc
         normalized_reason = self._stop_reason(reason)
         normalized_head = _sha(head, "review stop head") if head is not None else None
+        if normalized_reason.startswith("[acknowledged current over-ceiling limitation] "):
+            raise ControllerError("review stop reason uses a reserved acknowledgment prefix")
+        if not isinstance(acknowledge_over_ceiling, bool):
+            raise ControllerError("over-ceiling acknowledgment must be explicit")
+        if acknowledge_over_ceiling and normalized_head is None:
+            raise ControllerError("over-ceiling acknowledgment requires the exact live head")
         if not isinstance(retain_ambiguous_fingerprints, Sequence) or isinstance(
             retain_ambiguous_fingerprints, (str, bytes)
         ):
@@ -3254,6 +3319,8 @@ class ReviewController:
             if pr not in state.ordered_prs:
                 raise ControllerError(f"PR #{pr} is not in the configured review stack")
             previous = state.allocations.get(identity)
+            if acknowledge_over_ceiling and previous is not None:
+                raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")
             if previous is not None and previous.handoff_checkpoint is not None:
                 raise ControllerError("this channel already has a legacy completed handoff")
             live, reconciliation = self._reconciliation(state)
@@ -3267,6 +3334,8 @@ class ReviewController:
                 raise ControllerError("review stop requires a coherent exact-current stack topology")
             current = self._anchor(pr, item, reconciliation.links[pr])
             basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
+            if acknowledge_over_ceiling and basis != "direct_human":
+                raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")
             candidate_history = self._policy_history(state, pr, selected, reconciliation)
             if previous is not None and previous.stop_basis is None and previous.handoff_checkpoint is None:
                 prior_view = self._allocation_progress(
@@ -3297,6 +3366,7 @@ class ReviewController:
                 allow_historical_terminal_ambiguity=basis == "direct_human",
                 retained_ambiguous_fingerprints=retained_fingerprint_values,
                 ambiguity_reason=ambiguity_reason,
+                acknowledge_over_ceiling=acknowledge_over_ceiling,
             )
             retained_fingerprints, retained_reason = retained or ((), None)
             history = checked_histories[selected]
@@ -3346,7 +3416,11 @@ class ReviewController:
                 stop_parent_head=current.parent_head,
                 stop_merge_base=current.merge_base,
                 stop_patch_id=current.patch_id,
-                stop_reason=normalized_reason,
+                stop_reason=(
+                    f"[acknowledged current over-ceiling limitation] {normalized_reason}"
+                    if acknowledge_over_ceiling
+                    else normalized_reason
+                ),
                 stop_summary_disposition_fingerprints=self._stop_summary_fingerprints(state, pr),
                 retained_ambiguous_fingerprints=retained_fingerprints,
                 retained_ambiguous_reason=retained_reason,

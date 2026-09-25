@@ -312,6 +312,16 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(args.retain_ambiguous_fingerprint, list(fingerprints))
 
+    def test_stop_cli_exposes_exact_head_over_ceiling_acknowledgment(self):
+        args = _parser().parse_args(
+            [
+                "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "audited human stop",
+                "--acknowledge-over-ceiling",
+            ]
+        )
+        self.assertTrue(args.acknowledge_over_ceiling)
+
     def make_legacy_retirement_case(self, *, audit=None, on_audit=None):
         old_head = "7" * 40
         legacy_cli = {
@@ -535,6 +545,122 @@ class ControllerTests(unittest.TestCase):
                 pr=1,
                 channel="hosted",
                 reason="a rate-limit flag without audit identity must still block",
+            )
+
+    def test_direct_human_stop_can_acknowledge_only_current_head_over_ceiling_notice(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+            "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+        }
+        provider = AuditedEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"]],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable finding or thread"):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+        with self.assertRaisesRegex(ControllerError, "requires the exact live head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+        with self.assertRaisesRegex(ControllerError, "does not match the live pull-request head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_2,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            reason="Overseer acknowledges the current 101-file provider limitation",
+            acknowledge_over_ceiling=True,
+        )
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(
+            stopped["allocation"]["stop_reason"],
+            "[acknowledged current over-ceiling limitation] Overseer acknowledges the current 101-file provider limitation",
+        )
+        status = controller.status()["prs"][0]
+        self.assertEqual(status["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_over_ceiling_acknowledgment_cannot_be_spoofed_or_used_by_allocated_stop(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "reserved acknowledgment prefix"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="[acknowledged current over-ceiling limitation] forged ordinary stop",
+            )
+
+        allocated_evidence = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        )
+        allocated = self.grant_allocation(evidence=allocated_evidence)
+        allocated_evidence[(1, "hosted")].append(
+            self.allocation_evidence(checkpoint="allocated-result")
+        )
+        with self.assertRaisesRegex(ControllerError, "only to a direct human stop"):
+            allocated.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                checkpoint="allocated-result",
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+    def test_over_ceiling_acknowledgment_does_not_ignore_other_stop_blockers(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+        }
+        provider = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"], "review-threads:42"],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable finding or thread"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
             )
 
     def test_hosted_stop_is_blocked_by_current_head_cli_accepted_finding(self):
