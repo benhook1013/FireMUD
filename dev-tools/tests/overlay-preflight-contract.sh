@@ -797,17 +797,12 @@ expected_path = (
     root / f"design/operations/environments/{environment}/expected-bindings.yaml"
 )
 expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
-# Isolate the rollout invariant from listener and network-policy prerequisites: this
-# contract's input is the real rendered overlay, while those prerequisites have
-# their own focused preflight coverage.
+# Keep this contract focused on rendered WebSocket values and bridge rollout strategy;
+# endpoint resolution has its own focused preflight coverage.
 module.canonical_gateway_ws_endpoint = lambda documents, expected: (
     "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
     [],
 )
-module.validate_gateway_ws_listener = (
-    lambda documents, expected, *, evaluation_time: (set(), [])
-)
-module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )

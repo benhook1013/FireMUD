@@ -21,7 +21,7 @@ class JwtUsageTest {
       Pattern.compile("(?<![\\w$])AUTHORIZATION_HEADER(?![\\w$])");
   private static final Pattern STATIC_AUTHORIZATION_IMPORT =
       Pattern.compile(
-          "(?m)^\\s*import\\s+static\\s+org\\.springframework\\.http\\.HttpHeaders\\.AUTHORIZATION\\s*;");
+          "(?m)^\\s*import\\s+static\\s+(?:[\\w$]+\\.)*HttpHeaders\\.AUTHORIZATION\\s*;");
   private static final Pattern STATIC_HTTP_HEADERS_WILDCARD_IMPORT =
       Pattern.compile("(?m)^\\s*import\\s+static\\s+(?:[\\w$]+\\.)*HttpHeaders\\.\\*\\s*;");
   private static final Pattern STATIC_AUTHORIZATION_MEMBER_IMPORT =
@@ -44,6 +44,11 @@ class JwtUsageTest {
     assertTrue(
         containsAuthorizationHeaderReference(
             "import static org.springframework.http.HttpHeaders.AUTHORIZATION;\n"
+                + "request.getHeader(AUTHORIZATION)"));
+    assertTrue(
+        containsAuthorizationHeaderReference(
+            "import static org.springframework.http.HttpHeaders.*;\n"
+                + "import static com.google.common.net.HttpHeaders.AUTHORIZATION;\n"
                 + "request.getHeader(AUTHORIZATION)"));
     assertTrue(
         containsAuthorizationHeaderReference(
