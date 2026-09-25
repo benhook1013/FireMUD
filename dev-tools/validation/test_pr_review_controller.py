@@ -558,6 +558,7 @@ class ControllerTests(unittest.TestCase):
         provider = AuditedEvidence(
             {
                 (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker],
+                (1, "cli"): [marker],
             },
             audit={
                 "complete": True,
@@ -602,6 +603,40 @@ class ControllerTests(unittest.TestCase):
         )
         status = controller.status()["prs"][0]
         self.assertEqual(status["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_over_ceiling_acknowledgment_rejects_conflicting_duplicate_checkpoint(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+            "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+        }
+        conflicting_marker = {**marker, "head": HEAD_2}
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker],
+                (1, "cli"): [conflicting_marker],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"]],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "conflicting duplicate over-ceiling checkpoint metadata"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
 
     def test_over_ceiling_acknowledgment_cannot_be_spoofed_or_used_by_allocated_stop(self):
         controller = self.make(

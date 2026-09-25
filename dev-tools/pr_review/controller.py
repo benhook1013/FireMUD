@@ -1969,25 +1969,39 @@ class ReviewController:
         }
         acknowledged_over_ceiling_checkpoints: tuple[str, ...] = ()
         if acknowledge_over_ceiling:
-            acknowledged: list[str] = []
+            over_ceiling_by_checkpoint: dict[str, Any] = {}
+            over_ceiling_fingerprints: dict[str, str] = {}
             for history in histories.values():
                 for value in history:
                     checkpoint = _field(value, "checkpoint", "checkpoint_id")
                     if (
-                        _field(value, "over_ceiling") is True
-                        and isinstance(checkpoint, str)
+                        isinstance(checkpoint, str)
                         and checkpoint.startswith("over-ceiling:")
-                        and _field(value, "head", "reviewed_head") == current.child_head
-                        and not any(
-                            _field(value, flag) is True
-                            for flag in (
-                                "held", "unstable", "unreconciled", "parent_moved",
-                                "rate_limited", "active_review", "active_reservation", "actionable",
-                            )
-                        )
                     ):
-                        acknowledged.append(checkpoint)
-            if not acknowledged or len(set(acknowledged)) != len(acknowledged):
+                        fingerprint = observation_fingerprint(value)
+                        previous_fingerprint = over_ceiling_fingerprints.get(checkpoint)
+                        if previous_fingerprint is not None and previous_fingerprint != fingerprint:
+                            raise ControllerError(
+                                "conflicting duplicate over-ceiling checkpoint metadata"
+                            )
+                        over_ceiling_fingerprints[checkpoint] = fingerprint
+                        over_ceiling_by_checkpoint[checkpoint] = value
+            acknowledged = [
+                checkpoint
+                for checkpoint, value in over_ceiling_by_checkpoint.items()
+                if (
+                    _field(value, "over_ceiling") is True
+                    and _field(value, "head", "reviewed_head") == current.child_head
+                    and not any(
+                        _field(value, flag) is True
+                        for flag in (
+                            "held", "unstable", "unreconciled", "parent_moved",
+                            "rate_limited", "active_review", "active_reservation", "actionable",
+                        )
+                    )
+                )
+            ]
+            if not acknowledged:
                 raise ControllerError(
                     "over-ceiling acknowledgment requires unique current-head over-ceiling evidence"
                 )
