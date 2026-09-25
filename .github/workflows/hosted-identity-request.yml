@@ -322,7 +322,7 @@ jobs:
             migration_paths="$(jq -r \
               '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
                 | select(type == "string")
-                | select(test("^services/[^/]+/src/main/resources/db/migration/V[0-9]+__[^/]+\\.sql$"))]
+                | select(test("^services/[^/]+/src/main/resources/db/migration/[^/]+\\.sql$"))]
               | unique | .[]' <<<"$changed_files_json")"
             if [[ -n "$migration_paths" ]]; then
               V2_SCHEMA_MIGRATION_CHANGE=true
@@ -445,6 +445,12 @@ jobs:
         run: |
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+
+      - name: Block unproven PR schema migration before image preparation
+        if: ${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}
+        run: |
+          echo "::error title=Hosted PR migration activation blocked::A changed Flyway migration cannot run in PR preview because this path has no trusted proof of fresh database provenance or zero old writers. Stop before waiting for or reclaiming preview capacity; run the trusted post-merge quiesce/preflight path instead." >&2
+          exit 1
 
       - name: Wait for tested PR merge runtime images
         if: ${{ needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha }}

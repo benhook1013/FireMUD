@@ -292,8 +292,11 @@ public class ScriptPatchReadinessProjectionServiceImpl
 
   /** Serializes readiness projection mutations for one tenant in PostgreSQL transactions. */
   private void lockTenantMutationScope(String tenantId) {
-    if (dsl == null || dsl.dialect().family() != SQLDialect.POSTGRES) {
+    if (dsl == null) {
       return;
+    }
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      throw new IllegalStateException("script_patch_readiness_requires_postgres");
     }
     dsl.execute(
         "select pg_advisory_xact_lock(?, ?)", READINESS_SCOPE_LOCK_NAMESPACE, tenantId.hashCode());

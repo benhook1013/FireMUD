@@ -177,24 +177,27 @@ class ScriptPatchReadinessSingletonIntegrationTest {
     assertThat(oldRebuildAccepted).isFalse();
     assertThat(oldRegistryRebuilt.get()).isFalse();
     assertThat(
-            dsl.fetchValue(
-                "select count(*) from readiness_downstream_effects "
-                    + "where patch_version = 'patch-old'",
-                Long.class))
+            dsl.fetch(
+                    "select count(*) from readiness_downstream_effects "
+                        + "where patch_version = 'patch-old'")
+                .get(0)
+                .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchValue(
-                "select readiness_status from script_patch_readiness_projections "
-                    + "where tenant_id = 'tenant-generation-race' "
-                    + "and script_patch_version = 'patch-old'",
-                String.class))
+            dsl.fetch(
+                    "select readiness_status from script_patch_readiness_projections "
+                        + "where tenant_id = 'tenant-generation-race' "
+                        + "and script_patch_version = 'patch-old'")
+                .get(0)
+                .get(0, String.class))
         .isEqualTo("SUPERSEDED");
     assertThat(
-            dsl.fetchValue(
-                "select readiness_generation from script_patch_readiness_projections "
-                    + "where tenant_id = 'tenant-generation-race' "
-                    + "and script_patch_version = 'patch-new'",
-                Long.class))
+            dsl.fetch(
+                    "select readiness_generation from script_patch_readiness_projections "
+                        + "where tenant_id = 'tenant-generation-race' "
+                        + "and script_patch_version = 'patch-new'")
+                .get(0)
+                .get(0, Long.class))
         .isEqualTo(2L);
 
     AtomicBoolean staleApplyRan = new AtomicBoolean();
@@ -253,18 +256,20 @@ class ScriptPatchReadinessSingletonIntegrationTest {
         .hasMessage("simulated downstream failure");
 
     assertThat(
-            dsl.fetchValue(
-                "select count(*) from readiness_downstream_effects "
-                    + "where patch_version = 'patch-retry'",
-                Long.class))
+            dsl.fetch(
+                    "select count(*) from readiness_downstream_effects "
+                        + "where patch_version = 'patch-retry'")
+                .get(0)
+                .get(0, Long.class))
         .isEqualTo(0L);
     assertThat(
-            dsl.fetchValue(
-                "select database_downstream_reconciled "
-                    + "from script_patch_readiness_projections "
-                    + "where tenant_id = 'tenant-downstream-rollback' "
-                    + "and script_patch_version = 'patch-retry'",
-                Boolean.class))
+            dsl.fetch(
+                    "select database_downstream_reconciled "
+                        + "from script_patch_readiness_projections "
+                        + "where tenant_id = 'tenant-downstream-rollback' "
+                        + "and script_patch_version = 'patch-retry'")
+                .get(0)
+                .get(0, Boolean.class))
         .isEqualTo(Boolean.FALSE);
 
     boolean retryAccepted =
@@ -281,18 +286,20 @@ class ScriptPatchReadinessSingletonIntegrationTest {
                                 + "('patch-retry', 'retry-reconciled')")));
     assertThat(retryAccepted).isEqualTo(Boolean.TRUE);
     assertThat(
-            dsl.fetchValue(
-                "select database_downstream_reconciled "
-                    + "from script_patch_readiness_projections "
-                    + "where tenant_id = 'tenant-downstream-rollback' "
-                    + "and script_patch_version = 'patch-retry'",
-                Boolean.class))
+            dsl.fetch(
+                    "select database_downstream_reconciled "
+                        + "from script_patch_readiness_projections "
+                        + "where tenant_id = 'tenant-downstream-rollback' "
+                        + "and script_patch_version = 'patch-retry'")
+                .get(0)
+                .get(0, Boolean.class))
         .isEqualTo(Boolean.TRUE);
     assertThat(
-            dsl.fetchValue(
-                "select count(*) from readiness_downstream_effects "
-                    + "where patch_version = 'patch-retry'",
-                Long.class))
+            dsl.fetch(
+                    "select count(*) from readiness_downstream_effects "
+                        + "where patch_version = 'patch-retry'")
+                .get(0)
+                .get(0, Long.class))
         .isEqualTo(1L);
   }
 
@@ -362,17 +369,18 @@ class ScriptPatchReadinessSingletonIntegrationTest {
         .isInstanceOf(FlywayException.class)
         .hasMessageContaining("four exact V1 producer-agnostic unique indexes");
     String indexDefinition =
-        (String)
-            dsl.fetchValue(
+        dsl.fetch(
                 "select pg_get_indexdef(indexrelid) from pg_index "
-                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
-                String.class);
+                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass")
+            .get(0)
+            .get(0, String.class);
     assertThat(indexDefinition).contains("(tenant_id)");
     assertThat(
-            dsl.fetchValue(
-                "select count(*) from pg_indexes where schemaname = current_schema() "
-                    + "and indexname = 'uq_script_work_item_trigger_identity_unpinned'",
-                Long.class))
+            dsl.fetch(
+                    "select count(*) from pg_indexes where schemaname = current_schema() "
+                        + "and indexname = 'uq_script_work_item_trigger_identity_unpinned'")
+                .get(0)
+                .get(0, Long.class))
         .isEqualTo(1L);
   }
 
@@ -392,11 +400,11 @@ class ScriptPatchReadinessSingletonIntegrationTest {
         .isInstanceOf(FlywayException.class)
         .hasMessageContaining("four exact V1 producer-agnostic unique indexes");
     String indexPredicate =
-        (String)
-            dsl.fetchValue(
+        dsl.fetch(
                 "select pg_get_expr(indpred, indrelid) from pg_index "
-                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
-                String.class);
+                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass")
+            .get(0)
+            .get(0, String.class);
     assertThat(indexPredicate).contains(">=");
   }
 

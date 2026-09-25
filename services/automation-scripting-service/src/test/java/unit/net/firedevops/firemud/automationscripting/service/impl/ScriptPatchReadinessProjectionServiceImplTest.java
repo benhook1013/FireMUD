@@ -13,11 +13,30 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchReadinessProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class ScriptPatchReadinessProjectionServiceImplTest {
+  @Test
+  void rejectsNonPostgresDialectBeforeReadinessMutation() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    DSLContext dsl = Mockito.mock(DSLContext.class);
+    when(dsl.dialect()).thenReturn(SQLDialect.H2);
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository, dsl);
+
+    assertThatThrownBy(() -> service.beginPatchReadiness("1", "patch-h2", List.of("script-a")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_patch_readiness_requires_postgres");
+    Mockito.verifyNoInteractions(repository, workItemRepository);
+  }
+
   @Test
   void supersedesOlderActivePatchAndCancelsPendingOnLoadWork() {
     ScriptPatchReadinessProjectionRepository repository =

@@ -2229,6 +2229,29 @@ prepare_by_name = {
     for step in jobs["prepare-runtime"]["steps"]
     if isinstance(step, dict)
 }
+prepare_steps = jobs["prepare-runtime"]["steps"]
+prepare_migration_gate = prepare_by_name[
+    "Block unproven PR schema migration before image preparation"
+]
+assert prepare_migration_gate["if"] == (
+    "${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}"
+)
+assert "Stop before waiting for or reclaiming preview capacity" in prepare_migration_gate[
+    "run"
+]
+prepare_migration_gate_index = prepare_steps.index(prepare_migration_gate)
+image_wait_index = next(
+    index
+    for index, step in enumerate(prepare_steps)
+    if step.get("name") == "Wait for tested PR merge runtime images"
+)
+base_image_wait_index = next(
+    index
+    for index, step in enumerate(prepare_steps)
+    if step.get("name") == "Wait for immutable base runtime images"
+)
+assert prepare_migration_gate_index < image_wait_index
+assert prepare_migration_gate_index < base_image_wait_index
 assert "Wait for tested PR merge runtime images" in prepare_by_name
 assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
@@ -6451,6 +6474,13 @@ run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
   run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/R__refresh_runtime_views.sql"}]]' \
+  run_deploy_target_fixture repeatable-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/afterMigrate__validate_runtime_state.sql"}]]' \
+  run_deploy_target_fixture callback-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/README.md"}]]' \
+  run_deploy_target_fixture ordinary-migration-directory-file 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-ordinary-migration-directory-file.output"
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
   run_deploy_target_fixture standalone-private 1 \
     'Private bridge proof requires hosted-controller identity.'
