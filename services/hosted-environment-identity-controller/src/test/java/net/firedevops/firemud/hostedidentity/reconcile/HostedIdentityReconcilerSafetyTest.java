@@ -4,6 +4,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.findRepositoryFile;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -55,7 +56,6 @@ import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -1771,21 +1771,6 @@ class HostedIdentityReconcilerSafetyTest {
       return map;
     }
     throw new AssertionError("expected CRD schema mapping but found " + value);
-  }
-
-  private static Path findRepositoryFile(String relativePath) {
-    Path directory = Path.of("").toAbsolutePath();
-    while (directory != null) {
-      Path candidate = directory.resolve(relativePath);
-      if (Files.isRegularFile(candidate)) {
-        return candidate;
-      }
-      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
-        break;
-      }
-      directory = directory.getParent();
-    }
-    throw new AssertionError("could not locate repository file " + relativePath);
   }
 
   @Test
