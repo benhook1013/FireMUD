@@ -473,7 +473,7 @@ class LiveEvidence:
                 continue
             record, state = matched
             responses_by_trigger.setdefault(trigger_id, set()).add(response_id)
-            if state.state not in {"retired"} and state.state == "completed":
+            if state.state == "completed":
                 response_item = next(
                     (
                         item
@@ -546,10 +546,6 @@ class LiveEvidence:
         represented_checkpoints = {
             str(item.get("checkpoint")) for item in hosted_history if isinstance(item, dict)
         }
-        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
-        for checkpoint in hosted_checkpoints:
-            if checkpoint.hosted_review_id is not None:
-                checkpoints_by_response.setdefault(checkpoint.hosted_review_id, []).append(checkpoint)
         legacy_represented_checkpoint_ids: set[str] = set()
         states_by_response: dict[int, list[tuple[dict[str, Any], hosted.TriggerState]]] = {}
         for record, state in records_by_trigger.values():

@@ -526,6 +526,7 @@ require_literal "$ADMISSION" 'pr-[1-9][0-9]{0,50}'
 forbid_literal "$ADMISSION" 'pr-[1-9][0-9]*'
 require_literal "$ADMISSION" "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'"
 ADMISSION="$ADMISSION" python3 - <<'PY'
+import copy
 import os
 import re
 from pathlib import Path
@@ -638,6 +639,124 @@ assert all(isinstance(name, str) and name for name in binding_policy_names)
 assert len(binding_policy_names) == len(set(binding_policy_names))
 assert len(binding_policy_names) == len(policy_names)
 assert set(binding_policy_names) == policy_names
+
+identity_namespace_fragment = "pr-[1-9][0-9]{0,50}-identity"
+publication_service_regex_group = (
+    "(game-design-service|world-management-service|entity-management-service|"
+    "game-logic-service|automation-scripting-service)"
+)
+admission_variable_contracts = {
+    "firemud-hosted-identity-secret-boundary": {
+        "hostedPreviewIdentityNamespacePattern": f"'{identity_namespace_fragment}'",
+        "publicationServiceRegexGroup": f"'{publication_service_regex_group}'",
+    },
+    "firemud-hosted-identity-certificate-boundary": {
+        "hostedPreviewIdentityNamespacePattern": f"'{identity_namespace_fragment}'",
+        "publicationServiceRegexGroup": f"'{publication_service_regex_group}'",
+    },
+    "firemud-hosted-identity-scope-roles": {
+        "hostedPreviewIdentityNamespacePattern": f"'{identity_namespace_fragment}'",
+    },
+    "firemud-hosted-identity-scope-rolebindings": {
+        "hostedPreviewIdentityNamespacePattern": f"'{identity_namespace_fragment}'",
+    },
+}
+
+
+def assert_admission_variable_contract(candidate_policies):
+    assert set(admission_variable_contracts) <= set(candidate_policies)
+    for policy_name, policy in candidate_policies.items():
+        spec = policy.get("spec", {})
+        expected_variables = admission_variable_contracts.get(policy_name, {})
+        variables = spec.get("variables", [])
+        assert isinstance(variables, list), policy_name
+        assert all(isinstance(variable, dict) for variable in variables), policy_name
+        variable_names = [variable.get("name") for variable in variables]
+        assert len(variable_names) == len(set(variable_names)), policy_name
+        actual_variables = {
+            variable.get("name"): variable.get("expression")
+            for variable in variables
+        }
+        assert actual_variables == expected_variables, (policy_name, actual_variables)
+
+        validation_expression = " ".join(
+            validation.get("expression", "")
+            for validation in spec.get("validations", [])
+        )
+        match_condition_expression = " ".join(
+            condition.get("expression", "")
+            for condition in spec.get("matchConditions", [])
+        )
+        assert "variables." not in match_condition_expression, policy_name
+        if expected_variables:
+            assert identity_namespace_fragment in match_condition_expression, policy_name
+            assert identity_namespace_fragment not in validation_expression, policy_name
+            assert "variables.hostedPreviewIdentityNamespacePattern" in validation_expression, policy_name
+        if "publicationServiceRegexGroup" in expected_variables:
+            assert publication_service_regex_group in match_condition_expression, policy_name
+            assert publication_service_regex_group not in validation_expression, policy_name
+            assert "variables.publicationServiceRegexGroup" in validation_expression, policy_name
+        for variable_name in expected_variables:
+            assert f"variables.{variable_name}" in validation_expression, (
+                policy_name,
+                variable_name,
+            )
+        if not expected_variables:
+            assert "variables." not in validation_expression, policy_name
+
+
+assert_admission_variable_contract(policies)
+
+
+def assert_admission_variable_contract_rejects(candidate_policies, context):
+    try:
+        assert_admission_variable_contract(candidate_policies)
+    except AssertionError:
+        return
+    raise AssertionError(f"admission variable contract accepted {context}")
+
+
+missing_publication_variable = copy.deepcopy(policies)
+secret_variables = missing_publication_variable[
+    "firemud-hosted-identity-secret-boundary"
+]["spec"]["variables"]
+secret_variables[:] = [
+    variable
+    for variable in secret_variables
+    if variable.get("name") != "publicationServiceRegexGroup"
+]
+assert_admission_variable_contract_rejects(
+    missing_publication_variable, "a missing publication service variable"
+)
+
+incorrect_publication_variable = copy.deepcopy(policies)
+incorrect_publication_variable["firemud-hosted-identity-certificate-boundary"][
+    "spec"
+]["variables"][1]["expression"] = (
+    "'(game-design-service|world-management-service|entity-management-service|"
+    "game-logic-service)'"
+)
+assert_admission_variable_contract_rejects(
+    incorrect_publication_variable, "an incomplete publication service list"
+)
+
+misplaced_publication_variable = copy.deepcopy(policies)
+secret_variables = misplaced_publication_variable[
+    "firemud-hosted-identity-secret-boundary"
+]["spec"]["variables"]
+misplaced_variable = next(
+    variable
+    for variable in secret_variables
+    if variable.get("name") == "publicationServiceRegexGroup"
+)
+secret_variables.remove(misplaced_variable)
+misplaced_publication_variable["firemud-hosted-identity-main"]["spec"][
+    "variables"
+] = [misplaced_variable]
+assert_admission_variable_contract_rejects(
+    misplaced_publication_variable, "a publication variable under the wrong policy"
+)
+
 break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
 namespace_controller = "system:serviceaccount:kube-system:namespace-controller"
 namespace_delete_break_glass = (
@@ -1056,7 +1175,8 @@ assert normalized_role_expression.count("r.resources == ['services']") == 1
 namespace_controller_scope_delete = (
     f"(request.userInfo.username == '{namespace_controller}' && "
     "request.operation == 'DELETE' && "
-    "((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') && "
+    "((request.namespace.matches('^(dev-identity|' + "
+    "variables.hostedPreviewIdentityNamespacePattern + ')$') && "
     "request.name == 'firemud-hosted-identity-scope') || "
     "(request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') && "
     "request.name == 'firemud-hosted-runtime-scope')))"
@@ -1276,7 +1396,7 @@ namespace_controller_secret_expression = next(
 normalized_namespace_controller_secret_expression = " ".join(
     namespace_controller_secret_expression.split()
 )
-assert "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)(-previous)?$')" in normalized_namespace_controller_secret_expression
+assert "request.name.matches('^firemud-grpc-' + variables.publicationServiceRegexGroup + '(-previous)?$')" in normalized_namespace_controller_secret_expression
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
@@ -1361,7 +1481,7 @@ assert "request.operation in ['CREATE', 'UPDATE']" in controller_grants
 assert "object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller'" in controller_grants
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in controller_grants
 for workload in publication_workloads:
-    assert f"request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')" in controller_grants
+    assert "request.name.matches('^firemud-grpc-' + variables.publicationServiceRegexGroup + '$')" in controller_grants
     assert (
         f"object.metadata.name == 'firemud-grpc-{workload}' && "
         f"object.metadata.labels['firemud.dev/role'] == 'grpc-publication-{workload}'"
@@ -1451,7 +1571,7 @@ assert certificate_match.startswith(f"({break_glass} &&")
 assert "request.subResource == ''" in certificate_match
 assert "request.operation == 'DELETE'" in certificate_match
 assert "request.namespace == 'dev-identity'" in certificate_match
-assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_match
+assert "request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')" in certificate_match
 controller_certificate_expression = certificate_match.split(
     "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'",
     1,
@@ -1460,7 +1580,7 @@ controller_certificate_expression = certificate_match.split(
     1,
 )[0]
 assert "request.namespace == 'dev-identity'" in controller_certificate_expression
-assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in controller_certificate_expression
+assert "request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')" in controller_certificate_expression
 assert "(request.operation == 'DELETE' &&" in certificate_match
 controller_delete_expression = controller_certificate_expression.split(
     "(request.operation == 'DELETE' &&", 1

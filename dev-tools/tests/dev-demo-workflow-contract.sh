@@ -99,16 +99,64 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
+# Extract a literal source range only when both delimiters occur exactly once
+# and the ending delimiter follows the start. The start line is included and
+# the ending line is excluded, matching the function bodies exercised below.
+extract_source_range() {
+  local source_path="$1"
+  local start_pattern="$2"
+  local end_pattern="$3"
+  awk -v start_pattern="$start_pattern" -v end_pattern="$end_pattern" '
+    {
+      source_lines[NR] = $0
+      if ($0 ~ start_pattern) {
+        start_count++
+        start_line = NR
+      }
+      if ($0 ~ end_pattern) {
+        end_count++
+        end_line = NR
+      }
+    }
+    END {
+      if (start_count != 1 || end_count != 1 || end_line <= start_line) {
+        printf "invalid source range in %s: start=%d end=%d\n", FILENAME, start_count, end_count > "/dev/stderr"
+        exit 2
+      }
+      for (line = start_line; line < end_line; line++) {
+        print source_lines[line]
+      }
+    }
+  ' "$source_path"
+}
+
+# Keep the extractor's fail-closed delimiter checks explicit: missing either
+# marker and reversed marker order must not produce a partial source snippet.
+range_fixture="$fixture_dir/source-range-fixture.sh"
+printf 'start\nbody\nend\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^missing$' '^end$' \
+  >"$fixture_dir/missing-start.out" 2>"$fixture_dir/missing-start.err"; then
+  echo "source range extraction accepted a missing start marker" >&2
+  exit 1
+fi
+if extract_source_range "$range_fixture" '^start$' '^missing$' \
+  >"$fixture_dir/missing-end.out" 2>"$fixture_dir/missing-end.err"; then
+  echo "source range extraction accepted a missing end marker" >&2
+  exit 1
+fi
+printf 'end\nbody\nstart\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^start$' '^end$' \
+  >"$fixture_dir/reversed-markers.out" 2>"$fixture_dir/reversed-markers.err"; then
+  echo "source range extraction accepted reversed markers" >&2
+  exit 1
+fi
+
 # Exercise the certificate workspace setup and EXIT cleanup directly. A caller
 # supplied root may contain unrelated files, so only the private child created
 # for this invocation may be removed.
 cert_workspace_setup="$fixture_dir/cert-workspace-setup.sh"
 {
-  awk '
-    /^provided_cert_dir=/ { capture = 1 }
-    /^workloads=\(/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^provided_cert_dir=' '^workloads=[(]'
   cat <<'EOF'
 printf 'generated certificate material\n' >"$cert_dir/generated.crt"
 printf '%s\n' "$cert_dir" >"$CERT_DIR_CAPTURE"
@@ -140,11 +188,7 @@ default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
 # caller so it cannot take the bootstrap generation/apply branch.
 secret_lookup_test="$fixture_dir/test-secret-exists.sh"
 {
-  awk '
-    /^secret_exists\(\)/ { capture = 1 }
-    /^read_secret_snapshot\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^secret_exists[(][)]' '^read_secret_snapshot[(][)]'
   cat <<'EOF'
 namespace=contract
 cert_dir="$OUTPUT_DIR"
@@ -217,11 +261,7 @@ done
 # dotted JSONPath keys, one read for all requested fields, and fail-closed errors.
 secret_snapshot_reader="$fixture_dir/read-secret-snapshot.sh"
 {
-  awk '
-    /^read_secret_snapshot\(\)/ { capture = 1 }
-    /^apply_secret\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^read_secret_snapshot[(][)]' '^apply_secret[(][)]'
   cat <<'EOF'
 namespace=contract
 lookup_mode="$1"
@@ -372,30 +412,14 @@ printf 'not a certificate\n' >"$certificate_fixture_dir/unparseable.crt"
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
-  awk '
-    /^assert_key_matches_certificate\(\)/ { capture = 1 }
-    /^ca_bundle_contains\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^assert_certificate_unexpired\(\)/ { capture = 1 }
-    /^validate_workload_certificate\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^validate_workload_certificate\(\)/ { capture = 1 }
-    /^shared_ca=/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^assert_key_matches_certificate[(][)]' '^ca_bundle_contains[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^validate_workload_certificate[(][)]' '^shared_ca='
 } >"$validator_source"
 echo "dev-demo certificate fixture: validator extracted" >&2
 
 expiry_helper_source="$certificate_fixture_dir/validate-certificate-expiry.sh"
-awk '
-  /^assert_certificate_unexpired\(\)/ { capture = 1 }
-  /^validate_workload_certificate\(\)/ { capture = 0 }
-  capture { print }
-' "$standalone_grpc_tls" >"$expiry_helper_source"
+extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]' >"$expiry_helper_source"
 expiry_fixture_dir="$certificate_fixture_dir/expiry"
 mkdir -p "$expiry_fixture_dir/newcerts"
 : >"$expiry_fixture_dir/index.txt"

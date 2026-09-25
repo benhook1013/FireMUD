@@ -4116,12 +4116,9 @@ gateway_deployment = next(
     document
     for document in gateway_strategy_counterexample
     if document.get("kind") == "Deployment"
-    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
 )
-gateway_deployment["metadata"]["name"] = "spring-cloud-gateway"
 gateway_deployment["spec"].pop("strategy", None)
-gateway_container = gateway_deployment["spec"]["template"]["spec"]["containers"][0]
-gateway_container["name"] = "spring-cloud-gateway"
 _, gateway_strategy_issues = module.validate_gateway_ws_values(
     gateway_strategy_counterexample,
     yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),

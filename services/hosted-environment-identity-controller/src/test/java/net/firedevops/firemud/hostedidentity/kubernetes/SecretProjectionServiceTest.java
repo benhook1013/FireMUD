@@ -639,19 +639,16 @@ class SecretProjectionServiceTest {
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
     KubernetesClient client = secretClient.client();
+    String role = HostedIdentityContract.INGRESS_ROLE;
+    String sourceName = plan.sourceSecretName(role);
+    String predecessorName = sourceName + "-previous";
     Map<String, String> acceptedData =
         Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
-    String acceptedRevision =
-        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, acceptedData);
+    String acceptedRevision = SecretProjectionService.revisionForRole(role, acceptedData);
     String acceptedSpki = "1".repeat(64);
     Map<String, String> acceptedAnnotations = acceptedAnnotations(acceptedRevision, acceptedSpki);
     Secret existing =
-        ownedSecret(
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            plan.ingressSecretName(),
-            acceptedData,
-            acceptedAnnotations);
+        ownedSecret(plan, role, plan.ingressSecretName(), acceptedData, acceptedAnnotations);
     existing.getMetadata().setResourceVersion("7");
     Map<String, String> replacementData =
         Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
@@ -662,13 +659,12 @@ class SecretProjectionServiceTest {
         .thenReturn(existingResource);
     when(existingResource.get()).thenReturn(existing);
     Resource<Secret> predecessorResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
-        .thenReturn(predecessorResource);
+    when(secretClient.identitySecrets().withName(predecessorName)).thenReturn(predecessorResource);
     Secret prior =
         ownedSecret(
             plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            plan.ingressSecretName() + "-previous",
+            role,
+            predecessorName,
             acceptedData,
             acceptedAnnotations(acceptedRevision, acceptedSpki));
     prior.getMetadata().setNamespace(plan.identityNamespace());
@@ -688,15 +684,7 @@ class SecretProjectionServiceTest {
 
     var result =
         service.project(
-            client,
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            replacement,
-            2,
-            2,
-            "2".repeat(64),
-            "cert-manager",
-            ALWAYS_CURRENT);
+            client, plan, role, replacement, 2, 2, "2".repeat(64), "cert-manager", ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -711,6 +699,10 @@ class SecretProjectionServiceTest {
         acceptedSpki, annotations.get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
     assertEquals("pending", annotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
     assertEquals("projected", result.state());
+    verify(secretClient.identitySecrets()).withName(predecessorName);
+    ArgumentCaptor<Secret> predecessorCandidate = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.identitySecrets()).resource(predecessorCandidate.capture());
+    assertEquals(predecessorName, predecessorCandidate.getValue().getMetadata().getName());
     verify(predecessorReplacementResource).lockResourceVersion("6");
     verify(lockedPredecessorResource).replace();
     verify(replacementResource).lockResourceVersion("7");
@@ -724,7 +716,7 @@ class SecretProjectionServiceTest {
     String workload = "game-design-service";
     String role = HostedIdentityContract.grpcPublicationRole(workload);
     String projectionName = plan.grpcPublicationSecretName(workload);
-    String sourceName = plan.grpcPublicationSourceSecretName(workload);
+    String sourceName = plan.sourceSecretName(role);
     Map<String, String> acceptedData =
         Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
     String acceptedRevision = SecretProjectionService.revisionForRole(role, acceptedData);
@@ -772,6 +764,7 @@ class SecretProjectionServiceTest {
 
     ArgumentCaptor<Secret> predecessor = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.identitySecrets()).resource(predecessor.capture());
+    verify(secretClient.identitySecrets()).withName(sourceName + "-previous");
     assertEquals(sourceName + "-previous", predecessor.getValue().getMetadata().getName());
     assertEquals(plan.identityNamespace(), predecessor.getValue().getMetadata().getNamespace());
     assertEquals(acceptedData, predecessor.getValue().getData());

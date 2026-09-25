@@ -1427,7 +1427,12 @@ class ReviewController:
             ):
                 matching.append(item)
         if len(matching) > 1:
-            return result("INVALID", "multiple completed results match the one-review allocation")
+            checkpoint = _field(matching[0], "checkpoint", "checkpoint_id")
+            return result(
+                "INVALID",
+                "multiple completed results match the one-review allocation",
+                checkpoint,
+            )
         if not matching:
             if current.child_head != allocation.head or current.patch_id != allocation.patch_id:
                 return result("INVALID", "the promised head or patch changed before a matching review")
@@ -1864,7 +1869,10 @@ class ReviewController:
                 prior_progress = self._allocation_progress(
                     previous, history, current, reconciliation.status_for(pr, selected.value)
                 )
-                if prior_progress["status"] in {"EXHAUSTED_PENDING", "HANDED_OFF"}:
+                if (
+                    prior_progress["status"] in {"EXHAUSTED_PENDING", "HANDED_OFF"}
+                    or prior_progress["checkpoint"] is not None
+                ):
                     raise ControllerError("consumed or handed-off review allocations cannot be renewed")
             if any(
                 _field(value, flag) is True
