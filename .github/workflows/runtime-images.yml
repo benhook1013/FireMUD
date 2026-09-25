@@ -1188,7 +1188,7 @@ jobs:
     needs: [image-meta]
     if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read
@@ -1197,6 +1197,11 @@ jobs:
       SMOKE_TIMEOUT_SECONDS: 20
       SMOKE_IMAGE_TAG: ${{ needs.image-meta.outputs.image_tag }}
       SMOKE_IMAGE_LOCAL_ONLY: 'true'
+      SMOKE_MINIO_LOCAL_ONLY: 'true'
+      SMOKE_MINIO_SERVER_IMAGE: >-
+        firemud-minio-server-smoke:${{ github.run_id }}-${{ github.run_attempt }}
+      SMOKE_MINIO_CLIENT_IMAGE: >-
+        firemud-minio-client-smoke:${{ github.run_id }}-${{ github.run_attempt }}
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
@@ -1269,8 +1274,21 @@ jobs:
           VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
         run: bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"
 
+      - name: Build and smoke pinned MinIO sources for PR Compose
+        id: minio-source
+        if: >-
+          ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+        run: |
+          bash ./dev-tools/minio/build-and-smoke-images.sh \
+            "$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE"
+
       - name: Run credential-free full-stack smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+        env:
+          SMOKE_MINIO_SERVER_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.server_image_id }}
+          SMOKE_MINIO_CLIENT_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.client_image_id }}
         run: bash ./dev-tools/verify-smoke-images.sh
 
       - name: Export fixed-tag preview image artifact
@@ -1371,22 +1389,42 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure
-        if: ${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+        if: >-
+          ${{ failure() &&
+          needs.image-meta.outputs.runtime_smoke_required == 'true' &&
+          steps.minio-source.outputs.server_image_id != '' &&
+          steps.minio-source.outputs.client_image_id != '' }}
+        env:
+          SMOKE_MINIO_SERVER_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.server_image_id }}
+          SMOKE_MINIO_CLIENT_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.client_image_id }}
         run: |
           docker compose \
             -f docker/docker-compose.yml \
             -f docker/docker-compose.override.yml \
             -f docker/docker-compose.smoke-images.override.yml \
+            -f docker/docker-compose.pr-local-minio.override.yml \
             logs || true
 
       - name: Stop smoke stack
-        if: ${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+        if: >-
+          ${{ always() &&
+          needs.image-meta.outputs.runtime_smoke_required == 'true' &&
+          steps.minio-source.outputs.server_image_id != '' &&
+          steps.minio-source.outputs.client_image_id != '' }}
+        env:
+          SMOKE_MINIO_SERVER_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.server_image_id }}
+          SMOKE_MINIO_CLIENT_IMAGE_ID: >-
+            ${{ steps.minio-source.outputs.client_image_id }}
         run: |
           source ./dev-tools/smoke/run-owned-compose.sh
           if ! stop_run_owned_compose_project \
             -f docker/docker-compose.yml \
             -f docker/docker-compose.override.yml \
-            -f docker/docker-compose.smoke-images.override.yml; then
+            -f docker/docker-compose.smoke-images.override.yml \
+            -f docker/docker-compose.pr-local-minio.override.yml; then
             echo "Unable to prove or release the smoke Compose project; refusing unowned teardown." >&2
             exit 1
           fi

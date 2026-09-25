@@ -175,6 +175,7 @@ CI_GATING_STEPS = (
 
 DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+    "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
 )
 
 
