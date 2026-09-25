@@ -966,6 +966,16 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Warn about quiesced migration writers after failed deploy
+        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          {
+            echo ""
+            echo "### Migration writer recovery"
+            echo ""
+            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may remain quiesced after the failed Helm deploy. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Remove dev-demo kubeconfigs
         if: ${{ always() }}
         run: |

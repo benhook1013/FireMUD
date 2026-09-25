@@ -138,6 +138,14 @@ git -C "$repo" commit -qm "unrelated service migration"
 unsupported_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_rejected push "$ordinary_sha" "$unsupported_sha"
 
+mkdir -p "$repo/services/example/src/main/resources/db/migration/nested"
+printf '%s\n' 'CREATE TABLE nested_unsupported (id integer PRIMARY KEY);' \
+  >"$repo/services/example/src/main/resources/db/migration/nested/V2__unsupported.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "nested unsupported migration"
+nested_unsupported_sha="$(git -C "$repo" rev-parse HEAD)"
+assert_rejected push "$ordinary_sha" "$nested_unsupported_sha"
+
 namespace_for_head "$baseline_sha"
 assert_activation false repository_dispatch "" "$ordinary_sha"
 assert_activation true repository_dispatch "" "$supported_v2_sha"

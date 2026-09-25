@@ -1240,6 +1240,30 @@ expected_success_condition = (
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
 
+quiesced_writer_warning = deploy_by_name[
+    "Warn about quiesced migration writers after failed deploy"
+]
+expected_quiesced_writer_warning_condition = (
+    "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
+    "steps.deploy-release.outcome == 'failure' }}"
+)
+if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
+    raise SystemExit(
+        "quiesced-writer warning must require V2 migration activation and failed Helm deploy"
+    )
+quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
+for required_warning in (
+    "Account, Game Session, and Automation writer Deployments may remain quiesced",
+    "Inspect their current state before retrying",
+    "a partial deployment may have re-enabled some writers",
+):
+    if required_warning not in quiesced_writer_warning_run:
+        raise SystemExit(
+            f"quiesced-writer warning must include: {required_warning}"
+        )
+if "all writer Deployments are quiesced" in quiesced_writer_warning_run:
+    raise SystemExit("quiesced-writer warning must allow partial deployment state")
+
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
 destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, dict)]
