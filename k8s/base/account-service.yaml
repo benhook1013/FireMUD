@@ -6,6 +6,7 @@ metadata:
   name: account-service
 spec:
   replicas: 2
+  # Intentional stop-before-start for independently safe Account V25 activation; later rollouts incur downtime.
   strategy:
     type: Recreate
   selector:
