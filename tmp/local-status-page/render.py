@@ -182,17 +182,20 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         raise ValueError("every PR needs a programme stage")
     if len(set(stages)) != sum(1 for _ in groupby(stages)):
         raise ValueError("programme stages must be contiguous in stack order")
+    github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
     overview = []
     for position, (stage, members) in enumerate(groupby(stack, key=lambda item: item["stage"]), 1):
+        members = list(members)
         links = " · ".join(
             f'<a href="{REPO_URL}{item["number"]}">#{item["number"]}</a>' for item in members
         )
+        merged = github["available"] and all(github["lifecycle"].get(item["number"]) == "MERGED" for item in members)
+        row_class = ' class="merged"' if merged else ""
         overview.append(
-            f'<li><span class="stage-order">{position:02d}</span>'
+            f'<li{row_class}><span class="stage-order">{position:02d}</span>'
             f'<h3>{safe(stage)}</h3><p>{links}</p></li>'
         )
     rows = []
-    github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
     for position, item in enumerate(stack, 1):
         number = item["number"]
         if type(number) is not int or number <= 0:
@@ -297,43 +300,44 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <title>FireMUD · local delivery status</title>
 <style>
-:root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #f2f4f1; color: #16211e; }}
+:root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e9e5e3; color: #2d2627; }}
 * {{ box-sizing: border-box; }} body {{ margin: 0; overflow-x: hidden; }} main {{ max-width: 1160px; margin: auto; padding: 2rem 1.25rem 4rem; }}
-header {{ background: #123b35; color: #f4f6ed; padding: 2.4rem 1.25rem; }} header div {{ max-width: 1160px; margin: auto; }}
+header {{ background: #612f33; color: #f4eeea; padding: 2.4rem 1.25rem; }} header div {{ max-width: 1160px; margin: auto; }}
 .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem; }}
-.repo-link {{ color: #e1f0e3; font-size: .86rem; font-weight: 650; white-space: nowrap; }} .repo-link:hover {{ color: #fff; }}
+.repo-link {{ color: #f1dbd7; font-size: .86rem; font-weight: 650; white-space: nowrap; }} .repo-link:hover {{ color: #fff; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .2rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
-p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #c5e3cb; }}
-header p {{ color: #dce9dc; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #65736a; font-size: .8rem; }} header .generated {{ color: #c5d8ca; }}
-.refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #dce9dc; font-size: .78rem; }}
-.refresh-form button {{ border: 1px solid #dce9dc; border-radius: 7px; padding: .5rem .75rem; background: #f4f6ed; color: #123b35; font: inherit; font-weight: 700; cursor: pointer; }}
-.refresh-form button:hover {{ background: #dce9dc; }}
+p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #efd4cf; }}
+header p {{ color: #eadbd7; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #776a68; font-size: .8rem; }} header .generated {{ color: #dec9c4; }}
+.refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #eadbd7; font-size: .78rem; }}
+.refresh-form button {{ border: 1px solid #eadbd7; border-radius: 7px; padding: .5rem .75rem; background: #f1e9e5; color: #612f33; font: inherit; font-weight: 700; cursor: pointer; }}
+.refresh-form button:hover {{ background: #e5d6d1; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
 .refresh-progress {{ display: none; }} .refresh-form.loading .refresh-progress {{ display: inline; }}
-section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #52625c; font-size: .88rem; }}
-.stack, .card {{ background: #fff; border: 1px solid #d5dfd6; border-radius: 14px; box-shadow: 0 3px 12px #172b1b0b; }}
+section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #685d5d; font-size: .88rem; }}
+.stack, .card {{ background: #f4f0ed; border: 1px solid #d8cfcc; border-radius: 14px; box-shadow: 0 3px 12px #3823250b; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
-.overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #fff; border: 1px solid #d5dfd6; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #172b1b0b; }}
-.overview .stage-order {{ grid-row: 1 / span 2; background: #123b35; color: #f4f6ed; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
+.overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #f4f0ed; border: 1px solid #d8cfcc; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #3823250b; }}
+.overview li.merged {{ background: #e9e1eb; }}
+.overview .stage-order {{ grid-row: 1 / span 2; background: #612f33; color: #f4eeea; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
 .overview h3 {{ line-height: 1.25; padding: .8rem .9rem 0; }} .overview p {{ margin: .45rem 0 0; padding: 0 .9rem .8rem; font-size: .9rem; }}
-.stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); gap: 0 1rem; align-items: start; border-bottom: 1px solid #e6ebe6; }} .stack li:last-child {{ border: 0; }}
-.stack li.merged {{ background: #f4effa; }} .stack li.merged .order {{ background: #69528e; }}
-.stack li.closed {{ background: #f1f3f1; }} .stack li.closed .order {{ background: #68746c; }}
-.order {{ align-self: stretch; background: #123b35; color: #f4f6ed; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
-a {{ color: #0a6350; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #093e35; }}
-.pr-main > a {{ color: #16211e; font-weight: 650; }} .pr-main > a:hover {{ color: #093e35; }} .sub {{ display: block; margin-top: .25rem; color: #5b6a62; font-size: .78rem; overflow-wrap: anywhere; }}
+.stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); gap: 0 1rem; align-items: start; border-bottom: 1px solid #ded5d2; }} .stack li:last-child {{ border: 0; }}
+.stack li.merged {{ background: #e9e1eb; }}
+.stack li.closed {{ background: #ebe7e5; }}
+.order {{ align-self: stretch; background: #612f33; color: #f4eeea; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
+a {{ color: #853e43; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #612f33; }}
+.pr-main > a {{ color: #2d2627; font-weight: 650; }} .pr-main > a:hover {{ color: #612f33; }} .sub {{ display: block; margin-top: .25rem; color: #6c6060; font-size: .78rem; overflow-wrap: anywhere; }}
 .activity-grid {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }}
-.activity-card {{ min-width: 0; padding: .6rem .75rem; border: 1px solid #dce5dc; border-radius: 9px; background: #f7f9f6; }}
+.activity-card {{ min-width: 0; padding: .6rem .75rem; border: 1px solid #d8cfcc; border-radius: 9px; background: #eee9e6; }}
 .activity-top {{ display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }}
-.activity-caption, .activity-note {{ display: block; color: #64736a; font-size: .7rem; margin-top: .32rem; }}
+.activity-caption, .activity-note {{ display: block; color: #726667; font-size: .7rem; margin-top: .32rem; }}
 .round-pills {{ display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }}
-.round-pill {{ border: 1px solid #9dbbae; border-radius: 999px; padding: .12rem .43rem; background: #e8f3ec; font-weight: 650; }}
-.round-pill.older {{ border-style: dashed; background: #fff; color: #63736a; }}
-.round-pill.unlinked {{ border-color: #b9945a; background: #fff6e9; color: #79562b; }}
-.fresh {{ color: #6a776e; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
-.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; }} .card {{ overflow: hidden; }} .card-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; background: #123b35; color: #f4f6ed; padding: .9rem 1.15rem; }} .card-top .fresh {{ color: #dce9dc; }}
-.task {{ font-weight: 620; min-height: 3.1em; margin: 1rem 1.15rem; }} dl {{ display: grid; grid-template-columns: 5.5rem 1fr; gap: .55rem .4rem; margin: 0 1.15rem 1.15rem; font-size: .86rem; }} dt {{ color: #627168; }} dd {{ margin: 0; line-height: 1.4; }}
-footer {{ color: #65736a; font-size: .8rem; margin-top: 2.5rem; }}
+.round-pill {{ border: 1px solid #ba9c9c; border-radius: 999px; padding: .12rem .43rem; background: #eadcda; font-weight: 650; }}
+.round-pill.older {{ border-style: dashed; background: #f4f0ed; color: #6c6060; }}
+.round-pill.unlinked {{ border-color: #b9945a; background: #f3e9d9; color: #79562b; }}
+.fresh {{ color: #746869; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
+.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; }} .card {{ overflow: hidden; }} .card-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; background: #612f33; color: #f4eeea; padding: .9rem 1.15rem; }} .card-top .fresh {{ color: #eadbd7; }}
+.task {{ font-weight: 620; min-height: 3.1em; margin: 1rem 1.15rem; }} dl {{ display: grid; grid-template-columns: 5.5rem 1fr; gap: .55rem .4rem; margin: 0 1.15rem 1.15rem; font-size: .86rem; }} dt {{ color: #6d6161; }} dd {{ margin: 0; line-height: 1.4; }}
+footer {{ color: #776a68; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 </style></head><body>
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>

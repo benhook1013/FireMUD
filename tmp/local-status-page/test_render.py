@@ -62,6 +62,27 @@ class StatusPageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contiguous"):
             page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
 
+    def test_overview_marks_only_fully_merged_groups(self):
+        data = self.fixture()
+        data["stack"].extend([
+            {**data["stack"][0], "number": 43},
+            {**data["stack"][0], "number": 44, "stage": "mixed"},
+            {**data["stack"][0], "number": 45, "stage": "mixed"},
+        ])
+        github = {"available": True, "states": {},
+                  "lifecycle": {42: "MERGED", 43: "MERGED", 44: "MERGED", 45: "OPEN"},
+                  "merged_at": {}, "stats": {}}
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        result = page.render(data, review, NOW, github)
+        overview = result.split('<ol class="overview">', 1)[1].split("</ol>", 1)[0]
+        self.assertIn('<li class="merged"><span class="stage-order">01</span>', overview)
+        self.assertIn('<li><span class="stage-order">02</span>', overview)
+        self.assertNotIn('<li class="merged"><span class="stage-order">02</span>', overview)
+        self.assertIn('.overview li.merged { background: #e9e1eb; }', result)
+        github["available"] = False
+        unavailable = page.render(data, review, NOW, github)
+        self.assertNotIn('<li class="merged"><span class="stage-order">01</span>', unavailable)
+
     def test_stale_and_future_timestamps_are_explicit(self):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
         self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
