@@ -114,6 +114,7 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     secondCoordinator.setFollowupId("rf-2");
     secondCoordinator.setCommandId("shared-command");
     secondCoordinator.setOriginGameInstanceId(8L);
+    secondCoordinator.setTargetGameInstanceId(10L);
     coordinatorRepository.save(secondCoordinator);
     RemoteFollowup secondFollowup = remoteFollowup(observedAt.plusSeconds(1));
     secondFollowup.setFollowupId("rf-2");
@@ -141,6 +142,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     assertThat(findFollowupsByOriginAndCommand(8L, "shared-command"))
         .extracting(RemoteFollowup::getFollowupId)
         .containsExactly("rf-2");
+    assertThat(findCoordinatorsByTargetOutcome("", "SCHEDULED"))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactlyInAnyOrder("coord-1", "coord-2");
   }
 
   @Test
