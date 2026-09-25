@@ -2,6 +2,7 @@ import importlib.util
 import base64
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,8 +44,10 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("form-action 'self'", result)
         self.assertIn("connect-src 'self'", result)
         refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
-        self.assertIn(f"script-src 'sha256-{refresh_hash}'", result)
+        age_hash = base64.b64encode(hashlib.sha256(page.AGE_SCRIPT.encode()).digest()).decode()
+        self.assertIn(f"script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}'", result)
         self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
+        self.assertIn(f'<script id="relative-age-updates">{page.AGE_SCRIPT}</script>', result)
         self.assertIn('class="refresh-progress" role="status" aria-live="polite"', result)
         self.assertIn("Review or PR details unavailable", result)
         self.assertNotIn("Takes about a minute", result)
@@ -89,6 +92,74 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
         self.assertIn("Manual status checked 1h 0m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
         self.assertEqual("25 Sep 00:00 NZST", page.local_time(NOW))
+
+    @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
+    def test_relative_age_script_updates_both_labels_over_time(self):
+        javascript = """
+const vm = require('node:vm');
+const stamp = Date.parse('2026-09-24T12:00:00Z');
+let now = stamp;
+let tick;
+let interval;
+const labels = Array.from({length: 2}, () => ({dateTime: '2026-09-24T12:00:00Z', textContent: ''}));
+vm.runInNewContext(process.argv[1], {
+  document: {querySelectorAll: () => labels}, Date: {now: () => now, parse: Date.parse},
+  setInterval: (callback, milliseconds) => { tick = callback; interval = milliseconds; }
+});
+const states = [labels.map(label => label.textContent)];
+for (const minutes of [7, 132, 1440]) {
+  now = stamp + minutes * 60000;
+  tick();
+  states.push(labels.map(label => label.textContent));
+}
+process.stdout.write(JSON.stringify({states, interval}));
+"""
+        run = subprocess.run(["node", "-e", javascript, page.AGE_SCRIPT], capture_output=True, text=True, check=True)
+        result = json.loads(run.stdout)
+        self.assertEqual([[value, value] for value in ("just now", "7m ago", "2h 12m ago", "1d ago")], result["states"])
+        self.assertEqual(30000, result["interval"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
+    def test_refresh_elapsed_time_stays_in_button_and_prevents_duplicate_fetch(self):
+        javascript = """
+const vm = require('node:vm');
+let submit;
+let tick;
+let clock = 0;
+let fetchCount = 0;
+let resolveFetch;
+const pending = new Promise(resolve => { resolveFetch = resolve; });
+const button = {disabled: false, textContent: 'Refresh review data'};
+const progress = {textContent: ''};
+const form = {
+  action: '/refresh', classList: {add() {}, remove() {}},
+  querySelector: selector => selector === 'button' ? button : progress,
+  addEventListener: (event, handler) => { submit = handler; }
+};
+let reloaded = false;
+vm.runInNewContext(process.argv[1], {
+  document: {querySelector: () => form}, Date: {now: () => clock},
+  setInterval: callback => { tick = callback; return 1; }, clearInterval: () => {},
+  fetch: () => { fetchCount++; return pending; },
+  window: {location: {reload: () => { reloaded = true; }}}
+});
+(async () => {
+  const first = submit({preventDefault() {}});
+  await submit({preventDefault() {}});
+  const initial = [button.disabled, button.textContent, progress.textContent, fetchCount];
+  clock = 18000;
+  tick();
+  const elapsed = [button.textContent, progress.textContent];
+  resolveFetch({ok: true});
+  await first;
+  process.stdout.write(JSON.stringify({initial, elapsed, reloaded}));
+})().catch(error => { process.stderr.write(String(error)); process.exitCode = 1; });
+"""
+        run = subprocess.run(["node", "-e", javascript, page.REFRESH_SCRIPT], capture_output=True, text=True, check=True)
+        result = json.loads(run.stdout)
+        self.assertEqual([True, "Refreshing · 0s", "Refresh in progress", 1], result["initial"])
+        self.assertEqual(["Refreshing · 18s", "Refresh in progress"], result["elapsed"])
+        self.assertTrue(result["reloaded"])
 
     @patch.object(page, "github_stages")
     @patch.object(page, "review_snapshot")
@@ -138,14 +209,17 @@ class StatusPageTest(unittest.TestCase):
         result = page.render(data, review, NOW, github)
         self.assertIn("<strong>Draft</strong> · Hosted Held · CLI Ready", result)
         self.assertIn('<li class="merged"><span class="order">02</span>', result)
-        self.assertIn("<strong>Merged</strong> · 12m ago · 24 Sep 23:48 NZST", result)
+        self.assertIn('<strong>Merged</strong> <time class="relative-age" '
+                      'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time>', result)
         self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head)">4/3</span>', result)
         self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
         self.assertIn("1 unlinked to a verified review", result)
         self.assertIn("1 excluded from taper", result)
-        self.assertEqual(2, result.count('Refreshed 25 Sep 00:00 NZST'))
+        age_markup = ('Refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
+                      'title="25 Sep 00:00 NZST">just now</time>')
+        self.assertEqual(2, result.count(age_markup))
         self.assertNotIn("Stack record checked", result)
         self.assertNotIn("do not establish taper or merge readiness", result)
 

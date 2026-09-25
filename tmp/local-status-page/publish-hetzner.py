@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import ipaddress
 import json
@@ -21,7 +22,9 @@ NAMESPACE = "overseer-status"
 IMAGE = "docker.io/library/nginx@sha256:7150b3a39203cb5bee612ff4a9d18774f8c7caf6399d6e8985e97e28eb751c18"
 BRIEF_LINK = re.compile(r'<a href="\.\./\.\./task-briefs/[^"]+">([^<]+)</a>')
 REFRESH_FORM = re.compile(r'<form class="refresh-form"[^>]*>.*?</form>', re.DOTALL)
+REFRESH_TIME = re.compile(r'<span class="refresh-time">.*?</span>', re.DOTALL)
 REFRESH_SCRIPT = re.compile(r'<script id="local-refresh-progress">.*?</script>', re.DOTALL)
+AGE_SCRIPT = re.compile(r'<script id="relative-age-updates">(.*?)</script>', re.DOTALL)
 
 
 def local_wifi_url() -> str:
@@ -46,12 +49,26 @@ def local_wifi_url() -> str:
 
 
 def public_html(source: str, local_url: str) -> str:
+    def keep_timestamp(match: re.Match[str]) -> str:
+        label = REFRESH_TIME.search(match.group(0))
+        if label is None:
+            raise ValueError("the published page needs its read-only refresh timestamp")
+        return f'<div class="refresh-form">{label.group(0)}</div>'
+
     result = BRIEF_LINK.sub(r"\1 (local brief)", source)
-    result = REFRESH_FORM.sub("", result)
+    result = REFRESH_FORM.sub(keep_timestamp, result)
     result = REFRESH_SCRIPT.sub("", result)
+    age_script = AGE_SCRIPT.search(result)
+    if age_script is None:
+        raise ValueError("the published page needs its read-only relative-time script")
+    age_hash = base64.b64encode(hashlib.sha256(age_script.group(1).encode()).digest()).decode()
     result = result.replace("form-action 'self'", "form-action 'none'")
     result = result.replace("connect-src 'self'", "connect-src 'none'")
-    result = re.sub(r"script-src 'sha256-[^']+'", "script-src 'none'", result)
+    result, policy_count = re.subn(
+        r"script-src(?: 'sha256-[^']+')+", f"script-src 'sha256-{age_hash}'", result, count=1
+    )
+    if policy_count != 1:
+        raise ValueError("the published page needs a matching script policy")
     result = result.replace("Private local snapshot", "Published delivery snapshot")
     result = re.sub(
         r"<footer>.*?</footer>",

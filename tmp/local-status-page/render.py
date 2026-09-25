@@ -33,15 +33,17 @@ REFRESH_SCRIPT = """(() => {
     event.preventDefault();
     if (button.disabled) return;
     button.disabled = true;
-    button.textContent = 'Refreshing…';
+    form.classList.remove('failed');
+    progress.textContent = 'Refresh in progress';
     form.classList.add('loading');
     const started = Date.now();
-    const update = () => { progress.textContent = `Working for ${Math.floor((Date.now() - started) / 1000)}s…`; };
+    const update = () => { button.textContent = `Refreshing · ${Math.floor((Date.now() - started) / 1000)}s`; };
     update();
     const timer = setInterval(update, 1000);
     try {
       const response = await fetch(form.action, { method: 'POST', credentials: 'same-origin' });
       if (!response.ok) {
+        form.classList.add('failed');
         progress.textContent = response.status === 409
           ? 'Another refresh is already running. Try again when it finishes.'
           : `Refresh failed (${response.status}). Try again shortly.`;
@@ -49,13 +51,32 @@ REFRESH_SCRIPT = """(() => {
       }
       window.location.reload();
     } catch {
+      form.classList.add('failed');
       progress.textContent = 'Refresh connection failed. Try again shortly.';
     } finally {
       clearInterval(timer);
+      form.classList.remove('loading');
       button.disabled = false;
       button.textContent = 'Refresh review data';
     }
   });
+})();"""
+AGE_SCRIPT = """(() => {
+  const labels = document.querySelectorAll('.relative-age');
+  const update = () => {
+    const now = Date.now();
+    for (const label of labels) {
+      const timestamp = Date.parse(label.dateTime);
+      if (Number.isNaN(timestamp)) continue;
+      const minutes = Math.max(0, Math.floor((now - timestamp) / 60000));
+      label.textContent = minutes === 0 ? 'just now'
+        : minutes < 60 ? `${minutes}m ago`
+        : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
+        : `${Math.floor(minutes / 1440)}d ago`;
+    }
+  };
+  update();
+  setInterval(update, 30000);
 })();"""
 
 
@@ -232,17 +253,18 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         if lifecycle == "MERGED":
             merged_at = github.get("merged_at", {}).get(number)
             merged_time = utc(merged_at) if merged_at else None
-            channel_label = (
-                f"{relative_time(merged_time, now)} · {local_time(merged_time)}"
+            channel_html = (
+                f'<time class="relative-age" datetime="{safe(merged_time.isoformat())}" '
+                f'title="{safe(local_time(merged_time))}">{relative_time(merged_time, now)}</time>'
                 if merged_time else "Merge time unavailable"
             )
         elif lifecycle == "CLOSED":
-            channel_label = "Historical review record"
+            channel_html = "Historical review record"
         elif queue_item:
             channels = queue_item["channels"]
-            channel_label = f'Hosted {channels["hosted"].replace("_", " ").title()} · CLI {channels["cli"].replace("_", " ").title()}'
+            channel_html = safe(f'Hosted {channels["hosted"].replace("_", " ").title()} · CLI {channels["cli"].replace("_", " ").title()}')
         else:
-            channel_label = "Review eligibility unavailable"
+            channel_html = "Review eligibility unavailable"
         activity_cards = []
         if queue_item and isinstance(queue_item.get("review_activity"), dict):
             for channel in ("hosted", "cli"):
@@ -291,7 +313,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<li{row_class}><span class="order">{position:02d}</span><div class="pr-main">'
             f'<a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>'
             f'<span class="sub">{size_html}</span>'
-            f'<span class="sub"><strong>{safe(github_label)}</strong> · {safe(channel_label)}</span>'
+            f'<span class="sub"><strong>{safe(github_label)}</strong>{" " if lifecycle == "MERGED" else " · "}{channel_html}</span>'
             f'{activity_grid}'
             f'</div></li>'
         )
@@ -305,15 +327,20 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<dt>Blocker / gate</dt><dd>{safe(lane["blocker"])}</dd>'
             f'</dl></article>'
         )
+    refreshed_at = (
+        f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
+        f'title="{safe(local_time(now))}">just now</time>'
+    )
     queue_time = (
-        f'Refreshed {safe(local_time(now))}'
+        f'Refreshed {refreshed_at}'
         if review["available"] and github["available"]
         else 'Review or PR details unavailable'
     )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
+    age_hash = base64.b64encode(hashlib.sha256(AGE_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <title>FireMUD · local delivery status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
@@ -325,10 +352,11 @@ h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing:
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
 .refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
-.refresh-form button {{ border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; font-weight: 700; cursor: pointer; }}
+.refresh-form button {{ border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
-.refresh-progress {{ display: none; }} .refresh-form.loading .refresh-progress {{ display: inline; }}
+.refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
+.refresh-form.failed .refresh-progress {{ position: static; width: auto; height: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal; }}
 section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #5c6571; font-size: .88rem; }}
 .stack, .card {{ background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; box-shadow: 0 3px 12px #252b390c; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
@@ -362,13 +390,13 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 </style></head><body>
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
 <p>Worker lanes and the PR train.</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>{queue_time}</span></form></div></header>
+<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{queue_time}</span></form></div></header>
 <main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
 <section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
 <ol class="overview">{"".join(overview)}</ol></section>
 <section><h2>Configured review queue</h2><p class="section-note">{queue_time}</p>
 <ol class="stack">{"".join(rows)}</ol></section>
-<footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script></body></html>"""
+<footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:
