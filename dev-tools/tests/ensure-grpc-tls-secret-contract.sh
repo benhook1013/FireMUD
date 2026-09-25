@@ -142,6 +142,12 @@ case "$operation" in
       echo "unexpected Secret snapshot expression: $expression" >&2
       exit 2
     fi
+    printf 'snapshot-attempt %s/%s\n' "$namespace" "$secret" >>"$KUBECTL_LOG"
+    if [[ "${PROJECTION_SNAPSHOT_MODE:-present}" == fetch-failure &&
+      "$secret" == firemud-grpc-* && "$secret" != firemud-grpc-tls ]]; then
+      echo "mock kubectl snapshot failure for $secret" >&2
+      exit 7
+    fi
     if [[ "${LOOKUP_MODE:-present}" != present && "$secret" == firemud-grpc-tls ]]; then
       exit 0
     fi
@@ -231,10 +237,12 @@ run_helper() {
   local lookup_mode="${6:-present}"
   local cert_dir_parent="${7:-}"
   local applied_secret_path="${8:-$applied_secret}"
+  local projection_snapshot_mode="${9:-present}"
   mkdir -p "$state"
   PATH="$mock_bin:$PATH" \
     BASH_ENV="$bash_env_file" \
     LOOKUP_MODE="$lookup_mode" \
+    PROJECTION_SNAPSHOT_MODE="$projection_snapshot_mode" \
     DATA_DIR="$data_dir" \
     KUBECTL_LOG="$log" \
     APPLIED_SECRET="$applied_secret_path" \
@@ -323,6 +331,32 @@ shopt -u nullglob
   echo "the helper left temporary certificate or stderr capture files after lookup failure" >&2
   exit 1
 }
+
+# A Secret snapshot fetch error is not an incomplete projection and must not
+# be retried until the certificate wait deadline.
+snapshot_failure_log="$fixture_dir/snapshot-failure.log"
+if run_helper complete "$snapshot_failure_log" "$fixture_dir/snapshot-failure-state" \
+  "$fixture_dir/advance-shell-clock.sh" 30 present "" \
+  "$fixture_dir/snapshot-failure-applied-secret.yaml" fetch-failure \
+  >"$fixture_dir/snapshot-failure.out" 2>"$fixture_dir/snapshot-failure.err"; then
+  echo "the helper continued after a publication Secret snapshot fetch failure" >&2
+  exit 1
+fi
+grep -Fq 'failed to fetch cert-manager Secret snapshot dev/firemud-grpc-game-design-service' \
+  "$fixture_dir/snapshot-failure.err" || {
+  echo "the helper did not report an immediate publication Secret snapshot fetch failure" >&2
+  cat "$fixture_dir/snapshot-failure.err" >&2
+  exit 1
+}
+snapshot_failure_attempts="$(grep -Fc 'snapshot-attempt dev/firemud-grpc-game-design-service' "$snapshot_failure_log" || true)"
+[[ "$snapshot_failure_attempts" == 1 ]] || {
+  echo "the helper retried a failed publication Secret snapshot $snapshot_failure_attempts times" >&2
+  exit 1
+}
+if grep -Fq 'did not become key-complete' "$fixture_dir/snapshot-failure.err"; then
+  echo "the helper treated a Secret fetch failure as an incomplete projection timeout" >&2
+  exit 1
+fi
 
 applied_shared_ca="$fixture_dir/applied-shared-ca.crt"
 applied_client_cert="$fixture_dir/applied-client.crt"
