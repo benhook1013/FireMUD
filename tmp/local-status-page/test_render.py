@@ -207,8 +207,7 @@ vm.runInNewContext(process.argv[1], {
                   "merged_at": {43: (NOW - timedelta(minutes=12)).isoformat()},
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
-        self.assertIn('<span class="sub">CLI ready</span>', result)
-        self.assertNotIn("Hosted Held", result)
+        self.assertIn('<span class="sub">Hosted held · CLI ready</span>', result)
         self.assertIn('<li class="merged"><span class="order">02</span>', result)
         self.assertIn('<strong>Merged</strong> <time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time>', result)
@@ -226,13 +225,13 @@ vm.runInNewContext(process.argv[1], {
         self.assertNotIn("Stack record checked", result)
         self.assertNotIn("do not establish taper or merge readiness", result)
 
-    def test_open_review_line_only_shows_controller_ready_channels(self):
+    def test_open_review_line_shows_both_states_when_either_channel_is_ready(self):
         data = self.fixture()
         data["stack"].extend({**data["stack"][0], "number": number} for number in range(43, 47))
         review = page.review_snapshot(None, 42, HEAD, NOW)
         review.update({"available": True, "queue": {
-            42: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}},
-            43: {"channels": {"hosted": "READY", "cli": "HELD"}},
+            42: {"channels": {"hosted": "HELD", "cli": "HELD"}},
+            43: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}},
             44: {"channels": {"hosted": "RATE_LIMITED", "cli": "READY"}},
             45: {"channels": {"hosted": "READY", "cli": "READY"}},
         }})
@@ -245,13 +244,13 @@ vm.runInNewContext(process.argv[1], {
             queue = result.split('<ol class="stack">', 1)[1]
             return queue.split(f'{page.REPO_URL}{number}">', 1)[1].split("</li>", 1)[0]
 
-        self.assertEqual(1, row(42).count('class="sub"'))
-        self.assertIn('<span class="sub">Hosted ready</span>', row(43))
-        self.assertIn('<span class="sub">CLI ready</span>', row(44))
+        self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
+        self.assertEqual(1, row(43).count('class="sub"'))
+        self.assertIn('<span class="sub">Hosted rate limited · CLI ready</span>', row(44))
         self.assertIn('<span class="sub">Hosted ready · CLI ready</span>', row(45))
         self.assertEqual(1, row(46).count('class="sub"'))
         self.assertNotIn("Ready for review", result)
-        self.assertNotIn("Parent Moved", result)
+        self.assertNotIn("parent moved", result)
         self.assertNotIn("Review eligibility unavailable", result)
 
     def test_pr_size_colors_only_warn_above_ninety_files(self):
@@ -336,7 +335,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertFalse(snapshot["saved_head_stale"])
         self.assertEqual({42, 43}, set(snapshot["queue"]))
         result = page.render(self.fixture(), snapshot, NOW)
-        self.assertIn('<span class="sub">Hosted ready</span>', result)
+        self.assertIn('<span class="sub">Hosted ready · CLI held</span>', result)
         self.assertNotIn("raw /", result)
         report["prs"][0]["head"] = "b" * 40
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")

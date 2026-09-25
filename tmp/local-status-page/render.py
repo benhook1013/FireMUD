@@ -257,9 +257,14 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             status_html = '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
         elif queue_item:
             channels = queue_item.get("channels", {})
-            actionable = [f"{label} ready" for channel, label in (("hosted", "Hosted"), ("cli", "CLI"))
-                          if channels.get(channel) == "READY"] if isinstance(channels, dict) else []
-            status_html = f'<span class="sub">{safe(" · ".join(actionable))}</span>' if actionable else ""
+            states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
+            if (len(states) == 2 and all(isinstance(state, str) and state for state in states)
+                    and ("READY" in states or number == data["review_front"])):
+                labels = (f"{name} {state.replace('_', ' ').lower()}"
+                          for name, state in zip(("Hosted", "CLI"), states))
+                status_html = f'<span class="sub">{safe(" · ".join(labels))}</span>'
+            else:
+                status_html = ""
         else:
             status_html = ""
         activity_cards = []
