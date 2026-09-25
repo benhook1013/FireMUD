@@ -475,4 +475,29 @@ if grep -q '^delete ' "$aggregate_timeout_log"; then
   exit 1
 fi
 
+# A non-CA certificate whose subject contains CA:TRUE must not satisfy the
+# projected issuer Basic Constraints check.
+openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/non-ca.key"
+openssl req -new -key "$fixture_dir/non-ca.key" -subj '/CN=CA:TRUE' -out "$fixture_dir/non-ca.csr"
+cat >"$fixture_dir/non-ca.ext" <<'EOF'
+[leaf]
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+EOF
+openssl x509 -req -in "$fixture_dir/non-ca.csr" -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" -CAcreateserial -days 30 -sha256 -extfile "$fixture_dir/non-ca.ext" -extensions leaf -out "$data_dir/game-design-service-ca.crt"
+non_ca_log="$fixture_dir/non-ca-ca-projection.log"
+if run_helper complete "$non_ca_log" "$fixture_dir/non-ca-state" >"$fixture_dir/non-ca.out" 2>"$fixture_dir/non-ca.err"; then
+  echo "the helper accepted a non-CA certificate whose subject contains CA:TRUE" >&2
+  exit 1
+fi
+grep -Fq 'cert-manager CA projection is not a CA certificate: dev/firemud-grpc-game-design-service' "$fixture_dir/non-ca.err" || {
+  echo "the helper rejected the non-CA projection for an unexpected reason" >&2
+  cat "$fixture_dir/non-ca.err" >&2
+  exit 1
+}
+if grep -Eq '^(apply|delete) ' "$non_ca_log"; then
+  echo "the helper mutated Kubernetes Secrets before rejecting the non-CA projection" >&2
+  exit 1
+fi
+
 printf 'ensure-grpc-tls-secret runtime contract passed\n'

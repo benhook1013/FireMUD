@@ -747,6 +747,13 @@ def _summary_proves_complete_zero_findings(body: str) -> bool:
     )
 
 
+def _reviewed_label_counts(text: str) -> set[int]:
+    """Return reviewed counts without treating "not reviewed" as reviewed."""
+
+    reviewed_text = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
+    return {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(reviewed_text)}
+
+
 def _summary_has_explicit_incomplete_coverage(body: str) -> bool:
     """Require positive, quantitative evidence that the review omitted files."""
 
@@ -755,7 +762,7 @@ def _summary_has_explicit_incomplete_coverage(body: str) -> bool:
         return True
 
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
-    reviewed_counts = {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
     if (
         len(selected_counts) == len(reviewed_counts) == 1
         and next(iter(reviewed_counts)) < next(iter(selected_counts))
@@ -805,7 +812,7 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
             return True
 
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
-    reviewed_counts = {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
     ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
     if len(selected_counts) > 1 or len(reviewed_counts) > 1 or len(set(ratios)) > 1:
         return True
@@ -819,7 +826,7 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
 
 def _summary_proves_complete_file_coverage(text: str) -> bool:
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
-    reviewed_counts = {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
     not_reviewed_counts = [int(match.group(1)) for match in FILE_NOT_REVIEWED_COUNT.finditer(text)]
     ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
     if selected_counts and reviewed_counts:

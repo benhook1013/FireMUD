@@ -353,7 +353,8 @@ for workload in "${workloads[@]}"; do
   assert_certificate_unexpired "$workload_cert" \
     "cert-manager publication certificate in Secret ${namespace}/${secret_name}" \
     "${workload_rotation_resources[*]}" || exit 1
-  openssl x509 -in "$workload_ca" -noout -text | grep -Fq 'CA:TRUE' || {
+  openssl x509 -in "$workload_ca" -noout -ext basicConstraints 2>/dev/null |
+    grep -Eq '^[[:space:]]*CA:TRUE([,[:space:]]|$)' || {
     echo "cert-manager CA projection is not a CA certificate: ${namespace}/${secret_name}" >&2
     exit 1
   }

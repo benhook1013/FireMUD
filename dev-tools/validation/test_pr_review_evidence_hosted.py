@@ -685,6 +685,38 @@ class HostedEvidenceTests(unittest.TestCase):
             hosted.prepare_full_trigger(PR, PR + 1)
         self.assertEqual(hosted.prepare_full_trigger(PR)["command"], hosted.FULL_COMMAND)
 
+    def test_not_reviewed_label_is_excluded_from_reviewed_count(self):
+        summary = (
+            "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. "
+            "Files reviewed: 61."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), {61})
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_not_reviewed_only_label_does_not_supply_a_reviewed_count(self):
+        summary = "Files selected: 89. Files not reviewed: 28."
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), set())
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_reviewed_count_still_proves_complete_coverage_and_conflicts_fail_closed(self):
+        complete = "Files selected: 89. Files not reviewed: 0. Files reviewed: 89."
+        inconsistent = (
+            "Files selected: 89. Files not reviewed: 28. "
+            "Files reviewed: 61. Files reviewed: 60."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(complete), {89})
+        self.assertFalse(hosted._summary_has_explicit_incompleteness(complete))
+        self.assertTrue(hosted._summary_proves_complete_file_coverage(complete))
+        self.assertEqual(hosted._reviewed_label_counts(inconsistent), {60, 61})
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(inconsistent))
+
     def test_rate_limit_cannot_count_as_completed_review(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         reply = comment(

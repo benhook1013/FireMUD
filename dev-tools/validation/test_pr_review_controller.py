@@ -1645,6 +1645,39 @@ class ControllerTests(unittest.TestCase):
         controller.status()
         self.assertEqual(controller.git.remote_heads_calls, 1)
 
+    def test_reconciliation_caches_only_successful_test_merge_trees_by_exact_tuple(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+
+        controller.status()
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1)])
+
+        next_head = "8" * 40
+        controller.github.values[1] = pr(1, next_head)
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls[-1], (BASE, next_head))
+
+        next_base = "9" * 40
+        controller.github.values[1] = pr(1, next_head, base_tip=next_base)
+        controller.git.heads["develop"] = next_base
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls[-1], (next_base, next_head))
+        self.assertEqual(len(controller.git.test_merge_calls), 3)
+
+    def test_failed_test_merge_is_not_cached(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+        controller.git.test_merge_error = ControllerError("temporary test-merge failure")
+
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1)])
+
+        controller.git.test_merge_error = None
+        controller.status()
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1), (BASE, HEAD_1)])
+
     def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
         hosted = [
             Evidence(1, PARENT, f"h{index}", raw=index, accepted=1, completed=True, attributable=True,

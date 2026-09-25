@@ -484,6 +484,7 @@ class ReviewController:
         self.cli_adapter = cli_adapter
         self.isolated_fixture = isolated_fixture
         self._default_test_merge_proofs: dict[int, tuple[str, str, str]] = {}
+        self._test_merge_tree_cache: dict[tuple[str, str], str] = {}
 
     def _require_github(self) -> GitHubProvider:
         if self.github is None:
@@ -1089,8 +1090,15 @@ class ReviewController:
         verifier = getattr(self.git, "test_merge_tree", None)
         if not callable(verifier):
             raise ControllerError("Git provider cannot verify a current base/head test merge")
-        tree = verifier(_sha(base, "test-merge base"), _sha(head, "test-merge head"))
-        return _sha(tree, "test-merge tree")
+        base_sha = _sha(base, "test-merge base")
+        head_sha = _sha(head, "test-merge head")
+        identity = (base_sha.casefold(), head_sha.casefold())
+        cached = self._test_merge_tree_cache.get(identity)
+        if cached is not None:
+            return cached
+        tree = _sha(verifier(base_sha, head_sha), "test-merge tree")
+        self._test_merge_tree_cache[identity] = tree
+        return tree
 
     @staticmethod
     def _legacy_transition_record(value: Any, pr: int, current_head: str) -> None:
