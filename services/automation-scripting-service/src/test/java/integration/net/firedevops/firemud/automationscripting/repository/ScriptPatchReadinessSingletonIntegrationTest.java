@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptPatchReadinessProjectionServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
@@ -105,6 +107,196 @@ class ScriptPatchReadinessSingletonIntegrationTest {
   }
 
   @Test
+  void newerGenerationWaitsForInFlightApplyAndFencesOldRegistryRebuild() throws Exception {
+    DSLContext dsl = migrateToLatest();
+    dsl.execute(
+        "create table readiness_downstream_effects (patch_version text primary key, "
+            + "effect text not null)");
+    DriverManagerDataSource rawDataSource = dataSource(schema);
+    DSLContext transactionalDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(rawDataSource), SQLDialect.POSTGRES);
+    TransactionTemplate transactionTemplate =
+        new TransactionTemplate(new DataSourceTransactionManager(rawDataSource));
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(
+            new ScriptPatchReadinessProjectionRepository(transactionalDsl),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            transactionalDsl);
+    transactionTemplate.executeWithoutResult(
+        status -> service.beginPatchReadiness("tenant-generation-race", "patch-old", List.of("a")));
+
+    CountDownLatch oldApplyEntered = new CountDownLatch(1);
+    CountDownLatch releaseOldApply = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Boolean> oldApply =
+          executor.submit(
+              () ->
+                  transactionTemplate.execute(
+                      status ->
+                          service.applyIfCurrent(
+                              "tenant-generation-race",
+                              "patch-old",
+                              List.of("a"),
+                              ignored -> {
+                                transactionalDsl.execute(
+                                    "insert into readiness_downstream_effects "
+                                        + "(patch_version, effect) values ('patch-old', 'applied')");
+                                oldApplyEntered.countDown();
+                                await(releaseOldApply);
+                              })));
+      assertThat(oldApplyEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+      Future<?> newerBegin =
+          executor.submit(
+              () ->
+                  transactionTemplate.executeWithoutResult(
+                      status ->
+                          service.beginPatchReadiness(
+                              "tenant-generation-race", "patch-new", List.of("b"))));
+      awaitAdvisoryLockWait(dsl);
+      assertThat(newerBegin.isDone()).isFalse();
+
+      releaseOldApply.countDown();
+      assertThat(oldApply.get(5, TimeUnit.SECONDS)).isTrue();
+      newerBegin.get(5, TimeUnit.SECONDS);
+    } finally {
+      releaseOldApply.countDown();
+      executor.shutdownNow();
+    }
+
+    AtomicBoolean oldRegistryRebuilt = new AtomicBoolean();
+    boolean oldRebuildAccepted =
+        transactionTemplate.execute(
+            status ->
+                service.rebuildRegistryIfCurrent(
+                    "tenant-generation-race",
+                    "patch-old",
+                    List.of("a"),
+                    () -> oldRegistryRebuilt.set(true)));
+    assertThat(oldRebuildAccepted).isFalse();
+    assertThat(oldRegistryRebuilt.get()).isFalse();
+    assertThat(
+            dsl.fetchValue(
+                "select count(*) from readiness_downstream_effects "
+                    + "where patch_version = 'patch-old'",
+                Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "select readiness_status from script_patch_readiness_projections "
+                    + "where tenant_id = 'tenant-generation-race' "
+                    + "and script_patch_version = 'patch-old'",
+                String.class))
+        .isEqualTo("SUPERSEDED");
+    assertThat(
+            dsl.fetchValue(
+                "select readiness_generation from script_patch_readiness_projections "
+                    + "where tenant_id = 'tenant-generation-race' "
+                    + "and script_patch_version = 'patch-new'",
+                Long.class))
+        .isEqualTo(2L);
+
+    AtomicBoolean staleApplyRan = new AtomicBoolean();
+    boolean staleApplyAccepted =
+        transactionTemplate.execute(
+            status ->
+                service.applyIfCurrent(
+                    "tenant-generation-race",
+                    "patch-old",
+                    List.of("a"),
+                    ignored -> staleApplyRan.set(true)));
+    assertThat(staleApplyAccepted).isFalse();
+    assertThat(staleApplyRan.get()).isFalse();
+  }
+
+  @Test
+  void downstreamDatabaseFailureRollsBackWithReadinessProgressAndCanRetry() {
+    DSLContext dsl = migrateToLatest();
+    dsl.execute(
+        "create table readiness_downstream_effects (patch_version text not null, "
+            + "effect text not null)");
+    DriverManagerDataSource rawDataSource = dataSource(schema);
+    DSLContext transactionalDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(rawDataSource), SQLDialect.POSTGRES);
+    TransactionTemplate transactionTemplate =
+        new TransactionTemplate(new DataSourceTransactionManager(rawDataSource));
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(
+            new ScriptPatchReadinessProjectionRepository(transactionalDsl),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            transactionalDsl);
+    transactionTemplate.executeWithoutResult(
+        status ->
+            service.beginPatchReadiness("tenant-downstream-rollback", "patch-retry", List.of("a")));
+
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.executeWithoutResult(
+                    status ->
+                        service.applyIfCurrent(
+                            "tenant-downstream-rollback",
+                            "patch-retry",
+                            List.of("a"),
+                            ignored -> {
+                              transactionalDsl.execute(
+                                  "insert into readiness_downstream_effects "
+                                      + "(patch_version, effect) values "
+                                      + "('patch-retry', 'schedule-refresh')");
+                              transactionalDsl.execute(
+                                  "insert into readiness_downstream_effects "
+                                      + "(patch_version, effect) values "
+                                      + "('patch-retry', 'instance-reconciliation')");
+                              throw new IllegalStateException("simulated downstream failure");
+                            })))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulated downstream failure");
+
+    assertThat(
+            dsl.fetchValue(
+                "select count(*) from readiness_downstream_effects "
+                    + "where patch_version = 'patch-retry'",
+                Long.class))
+        .isEqualTo(0L);
+    assertThat(
+            dsl.fetchValue(
+                "select database_downstream_reconciled "
+                    + "from script_patch_readiness_projections "
+                    + "where tenant_id = 'tenant-downstream-rollback' "
+                    + "and script_patch_version = 'patch-retry'",
+                Boolean.class))
+        .isEqualTo(Boolean.FALSE);
+
+    boolean retryAccepted =
+        transactionTemplate.execute(
+            status ->
+                service.applyIfCurrent(
+                    "tenant-downstream-rollback",
+                    "patch-retry",
+                    List.of("a"),
+                    ignored ->
+                        transactionalDsl.execute(
+                            "insert into readiness_downstream_effects "
+                                + "(patch_version, effect) values "
+                                + "('patch-retry', 'retry-reconciled')")));
+    assertThat(retryAccepted).isEqualTo(Boolean.TRUE);
+    assertThat(
+            dsl.fetchValue(
+                "select database_downstream_reconciled "
+                    + "from script_patch_readiness_projections "
+                    + "where tenant_id = 'tenant-downstream-rollback' "
+                    + "and script_patch_version = 'patch-retry'",
+                Boolean.class))
+        .isEqualTo(Boolean.TRUE);
+    assertThat(
+            dsl.fetchValue(
+                "select count(*) from readiness_downstream_effects "
+                    + "where patch_version = 'patch-retry'",
+                Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
   void migrationFailsClosedWhenExistingTenantHasMultipleActiveRows() {
     DSLContext dsl = migrateToVersionOne();
     dsl.execute(
@@ -148,11 +340,11 @@ class ScriptPatchReadinessSingletonIntegrationTest {
             dsl.fetch(
                     "select count(*) from pg_indexes "
                         + "where schemaname = current_schema() "
-                        + "and indexname in (" +
-                        "'uq_script_work_item_trigger_identity', " +
-                        "'uq_script_work_item_trigger_identity_unpinned', " +
-                        "'uq_script_event_audit_handler_identity', " +
-                        "'uq_script_event_audit_handler_identity_unpinned')")
+                        + "and indexname in ("
+                        + "'uq_script_work_item_trigger_identity', "
+                        + "'uq_script_work_item_trigger_identity_unpinned', "
+                        + "'uq_script_event_audit_handler_identity', "
+                        + "'uq_script_event_audit_handler_identity_unpinned')")
                 .get(0)
                 .get(0, Long.class))
         .isEqualTo(4L);
@@ -172,9 +364,9 @@ class ScriptPatchReadinessSingletonIntegrationTest {
     String indexDefinition =
         (String)
             dsl.fetchValue(
-            "select pg_get_indexdef(indexrelid) from pg_index "
-                + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
-            String.class);
+                "select pg_get_indexdef(indexrelid) from pg_index "
+                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
+                String.class);
     assertThat(indexDefinition).contains("(tenant_id)");
     assertThat(
             dsl.fetchValue(
@@ -202,9 +394,9 @@ class ScriptPatchReadinessSingletonIntegrationTest {
     String indexPredicate =
         (String)
             dsl.fetchValue(
-            "select pg_get_expr(indpred, indrelid) from pg_index "
-                + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
-            String.class);
+                "select pg_get_expr(indpred, indrelid) from pg_index "
+                    + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
+                String.class);
     assertThat(indexPredicate).contains(">=");
   }
 
@@ -217,7 +409,7 @@ class ScriptPatchReadinessSingletonIntegrationTest {
           ScriptPatchReadinessProjectionServiceImpl service =
               new ScriptPatchReadinessProjectionServiceImpl(
                   repository, Mockito.mock(ScriptWorkItemRepository.class), dsl);
-          service.beginPatchReadiness("tenant-concurrent", patchVersion, 1);
+          service.beginPatchReadiness("tenant-concurrent", patchVersion, List.of(patchVersion));
         });
   }
 
@@ -288,5 +480,26 @@ class ScriptPatchReadinessSingletonIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("concurrent readiness test interrupted", ex);
     }
+  }
+
+  private static void awaitAdvisoryLockWait(DSLContext observerDsl) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      Long waitingSessions =
+          observerDsl
+              .fetch(
+                  "select count(*) from pg_stat_activity "
+                      + "where datname = current_database() "
+                      + "and wait_event_type = 'Lock' "
+                      + "and wait_event = 'advisory' "
+                      + "and query like '%pg_advisory_xact_lock%'")
+              .get(0)
+              .get(0, Long.class);
+      if (waitingSessions != null && waitingSessions > 0) {
+        return;
+      }
+      TimeUnit.MILLISECONDS.sleep(10);
+    }
+    throw new AssertionError("new readiness generation did not wait for the tenant advisory lock");
   }
 }

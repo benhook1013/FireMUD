@@ -11,10 +11,8 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
-import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
-import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -68,9 +66,10 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
+    List<String> canonicalScriptNames = requestedNames.stream().sorted().toList();
     List<ScriptDefinition> defs =
         repository.findByTenantIdAndScriptVersionAndNameIn(
-            tenantKey, scriptPatchVersion, affectedScripts);
+            tenantKey, scriptPatchVersion, canonicalScriptNames);
     Set<String> resolvedNames =
         defs.stream().map(ScriptDefinition::getName).collect(java.util.stream.Collectors.toSet());
     if (defs.size() != requestedNames.size()
@@ -79,35 +78,46 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
-    boolean readinessCreated =
-        readinessProjectionService.beginPatchReadiness(tenantId, scriptPatchVersion, defs.size());
-    if (!readinessCreated && !hasActiveReadinessIdentity(tenantId, scriptPatchVersion)) {
+    defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();
+    readinessProjectionService.beginPatchReadiness(
+        tenantId, scriptPatchVersion, canonicalScriptNames);
+    List<ScriptDefinition> canonicalDefinitions = defs;
+    boolean applied =
+        readinessProjectionService.applyIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            admitOnLoad -> {
+              if (admitOnLoad) {
+                canonicalDefinitions.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
+              }
+              scheduleDefinitionService.refreshPatchSchedules(
+                  tenantId, scriptPatchVersion, canonicalDefinitions, canonicalScriptNames);
+              scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
+            });
+    if (!applied) {
       return false;
     }
-    // Only new or explicitly active readiness identities reach this point. Replay downstream
-    // work under the same idempotency keys so an active retry can finish missing steps.
-    defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
-    scheduleDefinitionService.refreshPatchSchedules(
-        tenantId, scriptPatchVersion, defs, affectedScripts);
-    scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
-    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
-    affectedScripts.forEach(map::remove);
-    for (ScriptDefinition def : defs) {
-      map.put(def.getName(), def.getDefinition());
+    boolean registryRebuilt =
+        readinessProjectionService.rebuildRegistryIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            () -> rebuildRegistry(tenantKey, canonicalScriptNames, canonicalDefinitions));
+    if (!registryRebuilt) {
+      return false;
     }
     logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
     return true;
   }
 
-  private boolean hasActiveReadinessIdentity(String tenantId, String scriptPatchVersion) {
-    return readinessProjectionService
-        .getProjection(tenantId, scriptPatchVersion)
-        .map(ReadinessStatusSummary::status)
-        .map(
-            status ->
-                status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_PENDING_VALIDATION
-                    || status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING)
-        .orElse(false);
+  private void rebuildRegistry(
+      long tenantKey, List<String> scriptNames, List<ScriptDefinition> definitions) {
+    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
+    scriptNames.forEach(map::remove);
+    for (ScriptDefinition definition : definitions) {
+      map.put(definition.getName(), definition.getDefinition());
+    }
   }
 
   private void admitOnLoad(

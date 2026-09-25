@@ -181,3 +181,15 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_ev
 CREATE UNIQUE INDEX uq_script_patch_readiness_active_tenant
     ON script_patch_readiness_projections (tenant_id)
     WHERE readiness_status IN ('PENDING_VALIDATION', 'ONLOAD_RUNNING');
+
+-- Retained V1 projections stay readable with NULL manifest/generation and an incomplete
+-- downstream marker. New Automation code binds retries to one canonical script set and uses
+-- the tenant-serialized generation as its current-readiness fence.
+ALTER TABLE script_patch_readiness_projections
+    ADD COLUMN script_set_manifest TEXT[],
+    ADD COLUMN readiness_generation BIGINT,
+    ADD COLUMN database_downstream_reconciled BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE UNIQUE INDEX uq_script_patch_readiness_tenant_generation
+    ON script_patch_readiness_projections (tenant_id, readiness_generation)
+    WHERE readiness_generation IS NOT NULL;
