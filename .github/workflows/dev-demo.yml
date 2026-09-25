@@ -184,6 +184,10 @@ jobs:
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
 
+      - name: Set up canonical GitHub CLI
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/setup-gh
+
       - name: Classify trusted V2 migration activation
         id: v2-migration-mode
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -197,10 +201,6 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/deploy/detect-hosted-v2-migration-activation.sh \
             "$EVENT_NAME" "$EVENT_BEFORE_SHA" "$HEAD_SHA" "$RUNTIME_NAMESPACE" >> "$GITHUB_OUTPUT"
-
-      - name: Set up canonical GitHub CLI
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        uses: ./.github/actions/setup-gh
 
       - name: Check Hosted identity requester credentials
         id: requester-credentials
