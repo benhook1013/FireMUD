@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
 VERIFY_SMOKE="$ROOT_DIR/dev-tools/verify-smoke-images.sh"
 OVERLAY="$ROOT_DIR/docker/docker-compose.pr-local-minio.override.yml"
+TRUSTED_PUBLISH_WORKFLOW="$ROOT_DIR/.github/workflows/publish-trusted-minio-source-images.yml"
 
 require_contains() {
   local contents="$1"
@@ -57,6 +58,18 @@ require_contains "$job" "steps.minio-source.outputs.server_image_id != ''"
 require_contains "$job" "steps.minio-source.outputs.client_image_id != ''"
 require_contains "$job" 'run: bash ./dev-tools/verify-smoke-images.sh'
 require_contains "$job" 'bash ./dev-tools/verify-smoke-images.sh'
+
+trusted_publisher="$(<"$TRUSTED_PUBLISH_WORKFLOW")"
+require_contains "$trusted_publisher" 'docker image rm "$image_ref"'
+require_contains "$trusted_publisher" 'docker image inspect "$image_ref"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE_NAME:$PUBLISH_TAG"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$SERVER_IMAGE_NAME@$SERVER_DIGEST"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE_NAME:$PUBLISH_TAG"'
+require_contains "$trusted_publisher" 'remove_local_image_reference "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
+require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$SERVER_IMAGE_NAME@$SERVER_DIGEST"'
+require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
 
 overlay="$(<"$OVERLAY")"
 require_contains "$overlay" 'minio:'
