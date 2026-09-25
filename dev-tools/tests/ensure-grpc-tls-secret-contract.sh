@@ -13,6 +13,7 @@ for required_command in openssl base64 awk grep; do
     exit 1
   }
 done
+real_openssl="$(command -v openssl)"
 
 workloads=(
   game-design-service
@@ -226,6 +227,16 @@ exit 0
 EOF
 chmod +x "$mock_bin/kubectl" "$mock_bin/sleep"
 
+cat >"$mock_bin/openssl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FORCE_EXPIRED_CERT_CHECK:-false}" == true && "$*" == *' -checkend 0 '* ]]; then
+  exit 1
+fi
+exec "$REAL_OPENSSL" "$@"
+EOF
+chmod +x "$mock_bin/openssl"
+
 applied_secret="$fixture_dir/applied-secret.yaml"
 
 run_helper() {
@@ -238,6 +249,7 @@ run_helper() {
   local cert_dir_parent="${7:-}"
   local applied_secret_path="${8:-$applied_secret}"
   local projection_snapshot_mode="${9:-present}"
+  local force_expired_cert_check="${10:-false}"
   mkdir -p "$state"
   PATH="$mock_bin:$PATH" \
     BASH_ENV="$bash_env_file" \
@@ -249,6 +261,8 @@ run_helper() {
     PREVIEW_GRPC_TLS_CERT_DIR="$cert_dir_parent" \
     PROJECTION_MODE="$mode" \
     STATE_DIR="$state" \
+    FORCE_EXPIRED_CERT_CHECK="$force_expired_cert_check" \
+    REAL_OPENSSL="$real_openssl" \
     CERTIFICATE_WAIT_TIMEOUT_SECONDS="$timeout_seconds" \
     bash "$HELPER" dev
 }
@@ -308,6 +322,39 @@ grep -Fq '5 distinct publication leaves' "$fixture_dir/warning-lookup.out" || {
   echo "a warning on an absent Secret was treated as an existing Secret" >&2
   exit 1
 }
+
+# Expiry guidance names retained Certificate and Secret resources. Deleting
+# only a projected Secret lets cert-manager recreate it from its Certificate.
+if run_helper complete "$fixture_dir/expired.log" "$fixture_dir/expired-state" \
+  "" 30 present "" "$fixture_dir/expired-applied-secret.yaml" present true \
+  >"$fixture_dir/expired.out" 2>"$fixture_dir/expired.err"; then
+  echo "the helper accepted an expired shared certificate" >&2
+  exit 1
+fi
+grep -Fq 'delete these retained Certificates and Secrets before rerunning:' \
+  "$fixture_dir/expired.err" || {
+  echo "the helper did not identify retained Kubernetes resources for rotation" >&2
+  cat "$fixture_dir/expired.err" >&2
+  exit 1
+}
+for resource in \
+  'Secret/dev/firemud-grpc-tls' \
+  'Certificate/dev/dev-grpc-game-design-service' \
+  'Secret/dev/firemud-grpc-game-design-service' \
+  'Certificate/dev/dev-grpc-world-management-service' \
+  'Secret/dev/firemud-grpc-world-management-service' \
+  'Certificate/dev/dev-grpc-entity-management-service' \
+  'Secret/dev/firemud-grpc-entity-management-service' \
+  'Certificate/dev/dev-grpc-game-logic-service' \
+  'Secret/dev/firemud-grpc-game-logic-service' \
+  'Certificate/dev/dev-grpc-automation-scripting-service' \
+  'Secret/dev/firemud-grpc-automation-scripting-service'; do
+  grep -Fq "$resource" "$fixture_dir/expired.err" || {
+    echo "the helper's expiry guidance omitted $resource" >&2
+    cat "$fixture_dir/expired.err" >&2
+    exit 1
+  }
+done
 
 # A failed lookup must retain its diagnostic and remove the temporary stderr
 # capture along with the helper's certificate workspace.

@@ -467,7 +467,7 @@ openssl ca -batch -config "$expiry_fixture_dir/openssl.cnf" \
 
 expect_expired_certificate() {
   local description="$1"
-  local rotation_secrets="$2"
+  local rotation_resources="$2"
   local expected_message="$3"
   local certificate="$4"
   local output
@@ -475,7 +475,7 @@ expect_expired_certificate() {
     {
       # shellcheck disable=SC1090 # The test extracts the exact expiry helper body.
       source "$expiry_helper_source"
-      assert_certificate_unexpired "$certificate" "$description" "$rotation_secrets"
+      assert_certificate_unexpired "$certificate" "$description" "$rotation_resources"
     } 2>&1
   )"; then
     echo "accepted expired certificate for ${description}" >&2
@@ -490,18 +490,18 @@ expect_expired_certificate() {
 
 expect_expired_certificate \
   'cert-manager CA projection in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-ca.crt"
 expect_expired_certificate \
   'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
-  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  'Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 expect_expired_certificate \
   'cert-manager publication certificate in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 python3 - "$standalone_grpc_tls" <<'PY'
 import sys
@@ -523,7 +523,7 @@ assert ca_expiry < leaf_verification
 assert leaf_expiry < leaf_verification
 assert shared_cert_parse < shared_cert_expiry < shared_key_match
 assert 'shared gRPC TLS client certificate in Secret ' in shared_branch
-assert 'shared_rotation_secrets' in shared_branch
+assert 'shared_rotation_resources' in shared_branch
 assert 'read_secret_file "$ca_secret" ca.key' not in source
 assert '--from-file=ca.key=' not in source
 assert 'openssl genrsa -out "$source_key"' not in source
