@@ -148,6 +148,24 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Stack record checked", result)
         self.assertIn("do not establish taper or merge readiness", result)
 
+    def test_zero_accepted_badges_keep_evidence_distinctions(self):
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {42: {
+            "channels": {"hosted": "READY", "cli": "READY"},
+            "review_activity": {"hosted": {"total": 4, "recent": [
+                {"raw": 0, "accepted": 0, "current_head": True, "attributable": True, "non_counting": False},
+                {"raw": 3, "accepted": 1, "current_head": True, "attributable": True, "non_counting": False},
+                {"raw": 2, "accepted": 0, "current_head": False, "attributable": False, "non_counting": True},
+            ]}}}}})
+        result = page.render(self.fixture(), review, NOW)
+        self.assertIn('<span class="round-pill zero-accepted" aria-label="0/0">0/0</span>', result)
+        self.assertIn('<span class="round-pill" aria-label="3/1">3/1</span>', result)
+        self.assertIn('<span class="round-pill zero-accepted older unlinked" '
+                      'aria-label="2/0 (older head, unlinked, non-counting)">2/0</span>', result)
+        self.assertIn('.round-pill.older.unlinked.zero-accepted { border-style: dashed; }', result)
+        self.assertIn('1 unlinked to a verified review', result)
+        self.assertIn('1 excluded from taper', result)
+
     @patch.object(page.subprocess, "run")
     def test_github_stage_fetch_fails_closed(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, '[{"number":42,"state":"MERGED","isDraft":false,"mergedAt":"2026-09-24T12:00:00Z","changedFiles":5,"additions":10,"deletions":3}]', "")
