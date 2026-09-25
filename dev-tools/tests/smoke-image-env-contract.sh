@@ -78,14 +78,19 @@ if ! grep -Fq 'SMOKE_MINIO_LOCAL_ONLY=true requires a unique local server image 
   exit 1
 fi
 
-SMOKE_IMAGE_TAG=contract-smoke-tag \
-SMOKE_MINIO_LOCAL_ONLY=true \
-SMOKE_MINIO_SERVER_IMAGE=firemud-minio-server-smoke:contract \
-SMOKE_MINIO_CLIENT_IMAGE=firemud-minio-client-smoke:contract \
-SMOKE_MINIO_SERVER_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-SMOKE_MINIO_CLIENT_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
-SMOKE_COMPOSE_CONFIG_ONLY=true \
-bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" >"$OUT_FILE" 2>"$ERR_FILE"
+if ! SMOKE_IMAGE_TAG=contract-smoke-tag \
+  SMOKE_MINIO_LOCAL_ONLY=true \
+  SMOKE_MINIO_SERVER_IMAGE=firemud-minio-server-smoke:contract \
+  SMOKE_MINIO_CLIENT_IMAGE=firemud-minio-client-smoke:contract \
+  SMOKE_MINIO_SERVER_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  SMOKE_MINIO_CLIENT_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  SMOKE_COMPOSE_CONFIG_ONLY=true \
+  bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" >"$OUT_FILE" 2>"$ERR_FILE"; then
+  echo "PR-local MinIO smoke positive path failed:" >&2
+  cat "$OUT_FILE" >&2
+  cat "$ERR_FILE" >&2
+  exit 1
+fi
 
 if ! grep -q 'Verified PR-local MinIO Compose image tags and pull policies.' "$OUT_FILE"; then
   echo "PR-local MinIO smoke did not prove the rendered image tags and no-pull policy" >&2
