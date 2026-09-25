@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -191,29 +192,8 @@ class EnvironmentIdentityPlannerTest {
     var sourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
     sourceSecretNames.remove(role);
     var incompletePlan =
-        new EnvironmentIdentityPlan(
-            plan.name(),
-            plan.controlNamespace(),
-            plan.identityNamespace(),
-            plan.runtimeNamespace(),
-            plan.hostname(),
-            plan.ingressCertificateName(),
-            plan.ingressSecretName(),
-            plan.telnetCertificateName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsCertificateName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.gatewayInternalWsDnsName(),
-            plan.tcpProxyBridgeCertificateName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.tcpProxyBridgeUriSan(),
-            plan.grpcCertificateName(),
-            plan.grpcSecretName(),
-            plan.ingressIssuer(),
-            plan.telnetIssuer(),
-            plan.grpcIssuer(),
-            plan.caSecretName(),
-            plan.grpcConsumers(),
+        copyPlan(
+            plan,
             plan.grpcPublicationCertificateNames(),
             plan.grpcPublicationSecretNames(),
             sourceSecretNames);
@@ -221,6 +201,33 @@ class EnvironmentIdentityPlannerTest {
     IllegalArgumentException failure =
         assertThrows(IllegalArgumentException.class, () -> incompletePlan.sourceSecretName(role));
     assertEquals("missing source Secret for gRPC publication role: " + role, failure.getMessage());
+  }
+
+  @Test
+  void rejectsPublicationCertificateAndSecretRoleMapsWithMissingOrExtraRoles() {
+    var plan = planner.plan("pr-42");
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    String unsupportedRole = "grpc-publication-unsupported-service";
+
+    var missingCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
+    missingCertificateNames.remove(role);
+    assertInvalidPublicationRoleMaps(
+        plan, missingCertificateNames, plan.grpcPublicationSecretNames());
+
+    var extraCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
+    extraCertificateNames.put(unsupportedRole, "unsupported-certificate");
+    assertInvalidPublicationRoleMaps(
+        plan, extraCertificateNames, plan.grpcPublicationSecretNames());
+
+    var missingSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
+    missingSecretNames.remove(role);
+    assertInvalidPublicationRoleMaps(
+        plan, plan.grpcPublicationCertificateNames(), missingSecretNames);
+
+    var extraSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
+    extraSecretNames.put(unsupportedRole, "unsupported-secret");
+    assertInvalidPublicationRoleMaps(
+        plan, plan.grpcPublicationCertificateNames(), extraSecretNames);
   }
 
   @Test
@@ -233,5 +240,53 @@ class EnvironmentIdentityPlannerTest {
     assertThrows(IllegalArgumentException.class, () -> planner.plan("preview-pr-42"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42x"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42-other"));
+  }
+
+  private static void assertInvalidPublicationRoleMaps(
+      EnvironmentIdentityPlan plan,
+      Map<String, String> certificateNames,
+      Map<String, String> secretNames) {
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                copyPlan(
+                    plan, certificateNames, secretNames, plan.grpcPublicationSourceSecretNames()));
+    assertEquals(
+        "gRPC publication certificate and Secret maps must contain exactly the supported roles",
+        failure.getMessage());
+  }
+
+  private static EnvironmentIdentityPlan copyPlan(
+      EnvironmentIdentityPlan plan,
+      Map<String, String> certificateNames,
+      Map<String, String> secretNames,
+      Map<String, String> sourceSecretNames) {
+    return new EnvironmentIdentityPlan(
+        plan.name(),
+        plan.controlNamespace(),
+        plan.identityNamespace(),
+        plan.runtimeNamespace(),
+        plan.hostname(),
+        plan.ingressCertificateName(),
+        plan.ingressSecretName(),
+        plan.telnetCertificateName(),
+        plan.telnetSecretName(),
+        plan.gatewayInternalWsCertificateName(),
+        plan.gatewayInternalWsSecretName(),
+        plan.gatewayInternalWsDnsName(),
+        plan.tcpProxyBridgeCertificateName(),
+        plan.tcpProxyBridgeSecretName(),
+        plan.tcpProxyBridgeUriSan(),
+        plan.grpcCertificateName(),
+        plan.grpcSecretName(),
+        plan.ingressIssuer(),
+        plan.telnetIssuer(),
+        plan.grpcIssuer(),
+        plan.caSecretName(),
+        plan.grpcConsumers(),
+        certificateNames,
+        secretNames,
+        sourceSecretNames);
   }
 }
