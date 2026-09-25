@@ -62,10 +62,10 @@ class GameSessionV2QuiescenceMigrationIntegrationTest {
             dsl.fetch(
                     "select count(*) from pg_indexes "
                         + "where schemaname = current_schema() "
-                        + "and indexname in (" +
-                        "'idx_gameplay_command_command_id', " +
-                        "'idx_remote_command_coordinator_command_id', " +
-                        "'uq_gameplay_admission_pointer_world_realm')")
+                        + "and indexname in ("
+                        + "'idx_gameplay_command_command_id', "
+                        + "'idx_remote_command_coordinator_command_id', "
+                        + "'uq_gameplay_admission_pointer_world_realm')")
                 .get(0)
                 .get(0, Long.class))
         .isEqualTo(3L);
@@ -76,8 +76,7 @@ class GameSessionV2QuiescenceMigrationIntegrationTest {
     DSLContext dsl = migrateToVersionOne();
     dsl.execute("drop index idx_gameplay_command_command_id");
     dsl.execute(
-        "create unique index idx_gameplay_command_command_id "
-            + "on gameplay_command (tenant_id)");
+        "create unique index idx_gameplay_command_command_id " + "on gameplay_command (tenant_id)");
 
     assertThatThrownBy(this::migrateExistingSchemaToLatest)
         .isInstanceOf(FlywayException.class)
@@ -85,9 +84,9 @@ class GameSessionV2QuiescenceMigrationIntegrationTest {
     String indexDefinition =
         (String)
             dsl.fetchValue(
-            "select pg_get_indexdef(indexrelid) from pg_index "
-                + "where indexrelid = 'idx_gameplay_command_command_id'::regclass",
-            String.class);
+                "select pg_get_indexdef(indexrelid) from pg_index "
+                    + "where indexrelid = 'idx_gameplay_command_command_id'::regclass",
+                String.class);
     assertThat(indexDefinition).contains("(tenant_id)");
     assertThat(
             dsl.fetchValue(
