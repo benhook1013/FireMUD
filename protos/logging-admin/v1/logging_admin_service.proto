@@ -3,6 +3,7 @@ syntax = "proto3";
 package logging_admin.v1;
 
 import "shared/v1/errors.proto";
+import "google/protobuf/timestamp.proto";
 
 option java_package = "net.firedevops.firemud.loggingadmin.v1";
 option java_multiple_files = true;
@@ -11,6 +12,7 @@ service LoggingAdminService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
   rpc CreateLogEvent(CreateLogEventRequest) returns (CreateLogEventResponse);
+  rpc ReadLogEventReceipt(ReadLogEventReceiptRequest) returns (ReadLogEventReceiptResponse);
   rpc ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse);
   rpc EvaluateModerationPolicy(EvaluateModerationPolicyRequest)
       returns (EvaluateModerationPolicyResponse);
@@ -35,15 +37,76 @@ message QueryLogsResponse {
 }
 
 message CreateLogEventRequest {
-  string tenant_id = 1;
-  string account_id = 2;
-  string type = 3;
-  string message = 4;
+  AccountAuditScope scope = 1;
+  string tenant_id = 2;
+  string audit_event_id = 3;
+  string producer_service = 4;
+  string event_type = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  int32 schema_version = 7;
+  bytes payload = 8;
+  int32 payload_digest_version = 9;
+  string payload_digest = 10;
 }
 
 message CreateLogEventResponse {
-  string log_event_id = 1;
-  shared.v1.ErrorDetail error = 2;
+  AccountAuditScope scope = 1;
+  string tenant_id = 2;
+  string audit_event_id = 3;
+  string receipt_id = 4;
+  string log_event_id = 5;
+  int32 schema_version = 6;
+  int32 payload_digest_version = 7;
+  string payload_digest = 8;
+  AccountAuditReceiptStatus status = 9;
+  AccountAuditReceiptOutcome outcome = 10;
+}
+
+message ReadLogEventReceiptRequest {
+  AccountAuditScope scope = 1;
+  string tenant_id = 2;
+  string audit_event_id = 3;
+  string producer_service = 4;
+  string event_type = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  int32 schema_version = 7;
+  bytes payload = 8;
+  int32 payload_digest_version = 9;
+  string payload_digest = 10;
+}
+
+message ReadLogEventReceiptResponse {
+  AccountAuditScope scope = 1;
+  string tenant_id = 2;
+  string audit_event_id = 3;
+  string receipt_id = 4;
+  string log_event_id = 5;
+  int32 schema_version = 6;
+  int32 payload_digest_version = 7;
+  string payload_digest = 8;
+  AccountAuditReceiptStatus status = 9;
+  AccountAuditReceiptOutcome outcome = 10;
+}
+
+enum AccountAuditScope {
+  ACCOUNT_AUDIT_SCOPE_UNSPECIFIED = 0;
+  ACCOUNT_AUDIT_SCOPE_PLATFORM = 1;
+  ACCOUNT_AUDIT_SCOPE_TENANT = 2;
+}
+
+enum AccountAuditReceiptStatus {
+  ACCOUNT_AUDIT_RECEIPT_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED = 1;
+  ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED = 2;
+  ACCOUNT_AUDIT_RECEIPT_STATUS_CONFLICT = 3;
+}
+
+enum AccountAuditReceiptOutcome {
+  ACCOUNT_AUDIT_RECEIPT_OUTCOME_UNSPECIFIED = 0;
+  ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED = 1;
+  ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE = 2;
+  ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE = 3;
+  ACCOUNT_AUDIT_RECEIPT_OUTCOME_IDEMPOTENCY_CONFLICT = 4;
 }
 
 message ApplyModerationActionRequest {

@@ -78,9 +78,15 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         && pointer.getTenantId() != mutation.tenantId()) {
       throw new IllegalArgumentException("tenant_id does not own admission pointer");
     }
+    if (pointer.getId() != null
+        && !Objects.equals(pointer.getStateScope(), mutation.stateScope())) {
+      throw new IllegalArgumentException(
+          "state_scope changes require a new playable-state lifecycle");
+    }
     enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
     long nextPointerVersion =
         pointer.getId() == null ? 1L : Math.max(pointer.getPointerVersion() + 1L, 1L);
+    long nextCatalogRevision = nextCatalogRevision(pointer, mutation);
     pointer.setWorldSlug(mutation.worldSlug());
     pointer.setWorldDisplayName(mutation.worldDisplayName());
     pointer.setRealmSlug(mutation.realmSlug());
@@ -88,6 +94,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     pointer.setTenantId(mutation.tenantId());
     pointer.setGameInstanceId(mutation.gameInstanceId());
     pointer.setPointerVersion(nextPointerVersion);
+    pointer.setCatalogRevision(nextCatalogRevision);
     pointer.setVisible(mutation.visible());
     pointer.setPublicProductionRealm(mutation.publicProductionRealm());
     pointer.setRequiresCharacterSelection(mutation.requiresCharacterSelection());
@@ -167,7 +174,38 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         pointer.isPublicProductionRealm(),
         pointer.isRequiresCharacterSelection(),
         pointer.getStateScope(),
-        pointer.getCharacterCreationPolicy());
+        pointer.getCharacterCreationPolicy(),
+        pointer.getCatalogRevision() == null ? 0L : pointer.getCatalogRevision(),
+        pointer.getRealmId(),
+        pointer.getPlayableStateNamespaceId());
+  }
+
+  private long nextCatalogRevision(
+      GameplayAdmissionPointer pointer, GameplayAdmissionPointerMutation mutation) {
+    if (pointer.getId() == null) {
+      return 1L;
+    }
+    Long currentRevision = pointer.getCatalogRevision();
+    if (currentRevision == null || currentRevision <= 0L) {
+      throw new IllegalStateException("Admission pointer catalog revision is missing or invalid");
+    }
+    if (!catalogPolicyMatches(pointer, mutation)) {
+      return Math.addExact(currentRevision, 1L);
+    }
+    return currentRevision;
+  }
+
+  private boolean catalogPolicyMatches(
+      GameplayAdmissionPointer pointer, GameplayAdmissionPointerMutation mutation) {
+    return Objects.equals(pointer.getWorldSlug(), mutation.worldSlug())
+        && Objects.equals(pointer.getWorldDisplayName(), mutation.worldDisplayName())
+        && Objects.equals(pointer.getRealmSlug(), mutation.realmSlug())
+        && Objects.equals(pointer.getRealmDisplayName(), mutation.realmDisplayName())
+        && pointer.isVisible() == mutation.visible()
+        && pointer.isPublicProductionRealm() == mutation.publicProductionRealm()
+        && pointer.isRequiresCharacterSelection() == mutation.requiresCharacterSelection()
+        && Objects.equals(pointer.getStateScope(), mutation.stateScope())
+        && Objects.equals(pointer.getCharacterCreationPolicy(), mutation.characterCreationPolicy());
   }
 
   private void validateMutation(GameplayAdmissionPointerMutation mutation) {

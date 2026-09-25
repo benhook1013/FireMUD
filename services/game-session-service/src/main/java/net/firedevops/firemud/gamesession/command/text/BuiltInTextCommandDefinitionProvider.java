@@ -32,6 +32,15 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         List.of(TextCommandActionTag.WORLD_BROWSE, TextCommandActionTag.UI));
     register(
         definitions,
+        TextCommandType.JOIN,
+        List.of("join"),
+        TextCommandDispatchGroup.WORLDS,
+        TextCommandStageRequirement.LOGIN,
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.WORLD_BROWSE, TextCommandActionTag.UI));
+    register(
+        definitions,
         TextCommandType.CHARS,
         List.of("chars"),
         TextCommandDispatchGroup.WORLDS,

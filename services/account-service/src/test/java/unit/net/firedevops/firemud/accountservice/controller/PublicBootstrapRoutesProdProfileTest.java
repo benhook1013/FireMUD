@@ -56,7 +56,7 @@ class PublicBootstrapRoutesProdProfileTest {
   @Test
   void accountCreationRemainsPublicInProdProfile() throws Exception {
     CreateAccountRequest request =
-        new CreateAccountRequest(1L, "demo", "demo@example.com", "swordfish");
+        new CreateAccountRequest("demo", "demo@example.com", "swordfish");
     when(accountService.createAccount(request))
         .thenReturn(new AccountDto(1L, "demo", "demo@example.com", "player", true));
 

@@ -34,7 +34,8 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
                   List.of(
                       net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
                           worldsHandler.browseView())));
-          case REALMS -> handleRealms(request.command());
+          case REALMS -> handleRealms(request);
+          case JOIN -> handleJoin(request);
           case CHARS -> handleChars(request);
           default ->
               new TextCommandInterpretationResult(
@@ -44,7 +45,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
                       net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
                           "INVALID_ARGUMENT", "Unsupported discovery command")));
         };
-    if (result.commandResult().accepted()) {
+    if (result.commandResult().accepted() && request.command().type() != TextCommandType.JOIN) {
       request
           .sessionContext()
           .ifPresent(context -> publishCommandEvent(context, request.command()));
@@ -52,21 +53,82 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     return result;
   }
 
-  private TextCommandInterpretationResult handleRealms(TextCommand command) {
-    return command
-        .realmBrowsePayload()
-        .flatMap(payload -> worldsHandler.browseRealms(payload.worldSelector()))
-        .map(
-            view ->
-                new TextCommandInterpretationResult(
-                    net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-                    List.of(
-                        net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(view))))
-        .orElseGet(
-            () ->
-                errorResult(
-                    "INVALID_ARGUMENT",
-                    "REALMS requires a valid world selector. Use WORLDS first."));
+  private TextCommandInterpretationResult handleRealms(TextCommandDispatchRequest request) {
+    if (request.command().realmBrowsePayload().isEmpty() || request.sessionContext().isEmpty()) {
+      return errorResult("INVALID_ARGUMENT", "REALMS requires a world selector after LOGIN.");
+    }
+    TextCommandPayload.RealmBrowseRequest payload =
+        request.command().realmBrowsePayload().orElseThrow();
+    return switch (worldsHandler.browseRealms(
+        request.sessionContext().orElseThrow(), payload.worldSelector())) {
+      case WorldsCommandHandler.RealmBrowseResult.Success success ->
+          new TextCommandInterpretationResult(
+              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+              List.of(
+                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                      success.output())));
+      case WorldsCommandHandler.RealmBrowseResult.InvalidSelector ignored ->
+          errorResult(
+              "INVALID_ARGUMENT", "REALMS requires a valid world selector. Use WORLDS first.");
+      case WorldsCommandHandler.RealmBrowseResult.Failure failure ->
+          errorResult(failure.code(), realmBrowseFailureMessage(failure.code()));
+    };
+  }
+
+  private TextCommandInterpretationResult handleJoin(TextCommandDispatchRequest request) {
+    if (request.command().joinRequestPayload().isEmpty() || request.sessionContext().isEmpty()) {
+      return errorResult("INVALID_ARGUMENT", "JOIN requires a world selector after LOGIN.");
+    }
+    TextCommandPayload.JoinRequest payload = request.command().joinRequestPayload().orElseThrow();
+    return switch (worldsHandler.joinPublicProductionMembership(
+        request.sessionContext().orElseThrow(), payload.worldSelector())) {
+      case WorldsCommandHandler.JoinMembershipResult.Failure failure ->
+          errorResult(failure.code(), joinFailureMessage(failure.code()));
+      case WorldsCommandHandler.JoinMembershipResult.Response response ->
+          handleJoinResponse(response.response());
+    };
+  }
+
+  private TextCommandInterpretationResult handleJoinResponse(
+      net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse response) {
+    if (response.hasError()) {
+      String code = response.getError().getCode();
+      if (code.isBlank()) {
+        code = "JOIN_FAILED";
+      }
+      return errorResult(code, joinFailureMessage(code));
+    }
+    if (!response.getSuccess()) {
+      String code = response.getOutcomeCode().isBlank() ? "JOIN_FAILED" : response.getOutcomeCode();
+      return errorResult(code, joinFailureMessage(code));
+    }
+    return new TextCommandInterpretationResult(
+        net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+        List.of(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.notice(
+                "Membership is ready. Continue with CHARS and PLAY.")));
+  }
+
+  private String realmBrowseFailureMessage(String code) {
+    return switch (code) {
+      case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
+          "Realm authority unavailable. Retry REALMS shortly.";
+      case "CONNECT_SCOPE_MISMATCH", "ADMISSION_POINTER_UNAVAILABLE" ->
+          "Realm routing changed or is unavailable. Retry REALMS.";
+      default -> "Realm selection is unavailable.";
+    };
+  }
+
+  private String joinFailureMessage(String code) {
+    return switch (code) {
+      case "CONNECT_SCOPE_MISMATCH" -> "Join scope expired or changed. Run REALMS again.";
+      case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
+          "Account authority unavailable. Retry JOIN shortly.";
+      case "ENTITLEMENT_UNAVAILABLE" ->
+          "Join policy could not be checked. Use REALMS and JOIN to start a new attempt later.";
+      case "LOGIN_REQUIRED" -> "Log in before joining a world.";
+      default -> "The selected world could not be joined.";
+    };
   }
 
   private TextCommandInterpretationResult handleChars(TextCommandDispatchRequest request) {

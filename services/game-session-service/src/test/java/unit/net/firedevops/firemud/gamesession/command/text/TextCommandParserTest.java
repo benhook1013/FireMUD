@@ -47,6 +47,39 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesJoinAsOneAdapterLocalWorldSelector() {
+    TextCommand command = parser.parse("JOIN tenant-a/world-a");
+
+    assertEquals(TextCommandType.JOIN, command.type());
+    assertEquals(List.of("tenant-a/world-a"), command.args());
+    assertEquals(new TextCommandPayload.JoinRequest("tenant-a/world-a"), command.payload());
+  }
+
+  @Test
+  void rejectsJoinWithoutExactlyOneWorldSelector() {
+    TextCommand missingSelector = parser.parse("JOIN");
+    TextCommand extraArguments = parser.parse("JOIN world-a realm-b");
+
+    assertEquals(TextCommandType.JOIN, missingSelector.type());
+    assertFalse(missingSelector.joinRequestPayload().isPresent());
+    assertEquals(TextCommandType.JOIN, extraArguments.type());
+    assertFalse(extraArguments.joinRequestPayload().isPresent());
+  }
+
+  @Test
+  void resolvesJoinThroughTheBuiltInAuthenticatedWorldDispatchDefinition() {
+    TextCommandDefinition definition =
+        new BuiltInTextCommandDefinitionProvider()
+            .definitions().stream()
+                .filter(candidate -> candidate.type() == TextCommandType.JOIN)
+                .findFirst()
+                .orElseThrow();
+
+    assertEquals(TextCommandDispatchGroup.WORLDS, definition.dispatchGroup());
+    assertEquals(TextCommandStageRequirement.LOGIN, definition.stageRequirement());
+  }
+
+  @Test
   void rejectsLegacyThreeArgumentLoginShape() {
     TextCommand command = parser.parse("LOGIN demo@example.com swordfish 123456");
 

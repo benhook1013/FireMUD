@@ -23,26 +23,20 @@ components:
   schemas:
     CreateAccountRequest:
       type: object
-      description: Current API shape requires tenantId; target global registration with explicit JOIN remains unimplemented.
+      description: Creates a global account. Tenant membership and profiles are established separately.
       properties:
-        tenantId:
-          type: integer
-          format: int64
-          minimum: 1
         username:
           type: string
         email:
           type: string
         password:
           type: string
-      required: [tenantId, username, email, password]
+      required: [username, email, password]
     AccountDto:
       type: object
       properties:
         id:
           type: integer
-        tenantId:
-          type: string
         username:
           type: string
         email:
@@ -122,6 +116,35 @@ components:
         requestId:
           type: string
       required: [connectScopeId, requestId]
+    JoinPublicProductionRequest:
+      type: object
+      properties:
+        connectScopeId:
+          type: string
+          description: Account-issued, caller-bound realm discovery scope
+        requestId:
+          type: string
+          description: Stable ID for this explicit join attempt; use a new ID for a new attempt
+      required: [connectScopeId, requestId]
+    JoinPublicProductionResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        outcomeCode:
+          type: string
+        accountId:
+          type: integer
+        tenantId:
+          type: integer
+        membershipId:
+          type: integer
+        membershipVersion:
+          type: integer
+        membershipAuthorityGeneration:
+          type: integer
+        replayed:
+          type: boolean
     ConnectTokenResponse:
       type: object
       properties:
@@ -154,11 +177,15 @@ components:
           type: string
     BootstrapRealmDto:
       type: object
+      required: [worldSlug, realmSlug, realmId]
       properties:
         worldSlug:
           type: string
         realmSlug:
           type: string
+        realmId:
+          type: string
+          format: uuid
         displayName:
           type: string
         tenantId:
@@ -421,6 +448,36 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+  /auth/bootstrap/join:
+    post:
+      summary: Explicitly join the selected public-production realm from a player-bootstrap scope
+      operationId: joinPublicProduction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinPublicProductionRequest'
+      responses:
+        '200':
+          description: Durable membership snapshot after a successful join or exact replay
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/JoinPublicProductionResult'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Scope, policy, or membership state denied the join
+        '503':
+          description: Required authority is unavailable; retry with the same attempt ID
   /auth/connect-token:
     post:
       summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token
@@ -538,8 +595,9 @@ paths:
           description: Invalid request
   /accounts:
     post:
-      summary: Create a new account
+      summary: Create a new global account
       operationId: createAccount
+      description: Registration creates global account and security state only; it does not join a tenant or create a profile.
       security: []
       requestBody:
         required: true
