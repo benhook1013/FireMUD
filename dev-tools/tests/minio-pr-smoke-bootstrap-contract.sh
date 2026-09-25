@@ -77,8 +77,10 @@ require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" 
 require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
 
 trusted_builder="$(<"$TRUSTED_BUILD_WORKFLOW")"
-require_contains "$trusted_builder" 'EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: '\''true'\'''
+require_contains "$trusted_builder" "EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: \${{ github.event_name == 'push' && 'true' || 'false' }}"
 require_contains "$trusted_builder" 'run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"'
+require_contains "$trusted_builder" 'if: github.event_name == '\''push'\'''
+require_contains "$trusted_builder" 'uses: actions/upload-artifact@'
 
 runtime_workflow="$(<"$WORKFLOW")"
 require_contains "$runtime_workflow" "      - 'dev-tools/minio/**'"

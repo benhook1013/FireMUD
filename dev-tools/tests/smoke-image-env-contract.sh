@@ -72,6 +72,12 @@ if SMOKE_IMAGE_TAG=contract-smoke-tag \
   exit 1
 fi
 
+if ! grep -Fq 'SMOKE_MINIO_LOCAL_ONLY=true requires a unique local server image tag.' "$ERR_FILE"; then
+  echo "PR-local MinIO smoke did not reject the missing server image tag with the expected error" >&2
+  cat "$ERR_FILE" >&2
+  exit 1
+fi
+
 SMOKE_IMAGE_TAG=contract-smoke-tag \
 SMOKE_MINIO_LOCAL_ONLY=true \
 SMOKE_MINIO_SERVER_IMAGE=firemud-minio-server-smoke:contract \

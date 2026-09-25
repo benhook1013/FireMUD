@@ -47,10 +47,11 @@ jobs:
       - name: Build and smoke exact MinIO sources
         id: smoke
         env:
-          EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: 'true'
+          EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
 
       - name: Upload exact smoke-tested image artifact
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: trusted-minio-images-${{ github.run_id }}-${{ github.run_attempt }}
