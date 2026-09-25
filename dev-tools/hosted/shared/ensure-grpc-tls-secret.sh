@@ -144,14 +144,14 @@ ca_bundle_contains() {
 assert_certificate_unexpired() {
   local certificate="$1"
   local description="$2"
-  local rotation_secrets="$3"
+  local rotation_resources="$3"
 
   if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
     return 0
   fi
   if ! openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null 2>&1; then
-    echo "$description is expired; for safe rotation, an operator must delete these retained Secrets before rerunning:" \
-      "$rotation_secrets" >&2
+    echo "$description is expired; for safe rotation, an operator must delete these retained Certificates and Secrets before rerunning:" \
+      "$rotation_resources" >&2
     return 1
   fi
 }
@@ -265,13 +265,16 @@ fi
 
 if ((shared_snapshot_status == 0)); then
   openssl x509 -in "$shared_cert" -noout >/dev/null
-  shared_rotation_secrets=("${namespace}/${shared_secret}")
+  shared_rotation_resources=("Secret/${namespace}/${shared_secret}")
   for workload in "${workloads[@]}"; do
-    shared_rotation_secrets+=("${namespace}/firemud-grpc-${workload}")
+    shared_rotation_resources+=(
+      "Certificate/${namespace}/${namespace}-grpc-${workload}"
+      "Secret/${namespace}/firemud-grpc-${workload}"
+    )
   done
   assert_certificate_unexpired "$shared_cert" \
     "shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}" \
-    "${shared_rotation_secrets[*]}" || exit 1
+    "${shared_rotation_resources[*]}" || exit 1
   assert_key_matches_certificate "$shared_cert" "$shared_key"
 else
   # The legacy shared bundle is still required by the six non-publication
@@ -343,16 +346,20 @@ for workload in "${workloads[@]}"; do
   }
 
   validate_workload_certificate "$workload_cert" "$workload_key" "$workload"
+  workload_rotation_resources=(
+    "Certificate/${namespace}/${namespace}-grpc-${workload}"
+    "Secret/${namespace}/${secret_name}"
+  )
   assert_certificate_unexpired "$workload_cert" \
     "cert-manager publication certificate in Secret ${namespace}/${secret_name}" \
-    "${namespace}/${secret_name}" || exit 1
+    "${workload_rotation_resources[*]}" || exit 1
   openssl x509 -in "$workload_ca" -noout -text | grep -Fq 'CA:TRUE' || {
     echo "cert-manager CA projection is not a CA certificate: ${namespace}/${secret_name}" >&2
     exit 1
   }
   assert_certificate_unexpired "$workload_ca" \
     "cert-manager CA projection in Secret ${namespace}/${secret_name}" \
-    "${namespace}/${secret_name}" || exit 1
+    "${workload_rotation_resources[*]}" || exit 1
   openssl verify -CAfile "$workload_ca" "$workload_cert" >/dev/null || {
     echo "cert-manager publication certificate does not chain to its projected CA: ${namespace}/${secret_name}" >&2
     exit 1
