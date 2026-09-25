@@ -725,7 +725,7 @@ assert_balanced_preflight_group "Production preflight failure"
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1
 
-if grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE"; then
+if grep -Fq "Skipping ci-static preflight" "$OUTPUT_FILE"; then
   echo "Stage overlay validation skipped static preflight" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
@@ -948,7 +948,7 @@ if ! (
   exit 1
 fi
 
-if grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE"; then
+if grep -Fq "Skipping ci-static preflight" "$OUTPUT_FILE"; then
   echo "Shared-base main path skipped static policy enforcement" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
