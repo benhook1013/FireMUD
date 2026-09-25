@@ -25,12 +25,12 @@ def test_merge_tree(
     run: GitCommand,
     timeout_seconds: float,
 ) -> str:
-    """Return the merged tree using a temporary detached worktree.
+    """Return the exact merge tree, preferring Git's checkout-free merge path.
 
-    Git 2.34 lacks ``merge-tree --write-tree``. A unique temporary worktree
-    exercises the installed Git merge engine without touching the caller's
-    checkout or any branch ref; cleanup is attempted even after timeout or
-    conflict. Only the detached worktree's index and files are changed.
+    Git 2.34 lacks ``merge-tree --write-tree``. For that version, a unique
+    temporary detached worktree exercises the merge engine without touching
+    the caller's checkout or any branch ref. LFS smudging is disabled during
+    that fallback checkout. Cleanup is attempted even after timeout or conflict.
     """
 
     for value, label in ((base, "test-merge base"), (head, "test-merge head")):
@@ -40,19 +40,57 @@ def test_merge_tree(
         raise TestMergeError("test-merge timeout must be positive")
 
     repository = Path(root).resolve()
+    def invoke(directory: Path, *arguments: str, timeout: float = timeout_seconds):
+        try:
+            return run(
+                ["git", "-C", str(directory), *arguments],
+                check=False,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise TestMergeError(f"git test-merge command timed out after {timeout} seconds") from error
+
+    # Probe the capability with a trivial self-merge so an unsupported option
+    # is distinguished from a real conflict in the requested base/head merge.
+    probe = invoke(repository, "merge-tree", "--write-tree", base, base)
+    if probe.returncode == 0:
+        probe_lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
+        if not probe_lines or re.fullmatch(r"[0-9a-fA-F]{40}", probe_lines[0]) is None:
+            raise TestMergeError("git merge-tree capability probe returned no tree")
+        probe_tree = probe_lines[0].lower()
+        probe_type = invoke(repository, "cat-file", "-t", probe_tree)
+        if probe_type.returncode != 0 or probe_type.stdout.strip() != "tree":
+            raise TestMergeError("git merge-tree capability probe returned a non-tree object")
+        merged = invoke(repository, "merge-tree", "--write-tree", base, head)
+        if merged.returncode != 0:
+            raise TestMergeError("current default base and PR head do not produce a clean test merge")
+        lines = [line.strip() for line in merged.stdout.splitlines() if line.strip()]
+        if not lines or re.fullmatch(r"[0-9a-fA-F]{40}", lines[0]) is None:
+            raise TestMergeError("current default base and PR head test merge returned no tree")
+        tree = lines[0].lower()
+        tree_type = invoke(repository, "cat-file", "-t", tree)
+        if tree_type.returncode != 0 or tree_type.stdout.strip() != "tree":
+            raise TestMergeError("current default base and PR head test merge returned a non-tree object")
+        return tree
+
     with tempfile.TemporaryDirectory(prefix="firemud-test-merge-") as temporary:
         temporary_root = Path(temporary)
         worktree = temporary_root / "worktree"
         hooks = temporary_root / "empty-hooks"
         hooks.mkdir()
 
-        def invoke(directory: Path, *arguments: str, timeout: float = timeout_seconds):
+        def invoke_fallback(directory: Path, *arguments: str, timeout: float = timeout_seconds):
             try:
                 return run(
                     [
                         "git",
                         "-c",
                         f"core.hooksPath={hooks}",
+                        "-c",
+                        "filter.lfs.process=",
+                        "-c",
+                        "filter.lfs.smudge=cat",
                         "-C",
                         str(directory),
                         *arguments,
@@ -70,12 +108,12 @@ def test_merge_tree(
         tree: str | None = None
         try:
             add_attempted = True
-            added = invoke(repository, "worktree", "add", "--detach", "--quiet", str(worktree), base)
+            added = invoke_fallback(repository, "worktree", "add", "--detach", "--quiet", str(worktree), base)
             if added.returncode != 0:
                 raise TestMergeError("could not create an isolated detached test-merge worktree")
             worktree_created = True
 
-            merged = invoke(
+            merged = invoke_fallback(
                 worktree,
                 "-c",
                 "rerere.enabled=false",
@@ -88,14 +126,14 @@ def test_merge_tree(
             )
             if merged.returncode != 0:
                 raise TestMergeError("current default base and PR head do not produce a clean test merge")
-            written = invoke(worktree, "write-tree")
+            written = invoke_fallback(worktree, "write-tree")
             if written.returncode != 0:
                 raise TestMergeError("current default base and PR head test merge has an unresolved index")
             lines = [line.strip() for line in written.stdout.splitlines() if line.strip()]
             if not lines or re.fullmatch(r"[0-9a-fA-F]{40}", lines[0]) is None:
                 raise TestMergeError("current default base and PR head test merge returned no tree")
             tree = lines[0].lower()
-            tree_type = invoke(repository, "cat-file", "-t", tree)
+            tree_type = invoke_fallback(repository, "cat-file", "-t", tree)
             if tree_type.returncode != 0 or tree_type.stdout.strip() != "tree":
                 raise TestMergeError("current default base and PR head test merge returned a non-tree object")
         except (OSError, subprocess.SubprocessError, TestMergeError, ValueError) as error:
@@ -103,7 +141,7 @@ def test_merge_tree(
         finally:
             if add_attempted:
                 cleanup_timeout = min(max(timeout_seconds, 1.0), 10.0)
-                removed = invoke(
+                removed = invoke_fallback(
                     repository,
                     "worktree",
                     "remove",

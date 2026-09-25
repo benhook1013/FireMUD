@@ -407,6 +407,7 @@ def _verify_target_still_current(target: ReviewTarget, github: GitHubReader) -> 
     if (
         target.default_base_front
         and current.number == target.snapshot.number
+        and current.state.upper() == "OPEN"
         and current.head_sha.casefold() == selected_head
         and current.base_ref_name == target.parent.ref_name
         and current.mergeable.upper() == "MERGEABLE"
@@ -587,6 +588,18 @@ def _validate_target(
             child_head,
             timeout=git_timeout_seconds,
         )
+        published_tree = _sha(
+            _git_output(
+                runner,
+                source_root,
+                "rev-parse",
+                f"{published_context}^{{tree}}",
+                timeout=git_timeout_seconds,
+            ),
+            "published test-merge tree",
+        )
+        if published_tree != _sha(target.default_test_merge_tree_sha, "selected test-merge tree"):
+            raise ReviewRunnerError("current test-merge tree differs from the selected base/head proof")
         review_context = (
             published_context
             if candidate_sha == child_head

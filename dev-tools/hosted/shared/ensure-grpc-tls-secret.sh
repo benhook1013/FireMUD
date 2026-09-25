@@ -353,11 +353,14 @@ for workload in "${workloads[@]}"; do
   assert_certificate_unexpired "$workload_cert" \
     "cert-manager publication certificate in Secret ${namespace}/${secret_name}" \
     "${workload_rotation_resources[*]}" || exit 1
-  openssl x509 -in "$workload_ca" -noout -ext basicConstraints 2>/dev/null |
-    grep -Eq '^[[:space:]]*CA:TRUE([,[:space:]]|$)' || {
+  if ! ca_basic_constraints="$(openssl x509 -in "$workload_ca" -noout -ext basicConstraints 2>/dev/null)"; then
+    echo "cert-manager CA projection basic constraints could not be read: ${namespace}/${secret_name}" >&2
+    exit 1
+  fi
+  if ! grep -Eq '^[[:space:]]*CA:TRUE([,[:space:]]|$)' <<<"$ca_basic_constraints"; then
     echo "cert-manager CA projection is not a CA certificate: ${namespace}/${secret_name}" >&2
     exit 1
-  }
+  fi
   assert_certificate_unexpired "$workload_ca" \
     "cert-manager CA projection in Secret ${namespace}/${secret_name}" \
     "${workload_rotation_resources[*]}" || exit 1

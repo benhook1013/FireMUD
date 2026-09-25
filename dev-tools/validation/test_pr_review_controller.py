@@ -31,6 +31,7 @@ from pr_review.controller import (
     compact_result,
     json_result,
 )
+from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
 from pr_review.state import LegacyEvidenceTransition, StateStore, observation_fingerprint
@@ -1626,6 +1627,36 @@ class ControllerTests(unittest.TestCase):
                 DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
 
             self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
+        tree = "9" * 40
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append((args, kwargs))
+            git_args = args[args.index("-C") + 2:]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unknown option --write-tree\n")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if "merge" in git_args:
+                return CompletedProcess(args, 0, "", "")
+            if git_args == ["write-tree"]:
+                return CompletedProcess(args, 0, f"{tree}\n", "")
+            if git_args[:2] == ["cat-file", "-t"]:
+                return CompletedProcess(args, 0, "tree\n", "")
+            if git_args[:2] == ["worktree", "remove"]:
+                return CompletedProcess(args, 0, "", "")
+            raise AssertionError(f"unexpected command: {args}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            actual = test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+
+        self.assertEqual(actual, tree)
+        self.assertTrue(calls)
+        fallback_add = next(args for args, _ in calls if "worktree" in args and "add" in args)
+        self.assertIn("filter.lfs.process=", fallback_add)
+        self.assertIn("filter.lfs.smudge=cat", fallback_add)
 
     def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
         with patch(

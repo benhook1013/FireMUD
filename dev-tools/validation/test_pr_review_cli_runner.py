@@ -29,6 +29,7 @@ from pr_review.cli_runner import (
     _name_only_diff_args,
     _test_merge_commit,
     _validate_target,
+    _verify_target_still_current,
     run_cli_review,
     target_from_resolver,
 )
@@ -121,6 +122,7 @@ class FakeCommands:
         parent_is_ancestor=True,
         merge_base=None,
         merge_conflict=False,
+        merge_tree=CONTEXT,
     ):
         self.root = root
         self.delay = delay
@@ -139,6 +141,7 @@ class FakeCommands:
         self.parent_is_ancestor = parent_is_ancestor
         self.merge_base = merge_base or PARENT
         self.merge_conflict = merge_conflict
+        self.merge_tree = merge_tree
         self.timeout_calls = []
         self.test_worktrees = set()
 
@@ -166,6 +169,8 @@ class FakeCommands:
             directory_index = args.index("-C")
             command_root = Path(args[directory_index + 1])
             git_args = args[directory_index + 2:]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 0, f"{self.merge_tree}\n", "")
             if command_root == self.root and git_args[:2] == ["worktree", "add"]:
                 self.test_worktrees.add(Path(git_args[-2]))
                 return CompletedProcess(args, 0, "", "")
@@ -178,7 +183,7 @@ class FakeCommands:
                         return CompletedProcess(args, 1, "", "conflict\n")
                     return CompletedProcess(args, 0, "", "")
                 if git_args == ["write-tree"]:
-                    return CompletedProcess(args, 0, f"{CONTEXT}\n", "")
+                    return CompletedProcess(args, 0, f"{self.merge_tree}\n", "")
             if git_args == ["rev-parse", "--git-common-dir"]:
                 return CompletedProcess(args, 0, ".git\n", "")
             if git_args == ["rev-parse", "HEAD^{commit}"]:
@@ -198,6 +203,8 @@ class FakeCommands:
                 return CompletedProcess(args, 0 if self.parent_is_ancestor else 1, "", "")
             if git_args[:2] == ["cat-file", "-t"]:
                 return CompletedProcess(args, 0, "tree\n", "")
+            if len(git_args) == 2 and git_args[0] == "rev-parse" and git_args[1].endswith("^{tree}"):
+                return CompletedProcess(args, 0, f"{self.merge_tree}\n", "")
             if "commit-tree" in git_args:
                 return CompletedProcess(args, 0, f"{CONTEXT}\n", "")
             if git_args[:3] == ["show", "-s", "--format=%P"]:
@@ -588,6 +595,40 @@ class CliReviewRunnerTests(unittest.TestCase):
                     for args in command_args
                 )
             )
+
+    def test_direct_default_front_rejects_a_published_tree_that_differs_from_selected_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, parent_is_ancestor=False, merge_base=OLDER_BASE, merge_tree=ADVANCED)
+
+            with self.assertRaisesRegex(ReviewRunnerError, "differs from the selected base/head proof"):
+                run_cli_review(
+                    target(default_base_front=True, merge_base=OLDER_BASE),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
+
+            self.assertFalse(any(args and args[0] == "coderabbit" for args, _ in commands.calls))
+
+    def test_closed_default_front_target_is_not_classified_as_stale_base_advance(self):
+        selected = target(default_base_front=True)
+        closed_advanced = dataclasses.replace(
+            selected.snapshot,
+            state="CLOSED",
+            base_sha=ADVANCED,
+        )
+
+        class ClosedPullRequest:
+            def pull_request(self, _number):
+                return closed_advanced
+
+            def branch_head(self, _ref_name):
+                return ADVANCED
+
+        with self.assertRaisesRegex(ReviewRunnerError, "pull request changed during CLI preflight"):
+            _verify_target_still_current(selected, ClosedPullRequest())
 
     def test_cli_test_merge_commit_works_on_installed_git_without_changing_refs_or_checkout(self):
         with tempfile.TemporaryDirectory() as directory:

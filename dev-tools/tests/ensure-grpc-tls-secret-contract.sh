@@ -233,6 +233,14 @@ set -euo pipefail
 if [[ "${FORCE_EXPIRED_CERT_CHECK:-false}" == true && "$*" == *' -checkend 0 '* ]]; then
   exit 1
 fi
+if [[ "${FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT:-false}" == true &&
+  "$*" == *' -noout -ext basicConstraints' ]]; then
+  printf 'X509v3 Basic Constraints: critical\n    CA:TRUE\n'
+  for ((line = 0; line < 16384; line++)); do
+    printf '    unrelated extension detail to exercise complete output capture\n'
+  done
+  exit 0
+fi
 exec "$REAL_OPENSSL" "$@"
 EOF
 chmod +x "$mock_bin/openssl"
@@ -281,6 +289,18 @@ if ! run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
 fi
 grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
+  exit 1
+}
+large_constraints_log="$fixture_dir/large-constraints.log"
+if ! FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT=true run_helper complete "$large_constraints_log" \
+  "$fixture_dir/large-constraints-state" "" 30 >"$fixture_dir/large-constraints.out" \
+  2>"$fixture_dir/large-constraints.err"; then
+  cat "$fixture_dir/large-constraints.out" "$fixture_dir/large-constraints.err" >&2
+  echo "the helper failed to validate a CA extension after capturing its complete output" >&2
+  exit 1
+fi
+grep -Fq '5 distinct publication leaves' "$fixture_dir/large-constraints.out" || {
+  echo "the helper did not accept valid CA constraints with large extension output" >&2
   exit 1
 }
 if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log" || \
