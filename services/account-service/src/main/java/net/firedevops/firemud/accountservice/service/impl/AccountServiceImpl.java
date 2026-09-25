@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
@@ -86,11 +85,13 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -99,6 +100,8 @@ public class AccountServiceImpl implements AccountService {
       "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
   private static final String INVALID_CONNECT_SCOPE_MESSAGE =
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
+  private static final String JOIN_REQUIRED_CHARACTERS_MESSAGE =
+      "Join the selected world before discovering characters";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
@@ -255,7 +258,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate_gameplay")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
-      Long tenantId, String email, String password) {
+      String email, String password) {
     Account gameplayAccount =
         accountRepository
             .findByEmail(EmailCanonicalization.normalize(email))
@@ -263,14 +266,14 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
-    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
-    sessionService.storeSession(tenantId, account.getId(), token);
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
   }
@@ -278,7 +281,7 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional
   @Timed(value = "account.request_email_login_otp")
-  public void requestEmailLoginOtp(Long tenantId, String email) {
+  public void requestEmailLoginOtp(String email) {
     Optional<Account> account =
         accountRepository.findByEmail(EmailCanonicalization.normalize(email));
     if (account.isEmpty()
@@ -289,7 +292,6 @@ public class AccountServiceImpl implements AccountService {
     Account resolvedAccount = account.orElseThrow();
     try {
       requireAuthenticationEligible(resolvedAccount);
-      requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
     } catch (AuthenticationException ex) {
       return;
     }
@@ -317,7 +319,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.verify_email_login_otp")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
-      Long tenantId, String email, String code) {
+      String email, String code) {
     Account account =
         accountRepository
             .findByEmail(EmailCanonicalization.normalize(email))
@@ -338,14 +340,14 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
-    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
-    sessionService.storeSession(tenantId, account.getId(), token);
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
   }
@@ -485,14 +487,17 @@ public class AccountServiceImpl implements AccountService {
     try {
       return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
     } catch (AuthenticationException ex) {
-      sessionService.storeConnectTokenReplay(
-          scopeContext.tenantId(),
-          bootstrapContext.accountId(),
-          request.connectScopeId(),
-          request.requestId(),
-          new net.firedevops.firemud.accountservice.service.session.SessionService
-              .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
-          remainingConnectScopeReplayTtl(scopeContext));
+      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())
+          && !"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
+        sessionService.storeConnectTokenReplay(
+            scopeContext.tenantId(),
+            bootstrapContext.accountId(),
+            request.connectScopeId(),
+            request.requestId(),
+            new net.firedevops.firemud.accountservice.service.session.SessionService
+                .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
+            remainingConnectScopeReplayTtl(scopeContext));
+      }
       throw ex;
     }
   }
@@ -506,7 +511,7 @@ public class AccountServiceImpl implements AccountService {
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
     }
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
@@ -699,17 +704,16 @@ public class AccountServiceImpl implements AccountService {
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
         subscriptionRepository.findByTenantId(tenantId);
-    boolean gameplayAvailable =
-        subscriptions.isEmpty()
-            || subscriptions.stream().anyMatch(s -> isGameplayAvailableStatus(s.getStatus()));
-    boolean allowPublicJoin =
-        subscriptions.isEmpty()
-            || subscriptions.stream().anyMatch(s -> isPublicJoinAllowedStatus(s.getStatus()));
-    long version =
-        subscriptions.stream()
-            .mapToLong(subscription -> subscription.getId() == null ? 0L : subscription.getId())
-            .max()
-            .orElse(0L);
+    if (subscriptions.size() != 1) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is missing or ambiguous; retry later");
+    }
+    net.firedevops.firemud.accountservice.entity.Subscription subscription =
+        subscriptions.getFirst();
+    boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
+    boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
+    long version = subscription.getId() == null ? 0L : subscription.getId();
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }
@@ -793,6 +797,12 @@ public class AccountServiceImpl implements AccountService {
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
     if (!isPublicProductionRealm(realm)) {
+      if (accountTenantMembershipRepository
+          .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
+          .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+          .isEmpty()) {
+        return false;
+      }
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
         return false;
@@ -934,12 +944,22 @@ public class AccountServiceImpl implements AccountService {
   private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
     RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
+    requireGameplayAdmissionMembership(bootstrapContext.accountId(), currentRealm);
     if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
+  }
+
+  private void requireGameplayAdmissionMembership(long accountId, RuntimeRealmTarget realm) {
+    if (accountTenantMembershipRepository
+        .findByAccountIdAndTenantId(accountId, realm.tenantId())
+        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+        .isEmpty()) {
+      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
+    }
   }
 
   private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
@@ -1042,19 +1062,6 @@ public class AccountServiceImpl implements AccountService {
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
   }
 
-  private void requireGameplayMembership(Long accountId, Long tenantId, String message) {
-    AccountTenantMembership membership =
-        accountTenantMembershipRepository
-            .findByAccountIdAndTenantId(accountId, tenantId)
-            .orElseThrow(
-                () ->
-                    new AuthenticationException(
-                        AuthenticationErrorCodes.INVALID_CREDENTIALS, message));
-    if (!membership.isGameplayAdmissionAllowed()) {
-      throw new AuthenticationException(AuthenticationErrorCodes.INVALID_CREDENTIALS, message);
-    }
-  }
-
   private boolean hasRealmAccessGrant(
       Long accountId, Long tenantId, String worldSlug, String realmSlug) {
     return accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
@@ -1139,6 +1146,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.get_profile")
   public ProfileDto getProfile(Long tenantId, Long accountId) {
+    requireProfileMembership(tenantId, accountId);
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
@@ -1172,6 +1180,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {
     request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
+    requireProfileMembership(request.tenantId(), request.accountId());
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
@@ -1187,6 +1196,12 @@ public class AccountServiceImpl implements AccountService {
     return profileMapper.toDto(profile);
   }
 
+  private void requireProfileMembership(Long tenantId, Long accountId) {
+    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)) {
+      throw new IllegalArgumentException("Profile not found");
+    }
+  }
+
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.get_login_auth_modes")
@@ -1200,15 +1215,9 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.update_login_auth_modes")
   public AccountLoginAuthModesDto updateLoginAuthModes(
       Long accountId, UpdateAccountLoginAuthModesRequest request) {
-    Set<AccountLoginAuthMode> modes = request.loginAuthModes();
-    String serializedModes = AccountLoginAuthModes.normalize(modes);
-    Account account = requireAccount(accountId);
-    if (modes.contains(AccountLoginAuthMode.EMAIL_OTP) && !account.isEmailVerified()) {
-      throw new IllegalArgumentException("Email OTP requires a verified email address");
-    }
-    account.setLoginAuthModes(serializedModes);
-    accountRepository.save(account);
-    return new AccountLoginAuthModesDto(AccountLoginAuthModes.read(serializedModes));
+    throw new ResponseStatusException(
+        HttpStatus.NOT_IMPLEMENTED,
+        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
   }
 
   @Override
@@ -1281,10 +1290,12 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_password_reset")
   public void requestPasswordReset(PasswordResetRequest request) {
-    net.firedevops.firemud.accountservice.entity.Account account =
-        accountRepository
-            .findByEmail(EmailCanonicalization.normalize(request.email()))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(request.email()));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    Account account = accountOptional.get();
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
     token.setAccount(account);
@@ -1322,6 +1333,22 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.request_email_verification")
   public void requestEmailVerification(Long accountId) {
     Account account = requireAccount(accountId);
+    issueEmailVerification(account);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.request_email_verification_public")
+  public void requestEmailVerification(String email) {
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(email));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    issueEmailVerification(accountOptional.get());
+  }
+
+  private void issueEmailVerification(Account account) {
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
     token.setToken(java.util.UUID.randomUUID().toString());
@@ -1378,10 +1405,12 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.username_reminder")
   public void sendUsernameReminder(UsernameRecoveryRequest request) {
-    Account account =
-        accountRepository
-            .findByEmail(EmailCanonicalization.normalize(request.email()))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(request.email()));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    Account account = accountOptional.get();
     runAfterCommit(
         () ->
             emailService.sendEmail(
@@ -1535,6 +1564,9 @@ public class AccountServiceImpl implements AccountService {
     if (!StringUtils.hasText(realmSlug)) {
       throw new IllegalArgumentException("realmSlug is required");
     }
+    if (!"SHARED".equals(stateScope) && !"ISOLATED".equals(stateScope)) {
+      throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
+    }
     return new RuntimeRealmTarget(
         tenantId,
         gameInstanceId,
@@ -1550,10 +1582,13 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PlayableStateScope toPlayableStateScope(RuntimeRealmTarget realm) {
-    return switch (realm.stateScope()) {
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-    };
+    if ("SHARED".equals(realm.stateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    }
+    if ("ISOLATED".equals(realm.stateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    }
+    throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
   }
 
   private long requirePositiveLong(Object value, String field) {

@@ -29,12 +29,12 @@ public interface AccountService {
       String username, String password);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
-      Long tenantId, String email, String password);
+      String email, String password);
 
-  void requestEmailLoginOtp(Long tenantId, String email);
+  void requestEmailLoginOtp(String email);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
-      Long tenantId, String email, String code);
+      String email, String code);
 
   PlayerBootstrapResult issuePlayerBootstrap(String accountIdentifier, String secret);
 
@@ -85,6 +85,8 @@ public interface AccountService {
       net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request);
 
   void requestEmailVerification(Long accountId);
+
+  void requestEmailVerification(String email);
 
   void verifyEmail(net.firedevops.firemud.accountservice.dto.VerifyEmailRequest request);
 

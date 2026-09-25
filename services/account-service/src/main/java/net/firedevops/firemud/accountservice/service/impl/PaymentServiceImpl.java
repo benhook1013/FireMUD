@@ -2,13 +2,11 @@ package net.firedevops.firemud.accountservice.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
-import java.time.LocalDateTime;
 import net.firedevops.firemud.accountservice.client.StripeClient;
 import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.dto.SubscriptionDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PaymentTransaction;
-import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
@@ -118,25 +116,10 @@ public class PaymentServiceImpl implements PaymentService {
         true);
   }
 
+  @Override
   @Timed(value = "payment.create_subscription")
   public SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId) {
-    logger.info("Create subscription {} for account {}", planId, accountId);
-    Account account = requireAccountMembership(tenantId, accountId);
-    Subscription sub = new Subscription();
-    sub.setAccount(account);
-    sub.setPlanId(planId);
-    sub.setStatus("active");
-    sub.setStartedAt(LocalDateTime.now());
-    sub.setTenantId(tenantId);
-    sub = subscriptionRepository.save(sub);
-    return new SubscriptionDto(
-        sub.getId(),
-        tenantId,
-        accountId,
-        sub.getPlanId(),
-        sub.getStatus(),
-        sub.getStartedAt(),
-        sub.getEndedAt());
+    throw new IllegalStateException("Subscription creation is unavailable");
   }
 
   @Override

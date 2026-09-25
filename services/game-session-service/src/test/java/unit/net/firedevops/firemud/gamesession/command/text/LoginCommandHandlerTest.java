@@ -68,7 +68,7 @@ class LoginCommandHandlerTest {
   void setUp() {
     meterRegistry.clear();
     stubSessionContext(bootstrapShell(1L, 1L));
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
@@ -115,7 +115,7 @@ class LoginCommandHandlerTest {
     assertEquals(
         List.of(PlayerOutputKind.MESSAGE),
         result.outputs().stream().map(output -> output.kind()).toList());
-    verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"));
+    verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
     verify(commandService).enqueue("1", command.rawLine(), false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
@@ -137,7 +137,7 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR LOGIN_ARGUMENTS_INVALID Use LOGIN <email> [secret].",
         joinedOutputText(result.outputs()));
-    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
+    verify(accountClient, never()).authenticate(anyString(), anyString());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
     verify(firstPartyConnectContextRegistry, never()).find(anyLong());
   }
@@ -149,7 +149,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN, List.of("DEMO@EXAMPLE.COM"), "LOGIN DEMO@EXAMPLE.COM");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))
+    when(accountClient.requestEmailLoginOtp("demo@example.com"))
         .thenReturn(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -157,8 +157,8 @@ class LoginCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertEquals(
         LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, joinedOutputText(result.outputs()));
-    verify(accountClient).requestEmailLoginOtp("22", "demo@example.com");
-    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
+    verify(accountClient).requestEmailLoginOtp("demo@example.com");
+    verify(accountClient, never()).authenticate(anyString(), anyString());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -169,7 +169,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))
+    when(accountClient.requestEmailLoginOtp("demo@example.com"))
         .thenReturn(
             RequestEmailLoginOtpResponse.newBuilder()
                 .setError(
@@ -261,7 +261,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("0").build());
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -287,7 +287,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("-1").build());
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -313,7 +313,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken(AUTH_TOKEN)
@@ -379,14 +379,14 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginConsumesVerifiedFirstPartyContext() {
+  void bareLoginAcceptsVerifiedFirstPartyAccountDifferentFromGameOwner() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    77L,
+                    99L,
                     22L,
                     "demo",
                     "production",
@@ -401,9 +401,13 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
-    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
+    assertEquals("Logged in as first-party account 99", joinedOutputText(result.outputs()));
+    verify(accountClient, never()).authenticate(anyString(), anyString());
     verify(commandService).enqueue("1", "LOGIN", false);
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals(99L, captor.getValue().accountId());
+    assertEquals(77L, instance.getOwnerAccountId());
   }
 
   @Test
@@ -774,6 +778,61 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void reloginAsDifferentAccountClearsExistingGameplayBinding() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+    SessionContext existing =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-live",
+            "req-live");
+    stubSessionContext(existing);
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext context = captor.getValue();
+    assertEquals(99L, context.accountId());
+    assertEquals("other@example.com", context.loginName());
+    assertEquals(0L, context.characterId());
+    assertNull(context.characterName());
+    assertEquals(0L, context.gameInstanceId());
+    assertNull(context.roomInstanceId());
+    assertEquals(AUTH_TOKEN, context.jwt());
+    assertEquals(1L, context.bootstrapGameInstanceId());
+    assertNull(context.worldSlug());
+    assertNull(context.realmSlug());
+    assertEquals(0L, context.pointerVersion());
+    assertNull(context.playableStateScope());
+    assertNull(context.connectScopeId());
+    assertNull(context.connectRequestId());
+  }
+
+  @Test
   void reloginClearsStaleGameplayBindingBeforeRefreshingLoginContext() {
     TextCommand command =
         new TextCommand(
@@ -828,7 +887,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     stubSessionContext(staleGameplayContext(3L));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -880,7 +939,7 @@ class LoginCommandHandlerTest {
             "scope-stale",
             "req-stale");
     stubSessionContext(partialRoutingProjection);
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -893,7 +952,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void accountMismatchReturnsFailure() {
+  void authenticatedNonOwnerAccountIsAcceptedAndStored() {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -901,23 +960,20 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    stubSessionContext(staleGameplayContext(4L));
-    when(accountClient.authenticate(anyString(), anyString(), anyString()))
+    when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
-    assertFalse(result.commandResult().accepted());
-    assertEquals("ACCOUNT_MISMATCH", result.commandResult().errorCode());
-    assertEquals(
-        "ERROR ACCOUNT_MISMATCH " + LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE,
-        joinedOutputText(result.outputs()));
+    assertTrue(result.commandResult().accepted());
+    assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
+    verify(commandService).enqueue("1", command.rawLine(), false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService, times(2)).save(captor.capture());
-    verify(gameplayPresenceLifecycleService)
-        .clearGameplayBinding(staleGameplayContext(4L), "STALE_ADMISSION_POINTER");
-    assertClearedSessionContext(lastCaptured(captor), 0L);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals(99L, captor.getValue().accountId());
+    assertEquals("demo@example.com", captor.getValue().loginName());
+    assertEquals(77L, instance.getOwnerAccountId());
   }
 
   @Test
@@ -937,7 +993,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -964,7 +1020,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -990,7 +1046,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1022,7 +1078,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1057,7 +1113,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1085,7 +1141,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1112,7 +1168,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1136,7 +1192,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1163,7 +1219,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1190,7 +1246,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1219,7 +1275,7 @@ class LoginCommandHandlerTest {
 
     verify(sessionContextService, times(2))
         .save(any(net.firedevops.firemud.gamesession.service.SessionContext.class));
-    verify(accountClient, times(2)).authenticate(anyString(), anyString(), anyString());
+    verify(accountClient, times(2)).authenticate(anyString(), anyString());
   }
 
   @Test

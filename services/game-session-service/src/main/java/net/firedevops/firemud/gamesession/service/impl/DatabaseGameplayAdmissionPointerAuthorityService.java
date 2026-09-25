@@ -175,7 +175,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     requireText(mutation.worldDisplayName(), "world_display_name is required");
     requireText(mutation.realmSlug(), "realm_slug is required");
     requireText(mutation.realmDisplayName(), "realm_display_name is required");
-    requireText(mutation.stateScope(), "state_scope is required");
+    if (!"SHARED".equals(mutation.stateScope()) && !"ISOLATED".equals(mutation.stateScope())) {
+      throw new IllegalArgumentException("state_scope must be SHARED or ISOLATED");
+    }
     requireText(mutation.characterCreationPolicy(), "character_creation_policy is required");
     requireText(mutation.actorPrincipal(), "actor_principal is required");
     requireText(mutation.reason(), "reason is required");

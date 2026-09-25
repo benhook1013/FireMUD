@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted cache and freshness policy is not implemented. Account currently restamps responses while deriving version fields from subscription row IDs. In the current runtime `PLAY` path, `AccountClient` emits `ENTITLEMENT_UNAVAILABLE` when entitlement authority is unavailable, while `PlayCommandHandler` checks only `gameplayAvailable` after a successful authority response and emits `TENANT_BILLING_BLOCKED` when that flag is false. This current implementation status does not change the target contract: unavailable authority remains retryable as `ENTITLEMENT_UNAVAILABLE`, while known denial remains `TENANT_BILLING_BLOCKED`. No runtime cache, billing-event sequence consumer, source-freshness validation, instance-lifecycle enforcement, or hard-suspension consumer exists. Current behavior also blocks `past_due` contrary to the accepted lifecycle.
+The accepted cache and freshness policy is not implemented. Account currently restamps responses while deriving version fields from subscription row IDs, and the response lacks committed subscription status and complete operation-specific evidence. In the current runtime `PLAY` path, `AccountClient` emits `ENTITLEMENT_UNAVAILABLE` when entitlement authority is unavailable, while `PlayCommandHandler` checks only `gameplayAvailable` after a successful authority response and emits `TENANT_BILLING_BLOCKED` when that flag is false. Current code permits `past_due` gameplay and public join, consistent with the accepted lifecycle. This current implementation status does not change the target contract: unavailable authority remains retryable as `ENTITLEMENT_UNAVAILABLE`, while known denial remains `TENANT_BILLING_BLOCKED`. No runtime cache, billing-event sequence consumer, source-freshness validation, instance-lifecycle enforcement, or hard-suspension consumer exists.
 
 ## Decision Record
 
@@ -95,7 +95,7 @@ Durably replicating full entitlement projections into each runtime service could
 
 ## Implementation and Proof Obligations
 
-- Implement the complete runtime response, operation-specific billing flags, and explicit free/trial state; correct `past_due` handling and remove row-ID-derived versions.
+- Implement the complete runtime response, including committed subscription status, operation-specific billing flags, explicit free/trial state, and complete committed freshness/version evidence; remove row-ID-derived versions.
 - Implement per-tenant cache, single-flight refresh, sequenced event invalidation, gap detection, periodic reconciliation, and the five-minute hard ceiling.
 - Prove strict new commitment denial, eligible exact-same-binding/non-expanding reconnect and recovery continuity, fresh-entitlement enforcement for fresh admission or changed bindings, expired/unsafe last-known-good denial, exact 15-second and five-minute boundary behavior, the within-skew and beyond-skew evaluatedAt vectors, disabled continuity with an omitted limit, rejection of numeric zero, and finite-limit rejection when `maxClockSkew >= L`, and immediate known hard-cutoff behavior.
 - Prove no entitlement lookup occurs on routine actions for an uninterrupted session.

@@ -86,7 +86,7 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(
             accountService.authenticateForGameplay(
-                Mockito.eq(1L), Mockito.eq("demo@example.com"), Mockito.eq("bad")))
+                Mockito.eq("demo@example.com"), Mockito.eq("bad")))
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
@@ -94,11 +94,7 @@ class AccountGrpcServiceTest {
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
     service.authenticate(
-        AuthenticateRequest.newBuilder()
-            .setTenantId("1")
-            .setEmail("demo@example.com")
-            .setPassword("bad")
-            .build(),
+        AuthenticateRequest.newBuilder().setEmail("demo@example.com").setPassword("bad").build(),
         new StreamObserver<AuthenticateResponse>() {
           @Override
           public void onNext(AuthenticateResponse value) {
@@ -114,6 +110,7 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, ref.get().getError().getCode());
+    Mockito.verify(accountService).authenticateForGameplay("demo@example.com", "bad");
   }
 
   @Test
@@ -124,10 +121,7 @@ class AccountGrpcServiceTest {
 
     AtomicReference<RequestEmailLoginOtpResponse> ref = new AtomicReference<>();
     service.requestEmailLoginOtp(
-        RequestEmailLoginOtpRequest.newBuilder()
-            .setTenantId("7")
-            .setEmail("demo@example.com")
-            .build(),
+        RequestEmailLoginOtpRequest.newBuilder().setEmail("demo@example.com").build(),
         new StreamObserver<RequestEmailLoginOtpResponse>() {
           @Override
           public void onNext(RequestEmailLoginOtpResponse value) {
@@ -143,42 +137,20 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertTrue(ref.get().getAccepted());
-    Mockito.verify(accountService).requestEmailLoginOtp(7L, "demo@example.com");
-  }
-
-  @Test
-  void requestEmailLoginOtpRejectsZeroTenantIdAsApplicationError() {
-    PingService pingService = Mockito.mock(PingService.class);
-    AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<RequestEmailLoginOtpResponse> observer = new RecordingObserver<>();
-
-    service.requestEmailLoginOtp(
-        RequestEmailLoginOtpRequest.newBuilder()
-            .setTenantId("0")
-            .setEmail("demo@example.com")
-            .build(),
-        observer);
-
-    assertNotNull(observer.response());
-    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
-    assertTrue(observer.completed());
-    assertFalse(observer.receivedTransportError());
-    Mockito.verifyNoInteractions(accountService);
+    Mockito.verify(accountService).requestEmailLoginOtp("demo@example.com");
   }
 
   @Test
   void verifyEmailLoginOtpReturnsAuthenticatedSession() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.verifyEmailLoginOtp(7L, "demo@example.com", "123456"))
+    Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
         .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
     service.verifyEmailLoginOtp(
         VerifyEmailLoginOtpRequest.newBuilder()
-            .setTenantId("7")
             .setEmail("demo@example.com")
             .setCode("123456")
             .build(),
@@ -201,32 +173,10 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void verifyEmailLoginOtpRejectsZeroTenantIdAsApplicationError() {
-    PingService pingService = Mockito.mock(PingService.class);
-    AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
-
-    service.verifyEmailLoginOtp(
-        VerifyEmailLoginOtpRequest.newBuilder()
-            .setTenantId("0")
-            .setEmail("demo@example.com")
-            .setCode("123456")
-            .build(),
-        observer);
-
-    assertNotNull(observer.response());
-    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
-    assertTrue(observer.completed());
-    assertFalse(observer.receivedTransportError());
-    Mockito.verifyNoInteractions(accountService);
-  }
-
-  @Test
   void verifyEmailLoginOtpReturnsInvalidCredentialsAsApplicationError() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.verifyEmailLoginOtp(7L, "demo@example.com", "123456"))
+    Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
@@ -235,7 +185,6 @@ class AccountGrpcServiceTest {
 
     service.verifyEmailLoginOtp(
         VerifyEmailLoginOtpRequest.newBuilder()
-            .setTenantId("7")
             .setEmail("demo@example.com")
             .setCode("123456")
             .build(),
@@ -711,16 +660,21 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void getTenantEntitlementsForRuntimeRejectsZeroTenantIdBeforeLookup() {
+  void getTenantEntitlementsForRuntimeReturnsUnavailableAuthorityError() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-ambiguous"))
+        .thenThrow(
+            new AuthenticationException(
+                "ENTITLEMENT_UNAVAILABLE",
+                "Tenant entitlement authority is missing or ambiguous; retry later"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
     service.getTenantEntitlementsForRuntime(
         GetTenantEntitlementsForRuntimeRequest.newBuilder()
-            .setTenantId("0")
-            .setRequestId("req-2")
+            .setTenantId("1")
+            .setRequestId("req-ambiguous")
             .build(),
         new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
           @Override
@@ -736,27 +690,25 @@ class AccountGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(accountService);
+    assertTrue(ref.get().hasError());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", ref.get().getError().getCode());
   }
 
   @Test
-  void authenticateRejectsZeroTenantIdBeforeAuthentication() {
+  void getTenantEntitlementsForRuntimeRejectsZeroTenantIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
-    AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
-    service.authenticate(
-        AuthenticateRequest.newBuilder()
+    AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantEntitlementsForRuntime(
+        GetTenantEntitlementsForRuntimeRequest.newBuilder()
             .setTenantId("0")
-            .setEmail("demo@example.com")
-            .setPassword("bad")
+            .setRequestId("req-2")
             .build(),
-        new StreamObserver<AuthenticateResponse>() {
+        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
           @Override
-          public void onNext(AuthenticateResponse value) {
+          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
             ref.set(value);
           }
 

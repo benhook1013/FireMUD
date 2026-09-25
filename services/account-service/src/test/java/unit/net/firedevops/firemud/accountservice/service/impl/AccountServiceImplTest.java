@@ -104,6 +104,18 @@ class AccountServiceImplTest {
   @BeforeEach
   void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
+    Subscription explicitActiveEntitlement = new Subscription();
+    explicitActiveEntitlement.setId(1L);
+    explicitActiveEntitlement.setTenantId(7L);
+    explicitActiveEntitlement.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(explicitActiveEntitlement));
+    Subscription explicitActiveEntitlementForSecondTenant = new Subscription();
+    explicitActiveEntitlementForSecondTenant.setId(2L);
+    explicitActiveEntitlementForSecondTenant.setTenantId(8L);
+    explicitActiveEntitlementForSecondTenant.setStatus("active");
+    when(subscriptionRepository.findByTenantId(8L))
+        .thenReturn(java.util.List.of(explicitActiveEntitlementForSecondTenant));
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
@@ -241,7 +253,7 @@ class AccountServiceImplTest {
   void emailLoginOtpRequestIsNeutralForUnknownEmail() {
     when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
 
-    service.requestEmailLoginOtp(7L, "unknown@example.com");
+    service.requestEmailLoginOtp("unknown@example.com");
 
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
   }
@@ -259,7 +271,7 @@ class AccountServiceImplTest {
     account.setLifecycleState(lifecycleState);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     verifyNoInteractions(
         accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
@@ -271,11 +283,7 @@ class AccountServiceImplTest {
     account.setId(9L);
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
@@ -286,7 +294,7 @@ class AccountServiceImplTest {
               return challenge;
             });
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     org.mockito.ArgumentCaptor<
             net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
@@ -303,6 +311,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("verified@example.com"),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.matches(".*\\b\\d{6}\\b.*"));
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -312,16 +321,12 @@ class AccountServiceImplTest {
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
     account.setRole("player");
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     org.mockito.ArgumentCaptor<
             net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
@@ -343,17 +348,18 @@ class AccountServiceImplTest {
         .thenReturn(Optional.of(challengeCaptor.getValue()));
 
     AuthenticationResult result =
-        service.verifyEmailLoginOtp(7L, "verified@example.com", codeMatcher.group(1));
+        service.verifyEmailLoginOtp("verified@example.com", codeMatcher.group(1));
 
     assertEquals(9L, result.accountId());
     assertNotNull(result.authToken());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
         .delete(challengeCaptor.getValue());
     org.mockito.Mockito.verify(sessionService)
-        .storeSession(
-            org.mockito.ArgumentMatchers.eq(7L),
+        .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(9L),
-            org.mockito.ArgumentMatchers.eq(result.authToken()));
+            org.mockito.ArgumentMatchers.eq(result.authToken()),
+            org.mockito.ArgumentMatchers.eq(jwtAuthProperties.getJwtExpirationMs()));
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -368,19 +374,17 @@ class AccountServiceImplTest {
     challenge.setAccountId(9L);
     challenge.setCodeHash(hash("123456"));
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticateForGameplay(7L, "demo@example.com", "123456");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
-    org.mockito.Mockito.verify(sessionService).storeSession(7L, 9L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(9L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -395,16 +399,11 @@ class AccountServiceImplTest {
     challenge.setAccountId(9L);
     challenge.setCodeHash(hash("123456"));
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result =
-        service.authenticateForGameplay(7L, "demo@example.com", "password");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
@@ -433,7 +432,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticateForGameplay(7L, "demo@example.com", "wrong"));
+            () -> service.authenticateForGameplay("demo@example.com", "wrong"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals(1, challenge.getInvalidAttemptCount());
@@ -450,7 +449,7 @@ class AccountServiceImplTest {
     account.setLoginAuthModes("PASSWORD");
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     verifyNoInteractions(
         accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
@@ -463,7 +462,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.verifyEmailLoginOtp(7L, "unknown@example.com", "123456"));
+            () -> service.verifyEmailLoginOtp("unknown@example.com", "123456"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     verifyNoInteractions(accountEmailLoginChallengeRepository, sessionService);
@@ -475,8 +474,6 @@ class AccountServiceImplTest {
     account.setId(9L);
     account.setEmail("verified@example.com");
     account.setRole("player");
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
         new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
     challenge.setId(5L);
@@ -485,12 +482,10 @@ class AccountServiceImplTest {
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
     challenge.setInvalidAttemptCount(0);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
 
-    AuthenticationResult result = service.verifyEmailLoginOtp(7L, "verified@example.com", "123456");
+    AuthenticationResult result = service.verifyEmailLoginOtp("verified@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
@@ -573,12 +568,9 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
     jwtAuthProperties.setJwtSecret(null);
 
-    AuthenticationResult result =
-        service.authenticateForGameplay(1L, "demo@example.com", "password");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -587,7 +579,9 @@ class AccountServiceImplTest {
     assertEquals(1L, claims.get("accountId", Long.class));
     assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
     assertNotNull(claims.get("jti"));
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(1L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -1132,15 +1126,15 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     AuthenticationResult result =
-        service.authenticateForGameplay(1L, "  DEMO@example.com ", "password");
+        service.authenticateForGameplay("  DEMO@example.com ", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(1L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
@@ -1150,8 +1144,7 @@ class AccountServiceImplTest {
     when(accountRepository.findByEmail("demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
-            AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo", "bad"));
+            AuthenticationException.class, () -> service.authenticateForGameplay("demo", "bad"));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
@@ -1162,7 +1155,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
+            () -> service.authenticateForGameplay("demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
@@ -1170,22 +1163,19 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateRejectsMissingGameplayMembership() {
+  void authenticateAllowsGlobalIdentityWithoutTenantMembership() {
     Account account = new Account();
     account.setId(7L);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
-        .thenReturn(Optional.empty());
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
-    AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
-
-    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
-    assertEquals("Invalid credentials", exception.getMessage());
+    assertEquals(7L, result.accountId());
+    assertNotNull(result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(7L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -1254,6 +1244,38 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void getTenantEntitlementsForRuntimeTreatsMissingSubscriptionAsUnavailable() {
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-missing-entitlement"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeTreatsMixedSubscriptionRowsAsUnavailable() {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    Subscription canceled = new Subscription();
+    canceled.setId(32L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active, canceled));
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
   void issueConnectTokenReturnsShortLivedConnectToken() {
     Account account = new Account();
     account.setId(11L);
@@ -1300,6 +1322,60 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(11L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq(30000L));
+  }
+
+  @Test
+  void issueConnectTokenRetriesAfterEntitlementAuthorityRecoversWithoutCachingFailure() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(active), java.util.List.of(), java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, "req-entitlement-retry");
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("req-entitlement-retry"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay ->
+                    !replay.success() && "ENTITLEMENT_UNAVAILABLE".equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.anyLong());
+
+    ConnectTokenResult retried = service.issueConnectToken(bootstrap.bootstrapToken(), request);
+
+    assertEquals("req-entitlement-retry", retried.requestId());
+    assertNotNull(retried.connectToken());
+    assertFalse(retried.replayed());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-entitlement-retry"),
+            org.mockito.ArgumentMatchers.argThat(replay -> replay.success()),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test
@@ -1600,7 +1676,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenRejectsUnavailableGameplayBeforeMissingMembershipOutcomes() {
+  void issueConnectTokenClassifiesKnownBillingDenialAndReplaysItDeterministically() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1623,6 +1699,105 @@ class AccountServiceImplTest {
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled");
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+
+    assertEquals("TENANT_BILLING_BLOCKED", exception.getCode());
+    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-gameplay-disabled"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay -> !replay.success() && "TENANT_BILLING_BLOCKED".equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+
+    when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-gameplay-disabled"))
+        .thenReturn(
+            Optional.of(
+                new SessionService.ConnectTokenReplay(
+                    false, null, "TENANT_BILLING_BLOCKED", exception.getMessage())));
+    AuthenticationException replayed =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+
+    assertEquals("TENANT_BILLING_BLOCKED", replayed.getCode());
+    assertEquals(exception.getMessage(), replayed.getMessage());
+  }
+
+  @Test
+  void issueConnectTokenKeepsGenericMembershipRejectionDistinctFromBillingDenial() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership deniedMembership = membership(account, 7L);
+    deniedMembership.setGameplayAdmissionAllowed(true);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(deniedMembership));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("55")
+                .setPointerVersion(19L)
+                .setVisible(true)
+                .setPublicProductionRealm(false)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    deniedMembership.setGameplayAdmissionAllowed(false);
 
     AuthenticationException exception =
         assertThrows(
@@ -1630,12 +1805,18 @@ class AccountServiceImplTest {
             () ->
                 service.issueConnectToken(
                     bootstrap.bootstrapToken(),
-                    new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled")));
+                    new ConnectTokenRequest(connectScopeId, "req-membership-denied")));
 
     assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
-    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    assertEquals("Gameplay admission is not allowed for this account", exception.getMessage());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test
@@ -1760,6 +1941,49 @@ class AccountServiceImplTest {
     assertEquals("Mara", characters.getFirst().characterName());
     assertEquals("SHARED", characters.getFirst().stateScope());
     assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false", "true"})
+  void listBootstrapCharactersRequiresCurrentAdmittingMembership(boolean membershipExists) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    if (membershipExists) {
+      AccountTenantMembership membership = membership(account, 7L);
+      membership.setGameplayAdmissionAllowed(false);
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.of(membership));
+    } else {
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.empty());
+    }
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    verifyNoInteractions(entityManagementClient);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
 
   @Test
@@ -2040,6 +2264,49 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapCharactersRejectsAdmissionPointerWithUnknownStateScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("UNKNOWN")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
   void listBootstrapCharactersUsesWorldQualifiedPointerLookupWhenRealmSlugDuplicatesAcrossWorlds() {
     Account account = new Account();
     account.setId(11L);
@@ -2137,7 +2404,7 @@ class AccountServiceImplTest {
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(
             org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyLong()))
-        .thenReturn(Optional.empty());
+        .thenReturn(Optional.of(membership(account, 7L)));
     when(gameSessionClient.listGameplayRealms("demo"))
         .thenReturn(
             java.util.List.of(
@@ -2256,7 +2523,7 @@ class AccountServiceImplTest {
 
   @ParameterizedTest
   @CsvSource({"true, false", "false, true"})
-  void issueConnectTokenRequiresMembershipForNonPublicRealmWithGrant(
+  void listBootstrapRealmsExcludesNonPublicRealmWithoutMembershipEvenWithGrant(
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
@@ -2266,6 +2533,110 @@ class AccountServiceImplTest {
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(visible)
+                    .setPublicProductionRealm(publicProductionRealm)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("55")
+                .setPointerVersion(19L)
+                .setVisible(visible)
+                .setPublicProductionRealm(publicProductionRealm)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    assertTrue(service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").isEmpty());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true, false", "false, true"})
+  void listBootstrapRealmsIncludesNonPublicRealmWhenMembershipAndGrantPresent(
+      boolean visible, boolean publicProductionRealm) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(visible)
+                    .setPublicProductionRealm(publicProductionRealm)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(1, realms.size());
+    assertEquals("preview", realms.getFirst().realmSlug());
+    assertFalse(realms.getFirst().connectScopeId().isBlank());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true, false", "false, true"})
+  void issueConnectTokenRevalidatesMembershipAfterNonPublicDiscovery(
+      boolean visible, boolean publicProductionRealm) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)), Optional.empty());
     Subscription active = new Subscription();
     active.setId(22L);
     active.setTenantId(7L);
@@ -2395,6 +2766,7 @@ class AccountServiceImplTest {
     profile.setTenantId(1L);
     profile.setDisplayName("demo");
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileMapper.toDto(profile))
         .thenReturn(
@@ -2428,6 +2800,7 @@ class AccountServiceImplTest {
     profile.setAccount(new Account());
     profile.setTenantId(1L);
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
     when(profileMapper.toDto(profile))
@@ -2443,6 +2816,27 @@ class AccountServiceImplTest {
     assertEquals("demo", dto.displayName());
     assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, profile.getPresenceVisibilityPolicy());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
+  }
+
+  @Test
+  void profileReadAndUpdateFailClosedWithoutCurrentTenantMembership() {
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(false);
+
+    assertEquals(
+        "Profile not found",
+        assertThrows(IllegalArgumentException.class, () -> service.getProfile(1L, 2L))
+            .getMessage());
+    assertEquals(
+        "Profile not found",
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    service.updateProfile(
+                        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)))
+            .getMessage());
+
+    verifyNoInteractions(profileRepository, profileMapper, notificationService);
   }
 
   @Test
@@ -2558,6 +2952,16 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void requestPasswordResetUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.requestPasswordReset(new PasswordResetRequest("unknown@example.com"));
+
+    org.mockito.Mockito.verifyNoInteractions(
+        passwordResetTokenRepository, emailService, notificationService);
+  }
+
+  @Test
   void sendUsernameReminderEmailsUsername() {
     Account account = new Account();
     account.setId(1L);
@@ -2575,6 +2979,17 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("Username Reminder"),
             org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void sendUsernameReminderUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.sendUsernameReminder(
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
+            "unknown@example.com"));
+
+    org.mockito.Mockito.verifyNoInteractions(emailService, notificationService);
   }
 
   @Test
@@ -2617,6 +3032,35 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void requestEmailVerificationByEmailCreatesTokenForResolvedAccount() {
+    Account account = new Account();
+    account.setId(6L);
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailVerification("  DEMO@example.com ");
+
+    org.mockito.Mockito.verify(emailVerificationTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Email Verification"),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void requestEmailVerificationByUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.requestEmailVerification("unknown@example.com");
+
+    org.mockito.Mockito.verifyNoInteractions(
+        emailVerificationTokenRepository, emailService, notificationService);
+  }
+
+  @Test
   void verifyEmailSetsFlag() {
     Account account = new Account();
     EmailVerificationToken token = new EmailVerificationToken();
@@ -2631,41 +3075,21 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void updateLoginAuthModesPersistsVerifiedEmailOtpOnlySelection() {
-    Account account = new Account();
-    account.setId(44L);
-    account.setEmailVerified(true);
-    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
-    when(accountRepository.save(account)).thenReturn(account);
-
-    var result =
-        service.updateLoginAuthModes(
-            44L,
-            new UpdateAccountLoginAuthModesRequest(
-                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP)));
-
-    assertEquals(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP), result.loginAuthModes());
-    assertEquals("EMAIL_OTP", account.getLoginAuthModes());
-    org.mockito.Mockito.verify(accountRepository).save(account);
-  }
-
-  @Test
-  void updateLoginAuthModesRejectsEmailOtpBeforeEmailVerification() {
-    Account account = new Account();
-    account.setId(44L);
-    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
-
-    IllegalArgumentException exception =
+  void updateLoginAuthModesFailsClosedBeforeReadingOrPersistingAccount() {
+    org.springframework.web.server.ResponseStatusException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            org.springframework.web.server.ResponseStatusException.class,
             () ->
                 service.updateLoginAuthModes(
                     44L,
                     new UpdateAccountLoginAuthModesRequest(
                         java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP))));
 
-    assertEquals("Email OTP requires a verified email address", exception.getMessage());
-    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).save(account);
+    assertEquals(501, exception.getStatusCode().value());
+    assertEquals(
+        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
+        exception.getReason());
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
   }
 
   private static String hash(String password) {

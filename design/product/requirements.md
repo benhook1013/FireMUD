@@ -62,7 +62,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Account must support a protective `account_security_lock` for a compromise assessment supported by verified or high-confidence evidence, an explicit Account security policy, or an audited operator action. Attacker-controlled failed-attempt signals may produce only temporary throttles or rejections and cannot authorize the durable lock. The Account-owned lock revokes ordinary account/bootstrap authority and is cleared only through Account security recovery; it is not a punitive moderation category.
 - First-party browser clients must support world, realm, and character selection before gameplay begins. Native mobile requires a later product and compatibility decision.
 - **Expanded Account Features**:
-  - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
+  - Players should be able to link an individually delivered optional Google, Discord, or Steam account to an existing FireMUD account for login; provider-first account creation is deferred. See [ADR 0049](../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md).
   - Profiles should include **game history, achievements, and social features**.
   - Persistent session tracking to **ensure seamless reconnection across devices**.
 See [Account Service](../architecture/microservices/account-service/README.md) for implementation details.

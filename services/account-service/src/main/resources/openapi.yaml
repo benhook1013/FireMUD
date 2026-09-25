@@ -2,10 +2,10 @@ openapi: 3.0.3
 info:
   title: Account Service API
   description: >-
-    API for user accounts and authentication. The caller-asserted
-    POST /accounts/{accountId}/external handler remains legacy implementation
-    drift and is intentionally omitted from the authoritative contract until
-    the server-verified provider-linking flow and its proof converge.
+    API for user accounts and authentication. The obsolete caller-asserted
+    POST /accounts/{accountId}/external route is removed and denied at the
+    public edge; no provider-linking route is available until the
+    server-verified global-account flow and its proof converge.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
@@ -23,14 +23,19 @@ components:
   schemas:
     CreateAccountRequest:
       type: object
+      description: Current API shape requires tenantId; target global registration with explicit JOIN remains unimplemented.
       properties:
+        tenantId:
+          type: integer
+          format: int64
+          minimum: 1
         username:
           type: string
         email:
           type: string
         password:
           type: string
-      required: [username, email, password]
+      required: [tenantId, username, email, password]
     AccountDto:
       type: object
       properties:
@@ -234,12 +239,12 @@ components:
         email:
           type: string
       required: [email]
-    AccountIdRequest:
+    EmailVerificationRequest:
       type: object
       properties:
-        accountId:
+        email:
           type: string
-      required: [accountId]
+      required: [email]
     VerifyEmailRequest:
       type: object
       properties:
@@ -486,7 +491,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccountIdRequest'
+              $ref: '#/components/schemas/EmailVerificationRequest'
       responses:
         '200':
           description: Request accepted
@@ -602,7 +607,7 @@ paths:
         '403':
           description: Account access required
     put:
-      summary: Replace allowed primary login mechanisms for an account
+      summary: Replace allowed primary login mechanisms for an account (currently unavailable)
       operationId: updateLoginAuthModes
       parameters:
         - name: accountId
@@ -627,6 +632,8 @@ paths:
           description: Invalid account ID, login mechanism set, or unverified email-OTP selection
         '403':
           description: Account access required
+        '501':
+          description: Recent ordinary reauthentication is required, but this mutation is unavailable until Account implements its evidence mechanism
   /accounts/{accountId}/tenant-export:
     get:
       summary: Export tenant-scoped account data

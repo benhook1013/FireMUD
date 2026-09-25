@@ -65,6 +65,31 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   }
 
   @Test
+  void upsertPointerRejectsUnknownStateScope() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.upsertPointer(
+                new GameplayAdmissionPointerMutation(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    true,
+                    true,
+                    false,
+                    "UNKNOWN",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-invalid-scope",
+                    null,
+                    null)));
+  }
+
+  @Test
   void upsertPointerAllowsCreateWhenExpectedVersionIsZero() {
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.empty());

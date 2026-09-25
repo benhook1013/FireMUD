@@ -130,8 +130,7 @@ public final class LoginCommandHandler {
     GameInstance instance = maybeInstance.get();
 
     AuthenticateResponse authResponse =
-        accountClient.authenticate(
-            String.valueOf(instance.getTenantId()), canonicalLoginName, credentials.password());
+        accountClient.authenticate(canonicalLoginName, credentials.password());
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
@@ -148,12 +147,6 @@ public final class LoginCommandHandler {
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
     }
-    if (!Objects.equals(authenticatedAccountId, instance.getOwnerAccountId())) {
-      clearFailedLoginSessionState(
-          numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
-      return accountMismatchFailure();
-    }
-
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
@@ -187,15 +180,12 @@ public final class LoginCommandHandler {
     if (bootstrapGameInstanceId <= 0) {
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
-    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
-    if (maybeInstance.isEmpty()) {
+    if (gameInstanceRepository.findById(bootstrapGameInstanceId).isEmpty()) {
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
-    GameInstance instance = maybeInstance.orElseThrow();
 
     RequestEmailLoginOtpResponse response =
         accountClient.requestEmailLoginOtp(
-            String.valueOf(instance.getTenantId()),
             EmailCanonicalization.normalize(challengeRequest.email()));
     if (hasError(response.getError()) || !response.getAccepted()) {
       return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
@@ -262,16 +252,6 @@ public final class LoginCommandHandler {
           verifiedContext.pointerVersion());
       return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
     }
-    if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
-      clearFailedLoginSessionState(
-          numericSessionId,
-          verifiedContext.tenantId(),
-          verifiedContext.gameInstanceId(),
-          verifiedContext.worldSlug(),
-          verifiedContext.realmSlug(),
-          verifiedContext.pointerVersion());
-      return accountMismatchFailure();
-    }
     if (!currentAdmissionPointerMatches(verifiedContext)) {
       clearFailedLoginSessionState(
           numericSessionId,
@@ -319,11 +299,12 @@ public final class LoginCommandHandler {
             .resolveProjectedSessionContext(Long.toString(sessionId))
             .filter(context -> context.tenantId() == tenantId)
             .orElse(null);
+    boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
     // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
-    // so reconnect on the same transport session can continue through PLAY without losing room
-    // state.
+    // only when it is still bound to the newly authenticated account. A different account starts
+    // with a fresh authenticated context so gameplay identity and routing cannot cross accounts.
     SessionContext context =
-        existing == null
+        !sameAuthenticatedAccount
             ? new SessionContext(
                 sessionId,
                 tenantId,
@@ -511,12 +492,6 @@ public final class LoginCommandHandler {
   private LoginCommandHandlingResult invalidAccountFailure() {
     return failure(
         LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE);
-  }
-
-  private LoginCommandHandlingResult accountMismatchFailure() {
-    return failure(
-        LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
-        LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
   }
 
   private LoginCommandHandlingResult failure(String code, String message) {

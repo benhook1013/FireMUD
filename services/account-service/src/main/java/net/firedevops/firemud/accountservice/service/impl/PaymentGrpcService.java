@@ -14,7 +14,6 @@ import net.firedevops.firemud.account.v1.PaymentServiceGrpc;
 import net.firedevops.firemud.account.v1.RefundPaymentRequest;
 import net.firedevops.firemud.account.v1.RefundPaymentResponse;
 import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
-import net.firedevops.firemud.accountservice.dto.SubscriptionDto;
 import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequestIdValidation;
@@ -89,36 +88,33 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       CreateSubscriptionRequest request,
       StreamObserver<CreateSubscriptionResponse> responseObserver) {
     try {
-      SubscriptionDto dto =
-          paymentService.createSubscription(
-              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
-              request.getPlanId());
-      CreateSubscriptionResponse response =
-          CreateSubscriptionResponse.newBuilder().setSubscriptionId(dto.id().toString()).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
+      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
     } catch (IllegalArgumentException ex) {
-      CreateSubscriptionResponse response =
-          CreateSubscriptionResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "CreateSubscription",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+      var error =
+          meterRegistry == null
+              ? net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                  .setCode("INVALID_ARGUMENT")
+                  .setMessage(ex.getMessage())
+                  .build()
+              : GrpcAppErrors.error(
+                  meterRegistry, logger, "CreateSubscription", "INVALID_ARGUMENT", ex.getMessage());
+      responseObserver.onNext(CreateSubscriptionResponse.newBuilder().setError(error).build());
       responseObserver.onCompleted();
-    } catch (Exception ex) {
-      CreateSubscriptionResponse response =
-          CreateSubscriptionResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateSubscription", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      return;
     }
+
+    String message = "Subscription creation is unavailable";
+    var error =
+        meterRegistry == null
+            ? net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                .setCode("FAILED_PRECONDITION")
+                .setMessage(message)
+                .build()
+            : GrpcAppErrors.error(
+                meterRegistry, logger, "CreateSubscription", "FAILED_PRECONDITION", message);
+    responseObserver.onNext(CreateSubscriptionResponse.newBuilder().setError(error).build());
+    responseObserver.onCompleted();
   }
 
   @Override
