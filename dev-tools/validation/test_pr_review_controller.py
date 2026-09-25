@@ -1473,6 +1473,29 @@ class ControllerTests(unittest.TestCase):
         controller.status()
         self.assertEqual(controller.git.remote_heads_calls, 1)
 
+    def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
+        hosted = [
+            Evidence(1, PARENT, f"h{index}", raw=index, accepted=1, completed=True, attributable=True,
+                     non_counting=index == 2)
+            for index in range(1, 6)
+        ] + [
+            Evidence(1, HEAD_1, "h6", raw=0, accepted=0, completed=True, attributable=True),
+            Evidence(1, HEAD_1, "unlinked", raw=2, accepted=0, completed=True, attributable=False),
+            Evidence(1, HEAD_1, "pending", raw=0, accepted=0, provisional=True),
+            Evidence(1, HEAD_1, "quota", raw=0, accepted=0, rate_limited=True),
+        ]
+        cli = [Evidence(1, HEAD_1, "c1", raw=2, accepted=0, completed=True, attributable=True)]
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): hosted, (1, "cli"): cli})
+        controller.set_stack([1])
+
+        result = controller.status()["prs"][0]
+        self.assertEqual(result["review_activity"]["hosted"]["total"], 7)
+        self.assertEqual([item["raw"] for item in result["review_activity"]["hosted"]["recent"]], [3, 4, 5, 0, 2])
+        self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
+        self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])
+        self.assertEqual(result["review_activity"]["cli"]["total"], 1)
+        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+
     def test_one_private_ordered_stack_and_effective_parent(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
         controller = self.make(values, heads={"feature-1": HEAD_1})

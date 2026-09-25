@@ -389,6 +389,35 @@ def _latest_review(history: Sequence[Any]) -> Any | None:
     return None
 
 
+def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any]:
+    """Summarize observed review rounds for display, never for policy decisions."""
+
+    results: list[dict[str, Any]] = []
+    for item in history:
+        if (
+            _field(item, "completed") is not True
+            or _field(item, "provisional") is True
+            or _field(item, "correction") is True
+            or _field(item, "rate_limited") is True
+        ):
+            continue
+        raw = _field(item, "raw", "raw_found")
+        accepted = _field(item, "accepted")
+        if type(raw) is not int or type(accepted) is not int or raw < 0 or not 0 <= accepted <= raw:
+            continue
+        reviewed_head = _field(item, "head", "reviewed_head")
+        results.append(
+            {
+                "raw": raw,
+                "accepted": accepted,
+                "attributable": _field(item, "attributable") is True,
+                "current_head": isinstance(reviewed_head, str) and reviewed_head == current_head,
+                "non_counting": _field(item, "non_counting") is True,
+            }
+        )
+    return {"total": len(results), "recent": results[-5:]}
+
+
 def _field(value: Any, name: str, *aliases: str) -> Any:
     if isinstance(value, Mapping):
         for key in (name, *aliases):
@@ -2311,6 +2340,10 @@ class ReviewController:
                     "reconciliation": reconciliation_status.value,
                     "reason": reconciliation.reasons.get(pr, ""),
                     "channels": channel_status,
+                    "review_activity": {
+                        channel.value: _review_activity(histories[channel][pr], item.head)
+                        for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+                    },
                     "allocations": {
                         channel.value: allocations[channel][pr]
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
