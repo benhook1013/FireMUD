@@ -1410,6 +1410,12 @@ class SecretProjectionServiceTest {
           acceptedData,
           acceptedData);
     }
+    for (String role :
+        List.of(
+            HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE)) {
+      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
+    }
     stubCertificate(
         secretClient.client(),
         plan,
@@ -1584,6 +1590,12 @@ class SecretProjectionServiceTest {
           acceptedData,
           acceptedData,
           acceptedData);
+    }
+    for (String role :
+        List.of(
+            HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE)) {
+      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
     }
     stubCertificate(
         secretClient.client(),

@@ -150,6 +150,10 @@ if [[ "${1:-}" == "--projections" ]]; then
       "firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt"
     )
   done
+  projections+=(
+    "firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt"
+    "firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt"
+  )
   initialize_wait_state "$timeout_seconds"
   all_projections_ready=true
   for projection in "${projections[@]}"; do

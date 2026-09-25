@@ -177,7 +177,7 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
-        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
+        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')",
     ):
         require(certificate, needle, "Certificate boundary")
     status_rules = certificate_status["matchConstraints"]["resourceRules"]
@@ -205,9 +205,39 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$",
         "standalone Certificate validation",
     )
+    for needle in (
+        "object.metadata.name.endsWith('-grpc-account-service')",
+        "object.spec.secretName == 'firemud-grpc-account-service'",
+        "object.spec.issuerRef.name == 'firemud-ca-issuer'",
+        "object.spec.dnsNames == ['account-service', 'account-service.' + request.namespace, 'account-service.' + request.namespace + '.svc', 'account-service.' + request.namespace + '.svc.cluster.local']",
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/account-service']",
+        "object.metadata.name.endsWith('-grpc-game-session-service')",
+        "object.spec.secretName == 'firemud-grpc-game-session-service'",
+        "object.spec.issuerRef.name == 'firemud-ca-issuer'",
+        "object.spec.dnsNames == ['game-session-service', 'game-session-service.' + request.namespace, 'game-session-service.' + request.namespace + '.svc', 'game-session-service.' + request.namespace + '.svc.cluster.local']",
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-session-service']",
+    ):
+        require(certificate_validation, needle, "standalone workload identity")
+    normalized_certificate_validation = " ".join(certificate_validation.split())
+    for workload in ("account-service", "game-session-service"):
+        expected_branch = (
+            f"(object.metadata.name.endsWith('-grpc-{workload}') && "
+            f"object.spec.secretName == 'firemud-grpc-{workload}' && "
+            "object.spec.issuerRef.name == 'firemud-ca-issuer' && "
+            f"object.spec.dnsNames == ['{workload}', '{workload}.' + request.namespace, "
+            f"'{workload}.' + request.namespace + '.svc', "
+            f"'{workload}.' + request.namespace + '.svc.cluster.local'] && "
+            f"object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/{workload}'] && "
+            "object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth'])"
+        )
+        require(
+            normalized_certificate_validation,
+            expected_branch,
+            f"standalone {workload} Certificate identity",
+        )
     require(
         certificate_validation,
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",

@@ -182,7 +182,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void protectedPublicationProjectionMustBeAcceptedBeforeReadiness() {
+  void workloadIdentityProjectionMustBeAcceptedBeforeReadiness() {
     DeploymentHeadGateFixture fixture =
         new DeploymentHeadGateFixture(
             new RuntimeProfileService.RuntimeProfile(
@@ -242,7 +242,7 @@ class HostedIdentityReconcilerSafetyTest {
         status.getGrpcPublication().keySet());
     assertTrue(status.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
     assertEquals(
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 5,
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 7,
         acknowledgedProjections.size());
     assertEquals(
         "awaiting-acceptance",
@@ -2126,7 +2126,8 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<Map<String, String>> publicationRevisions = ArgumentCaptor.forClass(Map.class);
+    ArgumentCaptor<Map<String, String>> workloadIdentityRevisions =
+        ArgumentCaptor.forClass(Map.class);
     verify(fixture.rollout)
         .sync(
             any(),
@@ -2134,7 +2135,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             gatewayRevision.capture(),
             anyString(),
-            publicationRevisions.capture(),
+            workloadIdentityRevisions.capture(),
             any());
     assertEquals(
         "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
@@ -2149,8 +2150,12 @@ class HostedIdentityReconcilerSafetyTest {
             "grpc-publication-game-logic-service",
             "revision-grpc-publication-game-logic-service",
             "grpc-publication-automation-scripting-service",
-            "revision-grpc-publication-automation-scripting-service"),
-        publicationRevisions.getValue());
+            "revision-grpc-publication-automation-scripting-service",
+            HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_GAME_SESSION_ROLE),
+        workloadIdentityRevisions.getValue());
     verify(fixture.runtime, times(2))
         .validateTcpProxyService(fixture.client, fixture.plan, expected);
   }
@@ -2288,6 +2293,10 @@ class HostedIdentityReconcilerSafetyTest {
                   "4",
                   SERIALIZED_DEFERRED_DRIFT));
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
+      when(batch.grpcAccount())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE, "b"));
+      when(batch.grpcGameSession())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "c"));
       when(batch.grpcPublication(anyString()))
           .thenAnswer(
               invocation -> {

@@ -57,7 +57,7 @@ spec:
            owner.kind == 'Certificate' &&
            owner.controller == true &&
            owner.blockOwnerDeletion == true &&
-           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')))
+           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')))
       message: internal CertificateRequests must use the canonical ClusterIssuer and be owned by a canonical Certificate
       reason: Forbidden
     - expression: >-
@@ -112,7 +112,7 @@ spec:
            owner.kind == 'Certificate' &&
            owner.controller == true &&
            owner.blockOwnerDeletion == true &&
-           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')))
+           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')))
       message: internal CertificateRequest approval and status may not alter its canonical spec or ownership
       reason: Forbidden
 
@@ -149,24 +149,24 @@ spec:
          (has(oldObject.spec.issuerRef) && oldObject.spec.issuerRef.name == 'firemud-ca-issuer' ||
           ((oldObject.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
             request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) ||
-           (oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') &&
+           (oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$') &&
             request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$'))))) ||
         (request.operation == 'CREATE' &&
          (has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer' ||
           ((object.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
             request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) ||
-           (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') &&
+           (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$') &&
             request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$'))))) ||
         (request.operation == 'UPDATE' &&
           (has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer' ||
           (object.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
            request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) ||
-          (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') &&
+          (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$') &&
            request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')) ||
           (has(oldObject.spec.issuerRef) && oldObject.spec.issuerRef.name == 'firemud-ca-issuer' ||
            (oldObject.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
             request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) ||
-           (oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') &&
+           (oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$') &&
             request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')))))
   validations:
     - expression: >-
@@ -174,21 +174,21 @@ spec:
         (request.operation == 'DELETE' &&
          request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')) ||
+         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')) ||
         (request.operation == 'DELETE' &&
          request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$') ||
           request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')) ||
+         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')) ||
         (request.operation != 'DELETE' &&
          ((request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-standalone-certificate-writer' &&
            request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
            (request.namespace.matches('^pr-[1-9][0-9]{0,50}$') || object.metadata.name.contains('-grpc-')) &&
-           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
            object.metadata.name.startsWith(request.namespace + '-') &&
            has(object.spec.secretName) &&
            ((object.metadata.name.contains('-grpc-') &&
-             object.spec.secretName.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')) ||
+             object.spec.secretName.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$')) ||
             (!object.metadata.name.contains('-grpc-') &&
              object.spec.secretName == object.metadata.name)) &&
            has(object.spec.isCA) &&
@@ -252,10 +252,22 @@ spec:
              object.spec.issuerRef.name == 'firemud-ca-issuer' &&
              object.spec.dnsNames == ['automation-scripting-service', 'automation-scripting-service.' + request.namespace, 'automation-scripting-service.' + request.namespace + '.svc', 'automation-scripting-service.' + request.namespace + '.svc.cluster.local'] &&
              object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/automation-scripting-service'] &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']) ||
+            (object.metadata.name.endsWith('-grpc-account-service') &&
+             object.spec.secretName == 'firemud-grpc-account-service' &&
+             object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+             object.spec.dnsNames == ['account-service', 'account-service.' + request.namespace, 'account-service.' + request.namespace + '.svc', 'account-service.' + request.namespace + '.svc.cluster.local'] &&
+             object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/account-service'] &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']) ||
+            (object.metadata.name.endsWith('-grpc-game-session-service') &&
+             object.spec.secretName == 'firemud-grpc-game-session-service' &&
+             object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+             object.spec.dnsNames == ['game-session-service', 'game-session-service.' + request.namespace, 'game-session-service.' + request.namespace + '.svc', 'game-session-service.' + request.namespace + '.svc.cluster.local'] &&
+             object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-session-service'] &&
              object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))) ||
           (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
            (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
            has(object.spec.issuerRef) &&
            object.spec.issuerRef.name == 'firemud-ca-issuer' &&
            object.spec.issuerRef.kind == 'ClusterIssuer' &&

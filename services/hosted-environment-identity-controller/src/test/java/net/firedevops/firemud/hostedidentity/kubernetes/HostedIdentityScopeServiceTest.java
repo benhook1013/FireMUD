@@ -233,7 +233,9 @@ class HostedIdentityScopeServiceTest {
             "pr-42-grpc-world-management-service",
             "pr-42-grpc-entity-management-service",
             "pr-42-grpc-game-logic-service",
-            "pr-42-grpc-automation-scripting-service"),
+            "pr-42-grpc-automation-scripting-service",
+            "pr-42-grpc-account-service",
+            "pr-42-grpc-game-session-service"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 
@@ -249,6 +251,8 @@ class HostedIdentityScopeServiceTest {
             "entity-management-service",
             "game-logic-service",
             "automation-scripting-service",
+            "account-service",
+            "game-session-service",
             "spring-cloud-gateway",
             "tcp-proxy-service"),
         HostedIdentityScopeService.requiredDeploymentNames(plan));

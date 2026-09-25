@@ -48,6 +48,28 @@ class EnvironmentIdentityPlannerTest {
             "spring-cloud-gateway",
             "tcp-proxy-service"),
         plan.grpcConsumers());
+    assertEquals(
+        "pr-42-grpc-game-design-service",
+        plan.grpcPublicationSourceSecretName("game-design-service"));
+    assertEquals(
+        "firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-design-service",
+        plan.grpcPublicationUriSan("game-design-service"));
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountCertificateName());
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountSourceSecretName());
+    assertEquals("firemud-grpc-account-service", plan.grpcAccountSecretName());
+    assertEquals(
+        plan.grpcAccountSecretName(), plan.secretName(HostedIdentityContract.GRPC_ACCOUNT_ROLE));
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionCertificateName());
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionSourceSecretName());
+    assertEquals("firemud-grpc-game-session-service", plan.grpcGameSessionSecretName());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-session-service",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD));
+    assertEquals(
+        plan.grpcGameSessionSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
       assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));

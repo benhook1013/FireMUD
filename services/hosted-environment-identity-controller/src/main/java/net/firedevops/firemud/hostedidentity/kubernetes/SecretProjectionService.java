@@ -235,8 +235,8 @@ public class SecretProjectionService {
       Runnable runtimeProfileFence) {
     runtimeProfileFence.run();
     String predecessorSourceName =
-        HostedIdentityContract.isGrpcPublicationRole(role)
-            ? plan.grpcPublicationSourceSecretNames().get(role)
+        HostedIdentityContract.isGrpcWorkloadIdentityRole(role)
+            ? plan.grpcWorkloadIdentitySourceSecretNames().get(role)
             : targetName;
     String name = predecessorSourceName + "-previous";
     Map<String, String> annotations = new LinkedHashMap<>(existing.getMetadata().getAnnotations());

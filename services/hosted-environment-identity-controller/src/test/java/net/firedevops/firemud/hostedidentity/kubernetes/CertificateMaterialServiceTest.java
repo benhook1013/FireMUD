@@ -454,7 +454,9 @@ class CertificateMaterialServiceTest {
             plan.grpcPublicationSecretName("world-management-service"),
             plan.grpcPublicationSecretName("entity-management-service"),
             plan.grpcPublicationSecretName("game-logic-service"),
-            plan.grpcPublicationSecretName("automation-scripting-service")),
+            plan.grpcPublicationSecretName("automation-scripting-service"),
+            plan.grpcAccountSecretName(),
+            plan.grpcGameSessionSecretName()),
         java.util.Set.copyOf(read.getAllValues()));
 
     clearInvocations(runtimeSecrets);
@@ -1949,6 +1951,45 @@ class CertificateMaterialServiceTest {
       when(secretClient.identitySecrets().withName(sourceName)).thenReturn(sourceResource);
       when(sourceResource.get()).thenReturn(certManagerSource(plan, role, sourceName, data));
     }
+    String accountRole = HostedIdentityContract.GRPC_ACCOUNT_ROLE;
+    String accountName = plan.grpcAccountSecretName();
+    String accountSourceName = plan.grpcAccountSourceSecretName();
+    String accountRevision = SecretProjectionService.revisionForRole(accountRole, data);
+    Resource<Secret> accountProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(accountName)).thenReturn(accountProjectionResource);
+    when(accountProjectionResource.get())
+        .thenReturn(
+            ownedSecret(
+                plan,
+                accountRole,
+                accountName,
+                data,
+                acceptedAnnotations(accountRevision, "1".repeat(64))));
+    Resource<Secret> accountSourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(accountSourceName))
+        .thenReturn(accountSourceResource);
+    when(accountSourceResource.get())
+        .thenReturn(certManagerSource(plan, accountRole, accountSourceName, data));
+    String gameSessionRole = HostedIdentityContract.GRPC_GAME_SESSION_ROLE;
+    String gameSessionName = plan.grpcGameSessionSecretName();
+    String gameSessionSourceName = plan.grpcGameSessionSourceSecretName();
+    String gameSessionRevision = SecretProjectionService.revisionForRole(gameSessionRole, data);
+    Resource<Secret> gameSessionProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(gameSessionName))
+        .thenReturn(gameSessionProjectionResource);
+    when(gameSessionProjectionResource.get())
+        .thenReturn(
+            ownedSecret(
+                plan,
+                gameSessionRole,
+                gameSessionName,
+                data,
+                acceptedAnnotations(gameSessionRevision, "1".repeat(64))));
+    Resource<Secret> gameSessionSourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(gameSessionSourceName))
+        .thenReturn(gameSessionSourceResource);
+    when(gameSessionSourceResource.get())
+        .thenReturn(certManagerSource(plan, gameSessionRole, gameSessionSourceName, data));
     Secret ownedGrpc =
         ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());
     Resource<Secret> grpcSourceResource = mock(Resource.class);

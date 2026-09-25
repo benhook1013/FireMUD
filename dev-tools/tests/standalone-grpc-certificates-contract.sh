@@ -71,9 +71,11 @@ workloads = (
     "entity-management-service",
     "game-logic-service",
     "automation-scripting-service",
+    "account-service",
+    "game-session-service",
 )
 if len(documents) != len(workloads):
-    raise SystemExit(f"expected five Certificate documents, got {len(documents)}")
+    raise SystemExit(f"expected seven Certificate documents, got {len(documents)}")
 for workload, document in zip(workloads, documents, strict=True):
     expected_name = f"{namespace}-grpc-{workload}"
     if document.get("apiVersion") != "cert-manager.io/v1" or document.get("kind") != "Certificate":
@@ -121,8 +123,8 @@ for workload, document in zip(workloads, documents, strict=True):
 PY
 
   actual_wait_count="$(grep -c ' wait ' "$STATE_DIR/calls")"
-  [[ "$actual_wait_count" -eq 5 ]] || {
-    echo "expected five Certificate readiness waits for $namespace, got $actual_wait_count" >&2
+  [[ "$actual_wait_count" -eq 7 ]] || {
+    echo "expected seven Certificate readiness waits for $namespace, got $actual_wait_count" >&2
     exit 1
   }
   if grep -E 'get secret|create secret|apply.*secret' "$STATE_DIR/calls" >/dev/null; then
@@ -162,6 +164,8 @@ for workload in (
     "entity-management-service",
     "game-logic-service",
     "automation-scripting-service",
+    "account-service",
+    "game-session-service",
 ):
     assert workload in request_text, workload
     assert f"firemud-grpc-{workload}" in certificate_text, workload

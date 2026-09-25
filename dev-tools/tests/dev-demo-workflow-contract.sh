@@ -51,17 +51,19 @@ contains_literal "$certificate_generator" \
 # These are literal source snippets; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 for required in \
+  'escaped_key="${key//./\\.}"' \
   'get secret "$secret_name" --ignore-not-found -o name' \
   'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
-  "local jsonpath='{.metadata.name}'" \
   'jsonpath+="{\"|\"}{.data.${escaped_key}}"' \
+  'if read_secret_snapshot "$shared_secret"' \
+  "local jsonpath='{.metadata.name}'" \
   'jsonpath=${jsonpath}' \
   'failed to fetch Kubernetes Secret snapshot ${namespace}/${secret_name}' \
   'if ((shared_snapshot_status == 0)); then' \
   'assert_certificate_unexpired "$shared_cert"' \
   'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
   'assert_certificate_unexpired "$workload_cert"' \
-  'cert-manager publication certificate in Secret' \
+  'cert-manager workload certificate in Secret' \
   'cert-manager CA projection' \
   'openssl verify -CAfile "$workload_ca" "$workload_cert"' \
   'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' \
@@ -78,6 +80,8 @@ for required in \
   '  world-management-service' \
   '  entity-management-service' \
   '  game-logic-service' \
+  '  account-service' \
+  '  game-session-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
 done
@@ -1408,6 +1412,8 @@ for required in (
     '"firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"',
     'publication_workloads=(',
     'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt',
     '    game-design-service',
     '    world-management-service',
     '    entity-management-service',

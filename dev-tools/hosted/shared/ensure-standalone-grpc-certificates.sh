@@ -28,6 +28,8 @@ workloads=(
   entity-management-service
   game-logic-service
   automation-scripting-service
+  account-service
+  game-session-service
 )
 
 write_certificates() {

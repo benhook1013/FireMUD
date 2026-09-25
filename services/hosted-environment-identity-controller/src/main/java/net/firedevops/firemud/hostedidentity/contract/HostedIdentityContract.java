@@ -63,6 +63,10 @@ public final class HostedIdentityContract {
   public static final String TCP_PROXY_BRIDGE_ROLE = "tcp-proxy-bridge";
   public static final String GRPC_ROLE = "grpc";
   public static final String GRPC_PUBLICATION_ROLE_PREFIX = "grpc-publication-";
+  public static final String GRPC_ACCOUNT_WORKLOAD = "account-service";
+  public static final String GRPC_ACCOUNT_ROLE = "grpc-account-service";
+  public static final String GRPC_GAME_SESSION_WORKLOAD = "game-session-service";
+  public static final String GRPC_GAME_SESSION_ROLE = "grpc-game-session-service";
   public static final List<String> GRPC_PUBLICATION_WORKLOADS =
       List.of(
           "game-design-service",
@@ -95,6 +99,12 @@ public final class HostedIdentityContract {
       throw new IllegalArgumentException("unsupported gRPC publication workload: " + workload);
     }
     return GRPC_PUBLICATION_ROLE_PREFIX + workload;
+  }
+
+  public static boolean isGrpcWorkloadIdentityRole(String role) {
+    return GRPC_ACCOUNT_ROLE.equals(role)
+        || GRPC_GAME_SESSION_ROLE.equals(role)
+        || isGrpcPublicationRole(role);
   }
 
   public static boolean isGrpcPublicationRole(String role) {

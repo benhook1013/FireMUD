@@ -20,12 +20,14 @@ workloads=(
   entity-management-service
   game-logic-service
   automation-scripting-service
+  account-service
+  game-session-service
 )
 data_dir="$fixture_dir/data"
 mock_bin="$fixture_dir/bin"
 mkdir -p "$data_dir" "$mock_bin"
 
-# Build one shared issuer and five distinct workload identities. The helper
+# Build one shared issuer and seven distinct workload identities. The helper
 # validates the real X.509 extensions, SANs, key pairs, and issuer chains.
 openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/shared-issuer.key"
 openssl req -x509 -new -key "$fixture_dir/shared-issuer.key" -sha256 -days 30 \
@@ -265,8 +267,8 @@ if ! run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
   cat "$fixture_dir/success.out" "$fixture_dir/success.err" >&2
   exit 1
 fi
-grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
-  echo "the helper did not accept five valid cert-manager projections" >&2
+grep -Fq '7 distinct workload leaves' "$fixture_dir/success.out" || {
+  echo "the helper did not accept seven valid cert-manager projections" >&2
   exit 1
 }
 if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log"; then
@@ -285,7 +287,7 @@ for secret in firemud-grpc-tls "${workloads[@]/#/firemud-grpc-}"; do
     exit 1
   }
 done
-last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-automation-scripting-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
+last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-game-session-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
 reapply_line="$(grep -n '^apply dev/firemud-grpc-tls$' "$success_log" | cut -d: -f1)"
 legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cut -d: -f1)"
 [[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \
@@ -303,7 +305,7 @@ if ! run_helper complete "$warning_lookup_log" "$fixture_dir/warning-lookup-stat
   cat "$fixture_dir/warning-lookup.out" "$fixture_dir/warning-lookup.err" >&2
   exit 1
 fi
-grep -Fq '5 distinct publication leaves' "$fixture_dir/warning-lookup.out" || {
+grep -Fq '7 distinct workload leaves' "$fixture_dir/warning-lookup.out" || {
   echo "a warning on an absent Secret was treated as an existing Secret" >&2
   exit 1
 }
@@ -407,8 +409,8 @@ if grep -q '^delete ' "$incomplete_log"; then
   exit 1
 fi
 
-# Each publication projection becomes ready on its second read, one simulated
-# second later. The helper must apply one timeout to all five workloads rather
+# Each workload projection becomes ready on its second read, one simulated
+# second later. The helper must apply one timeout to all seven workloads rather
 # than resetting a fresh timeout for every workload.
 aggregate_timeout_log="$fixture_dir/aggregate-timeout.log"
 if run_helper delayed-each-workload "$aggregate_timeout_log" \

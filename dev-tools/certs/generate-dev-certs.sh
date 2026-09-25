@@ -27,10 +27,10 @@ if [[ "${1:-}" == "--workload" ]]; then
     exit 1
   }
   case "$workload" in
-    game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
+    account-service|game-session-service|game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
       ;;
     *)
-      echo "unsupported gRPC publication workload: $workload" >&2
+      echo "unsupported gRPC workload identity: $workload" >&2
       exit 1
       ;;
   esac
@@ -71,7 +71,7 @@ EOF
   openssl x509 -req -in "$workload_request" -CA "$ca_cert" -CAkey "$ca_key" \
     -CAserial "$workload_serial" -out "$output_cert" -days 365 -sha256 \
     -extensions v3_req -extfile "$workload_config" >/dev/null || {
-    echo "failed to sign publication workload certificate: $workload" >&2
+    echo "failed to sign gRPC workload identity certificate: $workload" >&2
     exit 1
   }
   chmod 644 "$output_cert"
