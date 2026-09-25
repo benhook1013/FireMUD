@@ -829,6 +829,138 @@ class ControllerTests(unittest.TestCase):
                 ambiguity_reason="latest terminal response is explicitly non-counting",
             )
 
+    def test_direct_cli_stop_preserves_historical_hosted_evidence_and_pins_latest(self):
+        old_head = "7" * 40
+        old_fingerprint = "d" * 64
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        evidence = AuditedEvidence(
+            {
+                (1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")],
+                (1, "hosted"): [
+                    self.allocation_evidence(
+                        head=old_head,
+                        checkpoint="legacy-hosted-6-5",
+                        accepted=5,
+                        anchored=False,
+                        held=True,
+                    ),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:5826936635",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 5826936635,
+                        "response_id": 5826937548,
+                    },
+                ],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "historical_unmatched_responses": [
+                    "a public Hosted checkpoint has no unique attributable trigger"
+                ],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": old_fingerprint,
+                        "captured_head": old_head,
+                        "response_at": "2026-09-01T00:00:00Z",
+                    },
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    },
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": latest_fingerprint, "trigger_id": 5826936635, "response_id": 5826937548}
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="cli",
+            reason="human stops further discovery after the latest CLI checkpoint",
+            retain_ambiguous_fingerprints=(latest_fingerprint,),
+            ambiguity_reason="latest terminal Hosted response remains explicitly non-counting",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["allocation"]["channel"], "cli")
+        self.assertEqual(stopped["allocation"]["retained_ambiguous_fingerprints"], [latest_fingerprint])
+
+    def test_direct_cli_stop_still_blocks_unpinned_current_hosted_ambiguity(self):
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        evidence = AuditedEvidence(
+            {
+                (1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")],
+                (1, "hosted"): [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:5826936635",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 5826936635,
+                        "response_id": 5826937548,
+                    }
+                ],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    }
+                ],
+                "retained_ambiguous": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "latest terminal ambiguity"):
+            controller.decide_stop(pr=1, channel="cli", reason="current Hosted ambiguity is unpinned")
+
+    def test_direct_cli_stop_still_blocks_current_unmatched_response(self):
+        evidence = AuditedEvidence(
+            {(1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": ["current-head response has no attributable trigger"],
+                "historical_unmatched_responses": ["old Hosted result remains historical"],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unmatched review response"):
+            controller.decide_stop(pr=1, channel="cli", reason="current unmatched response remains")
+
     def test_direct_hosted_stop_preserves_old_unanchored_checkpoint_without_reauthorizing_history(self):
         old_head = "7" * 40
         old_checkpoint = self.allocation_evidence(
