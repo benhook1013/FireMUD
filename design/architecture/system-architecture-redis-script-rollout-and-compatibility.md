@@ -74,8 +74,9 @@ Potentially compatible when proven by tests:
    - `requires_region_reset`
    - `requires_tenant_reset`
    - `requires_cluster_reset`
-6. Confirm reset safety before resuming:
-   - no `SCHEDULED` ledger rows remain for the affected scope
+6. Confirm reset safety before continuing the script rollout, and apply the separate traffic-reopen gate:
+   - no executable or unowned `SCHEDULED` ledger work remains for the affected scope; any remaining old-epoch `SCHEDULED` row is completely enumerated, explicitly fenced, and owned by reconciliation
+   - the affected scope remains blocked from reopening while any such reconciliation-owned row lacks the policy-defined authority-fenced terminal decision
    - in-flight commands are retried or marked terminal appropriately
 
 The registry, together with its golden compatibility tests, remains the single source of truth for whether coordination state can be safely replayed across script versions or must be reset.
