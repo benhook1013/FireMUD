@@ -685,6 +685,35 @@ class HostedEvidenceTests(unittest.TestCase):
             hosted.prepare_full_trigger(PR, PR + 1)
         self.assertEqual(hosted.prepare_full_trigger(PR)["command"], hosted.FULL_COMMAND)
 
+    def test_positive_finding_count_overrides_incidental_zero_finding_phrase(self):
+        contradictory_summaries = (
+            (
+                "Actionable comments posted: 2\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "Actionable comments posted: 02\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "02 findings\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+        )
+        legitimate_zero = (
+            "Actionable comments posted: 0\n"
+            "No issues found.\n"
+            "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+        )
+
+        for summary in contradictory_summaries:
+            with self.subTest(summary=summary.splitlines()[0]):
+                self.assertFalse(hosted._summary_proves_complete_zero_findings(summary))
+        self.assertTrue(hosted._summary_proves_complete_zero_findings(legitimate_zero))
+
     def test_not_reviewed_label_is_excluded_from_reviewed_count(self):
         summary = (
             "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. "

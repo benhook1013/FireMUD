@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import fcntl
 import hashlib
 import json
 import subprocess
@@ -34,6 +35,7 @@ from pr_review.controller import (
 from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
+from pr_review.runtime import LiveEvidence
 from pr_review.state import LegacyEvidenceTransition, StateStore, observation_fingerprint
 
 BASE = "a" * 40
@@ -170,6 +172,69 @@ class AuditedEvidence(dict):
             if isinstance(item, dict) and item.get("fingerprint") in pinned
         ]
         return audit
+
+
+class CountingEvidence(AuditedEvidence):
+    def __init__(self, *args, active_targets=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.history_reads = []
+        self.active_targets = set(active_targets)
+        self.active_target_reads = 0
+
+    def get(self, key, default=None):
+        if isinstance(key, tuple) and len(key) == 2 and key[1] in {"hosted", "cli"}:
+            self.history_reads.append(key)
+        return super().get(key, default)
+
+    def active_review_targets(self, pr_numbers, identities):
+        self.active_target_reads += 1
+        return self.active_targets.intersection(pr_numbers)
+
+
+def _stacked_prs(count, *, merged=()):
+    merged_numbers = set(merged)
+    values = {}
+    heads = {"develop": BASE}
+    previous = None
+    for number in range(1, count + 1):
+        head = f"{number:040x}"
+        if previous is None:
+            base_ref, base_tip = "develop", BASE
+        else:
+            base_ref, base_tip = f"feature-{previous[0]}", previous[1]
+        is_merged = number in merged_numbers
+        values[number] = LivePullRequest(
+            number,
+            head,
+            base_ref,
+            base_tip,
+            f"feature-{number}",
+            merged=is_merged,
+            state="MERGED" if is_merged else "OPEN",
+            mergeable="MERGEABLE",
+            head_repository="owner/repo",
+        )
+        heads[f"feature-{number}"] = head
+        if not is_merged:
+            previous = (number, head)
+    return values, heads
+
+
+def _batch_identity(item):
+    return {
+        "number": item.number,
+        "state": item.state,
+        "isDraft": False,
+        "mergedAt": "2026-09-26T00:00:00Z" if item.merged else None,
+        "baseRefName": item.base_ref,
+        "baseRefOid": item.base_tip,
+        "headRefName": item.head_ref,
+        "headRefOid": item.head,
+        "mergeable": item.mergeable,
+        "headRepository": {"nameWithOwner": item.head_repository},
+        "comments": {"nodes": []},
+        "reviews": {"nodes": []},
+    }
 
 
 def pr(
@@ -1708,6 +1773,273 @@ class ControllerTests(unittest.TestCase):
         controller.status()
         controller.status()
         self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1), (BASE, HEAD_1)])
+
+    def _enable_batch_status(self, controller, values, batch_values=None):
+        selected = batch_values if batch_values is not None else values
+        calls = []
+
+        def fetch(numbers):
+            calls.append(tuple(numbers))
+            return {number: _batch_identity(selected[number]) for number in numbers}
+
+        controller.github.batch_pull_requests = fetch
+        return calls
+
+    def test_status_overview_shifts_four_pr_window_after_front_merge(self):
+        ordered = list(range(1, 7))
+        before_values, before_heads = _stacked_prs(6)
+        before_evidence = CountingEvidence()
+        before = self.make(before_values, before_evidence, heads=before_heads)
+        before.set_stack(ordered)
+        self._enable_batch_status(before, before_values)
+
+        before_report = before.status_overview()
+
+        self.assertEqual(before_report["detail_window"]["deep_prs"], [1, 2, 3, 4])
+        self.assertEqual(before_report["prs"][4]["evidence_status"], "unknown")
+        self.assertEqual(before_report["prs"][4]["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in before_evidence.history_reads))
+
+        after_values, after_heads = _stacked_prs(6, merged=(1,))
+        after_evidence = CountingEvidence()
+        after = self.make(after_values, after_evidence, heads=after_heads)
+        after.set_stack(ordered)
+        self._enable_batch_status(after, after_values)
+
+        after_report = after.status_overview()
+
+        self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
+        self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
+        self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_status_overview_deepens_active_tail_target_without_allocation(self):
+        values, heads = _stacked_prs(7)
+        evidence = CountingEvidence(active_targets={6})
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(controller.store.load().allocations, {})
+        self.assertEqual(report["detail_window"]["active_targets"], [6])
+        self.assertEqual(report["detail_window"]["deep_prs"], [1, 2, 3, 4, 6])
+        self.assertFalse(any(pr_number == 5 for pr_number, _ in evidence.history_reads))
+        self.assertTrue(all(pr_number in {1, 2, 3, 4, 6} for pr_number, _ in evidence.history_reads))
+        tail = report["prs"][4]
+        self.assertEqual(tail["detail_level"], "identity_only")
+        self.assertEqual(tail["evidence_status"], "unknown")
+        self.assertEqual(tail["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
+        self.assertIn("not fetched", report["detail_window"]["tail_evidence"])
+        self.assertEqual(batch_calls, [tuple(values)])
+
+    def test_live_evidence_probe_includes_active_hosted_trigger_without_allocation(self):
+        trigger_at = "2026-09-26T01:00:00Z"
+        response_at = "2026-09-26T01:02:00Z"
+        trigger_id = 701
+        identity = {
+            "number": 6,
+            "headRefOid": HEAD_2,
+            "comments": {
+                "nodes": [
+                    {
+                        "databaseId": trigger_id,
+                        "author": {"login": "ben"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": trigger_at,
+                        "url": "https://github.test/comments/701",
+                    },
+                    {
+                        "databaseId": 702,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Full review triggered",
+                        "createdAt": response_at,
+                        "url": "https://github.test/comments/702",
+                    },
+                ]
+            },
+            "reviews": {"nodes": []},
+        }
+        record_path = Path("/tmp/current-trigger.json")
+        record = {
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 6,
+            "head_sha": HEAD_2,
+            "trigger": {
+                "id": trigger_id,
+                "created_at": trigger_at,
+                "url": "https://github.test/comments/701",
+                "author_login": "ben",
+                "type": "full",
+                "command": hosted.FULL_COMMAND,
+            },
+        }
+        evidence = LiveEvidence("owner/repo", object())
+        with (
+            patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[record_path]),
+            patch("pr_review.runtime.hosted.load_trigger_reservation", return_value=record),
+            patch.object(LiveEvidence, "_request_lock_is_held", return_value=False),
+        ):
+            active = evidence.active_review_targets((6,), {6: identity})
+
+        self.assertEqual(active, {6})
+
+    def test_live_evidence_probe_detects_manual_hosted_command_without_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            evidence = LiveEvidence("owner/repo", object(), state_store)
+            identity = {
+                5: {"comments": {"nodes": []}, "reviews": {"nodes": []}},
+                6: {
+                    "comments": {
+                        "nodes": [
+                            {
+                                "author": {"login": "human-reviewer"},
+                                "body": hosted.FULL_COMMAND,
+                            }
+                        ]
+                    },
+                    "reviews": {"nodes": []},
+                },
+            }
+            with (
+                patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[]),
+                patch(
+                    "pr_review.runtime.hosted.default_trigger_record_path",
+                    side_effect=lambda _repo, pr: Path(directory) / "records" / str(pr) / "trigger.json",
+                ),
+            ):
+                active = evidence.active_review_targets((5, 6), identity)
+
+        self.assertEqual(active, {6})
+
+    def test_live_evidence_probe_deepens_all_candidates_for_unscoped_cli_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            lock_path = Path(directory) / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.touch()
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                evidence = LiveEvidence("owner/repo", object(), state_store)
+                identities = {
+                    number: {"comments": {"nodes": []}, "reviews": {"nodes": []}}
+                    for number in (5, 6)
+                }
+                with (
+                    patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[]),
+                    patch(
+                        "pr_review.runtime.hosted.default_trigger_record_path",
+                        side_effect=lambda _repo, pr: Path(directory) / "records" / str(pr) / "trigger.json",
+                    ),
+                ):
+                    active = evidence.active_review_targets((5, 6), identities)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(active, {5, 6})
+
+    def test_status_overview_marks_moved_tail_stale_without_readiness(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_values = dict(values)
+        batch_values[5] = dataclasses.replace(values[5], base_ref="unexpected-parent")
+        self._enable_batch_status(controller, values, batch_values)
+
+        report = controller.status_overview()
+
+        tail = report["prs"][4]
+        self.assertEqual(tail["evidence_status"], "stale")
+        self.assertEqual(tail["reconciliation"], "UNRECONCILED")
+        self.assertNotIn("READY", tail["channels"].values())
+        self.assertNotIn("COMPLETE", tail["channels"].values())
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+
+    def test_status_overview_missing_batch_identity_fails_closed_without_deep_reads(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_values = dict(values)
+        batch_values[5] = None
+        controller.github.batch_pull_requests = lambda numbers: {
+            number: None if batch_values[number] is None else _batch_identity(batch_values[number])
+            for number in numbers
+        }
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["status"], "UNKNOWN")
+        self.assertEqual(report["detail_window"]["batch_status"], "failed")
+        self.assertTrue(all(item["evidence_status"] == "unknown" for item in report["prs"]))
+        self.assertEqual(evidence.history_reads, [])
+
+    def test_selected_tail_status_reads_ancestors_but_no_later_prs(self):
+        values, heads = _stacked_prs(7)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        pull_calls = []
+        original = controller.github.pull_request
+
+        def pull(number):
+            pull_calls.append(number)
+            return original(number)
+
+        controller.github.pull_request = pull
+
+        report = controller.status_for_pr(6)
+
+        self.assertEqual([item["pr"] for item in report["prs"]], [1, 2, 3, 4, 5, 6])
+        self.assertTrue(all(number <= 6 for number in pull_calls))
+        self.assertTrue(all(pr_number <= 6 for pr_number, _ in evidence.history_reads))
+        self.assertEqual(report["scope"], "selected PR and configured ancestors")
+
+    def test_review_action_preflights_do_not_use_overview_batch_or_tail_scope(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = []
+        controller.github.batch_pull_requests = lambda numbers: batch_calls.append(tuple(numbers))
+
+        target = controller.resolve_hosted_target()
+        allocation = controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=values[1].head,
+            reason="preserve the normal fresh decision boundary",
+        )
+
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertEqual(allocation["allocation"]["pr"], 1)
+        self.assertEqual(batch_calls, [])
+        self.assertTrue({1, 2, 3}.issubset({pr_number for pr_number, _ in evidence.history_reads}))
+
+    def test_status_memoizes_stop_audit_per_invocation_but_decision_refreshes(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = CountingEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="hosted-stop")],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-stop")],
+            }
+        )
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_stop(pr=1, channel="hosted", reason="hosted channel stop")
+        controller.decide_stop(pr=1, channel="cli", reason="CLI channel stop")
+        evidence.stop_audit_calls.clear()
+
+        controller.status()
+
+        self.assertEqual(len(evidence.stop_audit_calls), 1)
+        evidence.stop_audit_calls.clear()
+        with self.assertRaisesRegex(ControllerError, "already stopped"):
+            controller.decide_stop(pr=1, channel="hosted", reason="recheck current stop")
+        self.assertGreaterEqual(len(evidence.stop_audit_calls), 1)
 
     def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
         hosted = [

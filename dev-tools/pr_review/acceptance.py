@@ -102,6 +102,14 @@ class FixtureGit:
         self._merge_bases = {
             str(key): _sha(value, f"merge_bases[{key!r}]") for key, value in merge_bases.items()
         }
+        test_merge_trees = _mapping(fixture.get("test_merge_trees", {}), "test_merge_trees")
+        self._test_merge_trees: dict[str, str] = {}
+        for key, value in test_merge_trees.items():
+            if not isinstance(key, str) or key.count("...") != 1:
+                raise AcceptanceFixtureError("test_merge_trees keys must identify one base/head pair")
+            base, head = key.split("...", 1)
+            normalized_key = _pair_key(_sha(base, "test-merge tree base"), _sha(head, "test-merge tree head"))
+            self._test_merge_trees[normalized_key] = _sha(value, f"test_merge_trees[{key!r}]")
         patches = _mapping(fixture.get("patch_ids", {}), "patch_ids")
         self._patch_ids = {str(key): value for key, value in patches.items()}
         if any(not isinstance(value, str) or not value for value in self._patch_ids.values()):
@@ -140,6 +148,13 @@ class FixtureGit:
             return self._patch_ids[key]
         except KeyError as exc:
             raise AcceptanceFixtureError(f"fixture has no patch identity for {merge_base} and {head}") from exc
+
+    def test_merge_tree(self, base: str, head: str) -> str:
+        key = _pair_key(_sha(base, "test-merge base"), _sha(head, "test-merge head"))
+        try:
+            return self._test_merge_trees[key]
+        except KeyError as exc:
+            raise AcceptanceFixtureError(f"fixture has no test-merge tree for {base} and {head}") from exc
 
 
 class FixtureEvidence:
@@ -638,6 +653,7 @@ class AcceptanceFixture:
             "branch_heads",
             "ancestors",
             "merge_bases",
+            "test_merge_trees",
             "patch_ids",
             "pull_requests",
             "evidence",

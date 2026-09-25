@@ -76,6 +76,16 @@ ZERO_FINDING_PATTERNS = (
     re.compile(r"\b0\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
     re.compile(r"\bno\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
 )
+POSITIVE_FINDING_COUNT_PATTERNS = (
+    re.compile(
+        r"\b(?:actionable\s+)?comments?\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b0*[1-9]\d*\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:findings?|issues?)\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b", re.IGNORECASE
+    ),
+)
 INCOMPLETE_FILE_COVERAGE = re.compile(
     r"\b(?:\d+\s*(?:of|/)\s*\d+\s+)?(?:changed\s+)?files?\b.{0,100}"
     r"\b(?:not\s+reviewed|not\s+processed|skipped|omitted|could\s+not\s+be\s+reviewed|"
@@ -737,14 +747,14 @@ def _zero_finding_summary(comments: list[dict[str, Any]], head: str, after: date
 
 
 def _summary_proves_complete_zero_findings(body: str) -> bool:
-    """Require explicit complete file coverage and no positive open-issue claim."""
+    """Require complete file coverage and reject any positive finding count or claim."""
 
     if _summary_has_explicit_incompleteness(body):
         return False
     text = _unquoted(body)
-    return _summary_proves_complete_file_coverage(text) and any(
-        pattern.search(text) for pattern in ZERO_FINDING_PATTERNS
-    )
+    if any(pattern.search(text) for pattern in POSITIVE_FINDING_COUNT_PATTERNS):
+        return False
+    return _summary_proves_complete_file_coverage(text) and any(pattern.search(text) for pattern in ZERO_FINDING_PATTERNS)
 
 
 def _reviewed_label_counts(text: str) -> set[int]:

@@ -11,6 +11,7 @@ import stat
 import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
@@ -43,6 +44,11 @@ class LiveGitHub:
 
     def metadata(self, number: int) -> dict[str, Any]:
         return github.fetch_pr_metadata(self.repo, number)
+
+    def batch_pull_requests(self, numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+        """Fetch the current lightweight identity/activity view for a whole stack."""
+
+        return github.fetch_pr_identity_batch(self.repo, numbers)
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = self.metadata(number)
@@ -111,6 +117,109 @@ class LiveEvidence:
         if pr not in self._payloads:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
         return self._payloads[pr]
+
+    @staticmethod
+    def _request_lock_is_held(path: Path) -> bool:
+        """Check an existing request lock without creating or changing a file."""
+
+        if not path.exists():
+            return False
+        try:
+            with path.open("r") as handle:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            # A lock file that cannot be inspected is not safe to treat as idle.
+            return True
+        return False
+
+    def active_review_targets(
+        self,
+        pr_numbers: Sequence[int],
+        identities: Mapping[int, Mapping[str, Any] | None],
+    ) -> set[int]:
+        """Find PRs with a live request or a possibly active Hosted trigger.
+
+        The batch identity query carries only the most recent few public events.
+        If that bounded sample cannot prove a trigger terminal, the PR is
+        conservatively included for the normal complete evidence reconciliation.
+        A repository-wide CLI lock does not encode its selected PR, so every
+        configured PR becomes a deep candidate while that lock is held.
+        """
+
+        active: set[int] = set()
+        active_trigger_states = {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}
+        terminal_trigger_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
+        if self.state_store is None:
+            active.update(pr_numbers)
+        else:
+            state_path = self.state_store.path
+            if state_path.name != "pr-review-stack.json":
+                active.update(pr_numbers)
+            else:
+                cli_lock_path = state_path.parent.parent / "firemud" / "pr-review" / "cli.lock"
+                if self._request_lock_is_held(cli_lock_path):
+                    active.update(pr_numbers)
+        for pr in pr_numbers:
+            lock_path = hosted.default_trigger_record_path(self.repo, pr).parent / "request.lock"
+            if self._request_lock_is_held(lock_path):
+                active.add(pr)
+            try:
+                identity = identities.get(pr)
+                if not isinstance(identity, Mapping):
+                    active.add(pr)
+                    continue
+                comment_connection = identity.get("comments")
+                comments = comment_connection.get("nodes") if isinstance(comment_connection, Mapping) else None
+                if not isinstance(comments, list):
+                    active.add(pr)
+                    continue
+                manual_trigger_seen = False
+                for comment in comments:
+                    if not isinstance(comment, Mapping):
+                        manual_trigger_seen = True
+                        break
+                    author = comment.get("author")
+                    login = author.get("login") if isinstance(author, Mapping) else None
+                    body = comment.get("body")
+                    if not isinstance(login, str) or not isinstance(body, str):
+                        manual_trigger_seen = True
+                        break
+                    if not github.is_coderabbit_login(login) and hosted.normalize_command(body) == hosted.FULL_COMMAND:
+                        manual_trigger_seen = True
+                        break
+                if manual_trigger_seen:
+                    active.add(pr)
+                    continue
+                paths = hosted.current_trigger_record_paths(self.repo, pr)
+                if len(paths) > 1:
+                    active.add(pr)
+                    continue
+                if not paths:
+                    continue
+                path = paths[0]
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                if record.get("status") in {"posting", "posted_boundary_changed", "posted_boundary_unverified"}:
+                    active.add(pr)
+                    continue
+                if record.get("status") == "retired":
+                    continue
+                pull_request = dict(identity)
+                if not isinstance(pull_request.get("comments"), Mapping) or not isinstance(
+                    pull_request.get("reviews"), Mapping
+                ):
+                    active.add(pr)
+                    continue
+                payload = {"data": {"repository": {"pullRequest": pull_request}}}
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                if state.state in active_trigger_states or state.state not in terminal_trigger_states:
+                    active.add(pr)
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                active.add(pr)
+        return active
 
     @staticmethod
     def _comments(payload: dict[str, Any]) -> list[dict[str, Any]]:

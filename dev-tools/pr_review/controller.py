@@ -477,7 +477,7 @@ class ReviewController:
         self.store = store or StateStore()
         self.github = github
         self.git = git or DefaultGitProvider()
-        self._evidence_provider = evidence or EmptyEvidence()
+        self._evidence_provider = evidence if evidence is not None else EmptyEvidence()
         self.default_base_ref = default_base_ref
         self.repository = repository
         self.hosted_adapter = hosted_adapter
@@ -608,18 +608,44 @@ class ReviewController:
         return {"ordered_prs": list(state.ordered_prs), "schema_version": state.schema_version}
 
     def _live_snapshots(
-        self, state: ReviewState, remote_heads: Mapping[str, str] | None = None
+        self,
+        state: ReviewState,
+        remote_heads: Mapping[str, str] | None = None,
+        *,
+        live_identities: Mapping[int, Any] | None = None,
+        refresh_prs: set[int] | None = None,
     ) -> tuple[dict[int, LivePullRequest], dict[int, stack.PRSnapshot], str]:
         github = self._require_github()
         heads = remote_heads if remote_heads is not None else self.git.remote_heads()
         default_tip = _sha(heads.get(self.default_base_ref), "default base tip")
-        live = {pr: _live(github.pull_request(pr), pr) for pr in state.ordered_prs}
+        live = {}
+        for pr in state.ordered_prs:
+            if refresh_prs is None or pr in refresh_prs:
+                value = github.pull_request(pr)
+            else:
+                if live_identities is None or pr not in live_identities:
+                    raise ControllerError(f"batched identity is unavailable for PR #{pr}")
+                value = live_identities[pr]
+            live[pr] = _live(value, pr)
         snapshots = {pr: item.snapshot() for pr, item in live.items()}
         return live, snapshots, default_tip
 
-    def _reconciliation(self, state: ReviewState) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
+    def _reconciliation(
+        self,
+        state: ReviewState,
+        *,
+        live_identities: Mapping[int, Any] | None = None,
+        refresh_prs: set[int] | None = None,
+        evidence_prs: set[int] | None = None,
+    ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         remote_heads = self.git.remote_heads()
-        live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
+        live, snapshots, default_tip = self._live_snapshots(
+            state,
+            remote_heads,
+            live_identities=live_identities,
+            refresh_prs=refresh_prs,
+        )
+        selected_evidence_prs = set(state.ordered_prs if evidence_prs is None else evidence_prs)
         ancestry_errors: set[tuple[str, str]] = set()
 
         def is_ancestor(parent: str, child: str) -> bool:
@@ -731,12 +757,16 @@ class ReviewController:
                     "hosted": transition.hosted_fingerprints,
                     "cli": transition.cli_fingerprints,
                 }
-            decision = self._active_stack_reconciliation(state, pr, current)
+            decision = (
+                self._active_stack_reconciliation(state, pr, current)
+                if pr in selected_evidence_prs
+                else None
+            )
             if decision is not None:
                 reconciled[pr] = decision
         anchored: dict[int, str] = {}
         for pr in state.ordered_prs:
-            if pr in reconciled:
+            if pr in reconciled or pr not in selected_evidence_prs:
                 continue
             current = anchors.get(pr)
             if current is None:
@@ -884,6 +914,8 @@ class ReviewController:
                     set_anchor_status(pr, stack.ReconciliationStatus.UNRECONCILED, reason)
                     continue
                 anchors[pr] = current
+            if pr not in selected_evidence_prs:
+                continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
                 if latest is None:
@@ -1891,18 +1923,35 @@ class ReviewController:
         allow_historical_terminal_ambiguity: bool = False,
         retained_ambiguous_fingerprints: tuple[str, ...] = (),
         ambiguity_reason: str | None = None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
-        audit = self._stop_audit(
+        cache_key = (
             pr,
-            current,
-            retained_ambiguous_fingerprints,
-            allow_historical_unmatched=allow_historical_unmatched,
-            allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+            current.child_head,
+            current.parent_identity,
+            current.parent_head,
+            current.merge_base,
+            current.patch_id,
+            tuple(retained_ambiguous_fingerprints),
+            allow_historical_unmatched,
+            allow_historical_terminal_ambiguity,
         )
+        if stop_audit_cache is not None and cache_key in stop_audit_cache:
+            audit = stop_audit_cache[cache_key]
+        else:
+            audit = self._stop_audit(
+                pr,
+                current,
+                retained_ambiguous_fingerprints,
+                allow_historical_unmatched=allow_historical_unmatched,
+                allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+            )
+            if stop_audit_cache is not None:
+                stop_audit_cache[cache_key] = audit
         retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
             histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
         )
@@ -2075,6 +2124,7 @@ class ReviewController:
         current: AnchorFacts | None,
         reconciliation: stack.ReconciliationStatus,
         reconciliation_result: stack.Reconciliation | None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         def invalid(reason: str) -> dict[str, Any]:
             return {
@@ -2130,6 +2180,7 @@ class ReviewController:
                 allow_historical_terminal_ambiguity=allocation.stop_basis == "direct_human",
                 retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                 ambiguity_reason=allocation.retained_ambiguous_reason,
+                stop_audit_cache=stop_audit_cache,
             )
         except ControllerError as exc:
             return invalid(str(exc))
@@ -2185,6 +2236,7 @@ class ReviewController:
         *,
         state: ReviewState | None = None,
         reconciliation_result: stack.Reconciliation | None = None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Derive consumption from immutable evidence; never persist a live observation."""
 
@@ -2202,7 +2254,15 @@ class ReviewController:
         if allocation.stop_basis == "direct_human":
             if state is None:
                 return result("INVALID", "the persisted review-stop state is unavailable")
-            return self._stop_progress(allocation, state, history, current, reconciliation, reconciliation_result)
+            return self._stop_progress(
+                allocation,
+                state,
+                history,
+                current,
+                reconciliation,
+                reconciliation_result,
+                stop_audit_cache,
+            )
 
         if current is None or reconciliation in {
             stack.ReconciliationStatus.PARENT_MOVED,
@@ -2326,6 +2386,7 @@ class ReviewController:
                     checkpoint_pin=allocation.stop_checkpoint,
                     retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                     ambiguity_reason=allocation.retained_ambiguous_reason,
+                    stop_audit_cache=stop_audit_cache,
                 )
             except ControllerError as error:
                 return result("INVALID", str(error), checkpoint, accepted)
@@ -2354,9 +2415,13 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         channel: policy.Channel,
         histories: Mapping[int, Sequence[Any]],
+        *,
+        pr_numbers: Sequence[int] | None = None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
     ) -> dict[int, dict[str, Any]]:
         views: dict[int, dict[str, Any]] = {}
-        for pr in state.ordered_prs:
+        selected_prs = state.ordered_prs if pr_numbers is None else pr_numbers
+        for pr in selected_prs:
             allocation = state.allocations.get(f"{pr}:{channel.value}")
             if allocation is None or live[pr].merged:
                 continue
@@ -2371,6 +2436,7 @@ class ReviewController:
                 reconciliation.status_for(pr, channel.value),
                 state=state,
                 reconciliation_result=reconciliation,
+                stop_audit_cache=stop_audit_cache,
             )
         return views
 
@@ -2480,24 +2546,49 @@ class ReviewController:
             raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}")
 
     def status(self) -> dict[str, Any]:
-        state = self._state()
+        return self._status_from_state(self._state())
+
+    def _status_from_state(
+        self,
+        state: ReviewState,
+        *,
+        evidence_prs: set[int] | None = None,
+        live_identities: Mapping[int, Any] | None = None,
+    ) -> dict[str, Any]:
         if not state.ordered_prs:
             return {
                 "ordered_prs": [],
                 "status": "EMPTY",
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
             }
-        live, reconciliation = self._reconciliation(state)
+        live, reconciliation = self._reconciliation(
+            state,
+            live_identities=live_identities,
+            refresh_prs=evidence_prs,
+            evidence_prs=evidence_prs,
+        )
         values: list[dict[str, Any]] = []
         histories = {
             channel: {
-                pr: self._policy_history(state, pr, channel, reconciliation)
+                pr: (
+                    self._policy_history(state, pr, channel, reconciliation)
+                    if evidence_prs is None or pr in evidence_prs
+                    else []
+                )
                 for pr in state.ordered_prs
             }
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
         allocations = {
-            channel: self._allocation_views(state, live, reconciliation, channel, histories[channel])
+            channel: self._allocation_views(
+                state,
+                live,
+                reconciliation,
+                channel,
+                histories[channel],
+                stop_audit_cache=stop_audit_cache,
+            )
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
         for pr in state.ordered_prs:
@@ -2541,6 +2632,8 @@ class ReviewController:
                     "base": item.base_ref,
                     "parent": reconciliation.links[pr].identity,
                     "parent_head": reconciliation.links[pr].parent_head,
+                    "state": item.state,
+                    "merged": item.merged,
                     "reconciliation": reconciliation_status.value,
                     "reason": reconciliation.reasons.get(pr, ""),
                     "channels": channel_status,
@@ -2561,6 +2654,305 @@ class ReviewController:
             "prs": values,
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
+
+    @staticmethod
+    def _unknown_overview(state: ReviewState, reason: str) -> dict[str, Any]:
+        prs = [
+            {
+                "pr": pr,
+                "head": None,
+                "base": None,
+                "parent": None,
+                "parent_head": None,
+                "state": "UNKNOWN",
+                "merged": None,
+                "reconciliation": "UNKNOWN",
+                "reason": reason,
+                "channels": {"hosted": "UNKNOWN", "cli": "UNKNOWN"},
+                "review_activity": {},
+                "allocations": {},
+                "detail_level": "unknown",
+                "evidence_status": "unknown",
+                "evidence_last_checked_at": None,
+            }
+            for pr in state.ordered_prs
+        ]
+        return {
+            "ordered_prs": list(state.ordered_prs),
+            "status": "UNKNOWN",
+            "mode": "windowed",
+            "detail_window": {
+                "unmerged_limit": 4,
+                "batch_status": "failed",
+                "deep_prs": [],
+                "active_targets": [],
+                "reason": reason,
+            },
+            "prs": prs,
+            "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+        }
+
+    @staticmethod
+    def _batch_live_pull_requests(
+        provider: Any, numbers: Sequence[int]
+    ) -> tuple[dict[int, LivePullRequest], dict[int, Mapping[str, Any] | None]]:
+        fetch = getattr(provider, "batch_pull_requests", None)
+        if not callable(fetch):
+            raise ControllerError("GitHub provider does not support batched PR identities")
+        values = fetch(tuple(numbers))
+        if not isinstance(values, Mapping):
+            raise ControllerError("GitHub PR identity batch is malformed")
+        result: dict[int, LivePullRequest] = {}
+        raw_values: dict[int, Mapping[str, Any] | None] = {}
+        for number in numbers:
+            value = values.get(number)
+            if value is None:
+                raise ControllerError(f"GitHub PR identity batch is missing PR #{number}")
+            try:
+                result[number] = _live(value, number)
+            except (ControllerError, TypeError, ValueError, KeyError) as error:
+                raise ControllerError(f"GitHub PR identity batch is ambiguous for PR #{number}") from error
+            raw_values[number] = value if isinstance(value, Mapping) else None
+        return result, raw_values
+
+    @staticmethod
+    def _saved_identity_moved(
+        state: ReviewState,
+        pr: int,
+        item: LivePullRequest,
+        parent: stack.ParentLink,
+    ) -> bool:
+        for allocation in state.allocations.values():
+            if allocation.pr == pr and (
+                allocation.head.casefold() != item.head.casefold()
+                or allocation.parent_identity != parent.identity
+                or allocation.parent_head.casefold() != parent.parent_head.casefold()
+            ):
+                return True
+        for decision in state.reconciliations:
+            if decision.pr == pr and (
+                decision.child_head.casefold() != item.head.casefold()
+                or decision.parent_identity != parent.identity
+                or decision.parent_head.casefold() != parent.parent_head.casefold()
+            ):
+                return True
+        for transition in state.legacy_transitions:
+            if transition.pr == pr and (
+                transition.child_head.casefold() != item.head.casefold()
+                or transition.parent_identity != parent.identity
+                or transition.parent_head.casefold() != parent.parent_head.casefold()
+            ):
+                return True
+        return False
+
+    def status_for_pr(self, pr: int) -> dict[str, Any]:
+        """Deeply verify one selected PR and its configured ancestors only."""
+
+        state = self._state()
+        try:
+            index = state.ordered_prs.index(pr)
+        except ValueError:
+            return {
+                "ordered_prs": list(state.ordered_prs),
+                "status": "UNKNOWN",
+                "prs": [],
+                "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+                "selected_pr": pr,
+                "reason": "PR is not configured in the repository review stack",
+            }
+        scoped = dataclasses.replace(state, ordered_prs=state.ordered_prs[: index + 1])
+        report = self._status_from_state(scoped)
+        report["ordered_prs"] = list(state.ordered_prs)
+        report["selected_pr"] = pr
+        report["scope"] = "selected PR and configured ancestors"
+        return report
+
+    def status_overview(self) -> dict[str, Any]:
+        """Show a fresh lightweight queue with deep evidence for its active front."""
+
+        state = self._state()
+        if not state.ordered_prs:
+            return {
+                "ordered_prs": [],
+                "status": "EMPTY",
+                "mode": "windowed",
+                "detail_window": {"unmerged_limit": 4, "batch_status": "complete", "deep_prs": []},
+                "prs": [],
+                "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+            }
+
+        try:
+            batch_live, raw_identities = self._batch_live_pull_requests(self.github, state.ordered_prs)
+            remote_heads = self.git.remote_heads()
+            default_tip = _sha(remote_heads.get(self.default_base_ref), "default base tip")
+            batch_snapshots = {pr: item.snapshot() for pr, item in batch_live.items()}
+            links = stack.effective_parent_links(
+                state.ordered_prs,
+                batch_snapshots,
+                self.default_base_ref,
+                default_tip,
+            )
+        except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
+            return self._unknown_overview(state, str(error))
+
+        active_targets = {
+            allocation.pr
+            for allocation in state.allocations.values()
+            if allocation.handoff_checkpoint is None and allocation.stop_basis is None
+        }
+        active_scan_status = "unknown"
+        active_scan_error = None
+        discover_active = getattr(self._evidence_provider, "active_review_targets", None)
+        if callable(discover_active):
+            try:
+                found = discover_active(state.ordered_prs, raw_identities)
+                active_scan_status = "complete"
+            except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
+                found = set()
+                active_scan_status = "unknown"
+                active_scan_error = str(error)
+            if not isinstance(found, (set, frozenset)) or any(
+                isinstance(pr, bool) or not isinstance(pr, int) or pr not in state.ordered_prs for pr in found
+            ):
+                active_scan_status = "unknown"
+                active_scan_error = "active review target probe returned malformed PR identities"
+            else:
+                active_targets.update(found)
+
+        first_four = []
+        for pr in state.ordered_prs:
+            if not batch_live[pr].merged:
+                first_four.append(pr)
+                if len(first_four) == 4:
+                    break
+        target_prs = set(first_four) | active_targets
+        target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
+        deep_prs = target_prs.intersection(state.ordered_prs)
+        frontier = max(target_indexes, default=-1)
+        scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
+        scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
+        scoped_report: dict[str, Any] | None = None
+        deep_error = None
+        if scoped_prs:
+            try:
+                scoped_report = self._status_from_state(
+                    scoped_state,
+                    evidence_prs=deep_prs,
+                    live_identities=raw_identities,
+                )
+            except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
+                deep_error = str(error)
+
+        deep_by_pr = {
+            item.get("pr"): item
+            for item in (scoped_report or {}).get("prs", [])
+            if isinstance(item, Mapping)
+        }
+        mismatch: set[int] = set()
+        for pr in scoped_prs:
+            if pr not in deep_prs:
+                continue
+            detailed = deep_by_pr.get(pr)
+            if detailed is None:
+                continue
+            item = batch_live[pr]
+            if (
+                not isinstance(detailed.get("head"), str)
+                or detailed["head"].casefold() != item.head.casefold()
+                or detailed.get("base") != item.base_ref
+                or not isinstance(detailed.get("parent_head"), str)
+                or detailed["parent_head"].casefold() != item.base_tip.casefold()
+                or detailed.get("state") != item.state
+                or detailed.get("merged") != item.merged
+            ):
+                mismatch.add(pr)
+        changed = True
+        while changed:
+            changed = False
+            for pr in state.ordered_prs:
+                if links[pr].parent_pr in mismatch and pr not in mismatch:
+                    mismatch.add(pr)
+                    changed = True
+
+        values: list[dict[str, Any]] = []
+        for pr in state.ordered_prs:
+            item = batch_live[pr]
+            parent = links[pr]
+            detailed = deep_by_pr.get(pr) if pr in deep_prs else None
+            batch_topology_moved = (
+                not item.merged
+                and (item.base_ref != parent.parent_ref or item.base_tip.casefold() != parent.parent_head.casefold())
+            )
+            saved_identity_moved = self._saved_identity_moved(state, pr, item, parent)
+            if detailed is not None and deep_error is None:
+                row = dict(detailed)
+                row.update(
+                    {
+                        "state": item.state,
+                        "merged": item.merged,
+                        "detail_level": "deep",
+                        "evidence_status": "current",
+                        "evidence_last_checked_at": None,
+                    }
+                )
+                if pr in mismatch or batch_topology_moved:
+                    row["reconciliation"] = "UNRECONCILED"
+                    row["reason"] = "live PR identity changed between batch overview and deep reconciliation"
+                    row["channels"] = {"hosted": "UNRECONCILED", "cli": "UNRECONCILED"}
+                    row["allocations"] = {}
+                    row["evidence_status"] = "stale"
+                values.append(row)
+                continue
+
+            stale = pr in mismatch or batch_topology_moved or saved_identity_moved
+            reason = (
+                "live parent topology or saved review identity moved"
+                if stale
+                else "tail review evidence was not deeply checked in this status invocation"
+            )
+            if deep_error is not None and pr in scoped_prs:
+                stale = True
+                reason = f"deep review evidence is unavailable: {deep_error}"
+            values.append(
+                {
+                    "pr": pr,
+                    "head": item.head,
+                    "base": item.base_ref,
+                    "parent": parent.identity,
+                    "parent_head": parent.parent_head,
+                    "state": item.state,
+                    "merged": item.merged,
+                    "reconciliation": "UNKNOWN" if not stale else "UNRECONCILED",
+                    "reason": reason,
+                    "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
+                    "review_activity": {},
+                    "allocations": {},
+                    "detail_level": "identity_only",
+                    "evidence_status": "stale" if stale else "unknown",
+                    "evidence_last_checked_at": None,
+                }
+            )
+
+        report = {
+            "ordered_prs": list(state.ordered_prs),
+            "status": "PARTIAL",
+            "mode": "windowed",
+            "detail_window": {
+                "unmerged_limit": 4,
+                "batch_status": "complete",
+                "deep_prs": [
+                    pr for pr in state.ordered_prs if pr in deep_prs and not batch_live[pr].merged
+                ] if deep_error is None else [],
+                "tail_evidence": "not fetched; identity-only rows are informational and never indicate completion",
+                "active_targets": sorted(active_targets),
+                "active_target_scan": active_scan_status,
+                **({"active_target_error": active_scan_error} if active_scan_error else {}),
+                **({"deep_error": deep_error} if deep_error else {}),
+            },
+            "prs": values,
+            "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+        }
+        return report
 
     def resolve_cli_target(self, expected_pr: int | None = None) -> ReviewTarget:
         selected = self._target(policy.Channel.CLI, expected_pr)
