@@ -79,6 +79,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
         throw new IllegalArgumentException(
             "INVALID_TEMPLATE_CONFIGURATION: controlPlaneRequestId already resolved with different inputs");
       }
+      requireReadyScriptPatch(requestedScriptPatchVersion);
+      requireReadyScriptPatch(template.getDefaultScriptPatchVersion());
+      requireReadyScriptPatch(existing.get().getScriptPatchVersion());
       return toDto(existing.get());
     }
     if (template.getTemplateReferencePhase() != TemplateReferencePhase.ENFORCED) {
@@ -118,8 +121,10 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw new IllegalArgumentException(
           "VERSION_STATE_EPOCH_STALE: resolved version is not activation-eligible");
     }
+    requireReadyScriptPatch(version.scriptPatchVersion());
     String resolvedScriptPatchVersion =
         resolveScriptPatchVersion(template, requestedScriptPatchVersion, version);
+    requireReadyScriptPatch(resolvedScriptPatchVersion);
     String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
     String remapSetId = null;
     if (sourceVersionId != null && !sourceVersionId.equals(resolvedVersionId)) {
@@ -195,6 +200,13 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
           "INVALID_TEMPLATE_CONFIGURATION: template-owned runtime flags cannot be overridden");
     }
     return requested;
+  }
+
+  private void requireReadyScriptPatch(String scriptPatchVersion) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOT_READY: exact published-for-base and Automation READY evidence is unavailable");
+    }
   }
 
   private net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto

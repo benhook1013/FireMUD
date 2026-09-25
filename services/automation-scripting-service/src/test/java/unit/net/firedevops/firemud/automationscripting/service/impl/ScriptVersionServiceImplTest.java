@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,14 +41,18 @@ class ScriptVersionServiceImplTest {
   }
 
   @Test
-  void notifyUpdateSkipsTemporalTrackingForEmptyPatch() {
+  void notifyUpdatePropagatesEmptyPatchRejectionWithoutTemporalTracking() {
     ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
     TemporalScriptPatchReadinessOrchestrator orchestrator =
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
 
-    service.notifyUpdate("1", "patch-1", List.of());
+    when(commandService.notifyUpdate("1", "patch-1", List.of()))
+        .thenThrow(new IllegalArgumentException("zero_handler_manifest_unverifiable"));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.notifyUpdate("1", "patch-1", List.of()));
 
     verify(commandService).notifyUpdate("1", "patch-1", List.of());
     org.mockito.Mockito.verifyNoInteractions(orchestrator);

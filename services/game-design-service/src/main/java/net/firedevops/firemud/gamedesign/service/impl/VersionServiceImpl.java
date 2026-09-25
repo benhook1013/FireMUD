@@ -121,16 +121,12 @@ public class VersionServiceImpl implements VersionService {
   public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
     logger.info("Publishing version for tenant {}", tenantId);
     PublicationDigestRequestBinding.validatePublicationIdentity(tenantId, publishRequestId);
-    if (temporalPublishOrchestrator.isPresent()) {
-      return temporalPublishOrchestrator
-          .get()
-          .publishFullVersion(tenantId, notes, publishRequestId);
-    }
-    return publishCommandService.publishFullVersion(
-        tenantId,
-        notes,
-        publishRequestId,
-        TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
+    TemporalVersionPublishOrchestrator orchestrator =
+        temporalPublishOrchestrator.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "PUBLISH_WORKFLOW_UNAVAILABLE: durable publication workflow is required"));
+    return orchestrator.publishFullVersion(tenantId, notes, publishRequestId);
   }
 
   @Override
@@ -178,9 +174,7 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
-      runSafely(
-          "notify script patch version update",
-          () -> scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
+      scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of());
 
       finalizationStarted = true;
       ScriptPatchFinalization finalization =
@@ -1030,14 +1024,6 @@ public class VersionServiceImpl implements VersionService {
         version.getVersionState(),
         version.getVersionStateEpoch(),
         version.getUpdatedAt());
-  }
-
-  private void runSafely(String actionName, Runnable action) {
-    try {
-      action.run();
-    } catch (RuntimeException ex) {
-      logger.warn("Failed to {}", actionName, ex);
-    }
   }
 
   private static void requireText(String value, String fieldName) {
