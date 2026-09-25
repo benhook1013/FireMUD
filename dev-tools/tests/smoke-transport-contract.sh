@@ -1436,6 +1436,7 @@ field_matches() {
 
 case "$command_name" in
   ps)
+    [[ "${FAKE_DOCKER_FAIL_RESOURCE_INSPECTION:-false}" != true ]] || exit 42
     project=""
     service=""
     status=""
@@ -1516,6 +1517,15 @@ case "$command_name" in
       exit 0
     done <"$state_dir/containers"
     exit 1
+    ;;
+  compose)
+    saw_down=false
+    for argument in "$@"; do
+      [[ "$argument" != down ]] || saw_down=true
+    done
+    [[ "$saw_down" == true ]] || exit 99
+    : >"$state_dir/compose-down"
+    rm -f "$state_dir/containers" "$state_dir/networks" "$state_dir/volumes"
     ;;
   *)
     echo "unsupported fake docker command: $command_name" >&2
@@ -1737,5 +1747,37 @@ rm -f "$FAKE_DOCKER_STATE/networks" "$FAKE_DOCKER_STATE/volumes"
 rm -f "$FAKE_DOCKER_STATE/containers"
 run_owned_helper release_run_owned_compose_project
 [[ ! -e "$marker_path" ]]
+
+# A failed image pull can leave the claimed marker without creating any
+# Compose-labelled resources. Cleanup verifies this invocation's capability
+# and complete resource absence, then releases only its marker without running
+# Compose down against an uncreated project.
+run_owned_helper claim_run_owned_compose_project
+assert_command_rejects \
+  "ownership marker does not match this project and invocation capability" \
+  env FIREMUD_SMOKE_OWNERSHIP_TOKEN=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
+  bash -c "$RUN_OWNED_CHILD_BASH" _ \
+  "$RUN_OWNED_COMPOSE_HELPER" stop_run_owned_compose_project -f docker-compose.yml
+[[ -e "$marker_path" ]]
+run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
+[[ ! -e "$marker_path" ]]
+[[ ! -e "$FAKE_DOCKER_STATE/compose-down" ]]
+
+# Failed Docker resource inspection is ambiguous, so cleanup must retain the
+# run-owned marker and refuse to infer that the project is empty.
+run_owned_helper claim_run_owned_compose_project
+assert_command_rejects \
+  "could not establish that the Compose project is empty" \
+  env FAKE_DOCKER_FAIL_RESOURCE_INSPECTION=true \
+  bash -c "$RUN_OWNED_CHILD_BASH" _ \
+  "$RUN_OWNED_COMPOSE_HELPER" stop_run_owned_compose_project -f docker-compose.yml
+[[ -e "$marker_path" ]]
+
+# Existing project resources continue through the normal guarded Compose
+# teardown before the marker is released.
+printf 'game-session|%s|game-session-service|exited|\n' "$COMPOSE_PROJECT_NAME" >"$FAKE_DOCKER_STATE/containers"
+run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
+[[ ! -e "$marker_path" ]]
+[[ -e "$FAKE_DOCKER_STATE/compose-down" ]]
 
 echo "smoke script boundary contract checks passed"

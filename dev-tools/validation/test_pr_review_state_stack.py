@@ -64,6 +64,69 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(restored, state)
         self.assertEqual(restored.allocations["2849:hosted"].baseline_checkpoints, ("checkpoint-1", "checkpoint-2"))
 
+    def test_review_allocation_stop_round_trips_reviewed_and_final_heads_separately(self):
+        allocation = ReviewAllocation(
+            pr=2818,
+            channel="hosted",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base="c" * 40,
+            patch_id="current-owned-patch",
+            baseline_checkpoints=("latest-checkpoint",),
+            reason="pre-granted one-result allocation",
+            stop_basis="allocated",
+            stop_checkpoint="latest-checkpoint",
+            stop_reviewed_head="d" * 40,
+            stop_reviewed_patch_id="reviewed-owned-patch",
+            stop_head="a" * 40,
+            stop_parent_identity="develop",
+            stop_parent_head="b" * 40,
+            stop_merge_base="c" * 40,
+            stop_patch_id="current-owned-patch",
+            stop_reason="human stopped discovery after adjudication",
+            stop_summary_disposition_fingerprints=("e" * 64,),
+            retained_ambiguous_fingerprints=("f" * 64, "e" * 64),
+            retained_ambiguous_reason="terminal response lacks attributable review object",
+        )
+
+        restored = ReviewAllocation.from_dict(allocation.to_dict())
+
+        self.assertEqual(restored, allocation)
+        self.assertNotEqual(restored.stop_reviewed_head, restored.stop_head)
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64, "e" * 64))
+
+    def test_review_allocation_reads_the_legacy_single_retained_fingerprint(self):
+        legacy = {
+            "pr": 2818,
+            "channel": "hosted",
+            "head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "current-owned-patch",
+            "baseline_checkpoints": ["latest-checkpoint"],
+            "reason": "pre-granted one-result allocation",
+            "stop_basis": "direct_human",
+            "stop_checkpoint": "latest-checkpoint",
+            "stop_reviewed_head": "d" * 40,
+            "stop_reviewed_patch_id": "reviewed-owned-patch",
+            "stop_head": "a" * 40,
+            "stop_parent_identity": "develop",
+            "stop_parent_head": "b" * 40,
+            "stop_merge_base": "c" * 40,
+            "stop_patch_id": "current-owned-patch",
+            "stop_reason": "human stopped discovery after adjudication",
+            "stop_summary_disposition_fingerprints": [],
+            "retained_ambiguous_fingerprint": "f" * 64,
+            "retained_ambiguous_reason": "terminal response lacks attributable review object",
+        }
+
+        restored = ReviewAllocation.from_dict(legacy)
+
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64,))
+        self.assertEqual(restored.to_dict()["retained_ambiguous_fingerprints"], ["f" * 64])
+
     def test_old_state_without_allocations_remains_readable(self):
         state = ReviewState.from_dict({"schema_version": 1, "ordered_prs": [2849]})
 
@@ -538,6 +601,31 @@ class ReviewStateStackTest(unittest.TestCase):
         second_history = tuple(dataclasses.replace(item, pr=2) for item in history)
         target = select_review_target(state, Channel.CLI, (1, 2, 3), {1: history, 2: second_history, 3: ()})
         self.assertEqual((target.target, target.status), (3, ReviewStatus.MISSING_EVIDENCE))
+
+    def test_explicit_channel_stop_skips_only_that_pr_and_reports_distinct_status(self):
+        state = ReviewState(ordered_prs=(1, 2))
+        target = select_review_target(
+            state,
+            Channel.HOSTED,
+            (1, 2),
+            {1: (), 2: ()},
+            human_stopped_prs=(1,),
+        )
+
+        self.assertEqual((target.target, target.status), (2, ReviewStatus.MISSING_EVIDENCE))
+
+    def test_all_explicitly_stopped_targets_report_human_stopped_not_tapered(self):
+        target = select_review_target(
+            ReviewState(ordered_prs=(1, 2)),
+            Channel.CLI,
+            (1, 2),
+            {1: (), 2: ()},
+            human_stopped_prs=(1, 2),
+        )
+
+        self.assertIsNone(target.target)
+        self.assertEqual(target.status, ReviewStatus.HUMAN_STOPPED)
+        self.assertIn("explicitly stopped", target.reason)
 
     def test_evidence_bound_to_another_pr_cannot_advance_target(self):
         state = ReviewState(ordered_prs=(1, 2))

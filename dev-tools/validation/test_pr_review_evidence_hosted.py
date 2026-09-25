@@ -35,14 +35,20 @@ def comment(item_id: int, author: str, body: str, created: str, *, url: str | No
     }
 
 
-def review_payload(comments: list[dict] | None = None, reviews: list[dict] | None = None, *, head: str = HEAD):
+def review_payload(
+    comments: list[dict] | None = None,
+    reviews: list[dict] | None = None,
+    *,
+    head: str = HEAD,
+    threads: list[dict] | None = None,
+):
     return {
         "data": {
             "repository": {
                 "pullRequest": {
                     "headRefOid": head,
                     "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-09-23T00:00:00Z"}}]},
-                    "reviewThreads": {"nodes": []},
+                    "reviewThreads": {"nodes": threads or []},
                     "comments": {"nodes": comments or []},
                     "reviews": {"nodes": reviews or []},
                 }
@@ -692,9 +698,99 @@ class HostedEvidenceTests(unittest.TestCase):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         finished = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), trigger_record())
-        self.assertEqual(state.state, "awaiting_response")
+        self.assertEqual(state.state, "ambiguous")
+        self.assertTrue(state.terminal)
+        self.assertFalse(state.attributed)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_url, "https://example.test/comments/11")
+        self.assertIn("without a head-attributed result", state.reason)
+        self.assertNotEqual(state.state, "completed")
         checkpoint = evidence.Checkpoint(1, "2026-09-23T00:03:00Z", "Hosted", 0, 0, HEAD[:7], 1, False, None, None, 99)
         self.assertEqual(evidence.hosted_checkpoint_evidence(checkpoint, [], HEAD)["status"], "missing")
+
+    def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
+        trigger_at = "2026-09-23T00:01:00Z"
+        summary_at = "2026-09-23T00:03:20Z"
+        reply_at = "2026-09-23T00:03:00Z"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 89.\n"
+                "Files not reviewed due to moderation or processing errors: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = summary_at
+        reply = comment(11, "coderabbitai", "Full review finished.", reply_at)
+        reply["updatedAt"] = "2026-09-23T00:03:30Z"
+
+        def state_for(selected_summary=summary, selected_reply=reply, *, extra_comments=None, threads=None):
+            return hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload(
+                    [trigger, selected_summary, selected_reply, *(extra_comments or [])],
+                    reviews=[],
+                    threads=threads,
+                ),
+                trigger_record(),
+            )
+
+        self.assertEqual(state_for().state, "completed")
+
+        strict_but_incomplete = {
+            **summary,
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        self.assertNotEqual(state_for(strict_but_incomplete).state, "completed")
+
+        incomplete = {
+            **summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                "3 reported issues remain open.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        stale = {**summary, "updatedAt": trigger_at}
+        mismatched_head = {
+            **summary,
+            "body": summary["body"].replace(HEAD, "d" * 40),
+        }
+        inline_finding = {
+            "databaseId": 21,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A post-trigger inline finding.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        extra_issue_comment = comment(22, "coderabbitai", "A post-trigger bot comment.", "2026-09-23T00:02:30Z")
+        for invalid_summary in (incomplete, stale, mismatched_head):
+            with self.subTest(summary=invalid_summary["body"]):
+                self.assertNotEqual(state_for(invalid_summary).state, "completed")
+        self.assertNotEqual(
+            state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
+            "completed",
+        )
+        self.assertNotEqual(state_for(extra_comments=[extra_issue_comment]).state, "completed")
+
+        limited = {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}
+        active = {**reply, "body": "Full review triggered"}
+        unattributed = {key: value for key, value in reply.items() if key != "databaseId"}
+        self.assertEqual(state_for(selected_reply=limited).state, "rate_limited")
+        self.assertEqual(state_for(selected_reply=active).state, "active")
+        self.assertNotEqual(state_for(selected_reply=unattributed).state, "completed")
 
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

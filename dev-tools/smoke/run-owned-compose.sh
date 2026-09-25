@@ -421,9 +421,39 @@ release_run_owned_compose_project() {
 }
 
 stop_run_owned_compose_project() {
-  require_run_owned_compose_project || return 1
-  docker compose "$@" down -v --remove-orphans || return 1
-  release_run_owned_compose_project
+  _firemud_smoke_prepare || return 1
+  _firemud_smoke_lock || return 1
+  if ! _firemud_smoke_verify_marker; then
+    _firemud_smoke_unlock
+    return 1
+  fi
+
+  local status=0
+  _firemud_smoke_resource_status "$FIREMUD_SMOKE_EXPECTED_PROJECT" || status=$?
+  case "$status" in
+    0)
+      docker compose "$@" down -v --remove-orphans || {
+        _firemud_smoke_unlock
+        return 1
+      }
+      ;;
+    1)
+      # Compose can fail before creating any labelled resource (for example,
+      # while pulling an image). With the matching run capability and a
+      # complete empty-resource check under the project lock, release its
+      # marker without asking Compose to tear down a project it never created.
+      ;;
+    *)
+      _firemud_smoke_fail "could not establish that the Compose project is empty."
+      _firemud_smoke_unlock
+      return 1
+      ;;
+  esac
+
+  if ! release_run_owned_compose_project; then
+    _firemud_smoke_unlock
+    return 1
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

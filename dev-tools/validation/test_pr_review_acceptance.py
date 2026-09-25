@@ -125,6 +125,17 @@ class AcceptanceCliTest(unittest.TestCase):
             check=False,
         )
 
+    def test_allocation_handoff_subcommand_is_removed_in_favor_of_stop(self):
+        stop = cli._parser().parse_args(
+            ["decide", "stop", "--pr", "1", "--channel", "hosted", "--reason", "human judgment"]
+        )
+        self.assertEqual(stop.decide_command, "stop")
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(
+                ["decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted", "--head", HEAD_1,
+                 "--reason", "legacy handoff"]
+            )
+
     def test_live_status_never_calls_an_exhausted_allocation_merge_ready(self):
         report = {
             "pull_request": {"headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE},
@@ -153,6 +164,22 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(result["ready"])
         self.assertIn("hosted review allocation is EXHAUSTED_PENDING", result["reasons"][0])
+
+        controller.status = lambda: {
+            "prs": [{
+                "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
+                "reconciliation": "COHERENT", "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
+                "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
+            }]
+        }
+        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
+            "pr_review.cli.status_module.status", return_value={**report, "reasons": [], "ready": True}
+        ):
+            result, code = cli._dispatch(args)
+
+        self.assertEqual(code, 0)
+        self.assertFalse(result["ready"])
+        self.assertTrue(any("not taper or merge-readiness proof" in reason for reason in result["reasons"]))
 
     def test_public_commands_use_isolated_state_and_simulated_review_adapters(self):
         canonical = state.state_path()
@@ -702,7 +729,7 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertFalse(fixture_request_lock.exists())
             self.assertFalse(canonical_request_lock.exists())
 
-    def test_allocation_fixture_consumes_one_result_and_supports_corrected_head_handoff(self):
+    def test_allocation_fixture_consumes_one_result_and_stops_after_corrected_head(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.json"
@@ -750,12 +777,11 @@ class AcceptanceCliTest(unittest.TestCase):
             corrected["pull_requests"][0]["head"] = HEAD_2
             fixture.write_text(json.dumps(corrected), encoding="utf-8")
 
-            handoff = self.run_cli(
+            stopped = self.run_cli(
                 fixture,
                 isolated,
                 "decide",
-                "allocation",
-                "handoff",
+                "stop",
                 "--pr",
                 "1",
                 "--channel",
@@ -764,18 +790,22 @@ class AcceptanceCliTest(unittest.TestCase):
                 HEAD_2,
                 "--checkpoint",
                 checkpoint,
-                "--validation",
-                "corrected head and required checks validated in the isolated fixture",
                 "--reason",
-                "findings corrected and capacity released",
+                "findings corrected and review discovery stopped",
+                "--json",
             )
-            self.assertEqual(handoff.returncode, 0, handoff.stderr)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            stopped_payload = json.loads(stopped.stdout)
+            self.assertEqual(stopped_payload["stop_basis"], "allocated")
+            self.assertEqual(stopped_payload["reviewed_head"], HEAD_1)
+            self.assertEqual(stopped_payload["stop_head"], HEAD_2)
             final = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
             self.assertEqual(final.returncode, 0, final.stderr)
             self.assertEqual(
                 json.loads(final.stdout)["prs"][0]["allocations"]["hosted"]["status"],
-                "HANDED_OFF",
+                "STOPPED",
             )
+            self.assertEqual(json.loads(final.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
     def test_fixture_result_sequence_is_persisted_and_nonterminal_results_do_not_create_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -856,7 +886,7 @@ class AcceptanceCliTest(unittest.TestCase):
             )
             self.assertNotIn("_fixture_result_position", sidecar["evidence"][0])
 
-    def test_allocation_handoff_keeps_findings_and_next_parent_gates(self):
+    def test_allocation_stop_keeps_findings_and_next_parent_gates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.json"
@@ -881,23 +911,26 @@ class AcceptanceCliTest(unittest.TestCase):
             ]
             fixture.write_text(json.dumps(held), encoding="utf-8")
             blocked = self.run_cli(
-                fixture, isolated, "decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--checkpoint", "allocated-dry", "--validation", "checks green",
+                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry",
                 "--reason", "attempted before thread resolution",
             )
             self.assertNotEqual(blocked.returncode, 0)
-            self.assertIn("obligations remain", blocked.stderr)
+            self.assertIn("unresolved actionable finding or thread", blocked.stderr)
             blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
             self.assertNotEqual(blocked_next.returncode, 0)
             self.assertIn("expected PR #2, but selected PR #1", blocked_next.stderr)
 
             fixture.write_text(json.dumps(payload), encoding="utf-8")
-            handoff = self.run_cli(
-                fixture, isolated, "decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--checkpoint", "allocated-dry", "--validation", "checks green",
-                "--reason", "thread resolved and head validated",
+            stopped = self.run_cli(
+                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry",
+                "--reason", "thread resolved and review discovery stopped",
             )
-            self.assertEqual(handoff.returncode, 0, handoff.stderr)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertEqual(json.loads(shown.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
             next_pr = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
             self.assertEqual(next_pr.returncode, 0, next_pr.stderr)
             self.assertIn("pr=2", next_pr.stdout)
@@ -908,6 +941,69 @@ class AcceptanceCliTest(unittest.TestCase):
             blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
             self.assertNotEqual(blocked_next.returncode, 0)
             self.assertIn("PARENT_MOVED", blocked_next.stderr)
+
+    def test_direct_human_stop_preserves_old_unanchored_checkpoint_without_taper_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": BASE,
+                    "checkpoint": "legacy-hosted-6-5",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": False,
+                    "held": True,
+                    "unmatched_response": True,
+                    "accepted": 5,
+                    "raw": 6,
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "latest-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "raw": 0,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                },
+            ]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+
+            stopped = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--checkpoint",
+                "latest-hosted",
+                "--reason",
+                "stop discovery while retaining historical findings",
+                "--json",
+            )
+
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(json.loads(stopped.stdout)["stop_basis"], "direct_human")
+            status = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(status.returncode, 0, status.stderr)
+            self.assertEqual(json.loads(status.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
 
 if __name__ == "__main__":
