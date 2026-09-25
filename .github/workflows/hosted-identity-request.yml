@@ -34,6 +34,7 @@ jobs:
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
       exposure_mode: ${{ steps.target.outputs.exposure_mode }}
+      v2_schema_migration_change: ${{ steps.target.outputs.v2_schema_migration_change }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
       artifact_name: ${{ steps.target.outputs.artifact_name }}
       retire_identity: ${{ steps.target.outputs.retire_identity }}
@@ -120,6 +121,7 @@ jobs:
           ARTIFACT_MERGE_SHA=""
           ARTIFACT_NAME=""
           ARTIFACT_KIND=""
+          V2_SCHEMA_MIGRATION_CHANGE=false
           RETIRE_IDENTITY=false
           CLEANUP_STATE=none
           if [[ "$EVENT_NAME" == workflow_run ]]; then
@@ -314,6 +316,18 @@ jobs:
           fi
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
             "Ignoring stale lifecycle event for an earlier PR head."
+          if [[ "$ACTION" == deploy ]]; then
+            changed_files_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+            migration_paths="$(jq -r \
+              '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
+                | select(type == "string")
+                | select(test("^services/[^/]+/src/main/resources/db/migration/V[0-9]+__[^/]+\\.sql$"))]
+              | unique | .[]' <<<"$changed_files_json")"
+            if [[ -n "$migration_paths" ]]; then
+              V2_SCHEMA_MIGRATION_CHANGE=true
+            fi
+          fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
             [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
@@ -353,6 +367,7 @@ jobs:
           fi
           {
             echo "action=${ACTION}"
+            echo "v2_schema_migration_change=${V2_SCHEMA_MIGRATION_CHANGE}"
             echo "pr_number=${PR_NUMBER}"
             echo "base_sha=${base_sha}"
             echo "head_sha=${current_head_sha}"
@@ -761,6 +776,12 @@ jobs:
             echo "proof_retry_merge_sha=$retry_merge_sha"
             echo "proof_retry_image_tag=$retry_image_tag"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Block unproven PR schema migration activation
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && needs.validate-target.outputs.v2_schema_migration_change == 'true' }}
+        run: |
+          echo "::error title=Hosted PR migration activation blocked::A changed Flyway migration cannot run in PR preview because this path has no trusted proof of fresh database provenance or zero old writers. The isolated namespace is not sufficient while its Postgres PVC provenance is unverified. Run the trusted post-merge quiesce/preflight path instead." >&2
+          exit 1
 
       - name: Delete exact preview runtime namespace before recreate
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}

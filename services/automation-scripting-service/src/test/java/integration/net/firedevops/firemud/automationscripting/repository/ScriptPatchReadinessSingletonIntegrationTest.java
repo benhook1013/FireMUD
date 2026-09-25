@@ -125,6 +125,89 @@ class ScriptPatchReadinessSingletonIntegrationTest {
         .isEqualTo(2L);
   }
 
+  @Test
+  void migrationFailsClosedAndPreservesRowsWhenOnLoadClaimIsActive() {
+    DSLContext dsl = migrateToVersionOne();
+    dsl.execute(
+        "insert into script_patch_readiness_projections "
+            + "(tenant_id, script_patch_version, readiness_status, status_reason) "
+            + "values ('tenant-active-onload', 'patch-a', 'ONLOAD_RUNNING', 'test')");
+
+    assertThatThrownBy(this::migrateExistingSchemaToLatest)
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("active work-item and onLoad claims");
+    assertThat(
+            dsl.fetch(
+                    "select count(*) from script_patch_readiness_projections "
+                        + "where tenant_id = 'tenant-active-onload' "
+                        + "and readiness_status = 'ONLOAD_RUNNING'")
+                .get(0)
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetch(
+                    "select count(*) from pg_indexes "
+                        + "where schemaname = current_schema() "
+                        + "and indexname in (" +
+                        "'uq_script_work_item_trigger_identity', " +
+                        "'uq_script_work_item_trigger_identity_unpinned', " +
+                        "'uq_script_event_audit_handler_identity', " +
+                        "'uq_script_event_audit_handler_identity_unpinned')")
+                .get(0)
+                .get(0, Long.class))
+        .isEqualTo(4L);
+  }
+
+  @Test
+  void migrationFailsClosedWhenLegacyUniqueIndexShapeDrifts() {
+    DSLContext dsl = migrateToVersionOne();
+    dsl.execute("drop index uq_script_work_item_trigger_identity");
+    dsl.execute(
+        "create unique index uq_script_work_item_trigger_identity "
+            + "on script_work_items (tenant_id)");
+
+    assertThatThrownBy(this::migrateExistingSchemaToLatest)
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("four exact V1 producer-agnostic unique indexes");
+    String indexDefinition =
+        (String)
+            dsl.fetchValue(
+            "select pg_get_indexdef(indexrelid) from pg_index "
+                + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
+            String.class);
+    assertThat(indexDefinition).contains("(tenant_id)");
+    assertThat(
+            dsl.fetchValue(
+                "select count(*) from pg_indexes where schemaname = current_schema() "
+                    + "and indexname = 'uq_script_work_item_trigger_identity_unpinned'",
+                Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void migrationFailsClosedWhenLegacyUniqueIndexPredicateDrifts() {
+    DSLContext dsl = migrateToVersionOne();
+    dsl.execute("drop index uq_script_work_item_trigger_identity");
+    dsl.execute(
+        "create unique index uq_script_work_item_trigger_identity on script_work_items "
+            + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
+            + "playable_state_scope, world_slug, realm_slug, pointer_version, script_id, "
+            + "plugin_id, plugin_version_id, binding_id, event_type, event_schema_version, "
+            + "script_patch_version, script_pin_epoch, script_event_id, dry_run) "
+            + "where script_pin_epoch >= 0");
+
+    assertThatThrownBy(this::migrateExistingSchemaToLatest)
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("four exact V1 producer-agnostic unique indexes");
+    String indexPredicate =
+        (String)
+            dsl.fetchValue(
+            "select pg_get_expr(indpred, indrelid) from pg_index "
+                + "where indexrelid = 'uq_script_work_item_trigger_identity'::regclass",
+            String.class);
+    assertThat(indexPredicate).contains(">=");
+  }
+
   private void beginInTransaction(
       DSLContext dsl, TransactionTemplate transactionTemplate, String patchVersion) {
     transactionTemplate.executeWithoutResult(

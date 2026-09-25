@@ -6,6 +6,10 @@ metadata:
   name: automation-scripting-service
 spec:
   replicas: 2
+  # V2 relaxes producer-agnostic uniqueness; do not admit an old and new
+  # Automation binary at the same time.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: automation-scripting-service

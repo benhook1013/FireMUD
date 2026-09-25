@@ -916,6 +916,11 @@ target_step = next(step for step in validate_job["steps"] if step.get("id") == "
 assert "Unsupported lifecycle event" in target_step["run"]
 assert "RETIRE_IDENTITY=true" in target_step["run"]
 assert "RETIRE_IDENTITY=false" in target_step["run"]
+assert "pulls/${PR_NUMBER}/files?per_page=100" in target_step["run"]
+assert "v2_schema_migration_change=${V2_SCHEMA_MIGRATION_CHANGE}" in target_step["run"]
+assert validate_job["outputs"]["v2_schema_migration_change"] == (
+    "${{ steps.target.outputs.v2_schema_migration_change }}"
+)
 for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime"):
     assert "needs.validate-target.outputs.action == 'deploy'" in jobs[job_name]["if"], job_name
 assert "needs.deploy-runtime.outputs.allocation_status == 'allocated'" in jobs["verify-runtime"]["if"]
@@ -1791,6 +1796,9 @@ assert manager_kubeconfig_jobs == {
     "deploy-runtime", "publish-preview-proof", "destroy-runtime"
 }
 assert "Set up Helm" not in deploy_by_name
+preview_migration_gate = deploy_by_name["Block unproven PR schema migration activation"]
+assert "v2_schema_migration_change == 'true'" in preview_migration_gate["if"]
+assert "PVC provenance is unverified" in preview_migration_gate["run"]
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1806,6 +1814,7 @@ clean_delete_step_index = next(
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Delete exact preview runtime namespace before recreate"
 )
+preview_migration_gate_step_index = deploy_steps.index(preview_migration_gate)
 capture_retry_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1830,6 +1839,7 @@ assert (
     allocate_port_step_index
     < clean_revalidate_step_index
     < capture_retry_step_index
+    < preview_migration_gate_step_index
     < clean_delete_step_index
     < requested_step_index
     < apply_step_index
@@ -6312,7 +6322,11 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
-    printf '%s' '[[{"filename":"docs/readme.md"}]]'
+    if [[ -n "${FAKE_PR_FILES_JSON:-}" ]]; then
+      printf '%s' "$FAKE_PR_FILES_JSON"
+    else
+      printf '%s' '[[{"filename":"docs/readme.md"}]]'
+    fi
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -6409,6 +6423,7 @@ run_deploy_target_fixture() {
       TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
+      FAKE_PR_FILES_JSON="${FAKE_FIXTURE_PR_FILES_JSON:-}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
       bash "$TEMP_DIR/target.sh"
   ) >"$stdout" 2>"$stderr"
@@ -6430,6 +6445,8 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
+  run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
   run_deploy_target_fixture standalone-private 1 \
     'Private bridge proof requires hosted-controller identity.'
@@ -6640,6 +6657,7 @@ run_closed_target_fixture accepted closed example/FireMUD develop \
 test ! -s "$target_python_log"
 test "$(cat "$TEMP_DIR/closed-target-accepted.output")" = "$(cat <<EOF
 action=destroy
+v2_schema_migration_change=false
 pr_number=900
 base_sha=
 head_sha=${closed_head}

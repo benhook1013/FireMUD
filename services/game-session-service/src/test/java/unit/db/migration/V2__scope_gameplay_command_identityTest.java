@@ -22,6 +22,10 @@ class V2__scope_gameplay_command_identityTest {
     String normalized = migration.replaceAll("\\s+", " ").trim();
     assertThat(normalized)
         .contains(
+            "DO $v2_preflight$",
+            "Game Session V2 requires the three exact V1 pre-migration unique indexes",
+            "Game Session V2 requires the gameplay_command_command_id_key unique constraint",
+            "Game Session V2 requires claimed remote follow-ups to drain before migration",
             "DROP INDEX IF EXISTS idx_gameplay_command_command_id",
             "DROP CONSTRAINT IF EXISTS gameplay_command_command_id_key",
             "CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id ON gameplay_command USING btree (tenant_id, game_instance_id, command_id)",

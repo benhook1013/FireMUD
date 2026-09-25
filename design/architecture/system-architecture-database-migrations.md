@@ -111,6 +111,12 @@ local docs and treat it as part of their migration review process.
 
 Once a service has no active compatibility obligation, it may converge directly only when the objective evidence and atomic-convergence conditions above are recorded; project phase labels do not substitute for that evidence.
 
+Direct replacements that take blocking DDL or change writer uniqueness require a quiesced deployment boundary when rolling old/new overlap is unsafe. The boundary must come from trusted deployment control, not a PR-controlled Helm value or a static `Recreate` strategy alone: stop admission to old writers, scale their owners to zero, and prove that no old writer Pods remain before a new binary can start. The migration itself must inspect its known schema prerequisites and reject unresolved active claims or retained-data conflicts before destructive DDL; an unknown environment state blocks activation. Recovery is roll-forward only: resolve the reported preflight conflict under its data owner and retry the same V2 release or a corrected forward migration; do not restart old binaries against the changed uniqueness contract.
+
+The trusted dev-demo workflow preserves its existing clean namespace reset for ordinary pushes. A push that changes a Flyway migration instead preserves the runtime database and uses the quiesced activation path. A redispatch may use only the exact prior deployed-head annotation from the owned `dev` namespace, with valid Git ancestry to the target; missing or ambiguous evidence stops the workflow before namespace mutation. This narrow exception avoids using namespace deletion as a substitute for proving the retained V1 data prerequisites.
+
+Hosted candidate previews may activate a migration only when the trusted path independently proves both an isolated fresh database and absence of old writers. A newly recreated namespace or a manifest value is not database provenance when backing storage may be retained. If the preview credential cannot verify that proof, skip or fail the candidate activation before modifying its namespace; use the trusted post-merge quiesce path instead.
+
 Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with execution results recorded in PR/CI evidence and, when applicable, synchronized into the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.
 
 ### Cross-Service Identifier Migration
