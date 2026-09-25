@@ -887,7 +887,9 @@ class AcceptanceCliTest(unittest.TestCase):
             )
             self.assertNotEqual(blocked.returncode, 0)
             self.assertIn("obligations remain", blocked.stderr)
-            self.assertNotEqual(self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2").returncode, 0)
+            blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertNotEqual(blocked_next.returncode, 0)
+            self.assertIn("expected PR #2, but selected PR #1", blocked_next.stderr)
 
             fixture.write_text(json.dumps(payload), encoding="utf-8")
             handoff = self.run_cli(

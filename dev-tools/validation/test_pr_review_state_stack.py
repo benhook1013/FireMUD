@@ -184,13 +184,18 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         state = ReviewState(ordered_prs=(2818,), legacy_transitions=(transition,))
         self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
-        self.assertTrue(transition.matches(2818, {
+        anchor = {
             "child_head": "a" * 40,
             "parent_identity": "develop",
             "parent_head": "b" * 40,
             "merge_base": "c" * 40,
             "patch_id": "patch-id",
-        }))
+        }
+        self.assertTrue(transition.matches(2818, anchor))
+        self.assertFalse(transition.matches(1, anchor))
+        for field in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id"):
+            with self.subTest(field=field):
+                self.assertFalse(transition.matches(2818, {**anchor, field: f"wrong-{field}"}))
 
     def test_malformed_nested_state_records_raise_state_error(self):
         malformed_states = (

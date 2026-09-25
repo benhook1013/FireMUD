@@ -269,7 +269,8 @@ grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
   exit 1
 }
-if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log"; then
+if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log" || \
+  grep -Fq 'ca.key' "$applied_secret"; then
   echo "the helper read or created a runtime-local CA key/Secret" >&2
   exit 1
 fi
