@@ -1140,7 +1140,7 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupRejectsConflictingFollowupScopeReuse() {
-    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 99L, "cmd-1"))
         .thenReturn(Optional.empty());
     RemoteFollowup existing = followup();
     when(followupRepository
@@ -1149,7 +1149,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(Optional.of(existing));
     GameplayCommand command = gameplayCommand();
     command.setGameInstanceId(99L);
-    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 99L, "cmd-1"))
         .thenReturn(Optional.of(command));
 
     IllegalArgumentException ex =
