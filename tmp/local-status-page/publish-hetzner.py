@@ -21,6 +21,7 @@ NAMESPACE = "overseer-status"
 IMAGE = "docker.io/library/nginx@sha256:7150b3a39203cb5bee612ff4a9d18774f8c7caf6399d6e8985e97e28eb751c18"
 BRIEF_LINK = re.compile(r'<a href="\.\./\.\./task-briefs/[^"]+">([^<]+)</a>')
 REFRESH_FORM = re.compile(r'<form class="refresh-form"[^>]*>.*?</form>', re.DOTALL)
+REFRESH_SCRIPT = re.compile(r'<script id="local-refresh-progress">.*?</script>', re.DOTALL)
 
 
 def local_wifi_url() -> str:
@@ -47,6 +48,9 @@ def local_wifi_url() -> str:
 def public_html(source: str, local_url: str) -> str:
     result = BRIEF_LINK.sub(r"\1 (local brief)", source)
     result = REFRESH_FORM.sub("", result)
+    result = REFRESH_SCRIPT.sub("", result)
+    result = result.replace("form-action 'self'", "form-action 'none'")
+    result = re.sub(r"script-src 'sha256-[^']+'", "script-src 'none'", result)
     result = result.replace("Private local snapshot", "Published delivery snapshot")
     result = re.sub(
         r"<footer>.*?</footer>",
@@ -56,7 +60,8 @@ def public_html(source: str, local_url: str) -> str:
         flags=re.DOTALL,
     )
     if ("../../task-briefs/" in result or "/home/ben/" in result
-            or 'action="/refresh"' in result or f'href="{local_url}"' not in result):
+            or 'action="/refresh"' in result or 'id="local-refresh-progress"' in result
+            or f'href="{local_url}"' not in result):
         raise ValueError("the published page still contains a private local path")
     if "<h2>Worker lanes</h2>" not in result or "<h2>Configured review queue</h2>" not in result:
         raise ValueError("the rendered status page is incomplete")

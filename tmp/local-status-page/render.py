@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import html
 import json
 import os
@@ -20,6 +22,21 @@ DEFAULT_OUTPUT = ROOT / "output" / "index.html"
 REPO_URL = "https://github.com/benhook1013/FireMUD/pull/"
 REPO_HOME = "https://github.com/benhook1013/FireMUD"
 REPO = "benhook1013/FireMUD"
+REFRESH_SCRIPT = """(() => {
+  const form = document.querySelector('.refresh-form');
+  if (!form) return;
+  const button = form.querySelector('button');
+  const progress = form.querySelector('.refresh-progress');
+  form.addEventListener('submit', () => {
+    button.disabled = true;
+    button.textContent = 'Refreshing…';
+    form.classList.add('loading');
+    const started = Date.now();
+    const update = () => { progress.textContent = `Working for ${Math.floor((Date.now() - started) / 1000)}s…`; };
+    update();
+    setInterval(update, 1000);
+  });
+})();"""
 
 
 def utc(value: str) -> datetime:
@@ -33,15 +50,15 @@ def safe(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def time_label(value: str, now: datetime) -> str:
+def time_label(value: str, now: datetime, subject: str = "Manual status") -> str:
     observed = utc(value)
     age = now - observed
     if age < timedelta(minutes=-5):
-        return f"Future-dated · {safe(value)}"
+        return f"{safe(subject)} future-dated · {safe(value)}"
     if age > timedelta(hours=24):
-        return f"Stale · {safe(value)}"
+        return f"{safe(subject)} stale · {safe(value)}"
     minutes = max(0, int(age.total_seconds() // 60))
-    return f"Verified {minutes}m ago · {safe(value)}"
+    return f"{safe(subject)} checked {minutes}m ago · {safe(value)}"
 
 
 def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetime) -> dict:
@@ -139,7 +156,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         number = item["number"]
         if type(number) is not int or number <= 0:
             raise ValueError("PR numbers must be positive integers")
-        label = time_label(item["verified_at"], now)
+        label = time_label(item["verified_at"], now, "Stack record")
         draft = github["states"].get(number)
         github_label = "Draft" if draft is True else "Ready for review" if draft is False else "GitHub stage unavailable"
         stats = github.get("stats", {}).get(number)
@@ -208,15 +225,16 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
     for lane in lanes:
         cards.append(
             f'<article class="card"><div class="card-top"><h3>{safe(lane["name"])}</h3>'
-            f'<span class="fresh">{time_label(lane["verified_at"], now)}</span></div>'
+            f'<span class="fresh">{time_label(lane["verified_at"], now, "Lane note")}</span></div>'
             f'<p class="task">{safe(lane["task"])}</p>'
             f'<dl><dt>Next</dt><dd>{safe(lane["next_action"])}</dd>'
             f'<dt>Blocker / gate</dt><dd>{safe(lane["blocker"])}</dd>'
             f'</dl></article>'
         )
+    refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'self'">
 <title>FireMUD · local delivery status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #f2f4f1; color: #16211e; }}
@@ -230,6 +248,8 @@ header p {{ color: #dce9dc; max-width: 58ch; margin-bottom: 0; }} .generated {{ 
 .refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #dce9dc; font-size: .78rem; }}
 .refresh-form button {{ border: 1px solid #dce9dc; border-radius: 7px; padding: .5rem .75rem; background: #f4f6ed; color: #123b35; font: inherit; font-weight: 700; cursor: pointer; }}
 .refresh-form button:hover {{ background: #dce9dc; }}
+.refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
+.refresh-progress {{ display: none; }} .refresh-form.loading .refresh-progress {{ display: inline; }}
 section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #52625c; font-size: .88rem; }}
 .stack, .card {{ background: #fff; border: 1px solid #d5dfd6; border-radius: 14px; box-shadow: 0 3px 12px #172b1b0b; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
@@ -257,13 +277,13 @@ footer {{ color: #65736a; font-size: .8rem; margin-top: 2.5rem; }}
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
 <p>Configured review queue and worker lanes. This is a manual snapshot, not a merge authorization or live monitor.</p>
 <p class="generated">Rendered {safe(now.isoformat())} · stack source: local status.json</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span>Updates review counts and PR sizes; worker notes stay manual.</span></form></div></header>
+<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span>Takes about a minute. Updates review counts and PR sizes; stack and worker-note check times stay manual.</span></form></div></header>
 <main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
 <section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
 <ol class="overview">{"".join(overview)}</ol></section>
 <section><h2>Configured review queue</h2><p class="section-note">Completed counts can include older-head or unlinked results; they do not establish taper or merge readiness. The controller channel status remains authoritative. File and line totals come from GitHub at render time. Heads are individually timestamped and may be stale.</p>
 <ol class="stack">{"".join(rows)}</ol></section>
-<footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main></body></html>"""
+<footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:

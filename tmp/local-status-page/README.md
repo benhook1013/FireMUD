@@ -1,6 +1,6 @@
 # FireMUD delivery status page
 
-The page is a manually maintained snapshot. Edit `status.json` when worker lanes or stack stages change. The renderer reads current GitHub PR sizes and the configured review controller, then writes `output/index.html` for the local LAN server. The **Refresh review data** button on the local page reruns that renderer; it updates review counts and PR sizes but does not rewrite worker-lane notes or publish to Hetzner. Allow about a minute for it to finish.
+The page is a manually maintained snapshot. Edit `status.json` when worker lanes or stack stages change. The renderer reads current GitHub PR sizes and the configured review controller, then writes `output/index.html` for the local LAN server. The **Refresh review data** button on the local page reruns that renderer and shows elapsed time while it works; it updates review counts and PR sizes but does not rewrite the manually checked stack or worker-lane timestamps or publish to Hetzner. Allow about a minute for it to finish. The server rejects concurrent refreshes and applies a short cooldown.
 
 ```bash
 python3 render.py

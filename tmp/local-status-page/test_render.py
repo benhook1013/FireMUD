@@ -1,4 +1,6 @@
 import importlib.util
+import base64
+import hashlib
 import json
 import subprocess
 import unittest
@@ -36,6 +38,12 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42"', result)
         self.assertIn('href="https://github.com/benhook1013/FireMUD"', result)
         self.assertIn('<form class="refresh-form" action="/refresh" method="post">', result)
+        self.assertIn("form-action 'self'", result)
+        refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
+        self.assertIn(f"script-src 'sha256-{refresh_hash}'", result)
+        self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
+        self.assertIn('class="refresh-progress" role="status" aria-live="polite"', result)
+        self.assertIn("stack and worker-note check times stay manual", result)
         self.assertNotIn('href="../../task-briefs/', result)
         self.assertIn("Review eligibility unavailable", result)
         self.assertNotIn("Review front", result)
@@ -52,9 +60,9 @@ class StatusPageTest(unittest.TestCase):
             page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
 
     def test_stale_and_future_timestamps_are_explicit(self):
-        self.assertIn("Stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
-        self.assertIn("Future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
-        self.assertIn("Verified 60m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
+        self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
+        self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
+        self.assertIn("Manual status checked 60m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
 
     def test_github_stage_and_review_eligibility_are_distinct(self):
         data = self.fixture()
@@ -85,7 +93,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
         self.assertIn("1 unlinked to a verified review", result)
         self.assertIn("1 excluded from taper", result)
-        self.assertIn('<span class="fresh">Verified 60m ago', result)
+        self.assertIn('<span class="fresh">Stack record checked 60m ago', result)
         self.assertIn("do not establish taper or merge readiness", result)
 
     @patch.object(page.subprocess, "run")
