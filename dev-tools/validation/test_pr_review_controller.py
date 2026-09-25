@@ -601,7 +601,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(evidence.stop_audit_calls[-1][1], fingerprints)
         self.assertEqual(evidence.stop_audit_calls[-1][2], ())
 
-    def test_direct_hosted_stop_keeps_old_terminal_ambiguity_historical_and_pins_latest(self):
+    def test_direct_hosted_stop_keeps_archived_ambiguity_historical_and_pins_latest(self):
         old_head = "7" * 40
         old_fingerprint = "d" * 64
         latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
@@ -609,16 +609,6 @@ class ControllerTests(unittest.TestCase):
             {
                 (1, "hosted"): [
                     self.allocation_evidence(checkpoint="latest-hosted"),
-                    {
-                        "pr": 1,
-                        "head": old_head,
-                        "checkpoint": "trigger:5815330039",
-                        "held": True,
-                        "terminal_ambiguous": True,
-                        "fingerprint": old_fingerprint,
-                        "trigger_id": 5815330038,
-                        "response_id": 5815330039,
-                    },
                     {
                         "pr": 1,
                         "head": HEAD_1,
@@ -780,6 +770,61 @@ class ControllerTests(unittest.TestCase):
                 pr=1,
                 channel="hosted",
                 reason="unknown old capture remains blocking",
+                retain_ambiguous_fingerprints=(latest_fingerprint,),
+                ambiguity_reason="latest terminal response is explicitly non-counting",
+            )
+
+    def test_direct_hosted_stop_rejects_current_ambiguity_missing_from_complete_audit(self):
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        unaudited_fingerprint = "8" * 64
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:latest",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:unaccounted-current",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": unaudited_fingerprint,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    }
+                ],
+                "retained_ambiguous": [{"fingerprint": latest_fingerprint}],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "every current terminal response"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="current history has an unaccounted terminal ambiguity",
                 retain_ambiguous_fingerprints=(latest_fingerprint,),
                 ambiguity_reason="latest terminal response is explicitly non-counting",
             )

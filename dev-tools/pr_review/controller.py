@@ -1662,7 +1662,7 @@ class ReviewController:
         if (
             any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in candidate_fingerprints)
             or len(set(candidate_fingerprints)) != len(candidate_fingerprints)
-            or set(fingerprints) | historical_fingerprints != set(candidate_fingerprints)
+            or not set(candidate_fingerprints).issubset(set(fingerprints) | historical_fingerprints)
         ):
             raise ControllerError("retained ambiguity fingerprints must identify every current terminal response")
         audit_fingerprints = [
