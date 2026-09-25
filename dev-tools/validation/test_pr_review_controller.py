@@ -77,6 +77,7 @@ class FakeGitHub:
 
 class AuditedEvidence(dict):
     def __init__(self, *args, audit=None, on_audit=None, **kwargs):
+        self.backing = args[0] if args and isinstance(args[0], dict) else None
         super().__init__(*args, **kwargs)
         self.audit = audit or {
             "complete": True,
@@ -88,11 +89,29 @@ class AuditedEvidence(dict):
         self.on_audit = on_audit
         self.audit_calls = []
 
+    def get(self, key, default=None):
+        if self.backing is not None:
+            return self.backing.get(key, default)
+        return super().get(key, default)
+
     def legacy_transition_reauthorization_audit(self, pr_number, fingerprints, anchor):
         self.audit_calls.append((pr_number, fingerprints, anchor))
         if self.on_audit is not None:
             self.on_audit()
         return self.audit
+
+    def review_stop_audit(self, pr_number, anchor, retained_ambiguous_fingerprints=()):
+        if self.on_audit is not None:
+            self.on_audit()
+        audit = dict(self.audit)
+        audit.setdefault("head", anchor["child_head"])
+        audit.setdefault("anchor", dict(anchor))
+        pinned = set(retained_ambiguous_fingerprints)
+        audit["retained_ambiguous"] = [
+            item for item in audit.get("retained_ambiguous", ())
+            if isinstance(item, dict) and item.get("fingerprint") in pinned
+        ]
+        return audit
 
 
 def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_repository="owner/repo"):
@@ -111,11 +130,14 @@ class ControllerTests(unittest.TestCase):
     def make(self, values, evidence=None, *, heads=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        provider = evidence if evidence is not None else {}
+        if not callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
+            provider = AuditedEvidence(provider)
         return ReviewController(
             store=StateStore(Path(directory.name) / "state.json"),
             github=FakeGitHub(values),
             git=FakeGit(heads),
-            evidence=evidence or {},
+            evidence=provider,
             repository="owner/repo",
         )
 
@@ -202,10 +224,11 @@ class ControllerTests(unittest.TestCase):
         }
 
     def grant_allocation(self, *, channel="hosted", evidence=None, values=None, heads=None):
+        values = values or {1: pr(1, HEAD_1)}
         controller = self.make(
-            values or {1: pr(1, HEAD_1)},
+            values,
             evidence or {(1, channel): [self.allocation_evidence(completed=False)]},
-            heads=heads,
+            heads=heads or {"feature-1": values[1].head},
         )
         controller.set_stack([1])
         controller.decide_allocation(
@@ -236,22 +259,279 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(granted["allocation"]["baseline_checkpoints"], [])
         self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
 
-    def test_completed_dry_result_consumes_once_but_waits_for_handoff(self):
-        evidence = {(1, "hosted"): [self.allocation_evidence(accepted=1)]}
+    def test_direct_human_stop_is_a_distinct_review_status_and_needs_no_ci_evidence(self):
+        hosted = self.allocation_evidence(checkpoint="latest-hosted")
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [hosted]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="Overseer stopped further review discovery",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["reviewed_head"], HEAD_1)
+        self.assertEqual(stopped["stop_head"], HEAD_1)
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_hosted_stop_is_blocked_by_current_head_cli_accepted_finding(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-findings", accepted=1, channel="cli")],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="CLI findings on the live head have no published correction",
+            )
+
+    def test_hosted_stop_allows_older_cli_findings_on_corrected_descendant(self):
+        values = {1: pr(1, HEAD_2)}
+        controller = self.make(
+            values,
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted", head=HEAD_1)],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-findings", head=HEAD_1, accepted=1, channel="cli")],
+            },
+            heads={"feature-1": HEAD_2},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="the accepted CLI findings are on an older head with a published descendant",
+        )
+
+        self.assertEqual(stopped["stop_head"], HEAD_2)
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_resolved_cli_provisional_history_does_not_block_direct_hosted_stop(self):
+        provisional = self.allocation_evidence(
+            checkpoint="cli-provisional",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        completed_cli = self.allocation_evidence(checkpoint="cli-completed", channel="cli")
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [provisional, completed_cli],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="stop after the normal CLI review superseded provisional history",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_current_cli_provisional_state_still_blocks_direct_hosted_stop(self):
+        completed_cli = self.allocation_evidence(checkpoint="cli-completed", channel="cli")
+        provisional = self.allocation_evidence(
+            checkpoint="cli-current-provisional",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [completed_cli, provisional],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "cli channel has provisional review evidence"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="a provisional result on the current head is unresolved",
+            )
+
+    def test_stale_later_cli_provisional_does_not_replace_latest_attributable_checkpoint(self):
+        stale_head = "7" * 40
+        provisional = self.allocation_evidence(
+            head=stale_head,
+            checkpoint="stale-cli-provisional",
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "cli"): [
+                    self.allocation_evidence(checkpoint="latest-cli", channel="cli"),
+                    provisional,
+                ]
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="cli",
+            reason="the later provisional observation belongs to a stale head",
+        )
+
+        self.assertEqual(stopped["reviewed_head"], HEAD_1)
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_equivalent_history_retain_can_preserve_stop_across_rebased_head(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="reviewed-head")]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.git.patch_identity = lambda _merge_base, _head: "same-owned-patch"
+        evidence[(1, "hosted")][0]["patch_id"] = "same-owned-patch"
+        controller.set_stack([1])
+        controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="stop further hosted discovery after human review",
+        )
+
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (HEAD_1, HEAD_2)
+        without_judgment = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(without_judgment["status"], "INVALID")
+        self.assertIn("stopped head", without_judgment["reason"])
+
+        controller.decide_judgment(
+            pr=1,
+            channel="hosted",
+            decision="retain",
+            head=HEAD_2,
+            checkpoint="reviewed-head",
+            reason="same owned patch after coherent head rewrite",
+        )
+        retained = controller.status()["prs"][0]
+        self.assertEqual(retained["reconciliation"], "COHERENT")
+        self.assertEqual(retained["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(retained["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_stop_rejects_missing_or_stale_checkpoint_and_active_reservation(self):
+        pending = {1: pr(1, HEAD_1)}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.make(pending, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "completed attributable checkpoint"):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="latest"))
+        with self.assertRaisesRegex(ControllerError, "does not match the latest attributable"):
+            controller.decide_stop(pr=1, channel="hosted", checkpoint="stale", reason="human stop")
+
+        provider = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest")]},
+            audit={
+                "complete": True,
+                "active_reservations": ["review active"],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        active = self.make(pending, provider, heads={"feature-1": HEAD_1})
+        active.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "active review or reservation"):
+            active.decide_stop(pr=1, channel="hosted", reason="human stop")
+
+    def test_terminal_ambiguous_response_requires_exact_non_counting_retention(self):
+        fingerprint = "f" * 64
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": fingerprint,
+                        "trigger_id": 123,
+                        "response_id": 124,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [{"fingerprint": fingerprint}],
+                "retained_ambiguous": [{"fingerprint": fingerprint, "trigger_id": 123, "response_id": 124}],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(
+            ControllerError, "active review or reservation|unretained terminal ambiguity|exact fingerprint"
+        ):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="Overseer accepts this review-discovery stop",
+            retain_ambiguous_fingerprint=fingerprint,
+            ambiguity_reason="terminal response does not provide an attributable review object",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["retained_ambiguous_fingerprint"], fingerprint)
+        self.assertEqual(stopped["allocation"]["retained_ambiguous_reason"], "terminal response does not provide an attributable review object")
+
+    def test_completed_result_consumes_once_until_an_explicit_stop(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         controller = self.grant_allocation(evidence=evidence)
-        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-dry"))
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-dry", accepted=1))
 
         result = controller.status()["prs"][0]
 
         self.assertEqual(result["allocations"]["hosted"]["status"], "EXHAUSTED_PENDING")
         self.assertEqual(result["allocations"]["hosted"]["checkpoint"], "allocated-dry")
-        self.assertEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(result["channels"]["hosted"], "READY")
         with self.assertRaisesRegex(ControllerError, "ALLOCATION_EXHAUSTED"):
             controller.resolve_hosted_target()
         with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
-            controller.decide_allocation(
-                action="handoff", pr=1, channel="hosted", head=HEAD_1,
-                checkpoint="allocated-dry", validation="checks green", reason="premature",
+            controller.decide_stop(
+                pr=1, channel="hosted", head=HEAD_1,
+                checkpoint="allocated-dry", reason="accepted findings are not yet published",
             )
 
     def test_ineligible_completed_observation_does_not_invalidate_one_valid_allocation_result(self):
@@ -293,7 +573,7 @@ class ControllerTests(unittest.TestCase):
                     self.allocation_evidence(checkpoint=f"allocated-{label}", accepted=accepted)
                 )
 
-                with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+                with self.assertRaisesRegex(ControllerError, "consumed or"):
                     controller.decide_allocation(
                         action="renew",
                         pr=1,
@@ -318,7 +598,7 @@ class ControllerTests(unittest.TestCase):
 
         with (
             patch.object(controller.git, "is_ancestor", side_effect=reject_review_ancestry),
-            self.assertRaisesRegex(ControllerError, "consumed or handed-off"),
+            self.assertRaisesRegex(ControllerError, "consumed or"),
         ):
             controller.decide_allocation(
                 action="renew",
@@ -337,7 +617,7 @@ class ControllerTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+        with self.assertRaisesRegex(ControllerError, "consumed or"):
             controller.decide_allocation(
                 action="renew",
                 pr=1,
@@ -346,27 +626,27 @@ class ControllerTests(unittest.TestCase):
                 reason="do not renew after ambiguous completed results",
             )
 
-    def test_handed_off_allocation_cannot_be_renewed(self):
+    def test_stopped_allocation_cannot_be_renewed(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         controller = self.grant_allocation(evidence=evidence)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
-        controller.decide_allocation(
-            action="handoff",
+        stopped = controller.decide_stop(
             pr=1,
             channel="hosted",
             head=HEAD_1,
             checkpoint="allocated",
-            validation="checks passed",
-            reason="hand off completed review capacity",
+            reason="stop discovery after the allocated result",
         )
+        self.assertEqual(stopped["stop_basis"], "allocated")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
-        with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+        with self.assertRaisesRegex(ControllerError, "consumed or stopped"):
             controller.decide_allocation(
                 action="renew",
                 pr=1,
                 channel="hosted",
                 head=HEAD_1,
-                reason="do not reopen a handed-off allocation",
+                reason="do not reopen a stopped allocation",
             )
 
     def test_pre_review_identity_move_can_still_renew_allocation(self):
@@ -408,41 +688,40 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaises(ControllerError):
                 controller.resolve_hosted_target()
 
-    def test_productive_result_requires_corrected_head_before_handoff(self):
+    def test_productive_result_requires_corrected_head_before_stop(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         controller = self.grant_allocation(evidence=evidence)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
 
         with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
-            controller.decide_allocation(
-                action="handoff",
+            controller.decide_stop(
                 pr=1,
                 channel="hosted",
                 head=HEAD_1,
                 checkpoint="allocated-findings",
-                validation="checks passed",
                 reason="findings remain on the promised head",
             )
 
-    def test_accepted_fix_head_can_be_handed_off_after_validation(self):
+    def test_accepted_fix_head_can_be_stopped_after_publication(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}
         controller = self.grant_allocation(evidence=evidence, values=values)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
         values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
 
-        result = controller.decide_allocation(
-            action="handoff",
+        result = controller.decide_stop(
             pr=1,
             channel="hosted",
             head=HEAD_2,
             checkpoint="allocated-findings",
-            validation="focused correction and required checks passed",
             reason="accepted findings are published and validated",
         )
 
-        self.assertEqual(result["allocation"]["handoff_head"], HEAD_2)
-        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "HANDED_OFF")
+        self.assertEqual(result["stop_basis"], "allocated")
+        self.assertEqual(result["allocation"]["stop_reviewed_head"], HEAD_1)
+        self.assertEqual(result["allocation"]["stop_head"], HEAD_2)
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "STOPPED")
 
     def test_duplicate_stale_partial_and_rate_limited_results_do_not_consume(self):
         cases = (
@@ -501,7 +780,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(cancelled["allocations"], [])
         self.assertNotIn("hosted", controller.status()["prs"][0]["allocations"])
 
-    def test_next_pr_is_selected_after_handoff_but_parent_movement_blocks_it(self):
+    def test_next_pr_is_selected_after_stop_but_parent_movement_blocks_it(self):
         values = {
             1: pr(1, HEAD_1),
             2: pr(2, HEAD_2, "feature-1", HEAD_1),
@@ -525,14 +804,12 @@ class ControllerTests(unittest.TestCase):
             action="grant", pr=1, channel="hosted", head=HEAD_1, reason="parent handoff"
         )
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
-        controller.decide_allocation(
-            action="handoff",
+        controller.decide_stop(
             pr=1,
             channel="hosted",
             head=HEAD_1,
             checkpoint="allocated",
-            validation="parent checks passed",
-            reason="parent handoff complete",
+            reason="stop review discovery on the first stack item",
         )
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 2)
 

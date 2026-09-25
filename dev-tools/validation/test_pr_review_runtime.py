@@ -937,7 +937,7 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": checkpoint_at,
         }
 
-        def history_for(comments, reviews=None):
+        def history_for(comments, reviews=None, threads=None):
             with tempfile.TemporaryDirectory() as directory:
                 common = Path(directory)
                 record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -945,10 +945,71 @@ class RuntimeTest(unittest.TestCase):
                 record_path.write_text(
                     json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
                 )
-                return self._history(common, self._payload(comments, reviews))
+                return self._history(common, self._payload(comments, reviews, threads))
 
         valid = history_for([trigger, summary, reply, checkpoint])
         self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in valid))
+
+        provider_summary = {
+            **summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 89.\n"
+                "Files not reviewed due to moderation or processing errors: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "updatedAt": "2026-09-23T00:03:20Z",
+        }
+        edited_reply = {**reply, "updatedAt": "2026-09-23T00:03:30Z"}
+        provider_valid = history_for([trigger, provider_summary, edited_reply, checkpoint])
+        self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_valid))
+
+        incomplete_provider_summary = {
+            **provider_summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                "3 reported issues remain open.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        stale_provider_summary = {**provider_summary, "updatedAt": trigger_at}
+        mismatched_provider_summary = {
+            **provider_summary,
+            "body": provider_summary["body"].replace(HEAD, "d" * 40),
+        }
+        for invalid_summary in (
+            incomplete_provider_summary,
+            stale_provider_summary,
+            mismatched_provider_summary,
+        ):
+            with self.subTest(provider_summary=invalid_summary["body"]):
+                rejected = history_for([trigger, invalid_summary, edited_reply, checkpoint])
+                self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in rejected))
+
+        inline_comment = {
+            "databaseId": 54,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A post-trigger inline finding.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        with_inline_output = history_for(
+            [trigger, provider_summary, edited_reply, checkpoint],
+            threads=[{"comments": {"nodes": [inline_comment]}}],
+        )
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_inline_output))
+
+        post_trigger_comment = {
+            "databaseId": 53,
+            "author": {"login": "coderabbitai"},
+            "body": "A post-trigger bot comment.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        with_issue_output = history_for([trigger, provider_summary, post_trigger_comment, edited_reply, checkpoint])
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_issue_output))
 
         mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
         missing_summary = [trigger, reply, checkpoint]
@@ -1039,6 +1100,171 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(len(held), 1)
         self.assertTrue(held[0]["held"])
         self.assertFalse(held[0].get("completed", False))
+
+    def test_terminal_ambiguous_hosted_history_exposes_only_verified_immutable_identity(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        response_at = "2026-09-23T00:03:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=HEAD,
+            reason="finished response has no head-attributed summary",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
+            payload = self._payload([trigger, response])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        held = [item for item in history if item.get("terminal_ambiguous") is True]
+        self.assertEqual(len(held), 1)
+        self.assertTrue(held[0]["held"])
+        self.assertEqual(held[0]["trigger_id"], 10)
+        self.assertEqual(held[0]["response_id"], 11)
+        self.assertEqual(held[0]["captured_head"], HEAD)
+        self.assertRegex(held[0]["fingerprint"], r"^[0-9a-f]{64}$")
+
+        state.response_id = None
+        state.response_created_at = None
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
+            payload = self._payload([trigger, response])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+        self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
+
+    def test_review_stop_audit_pins_only_one_exact_terminal_ambiguity(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        response_at = "2026-09-23T00:03:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=HEAD,
+            reason="finished response has no head-attributed summary",
+        )
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        expected_audit = {
+            "complete": True,
+            "active_reservations": ["ambiguous"],
+            "unmatched_responses": [],
+            "ambiguous_responses": ["unattributed trigger response"],
+            "unresolved_findings": [],
+        }
+
+        def run_review_stop(selected_audit=expected_audit, pins=()):
+            observer._payloads.clear()
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit),
+                patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger-10.json")]),
+                patch.object(hosted, "load_trigger_record", return_value=record),
+                patch.object(hosted, "trigger_state", return_value=state),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.review_stop_audit(42, anchor, pins)
+
+        observed = run_review_stop()
+        ambiguous = observed["ambiguous_terminal_responses"]
+        self.assertEqual(len(ambiguous), 1)
+        self.assertEqual(ambiguous[0]["trigger_id"], 10)
+        self.assertEqual(ambiguous[0]["response_id"], 11)
+        self.assertTrue(observed["blockers"])
+
+        retained = run_review_stop(pins=(ambiguous[0]["fingerprint"],))
+        self.assertEqual(retained["retained_ambiguous"], ambiguous)
+        self.assertEqual(retained["active_reservations"], [])
+        self.assertEqual(retained["ambiguous_responses"], [])
+        self.assertEqual(retained["blockers"], [])
+
+        with self.assertRaisesRegex(ControllerError, "does not identify one current immutable response"):
+            run_review_stop(pins=("0" * 64,))
+
+        additional_ambiguity = {
+            **expected_audit,
+            "active_reservations": ["ambiguous", "ambiguous"],
+            "ambiguous_responses": ["unattributed trigger response", "unattributed trigger response"],
+        }
+        with self.assertRaisesRegex(ControllerError, "cannot be isolated"):
+            run_review_stop(additional_ambiguity, pins=(ambiguous[0]["fingerprint"],))
 
     def test_archived_completed_hosted_response_uses_exact_uncheckpointed_observation_fingerprint(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"

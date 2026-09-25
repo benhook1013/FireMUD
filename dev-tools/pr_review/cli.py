@@ -104,16 +104,25 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
     allocation = decide_commands.add_parser(
-        "allocation", help="grant, renew, cancel, or hand off one exact-bound channel review allocation"
+        "allocation", help="grant, renew, or cancel one exact-bound channel review allocation"
     )
-    allocation.add_argument("action", choices=("grant", "renew", "cancel", "handoff"))
+    allocation.add_argument("action", choices=("grant", "renew", "cancel"))
     allocation.add_argument("--pr", required=True, type=_positive_int)
     allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
     allocation.add_argument("--head", required=True, type=_exact_sha)
     allocation.add_argument("--reason", required=True)
-    allocation.add_argument("--checkpoint")
-    allocation.add_argument("--validation")
     allocation.add_argument("--json", action="store_true", dest="as_json")
+    stop = decide_commands.add_parser(
+        "stop", help="record a human decision to stop new review discovery on one channel"
+    )
+    stop.add_argument("--pr", required=True, type=_positive_int)
+    stop.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    stop.add_argument("--reason", required=True)
+    stop.add_argument("--head", type=_exact_sha)
+    stop.add_argument("--checkpoint")
+    stop.add_argument("--retain-ambiguous-fingerprint")
+    stop.add_argument("--ambiguity-reason")
+    stop.add_argument("--json", action="store_true", dest="as_json")
     summary_disposition = decide_commands.add_parser(
         "summary-disposition",
         help="adjudicate one exact CodeRabbit summary-only finding bucket",
@@ -245,10 +254,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
             for channel, state in stack_item["channels"].items():
-                if state != "COMPLETE":
+                if state == "HUMAN_STOPPED":
+                    review_reasons.append(
+                        f"{channel} review discovery was explicitly stopped; this is not taper or merge-readiness proof"
+                    )
+                elif state != "COMPLETE":
                     review_reasons.append(f"{channel} review policy is {state}")
             for channel, allocation in stack_item.get("allocations", {}).items():
-                if allocation["status"] != "HANDED_OFF":
+                if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
                     review_reasons.append(
                         f"{channel} review allocation is {allocation['status']}: {allocation['reason']}"
                     )
@@ -422,8 +435,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 channel=args.channel,
                 head=args.head,
                 reason=args.reason,
+            ), 0
+        if args.decide_command == "stop":
+            return controller.decide_stop(
+                pr=args.pr,
+                channel=args.channel,
+                reason=args.reason,
+                head=args.head,
                 checkpoint=args.checkpoint,
-                validation=args.validation,
+                retain_ambiguous_fingerprint=args.retain_ambiguous_fingerprint,
+                ambiguity_reason=args.ambiguity_reason,
             ), 0
         if args.decide_command == "reconcile":
             return controller.decide_reconciliation(

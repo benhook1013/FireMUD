@@ -29,6 +29,7 @@ class ReviewStatus(str, Enum):
     JUDGMENT_REQUIRED = "JUDGMENT_REQUIRED"
     PROVISIONAL = "PROVISIONAL"
     ALLOCATION_EXHAUSTED = "ALLOCATION_EXHAUSTED"
+    HUMAN_STOPPED = "HUMAN_STOPPED"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -305,6 +306,7 @@ def select_review_target(
     reconciliation_by_pr: Mapping[int, ReconciliationStatus | str] | None = None,
     other_channel_heads: Mapping[int, str] | None = None,
     handed_off_prs: Iterable[int] = (),
+    human_stopped_prs: Iterable[int] = (),
     exhausted_prs: Iterable[int] = (),
     allocation_blocks: Mapping[int, str] | None = None,
 ) -> ChannelDecision:
@@ -314,17 +316,22 @@ def select_review_target(
     reconciliation_by_pr = reconciliation_by_pr or {}
     other_channel_heads = other_channel_heads or {}
     handed_off = set(handed_off_prs)
+    human_stopped = set(human_stopped_prs)
     exhausted = set(exhausted_prs)
     allocation_blocks = allocation_blocks or {}
+    encountered_human_stop = False
     for pr in live_prs:
         if pr in handed_off:
+            continue
+        if pr in human_stopped:
+            encountered_human_stop = True
             continue
         if pr in allocation_blocks:
             return ChannelDecision(selected, pr, ReviewStatus.JUDGMENT_REQUIRED, allocation_blocks[pr])
         if pr in exhausted:
             return ChannelDecision(
                 selected, pr, ReviewStatus.ALLOCATION_EXHAUSTED,
-                f"{pr} has consumed its {selected.value} allocation; findings and validation must be cleared before handoff",
+                f"{pr} has consumed its {selected.value} allocation; an explicit stop decision is required",
             )
         history = evidence_by_pr.get(pr, ())
         all_items = [Evidence.from_value(value) for value in history]
@@ -362,5 +369,12 @@ def select_review_target(
             status,
             f"{pr} is the earliest incomplete {selected.value} target",
             latest.provisional or status == ReviewStatus.PROVISIONAL,
+        )
+    if encountered_human_stop:
+        return ChannelDecision(
+            selected,
+            None,
+            ReviewStatus.HUMAN_STOPPED,
+            f"all {selected.value} targets are complete or explicitly stopped",
         )
     return ChannelDecision(selected, None, ReviewStatus.COMPLETE, f"all {selected.value} targets are complete")

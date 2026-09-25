@@ -14,7 +14,9 @@ checkpoint observations remain provider data and are never copied into state.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import fcntl
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -1362,12 +1364,463 @@ class ReviewController:
         )
         return {"decision": decision.to_dict(), "reconciliations": [item.to_dict() for item in updated.reconciliations]}
 
+    def _stop_lock_paths(self, pr: int) -> tuple[Path, Path]:
+        """Return the same CLI and Hosted request locks used by review runners."""
+
+        if self.store.path.name == "pr-review-stack.json" and self.store.path.parent.name == "firemud":
+            common = self.store.path.parent.parent
+            cli_path = common / "firemud" / "pr-review" / "cli.lock"
+            hosted_path = common / "firemud" / "hosted" / self.repository.replace("/", "--") / f"pr-{pr}" / "request.lock"
+        else:
+            lock_root = self.store.path.parent / ".pr-review-stop-locks"
+            cli_path = lock_root / "cli.lock"
+            hosted_path = lock_root / f"hosted-pr-{pr}.lock"
+        return cli_path, hosted_path
+
+    @contextlib.contextmanager
+    def _stop_review_locks(self, pr: int):
+        """Prevent the stop decision from racing an active channel review."""
+
+        handles = []
+        try:
+            for path in self._stop_lock_paths(pr):
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                handle = path.open("a+")
+                handles.append(handle)
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ControllerError(f"cannot stop review discovery while a review is active ({path.name})") from exc
+            yield
+        finally:
+            for handle in reversed(handles):
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+
+    @staticmethod
+    def _stop_reason(reason: Any) -> str:
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ControllerError("review stop requires a non-empty reason of at most 500 characters")
+        if any(ord(character) < 0x20 for character in reason):
+            raise ControllerError("review stop reason must not contain control characters")
+        return reason.strip()
+
+    @staticmethod
+    def _stop_summary_fingerprints(state: ReviewState, pr: int) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                observation_fingerprint(item.to_dict())
+                for item in state.summary_dispositions
+                if item.pr == pr
+            )
+        )
+
+    def _latest_stop_checkpoint(
+        self,
+        pr: int,
+        channel: policy.Channel,
+        history: Sequence[Any],
+        checkpoint_pin: str | None,
+    ) -> tuple[Any, int]:
+        parsed: list[tuple[policy.Evidence, Any]] = []
+        identities: set[str] = set()
+        for value in history:
+            try:
+                item = policy.Evidence.from_value(value)
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise ControllerError("review stop encountered malformed live evidence") from exc
+            if item.pr != pr:
+                raise ControllerError("review stop evidence is bound to another pull request")
+            if not isinstance(item.checkpoint, str) or not item.checkpoint.strip():
+                raise ControllerError("review stop evidence lacks an immutable checkpoint identity")
+            if item.checkpoint in identities:
+                raise ControllerError("review stop evidence has an ambiguous duplicate checkpoint identity")
+            identities.add(item.checkpoint)
+            parsed.append((item, value))
+        attributable = [
+            (index, item, source)
+            for index, (item, source) in enumerate(parsed)
+            if item.completed is True
+            and item.attributable is True
+            and not item.correction
+            and not item.non_counting
+            and item.provisional is False
+        ]
+        if not attributable:
+            raise ControllerError("review stop requires a completed attributable checkpoint")
+        index, latest, latest_source = attributable[-1]
+        if checkpoint_pin is not None and checkpoint_pin != _field(latest_source, "checkpoint", "checkpoint_id"):
+            raise ControllerError("review stop checkpoint does not match the latest attributable result")
+        if not (
+            latest.anchored is True
+            and latest.provisional is False
+            and _field(latest_source, "channel") in (None, channel.value)
+        ):
+            raise ControllerError("latest attributable checkpoint is unanchored, provisional, or from another channel")
+        try:
+            reviewed_head = _sha(_field(latest_source, "head", "reviewed_head"), "latest reviewed head")
+            reviewed_patch = _field(latest_source, "patch_id", "patch_identity")
+            _sha(_field(latest_source, "child_head"), "checkpoint child head")
+            _sha(_field(latest_source, "parent_head"), "checkpoint parent head")
+            _sha(_field(latest_source, "merge_base"), "checkpoint merge base")
+        except ControllerError as exc:
+            raise ControllerError("latest checkpoint has an incomplete exact stack identity") from exc
+        if _field(latest_source, "child_head").casefold() != reviewed_head.casefold():
+            raise ControllerError("latest checkpoint reviewed head does not match its anchored child head")
+        if not isinstance(reviewed_patch, str) or not reviewed_patch.strip():
+            raise ControllerError("latest checkpoint has no owned-patch identity")
+        for later, _source in parsed[index + 1 :]:
+            if (
+                later.completed
+                and later.attributable
+                and not later.correction
+                and not later.non_counting
+                and not later.provisional
+            ):
+                raise ControllerError("latest attributable checkpoint is ambiguous")
+        return latest_source, index
+
+    def _stop_audit(
+        self,
+        pr: int,
+        current: AnchorFacts,
+        retained_ambiguous_fingerprints: tuple[str, ...],
+    ) -> Mapping[str, Any]:
+        provider = self._evidence_provider
+        review_audit = getattr(provider, "review_stop_audit", None)
+        if callable(review_audit):
+            try:
+                audit = review_audit(
+                    pr,
+                    current.as_dict(),
+                    retained_ambiguous_fingerprints=retained_ambiguous_fingerprints,
+                )
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
+        elif retained_ambiguous_fingerprints:
+            raise ControllerError("exact terminal-ambiguity retention requires the live review-stop evidence audit")
+        elif self.isolated_fixture:
+            audit = {
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "retained_ambiguous": [],
+            }
+        elif callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
+            try:
+                audit = provider.legacy_transition_reauthorization_audit(pr, (), current.as_dict())
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
+        else:
+            raise ControllerError("review stop requires complete paginated evidence for both review channels")
+        if not isinstance(audit, Mapping) or audit.get("complete") is not True:
+            raise ControllerError("review stop requires complete paginated evidence for both review channels")
+        if audit.get("head") is not None and str(audit.get("head")).casefold() != current.child_head.casefold():
+            raise ControllerError("review-stop evidence audit observed a stale pull-request head")
+        if audit.get("anchor") is not None and audit.get("anchor") != current.as_dict():
+            raise ControllerError("review-stop evidence audit observed a stale stack identity")
+        for field, description in (
+            ("active_reservations", "active review or reservation"),
+            ("unmatched_responses", "unmatched review response"),
+            ("ambiguous_responses", "unresolved evidence ambiguity"),
+            ("unresolved_findings", "unresolved actionable finding or thread"),
+        ):
+            values = audit.get(field, [])
+            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+                raise ControllerError(f"review-stop audit has malformed {field}")
+            if values:
+                raise ControllerError(f"review stop is blocked by an {description}")
+        terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
+        retained_ambiguities = audit.get("retained_ambiguous", [])
+        if not isinstance(terminal_ambiguities, Sequence) or isinstance(terminal_ambiguities, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed terminal ambiguity evidence")
+        if not isinstance(retained_ambiguities, Sequence) or isinstance(retained_ambiguities, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed retained ambiguity evidence")
+        retained_fingerprints = {
+            item.get("fingerprint")
+            for item in retained_ambiguities
+            if isinstance(item, Mapping) and isinstance(item.get("fingerprint"), str)
+        }
+        if any(
+            not isinstance(item, Mapping)
+            or not isinstance(item.get("fingerprint"), str)
+            or item["fingerprint"] not in retained_fingerprints
+            for item in terminal_ambiguities
+        ):
+            raise ControllerError("review stop is blocked by unretained terminal ambiguity")
+        return audit
+
+    def _stop_ambiguity_pin(
+        self,
+        histories: Mapping[policy.Channel, Sequence[Any]],
+        fingerprint: str | None,
+        reason: str | None,
+        audit: Mapping[str, Any],
+    ) -> tuple[str | None, str | None]:
+        candidates = [
+            value
+            for history in histories.values()
+            for value in history
+            if _field(value, "terminal_ambiguous") is True
+        ]
+        if fingerprint is None:
+            if candidates:
+                raise ControllerError("terminal ambiguous evidence requires an exact fingerprint and retention reason")
+            if reason is not None:
+                raise ControllerError("an ambiguity reason requires --retain-ambiguous-fingerprint")
+            return None, None
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise ControllerError("retained ambiguity fingerprint must be an exact lowercase SHA-256")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ControllerError("retaining terminal ambiguity requires a reason of at most 500 characters")
+        if any(ord(character) < 0x20 for character in reason):
+            raise ControllerError("ambiguity retention reason must not contain control characters")
+        matches = [value for value in candidates if _field(value, "fingerprint") == fingerprint]
+        if len(matches) != 1:
+            raise ControllerError("retained ambiguity fingerprint does not identify one terminal response")
+        matching_audit = [
+            item for item in audit.get("retained_ambiguous", ())
+            if isinstance(item, Mapping) and item.get("fingerprint") == fingerprint
+        ]
+        if len(matching_audit) != 1:
+            raise ControllerError("complete evidence audit did not retain the exact terminal response fingerprint")
+        return fingerprint, reason.strip()
+
+    def _check_stop_evidence(
+        self,
+        state: ReviewState,
+        pr: int,
+        channel: policy.Channel,
+        current: AnchorFacts,
+        reconciliation: stack.Reconciliation,
+        *,
+        checkpoint_pin: str | None,
+        retained_ambiguous_fingerprint: str | None = None,
+        ambiguity_reason: str | None = None,
+    ) -> tuple[Any, tuple[str, str] | None, dict[policy.Channel, list[Any]]]:
+        histories = {
+            selected: self._policy_history(state, pr, selected, reconciliation)
+            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+        audit = self._stop_audit(
+            pr,
+            current,
+            (retained_ambiguous_fingerprint,) if retained_ambiguous_fingerprint is not None else (),
+        )
+        retained_fingerprint, retained_reason = self._stop_ambiguity_pin(
+            histories, retained_ambiguous_fingerprint, ambiguity_reason, audit
+        )
+        for selected, history in histories.items():
+            parsed_history = [policy.Evidence.from_value(value) for value in history]
+            valid_review_indexes = [
+                index
+                for index, evidence_value in enumerate(parsed_history)
+                if evidence_value.completed is True
+                and evidence_value.attributable is True
+                and evidence_value.anchored is True
+                and evidence_value.provisional is False
+                and not evidence_value.correction
+                and not evidence_value.non_counting
+            ]
+            last_valid_review_index = max(valid_review_indexes, default=-1)
+            last_valid_review_head = (
+                parsed_history[last_valid_review_index].head
+                if last_valid_review_index >= 0
+                else None
+            )
+            for index, (value, evidence_value) in enumerate(zip(history, parsed_history, strict=True)):
+                if evidence_value.provisional and index > last_valid_review_index:
+                    provisional_head = evidence_value.head.casefold()
+                    relevant_heads = {current.child_head.casefold()}
+                    if last_valid_review_head:
+                        relevant_heads.add(last_valid_review_head.casefold())
+                    if not provisional_head or provisional_head in relevant_heads:
+                        raise ControllerError(f"{selected.value} channel has provisional review evidence")
+                if (
+                    evidence_value.completed is True
+                    and evidence_value.attributable is True
+                    and evidence_value.provisional is False
+                    and not evidence_value.correction
+                    and not evidence_value.non_counting
+                ):
+                    if type(evidence_value.accepted) is not int or evidence_value.accepted < 0:
+                        raise ControllerError(f"{selected.value} channel has a malformed accepted finding count")
+                    if evidence_value.accepted > 0:
+                        reviewed_head = _field(value, "head", "reviewed_head")
+                        try:
+                            _sha(reviewed_head, "accepted finding reviewed head")
+                            has_corrected_descendant = self.git.is_ancestor(reviewed_head, current.child_head)
+                        except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                            raise ControllerError("could not verify corrected-head ancestry for accepted findings") from exc
+                        if not has_corrected_descendant or reviewed_head.casefold() == current.child_head.casefold():
+                            raise ControllerError(
+                                "accepted findings need a published corrected head before review can stop"
+                            )
+                if any(
+                    _field(value, flag) is True
+                    for flag in (
+                        "held",
+                        "unstable",
+                        "rate_limited",
+                        "unreconciled",
+                        "parent_moved",
+                        "over_ceiling",
+                    )
+                ):
+                    if _field(value, "terminal_ambiguous") is True and _field(value, "fingerprint") == retained_fingerprint:
+                        continue
+                    raise ControllerError(f"{selected.value} channel has unresolved review evidence")
+                checkpoint_id = _field(value, "checkpoint", "checkpoint_id")
+                if isinstance(checkpoint_id, str) and checkpoint_id.startswith(("trigger:", "pending-capture:")):
+                    if _field(value, "terminal_ambiguous") is True and _field(value, "fingerprint") == retained_fingerprint:
+                        continue
+                    raise ControllerError(f"{selected.value} channel has pending or ambiguous review evidence")
+        history = histories[channel]
+        latest, index = self._latest_stop_checkpoint(pr, channel, history, checkpoint_pin)
+        reviewed_head = _field(latest, "head", "reviewed_head")
+        try:
+            is_ancestor = self.git.is_ancestor(reviewed_head, current.child_head)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise ControllerError("could not verify latest reviewed-head ancestry") from exc
+        equivalent_retain = self._has_stop_retain_judgment(
+            state,
+            pr,
+            channel.value,
+            _field(latest, "checkpoint", "checkpoint_id"),
+            reviewed_head,
+            current.patch_id,
+            reconciliation.status_for(pr, channel.value),
+        ) and _field(latest, "patch_id", "patch_identity") == current.patch_id
+        if not is_ancestor and not equivalent_retain:
+            raise ControllerError("latest reviewed head is not an ancestor of the live stop head")
+        accepted = _field(latest, "accepted")
+        if type(accepted) is not int or accepted < 0:
+            raise ControllerError("latest attributable checkpoint has a malformed accepted count")
+        reviewed_head = _field(latest, "head", "reviewed_head")
+        if accepted > 0 and reviewed_head.casefold() == current.child_head.casefold():
+            raise ControllerError("accepted findings need a published corrected head before review can stop")
+        return latest, (retained_fingerprint, retained_reason) if retained_fingerprint else None, histories
+
+    def _stop_progress(
+        self,
+        allocation: ReviewAllocation,
+        state: ReviewState,
+        history: Sequence[Any],
+        current: AnchorFacts | None,
+        reconciliation: stack.ReconciliationStatus,
+        reconciliation_result: stack.Reconciliation | None,
+    ) -> dict[str, Any]:
+        def invalid(reason: str) -> dict[str, Any]:
+            return {
+                "status": "INVALID",
+                "reason": reason,
+                "stop_basis": allocation.stop_basis,
+                "stop_checkpoint": allocation.stop_checkpoint,
+                "stop_head": allocation.stop_head,
+                "stop_reason": allocation.stop_reason,
+                "checkpoint": allocation.stop_checkpoint,
+            }
+
+        if allocation.stop_basis is None:
+            return invalid("the allocation has no canonical stop decision")
+        if current is None or reconciliation in {
+            stack.ReconciliationStatus.PARENT_MOVED,
+            stack.ReconciliationStatus.UNRECONCILED,
+        }:
+            return invalid("the stopped stack identity is no longer coherent")
+        equivalent_retain = self._has_stop_retain_judgment(
+            state,
+            allocation.pr,
+            allocation.channel,
+            allocation.stop_checkpoint,
+            allocation.stop_reviewed_head,
+            current.patch_id,
+            reconciliation,
+        )
+        if current.patch_id != allocation.stop_patch_id or (
+            current.child_head != allocation.stop_head and not equivalent_retain
+        ):
+            return invalid("the stopped head or owned patch changed after the decision")
+        topology_matches = (
+            current.parent_identity == allocation.stop_parent_identity
+            and current.parent_head == allocation.stop_parent_head
+            and current.merge_base == allocation.stop_merge_base
+        )
+        if not topology_matches and not equivalent_retain:
+            return invalid("parent reconciliation needs an explicit unchanged-patch retain judgment")
+        if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
+            return invalid("new summary-finding decisions require a fresh review-stop judgment")
+        if reconciliation_result is None:
+            return invalid("the complete reconciled stack identity is unavailable")
+        try:
+            latest, _, _ = self._check_stop_evidence(
+                state,
+                allocation.pr,
+                policy.Channel(allocation.channel),
+                current,
+                reconciliation_result,
+                checkpoint_pin=allocation.stop_checkpoint,
+                retained_ambiguous_fingerprint=allocation.retained_ambiguous_fingerprint,
+                ambiguity_reason=allocation.retained_ambiguous_reason,
+            )
+        except ControllerError as exc:
+            return invalid(str(exc))
+        if (
+            _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
+            or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
+        ):
+            return invalid("the recorded review checkpoint identity changed")
+        return {
+            "status": "STOPPED",
+            "reason": "review discovery explicitly stopped; merge readiness remains separate",
+            "stop_basis": allocation.stop_basis,
+            "stop_checkpoint": allocation.stop_checkpoint,
+            "stop_reviewed_head": allocation.stop_reviewed_head,
+            "stop_head": allocation.stop_head,
+            "stop_reason": allocation.stop_reason,
+            "retained_ambiguous_fingerprint": allocation.retained_ambiguous_fingerprint,
+            "checkpoint": allocation.stop_checkpoint,
+            "accepted": None,
+        }
+
+    @staticmethod
+    def _has_stop_retain_judgment(
+        state: ReviewState,
+        pr: int,
+        channel: str,
+        checkpoint: str,
+        reviewed_head: str,
+        current_patch_id: str,
+        reconciliation: stack.ReconciliationStatus,
+    ) -> bool:
+        """Allow only a checkpoint-bound retain over unchanged equivalent history."""
+
+        return (
+            reconciliation == stack.ReconciliationStatus.EQUIVALENT_HISTORY
+            and any(
+                item.pr == pr
+                and item.channel == channel
+                and item.decision == "retain"
+                and item.head == reviewed_head
+                and item.checkpoint == checkpoint
+                and item.patch_id == current_patch_id
+                for item in state.judgments
+            )
+        )
+
     def _allocation_progress(
         self,
         allocation: ReviewAllocation,
         history: Sequence[Any],
         current: AnchorFacts | None,
         reconciliation: stack.ReconciliationStatus,
+        *,
+        state: ReviewState | None = None,
+        reconciliation_result: stack.Reconciliation | None = None,
     ) -> dict[str, Any]:
         """Derive consumption from immutable evidence; never persist a live observation."""
 
@@ -1379,7 +1832,13 @@ class ReviewController:
                 "checkpoint": checkpoint,
                 "accepted": accepted,
                 "handoff_head": allocation.handoff_head,
+                "stop_basis": allocation.stop_basis or ("allocated" if allocation.handoff_checkpoint else None),
             }
+
+        if allocation.stop_basis == "direct_human":
+            if state is None:
+                return result("INVALID", "the persisted review-stop state is unavailable")
+            return self._stop_progress(allocation, state, history, current, reconciliation, reconciliation_result)
 
         if current is None or reconciliation in {
             stack.ReconciliationStatus.PARENT_MOVED,
@@ -1460,6 +1919,11 @@ class ReviewController:
             for item in history
             for flag in ("held", "unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited")
             if _field(item, "head", "reviewed_head") in (None, "", current.child_head)
+            and not (
+                allocation.stop_basis == "allocated"
+                and _field(item, "terminal_ambiguous") is True
+                and _field(item, "fingerprint") == allocation.retained_ambiguous_fingerprint
+            )
         ):
             return result("EXHAUSTED_PENDING", "current review, finding, or thread obligations remain", checkpoint, accepted)
         if any(
@@ -1473,8 +1937,48 @@ class ReviewController:
             for item in history
         ):
             return result("EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted)
+        if allocation.stop_basis == "allocated":
+            if state is None or reconciliation_result is None:
+                return result("INVALID", "the persisted review-stop state is unavailable", checkpoint, accepted)
+            if allocation.stop_checkpoint != checkpoint:
+                return result("INVALID", "the consumed checkpoint no longer matches the recorded stop", checkpoint, accepted)
+            if (
+                current.child_head != allocation.stop_head
+                or current.patch_id != allocation.stop_patch_id
+                or current.parent_identity != allocation.stop_parent_identity
+                or current.parent_head != allocation.stop_parent_head
+                or current.merge_base != allocation.stop_merge_base
+            ):
+                return result("INVALID", "the stopped head or stack identity changed", checkpoint, accepted)
+            if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
+                return result("INVALID", "new summary-finding decisions require a fresh stop judgment", checkpoint, accepted)
+            try:
+                latest, _, _ = self._check_stop_evidence(
+                    state,
+                    allocation.pr,
+                    policy.Channel(allocation.channel),
+                    current,
+                    reconciliation_result,
+                    checkpoint_pin=allocation.stop_checkpoint,
+                    retained_ambiguous_fingerprint=allocation.retained_ambiguous_fingerprint,
+                    ambiguity_reason=allocation.retained_ambiguous_reason,
+                )
+            except ControllerError as error:
+                return result("INVALID", str(error), checkpoint, accepted)
+            if (
+                _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
+                or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
+            ):
+                return result("INVALID", "the stopped review checkpoint identity changed", checkpoint, accepted)
+            return {
+                **result("STOPPED", "review discovery explicitly stopped; merge readiness remains separate", checkpoint, accepted),
+                "stop_reviewed_head": allocation.stop_reviewed_head,
+                "stop_head": allocation.stop_head,
+                "stop_reason": allocation.stop_reason,
+                "retained_ambiguous_fingerprint": allocation.retained_ambiguous_fingerprint,
+            }
         if allocation.handoff_checkpoint is None:
-            return result("EXHAUSTED_PENDING", "review allocation exhausted; validated handoff is still required", checkpoint, accepted)
+            return result("EXHAUSTED_PENDING", "review allocation exhausted; an explicit stop decision is required", checkpoint, accepted)
         if allocation.handoff_checkpoint != checkpoint or allocation.handoff_head != current.child_head:
             return result("INVALID", "recorded handoff no longer matches the consumed review and live head", checkpoint, accepted)
         return result("HANDED_OFF", "review capacity handed off; merge readiness remains a separate judgment", checkpoint, accepted)
@@ -1497,7 +2001,12 @@ class ReviewController:
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
                 current = None
             views[pr] = self._allocation_progress(
-                allocation, histories[pr], current, reconciliation.status_for(pr, channel.value)
+                allocation,
+                histories[pr],
+                current,
+                reconciliation.status_for(pr, channel.value),
+                state=state,
+                reconciliation_result=reconciliation,
             )
         return views
 
@@ -1537,6 +2046,7 @@ class ReviewController:
             reconciliation_by_pr={pr: reconciliation.status_for(pr, selected.value) for pr in state.ordered_prs},
             other_channel_heads=other_heads,
             handed_off_prs=(pr for pr, view in allocations.items() if view["status"] == "HANDED_OFF"),
+            human_stopped_prs=(pr for pr, view in allocations.items() if view["status"] == "STOPPED"),
             exhausted_prs=(pr for pr, view in allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
             allocation_blocks={
                 pr: view["reason"] for pr, view in allocations.items() if view["status"] == "INVALID"
@@ -1619,7 +2129,9 @@ class ReviewController:
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
-                if channel_reconciliation in {
+                if allocations[channel].get(pr, {}).get("status") == "STOPPED":
+                    channel_status[channel.value] = policy.ReviewStatus.HUMAN_STOPPED.value
+                elif channel_reconciliation in {
                     stack.ReconciliationStatus.PARENT_MOVED,
                     stack.ReconciliationStatus.UNRECONCILED,
                 }:
@@ -1808,13 +2320,11 @@ class ReviewController:
         channel: str,
         head: str,
         reason: str,
-        checkpoint: str | None = None,
-        validation: str | None = None,
     ) -> dict[str, Any]:
-        """Record an exact-bound operator capacity decision, never a taper decision."""
+        """Grant, renew, or cancel a pre-authorized one-result review allocation."""
 
-        if action not in {"grant", "renew", "cancel", "handoff"}:
-            raise ControllerError("allocation action must be grant, renew, cancel, or handoff")
+        if action not in {"grant", "renew", "cancel"}:
+            raise ControllerError("allocation action must be grant, renew, or cancel")
         try:
             selected = policy.Channel(channel)
         except ValueError as exc:
@@ -1858,70 +2368,202 @@ class ReviewController:
             raise ControllerError("allocation requires a coherent current stack identity")
         current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
-        if action in {"grant", "renew"}:
-            if checkpoint is not None or validation is not None:
-                raise ControllerError("grant and renew cannot include handoff proof")
-            if action == "grant":
-                target = self._target(selected, expected_pr=pr)
-                self._ensure_runnable(target)
-            else:
-                assert previous is not None
-                prior_progress = self._allocation_progress(
-                    previous, history, current, reconciliation.status_for(pr, selected.value)
-                )
-                if (
-                    prior_progress["status"] in {"EXHAUSTED_PENDING", "HANDED_OFF"}
-                    or prior_progress["checkpoint"] is not None
-                ):
-                    raise ControllerError("consumed or handed-off review allocations cannot be renewed")
-            if any(
-                _field(value, flag) is True
-                for value in history
-                for flag in ("held", "unstable", "rate_limited", "unreconciled", "parent_moved", "over_ceiling")
-                if _field(value, "head", "reviewed_head") in (None, "", item.head)
-            ):
-                raise ControllerError("current review evidence is blocked; allocation cannot be promised")
-            baseline = tuple(
-                _field(value, "checkpoint", "checkpoint_id")
-                for value in history if _field(value, "correction") is not True
-            )
-            if any(not isinstance(value, str) or not value for value in baseline):
-                raise ControllerError("existing review evidence lacks a checkpoint identity")
-            if len(baseline) != len(set(baseline)):
-                raise ControllerError("existing checkpoint identities are ambiguous")
-            allocation = ReviewAllocation(
-                pr=pr,
-                channel=selected.value,
-                head=item.head,
-                parent_identity=current.parent_identity,
-                parent_head=current.parent_head,
-                merge_base=current.merge_base,
-                patch_id=current.patch_id,
-                baseline_checkpoints=baseline,
-                reason=reason,
-            )
+        if action == "grant":
+            target = self._target(selected, expected_pr=pr)
+            self._ensure_runnable(target)
         else:
             assert previous is not None
-            if not checkpoint or not validation or not validation.strip():
-                raise ControllerError("handoff requires the consumed checkpoint and exact-head validation evidence")
             progress = self._allocation_progress(
-                previous, history, current, reconciliation.status_for(pr, selected.value)
-            )
-            if progress["status"] != "EXHAUSTED_PENDING" or progress["checkpoint"] != checkpoint:
-                raise ControllerError("handoff requires exactly one consumed attributable review checkpoint")
-            if progress["reason"] != "review allocation exhausted; validated handoff is still required":
-                raise ControllerError(progress["reason"])
-            allocation = dataclasses.replace(
                 previous,
-                handoff_checkpoint=checkpoint,
-                handoff_head=item.head,
-                handoff_validation=validation,
+                history,
+                current,
+                reconciliation.status_for(pr, selected.value),
+                state=state,
+                reconciliation_result=reconciliation,
             )
+            if (
+                progress["status"] in {"EXHAUSTED_PENDING", "HANDED_OFF", "STOPPED"}
+                or progress["checkpoint"] is not None
+            ):
+                raise ControllerError("consumed or stopped review allocations cannot be renewed")
+        if any(
+            _field(value, flag) is True
+            for value in history
+            for flag in ("held", "unstable", "rate_limited", "unreconciled", "parent_moved", "over_ceiling")
+            if _field(value, "head", "reviewed_head") in (None, "", item.head)
+        ):
+            raise ControllerError("current review evidence is blocked; allocation cannot be promised")
+        baseline = tuple(
+            _field(value, "checkpoint", "checkpoint_id")
+            for value in history if _field(value, "correction") is not True
+        )
+        if any(not isinstance(value, str) or not value for value in baseline):
+            raise ControllerError("existing review evidence lacks a checkpoint identity")
+        if len(baseline) != len(set(baseline)):
+            raise ControllerError("existing checkpoint identities are ambiguous")
+        allocation = ReviewAllocation(
+            pr=pr,
+            channel=selected.value,
+            head=item.head,
+            parent_identity=current.parent_identity,
+            parent_head=current.parent_head,
+            merge_base=current.merge_base,
+            patch_id=current.patch_id,
+            baseline_checkpoints=baseline,
+            reason=reason,
+        )
         updated = self.store.update(lambda current_state: update_allocation(current_state, allocation))
         return {
             "action": action,
             "allocation": allocation.to_dict(),
             "allocations": list(updated.allocations),
+        }
+
+    def decide_stop(
+        self,
+        *,
+        pr: int,
+        channel: str,
+        reason: str,
+        head: str | None = None,
+        checkpoint: str | None = None,
+        retain_ambiguous_fingerprint: str | None = None,
+        ambiguity_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a direct human stop or consume a granted one-result allocation."""
+
+        try:
+            selected = policy.Channel(channel)
+        except ValueError as exc:
+            raise ControllerError("review stop channel must be hosted or cli") from exc
+        normalized_reason = self._stop_reason(reason)
+        normalized_head = _sha(head, "review stop head") if head is not None else None
+        if (retain_ambiguous_fingerprint is None) != (ambiguity_reason is None):
+            raise ControllerError("terminal ambiguity retention requires both an exact fingerprint and a reason")
+        state = self._state()
+        if pr not in state.ordered_prs:
+            raise ControllerError(f"PR #{pr} is not in the configured review stack")
+        identity = f"{pr}:{selected.value}"
+        previous = state.allocations.get(identity)
+        with self._stop_review_locks(pr):
+            # Refresh everything inside both channel locks so an in-flight review
+            # cannot be mistaken for a terminal result.
+            state = self._state()
+            if pr not in state.ordered_prs:
+                raise ControllerError(f"PR #{pr} is not in the configured review stack")
+            previous = state.allocations.get(identity)
+            if previous is not None and previous.handoff_checkpoint is not None:
+                raise ControllerError("this channel already has a legacy completed handoff")
+            live, reconciliation = self._reconciliation(state)
+            item = live[pr]
+            if normalized_head is not None and normalized_head.casefold() != item.head.casefold():
+                raise ControllerError("review stop head does not match the live pull-request head")
+            if self._head_repository_problem(item):
+                raise ControllerError(f"PR #{pr} has an unsupported head repository")
+            remote_heads = self.git.remote_heads()
+            if not self._current_branches_match(state, live, reconciliation, pr, remote_heads):
+                raise ControllerError("review stop requires a coherent exact-current stack topology")
+            current = self._anchor(pr, item, reconciliation.links[pr])
+            latest, retained, checked_histories = self._check_stop_evidence(
+                state,
+                pr,
+                selected,
+                current,
+                reconciliation,
+                checkpoint_pin=checkpoint,
+                retained_ambiguous_fingerprint=retain_ambiguous_fingerprint,
+                ambiguity_reason=ambiguity_reason,
+            )
+            retained_fingerprint, retained_reason = retained or (None, None)
+            history = checked_histories[selected]
+            if previous is not None and previous.stop_basis is not None:
+                prior_view = self._allocation_progress(
+                    previous,
+                    history,
+                    current,
+                    reconciliation.status_for(pr, selected.value),
+                    state=state,
+                    reconciliation_result=reconciliation,
+                )
+                if prior_view["status"] == "STOPPED":
+                    raise ControllerError("review discovery is already stopped for this PR and channel")
+
+            basis = "direct_human"
+            if previous is not None and previous.stop_basis is None and previous.handoff_checkpoint is None:
+                prior_view = self._allocation_progress(
+                    previous,
+                    history,
+                    current,
+                    reconciliation.status_for(pr, selected.value),
+                    state=state,
+                    reconciliation_result=reconciliation,
+                )
+                if (
+                    prior_view["status"] == "EXHAUSTED_PENDING"
+                    and prior_view["reason"] == "review allocation exhausted; an explicit stop decision is required"
+                    and prior_view["checkpoint"] == _field(latest, "checkpoint", "checkpoint_id")
+                ):
+                    basis = "allocated"
+            if previous is not None and previous.stop_basis is None and basis == "allocated":
+                original = previous
+            elif previous is not None:
+                original = previous
+            else:
+                checkpoints = tuple(
+                    _field(value, "checkpoint", "checkpoint_id")
+                    for value in history
+                    if _field(value, "correction") is not True
+                )
+                if any(not isinstance(value, str) or not value for value in checkpoints):
+                    raise ControllerError("current review evidence lacks immutable checkpoint identities")
+                if len(checkpoints) != len(set(checkpoints)):
+                    raise ControllerError("current review evidence has ambiguous checkpoint identities")
+                original = ReviewAllocation(
+                    pr=pr,
+                    channel=selected.value,
+                    head=current.child_head,
+                    parent_identity=current.parent_identity,
+                    parent_head=current.parent_head,
+                    merge_base=current.merge_base,
+                    patch_id=current.patch_id,
+                    baseline_checkpoints=checkpoints,
+                    reason=normalized_reason,
+                )
+            stopped = dataclasses.replace(
+                original,
+                stop_basis=basis,
+                stop_checkpoint=_field(latest, "checkpoint", "checkpoint_id"),
+                stop_reviewed_head=_field(latest, "head", "reviewed_head"),
+                stop_reviewed_patch_id=_field(latest, "patch_id", "patch_identity"),
+                stop_head=current.child_head,
+                stop_parent_identity=current.parent_identity,
+                stop_parent_head=current.parent_head,
+                stop_merge_base=current.merge_base,
+                stop_patch_id=current.patch_id,
+                stop_reason=normalized_reason,
+                stop_summary_disposition_fingerprints=self._stop_summary_fingerprints(state, pr),
+                retained_ambiguous_fingerprint=retained_fingerprint,
+                retained_ambiguous_reason=retained_reason,
+            )
+
+            def persist(current_state: ReviewState) -> ReviewState:
+                if current_state.allocations.get(identity) != previous:
+                    raise ControllerError("review allocation changed concurrently; reread before stopping")
+                values = dict(current_state.allocations)
+                values[identity] = stopped
+                return dataclasses.replace(current_state, allocations=values)
+
+            updated = self.store.update(persist)
+        return {
+            "action": "stop",
+            "allocation": stopped.to_dict(),
+            "allocations": list(updated.allocations),
+            "checkpoint": _field(latest, "checkpoint", "checkpoint_id"),
+            "reviewed_head": _field(latest, "head", "reviewed_head"),
+            "stop_head": current.child_head,
+            "stop_basis": basis,
+            "reason": normalized_reason,
+            "retained_ambiguous_fingerprint": retained_fingerprint,
         }
 
     def _validate_decision_identity(
