@@ -106,7 +106,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
         List.of(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.notice(
-                "Membership is ready. Continue with CHARS and PLAY.")));
+                "Membership join confirmed.")));
   }
 
   private String realmBrowseFailureMessage(String code) {

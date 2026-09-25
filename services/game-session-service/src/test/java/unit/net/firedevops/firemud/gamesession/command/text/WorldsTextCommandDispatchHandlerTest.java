@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -194,6 +195,15 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(realmsResult.commandResult().accepted()).isTrue();
     assertThat(firstJoinResult.commandResult().accepted()).isFalse();
     assertThat(retryJoinResult.commandResult().accepted()).isTrue();
+    assertThat(retryJoinResult.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isInstanceOfSatisfying(
+            NoticeOutput.class,
+            notice -> {
+              assertThat(notice.text()).isEqualTo("Membership join confirmed.");
+              assertThat(notice.text()).doesNotContain("CHARS", "PLAY");
+            });
     assertThat(realmsResult.outputs())
         .singleElement()
         .extracting(output -> output.payload())
