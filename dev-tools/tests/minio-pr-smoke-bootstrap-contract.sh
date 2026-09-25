@@ -77,6 +77,17 @@ require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" 
 require_contains "$trusted_publisher" 'DOCKER_CONFIG="$anonymous_docker_config" verify_anonymous_pull "$CLIENT_IMAGE_NAME@$CLIENT_DIGEST"'
 
 trusted_builder="$(<"$TRUSTED_BUILD_WORKFLOW")"
+classifier="$(sed -n '/^  classify:$/,/^  build-and-smoke:$/p' "$TRUSTED_BUILD_WORKFLOW")"
+build_job="$(sed -n '/^  build-and-smoke:$/,$p' "$TRUSTED_BUILD_WORKFLOW")"
+require_contains "$classifier" 'fetch-depth: 0'
+require_contains "$classifier" 'changed_paths="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"'
+require_contains "$classifier" '"$BASE_REF" == main || "$BASE_REF" == develop'
+require_contains "$classifier" 'docker/minio/*|dev-tools/minio/*) has_source_change=true'
+require_contains "$classifier" '.github/workflows/build-trusted-minio-source-images.yml) has_workflow_change=true'
+require_contains "$classifier" 'if [[ "$has_source_change" == true && "$has_workflow_change" == false ]]; then'
+require_contains "$classifier" 'should_build=false'
+require_contains "$build_job" 'needs: classify'
+require_contains "$build_job" "if: needs.classify.outputs.should_build == 'true'"
 require_contains "$trusted_builder" "EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: \${{ github.event_name == 'push' && 'true' || 'false' }}"
 require_contains "$trusted_builder" 'run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"'
 require_contains "$trusted_builder" 'if: github.event_name == '\''push'\'''
