@@ -269,6 +269,7 @@ class FixtureEvidence:
         pr: int,
         expected_anchor: Mapping[str, Any],
         retained_ambiguous_fingerprints: Sequence[str] = (),
+        prior_hosted_fingerprints: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Expose complete fixture evidence through the live stop-audit contract."""
 
@@ -294,6 +295,11 @@ class FixtureEvidence:
             raise AcceptanceFixtureError("fixture stop audit received a malformed terminal ambiguity fingerprint")
         if len(set(pins)) != len(pins):
             raise AcceptanceFixtureError("fixture stop audit received duplicate terminal ambiguity fingerprints")
+        prior = tuple(prior_hosted_fingerprints)
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in prior):
+            raise AcceptanceFixtureError("fixture stop audit received a malformed prior Hosted fingerprint")
+        if len(set(prior)) != len(prior):
+            raise AcceptanceFixtureError("fixture stop audit received duplicate prior Hosted fingerprints")
 
         histories = {channel: tuple(self.history(pr, channel)) for channel in ("hosted", "cli")}
         terminal = [

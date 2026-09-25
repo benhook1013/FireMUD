@@ -32,7 +32,7 @@ from pr_review.controller import (
 )
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
-from pr_review.state import StateStore, observation_fingerprint
+from pr_review.state import LegacyEvidenceTransition, StateStore, observation_fingerprint
 
 BASE = "a" * 40
 PARENT = "b" * 40
@@ -88,6 +88,7 @@ class AuditedEvidence(dict):
         }
         self.on_audit = on_audit
         self.audit_calls = []
+        self.stop_audit_calls = []
 
     def get(self, key, default=None):
         if self.backing is not None:
@@ -100,7 +101,16 @@ class AuditedEvidence(dict):
             self.on_audit()
         return self.audit
 
-    def review_stop_audit(self, pr_number, anchor, retained_ambiguous_fingerprints=()):
+    def review_stop_audit(
+        self,
+        pr_number,
+        anchor,
+        retained_ambiguous_fingerprints=(),
+        prior_hosted_fingerprints=(),
+    ):
+        self.stop_audit_calls.append(
+            (pr_number, tuple(retained_ambiguous_fingerprints), tuple(prior_hosted_fingerprints))
+        )
         if self.on_audit is not None:
             self.on_audit()
         audit = dict(self.audit)
@@ -140,6 +150,30 @@ class ControllerTests(unittest.TestCase):
             evidence=provider,
             repository="owner/repo",
         )
+
+    def test_stop_cli_accepts_multiple_exact_ambiguity_fingerprints(self):
+        fingerprints = ("f" * 64, "e" * 64)
+
+        args = _parser().parse_args(
+            [
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--reason",
+                "human stop",
+                "--retain-ambiguous-fingerprint",
+                fingerprints[0],
+                "--retain-ambiguous-fingerprint",
+                fingerprints[1],
+                "--ambiguity-reason",
+                "both terminal responses lack attributable review objects",
+            ]
+        )
+
+        self.assertEqual(args.retain_ambiguous_fingerprint, list(fingerprints))
 
     def make_legacy_retirement_case(self, *, audit=None, on_audit=None):
         old_head = "7" * 40
@@ -467,8 +501,8 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "active review or reservation"):
             active.decide_stop(pr=1, channel="hosted", reason="human stop")
 
-    def test_terminal_ambiguous_response_requires_exact_non_counting_retention(self):
-        fingerprint = "f" * 64
+    def test_all_terminal_ambiguous_responses_require_exact_non_counting_retention(self):
+        fingerprints = ("f" * 64, "e" * 64)
         evidence = AuditedEvidence(
             {
                 (1, "hosted"): [
@@ -479,9 +513,19 @@ class ControllerTests(unittest.TestCase):
                         "checkpoint": "trigger:123",
                         "held": True,
                         "terminal_ambiguous": True,
-                        "fingerprint": fingerprint,
+                        "fingerprint": fingerprints[0],
                         "trigger_id": 123,
                         "response_id": 124,
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:223",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": fingerprints[1],
+                        "trigger_id": 223,
+                        "response_id": 224,
                     },
                 ]
             },
@@ -491,8 +535,14 @@ class ControllerTests(unittest.TestCase):
                 "unmatched_responses": [],
                 "ambiguous_responses": [],
                 "unresolved_findings": [],
-                "ambiguous_terminal_responses": [{"fingerprint": fingerprint}],
-                "retained_ambiguous": [{"fingerprint": fingerprint, "trigger_id": 123, "response_id": 124}],
+                "ambiguous_terminal_responses": [
+                    {"fingerprint": fingerprints[0]},
+                    {"fingerprint": fingerprints[1]},
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": fingerprints[0], "trigger_id": 123, "response_id": 124},
+                    {"fingerprint": fingerprints[1], "trigger_id": 223, "response_id": 224},
+                ],
             },
         )
         controller = self.make(
@@ -500,21 +550,56 @@ class ControllerTests(unittest.TestCase):
         )
         controller.set_stack([1])
 
+        state = controller.store.load()
+        live, reconciliation = controller._reconciliation(state)
+        current = controller._anchor(1, live[1], reconciliation.links[1])
+        prior_fingerprint = "d" * 64
+        transition = LegacyEvidenceTransition(
+            pr=1,
+            child_head=current.child_head,
+            parent_identity=current.parent_identity,
+            parent_head=current.parent_head,
+            merge_base=current.merge_base,
+            patch_id=current.patch_id,
+            hosted_fingerprints=(prior_fingerprint,),
+            reason="previous exact-anchor legacy evidence decision",
+        )
+        controller.store.update(
+            lambda current_state: dataclasses.replace(
+                current_state,
+                legacy_transitions=current_state.legacy_transitions + (transition,),
+            )
+        )
+
         with self.assertRaisesRegex(
-            ControllerError, "active review or reservation|unretained terminal ambiguity|exact fingerprint"
+            ControllerError,
+            "active review or reservation|unretained terminal ambiguity|exact fingerprints|every current terminal",
         ):
             controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+        with self.assertRaisesRegex(ControllerError, "unretained terminal ambiguity"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="human stop",
+                retain_ambiguous_fingerprints=(fingerprints[0],),
+                ambiguity_reason="response has no attributable review object",
+            )
         stopped = controller.decide_stop(
             pr=1,
             channel="hosted",
             reason="Overseer accepts this review-discovery stop",
-            retain_ambiguous_fingerprint=fingerprint,
+            retain_ambiguous_fingerprints=fingerprints,
             ambiguity_reason="terminal response does not provide an attributable review object",
         )
 
         self.assertEqual(stopped["stop_basis"], "direct_human")
-        self.assertEqual(stopped["retained_ambiguous_fingerprint"], fingerprint)
-        self.assertEqual(stopped["allocation"]["retained_ambiguous_reason"], "terminal response does not provide an attributable review object")
+        self.assertEqual(stopped["retained_ambiguous_fingerprints"], list(fingerprints))
+        self.assertEqual(
+            stopped["allocation"]["retained_ambiguous_reason"],
+            "terminal response does not provide an attributable review object",
+        )
+        self.assertEqual(evidence.stop_audit_calls[-1][1], fingerprints)
+        self.assertEqual(evidence.stop_audit_calls[-1][2], (prior_fingerprint,))
 
     def test_completed_result_consumes_once_until_an_explicit_stop(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}

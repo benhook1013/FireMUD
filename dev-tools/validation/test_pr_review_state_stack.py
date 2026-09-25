@@ -86,7 +86,7 @@ class ReviewStateStackTest(unittest.TestCase):
             stop_patch_id="current-owned-patch",
             stop_reason="human stopped discovery after adjudication",
             stop_summary_disposition_fingerprints=("e" * 64,),
-            retained_ambiguous_fingerprint="f" * 64,
+            retained_ambiguous_fingerprints=("f" * 64, "e" * 64),
             retained_ambiguous_reason="terminal response lacks attributable review object",
         )
 
@@ -94,6 +94,38 @@ class ReviewStateStackTest(unittest.TestCase):
 
         self.assertEqual(restored, allocation)
         self.assertNotEqual(restored.stop_reviewed_head, restored.stop_head)
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64, "e" * 64))
+
+    def test_review_allocation_reads_the_legacy_single_retained_fingerprint(self):
+        legacy = {
+            "pr": 2818,
+            "channel": "hosted",
+            "head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "current-owned-patch",
+            "baseline_checkpoints": ["latest-checkpoint"],
+            "reason": "pre-granted one-result allocation",
+            "stop_basis": "direct_human",
+            "stop_checkpoint": "latest-checkpoint",
+            "stop_reviewed_head": "d" * 40,
+            "stop_reviewed_patch_id": "reviewed-owned-patch",
+            "stop_head": "a" * 40,
+            "stop_parent_identity": "develop",
+            "stop_parent_head": "b" * 40,
+            "stop_merge_base": "c" * 40,
+            "stop_patch_id": "current-owned-patch",
+            "stop_reason": "human stopped discovery after adjudication",
+            "stop_summary_disposition_fingerprints": [],
+            "retained_ambiguous_fingerprint": "f" * 64,
+            "retained_ambiguous_reason": "terminal response lacks attributable review object",
+        }
+
+        restored = ReviewAllocation.from_dict(legacy)
+
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64,))
+        self.assertEqual(restored.to_dict()["retained_ambiguous_fingerprints"], ["f" * 64])
 
     def test_old_state_without_allocations_remains_readable(self):
         state = ReviewState.from_dict({"schema_version": 1, "ordered_prs": [2849]})

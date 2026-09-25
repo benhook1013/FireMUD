@@ -204,6 +204,13 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": trigger_at,
             "url": "https://example.test/comments/10",
         }
+        unrelated_trigger = {
+            **trigger,
+            "databaseId": 20,
+            "createdAt": "2026-09-24T00:03:00Z",
+            "updatedAt": "2026-09-24T00:03:00Z",
+            "url": "https://example.test/comments/20",
+        }
         checkpoint = {
             "databaseId": 12,
             "author": {"login": "maintainer"},
@@ -222,13 +229,20 @@ class RuntimeTest(unittest.TestCase):
             "submittedAt": response_at,
             "commit": {"oid": HEAD},
         }
-        payload = self._payload([trigger, checkpoint], [review])
+        unrelated_response = {
+            "databaseId": 56,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished without an attributable head.",
+            "createdAt": "2026-09-24T00:04:00Z",
+            "updatedAt": "2026-09-24T00:04:00Z",
+        }
+        payload = self._payload([trigger, checkpoint, unrelated_trigger, unrelated_response], [review])
         pull = payload["data"]["repository"]["pullRequest"]
         pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         live = LiveGitHub("owner/repo")
         observer = LiveEvidence("owner/repo", live)
-        record = {"head_sha": HEAD}
+        record = self._trigger_record(created=trigger_at)
         state = SimpleNamespace(
             trigger_comment_id=10,
             trigger_created_at=trigger_at,
@@ -238,18 +252,49 @@ class RuntimeTest(unittest.TestCase):
             response_id=55,
             head_sha=HEAD,
         )
+        unrelated_record = {**self._trigger_record(created="2026-09-24T00:03:00Z")}
+        unrelated_record["trigger"]["id"] = 20
+        unrelated_state = SimpleNamespace(
+            trigger_comment_id=20,
+            trigger_created_at="2026-09-24T00:03:00Z",
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=56,
+            head_sha=HEAD,
+        )
+        records_by_path = {"trigger-10.json": record, "trigger-20.json": unrelated_record}
+        states_by_trigger = {10: state, 20: unrelated_state}
 
         def run_audit(selected_record=record, selected_state=state, selected_checkpoint=checkpoint):
             observer._payloads.clear()
-            selected_payload = self._payload([trigger, selected_checkpoint], [review])
+            selected_payload = self._payload(
+                [trigger, selected_checkpoint, unrelated_trigger, unrelated_response], [review]
+            )
             selected_pull = selected_payload["data"]["repository"]["pullRequest"]
             selected_pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
             with (
                 patch.object(github, "fetch_pull_request", return_value=selected_payload),
                 patch.object(live, "pull_request", return_value=snapshot),
-                patch.object(observer, "_complete_trigger_paths", return_value=["trigger-10.json"]),
-                patch.object(hosted, "load_trigger_record", return_value=selected_record),
-                patch.object(hosted, "trigger_state", return_value=selected_state),
+                patch.object(
+                    observer,
+                    "_complete_trigger_paths",
+                    return_value=["trigger-10.json", "trigger-20.json"],
+                ),
+                patch.object(
+                    hosted,
+                    "load_trigger_record",
+                    side_effect=lambda path, *_: selected_record
+                    if Path(path).name == "trigger-10.json"
+                    else records_by_path[Path(path).name],
+                ),
+                patch.object(
+                    hosted,
+                    "trigger_state",
+                    side_effect=lambda _repo, _pr, _payload, selected, _path: selected_state
+                    if selected["trigger"]["id"] == 10
+                    else states_by_trigger[selected["trigger"]["id"]],
+                ),
                 patch.object(observer, "history", return_value=[]),
             ):
                 return observer.legacy_transition_reauthorization_audit(
@@ -263,9 +308,11 @@ class RuntimeTest(unittest.TestCase):
             "a public Hosted checkpoint has no unique attributable trigger",
             accepted["unmatched_responses"],
         )
+        self.assertIn("unattributed trigger response", accepted["ambiguous_responses"])
+        self.assertIn("ambiguous", accepted["active_reservations"])
 
         invalid_cases = (
-            ({"head_sha": "d" * 40}, state, checkpoint),
+            ({**record, "head_sha": "d" * 40}, state, checkpoint),
             (record, SimpleNamespace(**{**state.__dict__, "terminal": False}), checkpoint),
             (record, state, {**checkpoint, "author": {"login": "different-user"}}),
         )
@@ -1177,9 +1224,11 @@ class RuntimeTest(unittest.TestCase):
                 unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
         self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
 
-    def test_review_stop_audit_pins_only_one_exact_terminal_ambiguity(self) -> None:
+    def test_review_stop_audit_pins_every_exact_terminal_ambiguity_and_reuses_transition_fingerprints(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         response_at = "2026-09-23T00:03:00Z"
+        second_trigger_at = "2026-09-23T00:04:00Z"
+        second_response_at = "2026-09-23T00:05:00Z"
         trigger = {
             "databaseId": 10,
             "author": {"login": "maintainer"},
@@ -1195,7 +1244,20 @@ class RuntimeTest(unittest.TestCase):
             "createdAt": response_at,
             "updatedAt": response_at,
         }
-        payload = self._payload([trigger, response])
+        second_trigger = {
+            **trigger,
+            "databaseId": 20,
+            "createdAt": second_trigger_at,
+            "updatedAt": second_trigger_at,
+            "url": "https://example.test/comments/20",
+        }
+        second_response = {
+            **response,
+            "databaseId": 21,
+            "createdAt": second_response_at,
+            "updatedAt": second_response_at,
+        }
+        payload = self._payload([trigger, response, second_trigger, second_response])
         pull = payload["data"]["repository"]["pullRequest"]
         pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -1213,6 +1275,19 @@ class RuntimeTest(unittest.TestCase):
             head_sha=HEAD,
             reason="finished response has no head-attributed summary",
         )
+        second_record = self._trigger_record(created=second_trigger_at)
+        second_record["trigger"]["id"] = 20
+        second_state = SimpleNamespace(
+            trigger_comment_id=20,
+            trigger_created_at=second_trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=21,
+            response_created_at=second_response_at,
+            head_sha=HEAD,
+            reason="second finished response has no head-attributed summary",
+        )
         anchor = {
             "pr": 42,
             "child_head": HEAD,
@@ -1223,33 +1298,64 @@ class RuntimeTest(unittest.TestCase):
         }
         expected_audit = {
             "complete": True,
-            "active_reservations": ["ambiguous"],
+            "active_reservations": ["ambiguous", "ambiguous"],
             "unmatched_responses": [],
-            "ambiguous_responses": ["unattributed trigger response"],
+            "ambiguous_responses": ["unattributed trigger response", "unattributed trigger response"],
             "unresolved_findings": [],
         }
 
-        def run_review_stop(selected_audit=expected_audit, pins=()):
+        record_by_path = {
+            Path("trigger-10.json"): record,
+            Path("trigger-20.json"): second_record,
+        }
+        state_by_trigger = {10: state, 20: second_state}
+
+        def run_review_stop(selected_audit=expected_audit, pins=(), prior_fingerprints=()):
             observer._payloads.clear()
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(live, "pull_request", return_value=snapshot),
-                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit),
-                patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger-10.json")]),
-                patch.object(hosted, "load_trigger_record", return_value=record),
-                patch.object(hosted, "trigger_state", return_value=state),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit) as audit,
+                patch.object(
+                    observer,
+                    "_complete_trigger_paths",
+                    return_value=[Path("trigger-10.json"), Path("trigger-20.json")],
+                ),
+                patch.object(hosted, "load_trigger_record", side_effect=lambda path, *_: record_by_path[Path(path)]),
+                patch.object(
+                    hosted,
+                    "trigger_state",
+                    side_effect=lambda _repo, _pr, _payload, selected_record, _path: state_by_trigger[
+                        selected_record["trigger"]["id"]
+                    ],
+                ),
                 patch.object(observer, "history", return_value=[]),
             ):
-                return observer.review_stop_audit(42, anchor, pins)
+                result = observer.review_stop_audit(
+                    42,
+                    anchor,
+                    pins,
+                    prior_hosted_fingerprints=prior_fingerprints,
+                )
+                expected_anchor = {
+                    "child_head": HEAD,
+                    "live_base_ref": "develop",
+                    "live_base_tip": BASE,
+                }
+                audit.assert_called_once_with(42, prior_fingerprints, expected_anchor)
+                return result
 
         observed = run_review_stop()
         ambiguous = observed["ambiguous_terminal_responses"]
-        self.assertEqual(len(ambiguous), 1)
-        self.assertEqual(ambiguous[0]["trigger_id"], 10)
-        self.assertEqual(ambiguous[0]["response_id"], 11)
+        self.assertEqual(len(ambiguous), 2)
+        self.assertEqual([(item["trigger_id"], item["response_id"]) for item in ambiguous], [(10, 11), (20, 21)])
         self.assertTrue(observed["blockers"])
 
-        retained = run_review_stop(pins=(ambiguous[0]["fingerprint"],))
+        prior_fingerprints = ("d" * 64,)
+        retained = run_review_stop(
+            pins=tuple(item["fingerprint"] for item in ambiguous),
+            prior_fingerprints=prior_fingerprints,
+        )
         self.assertEqual(retained["retained_ambiguous"], ambiguous)
         self.assertEqual(retained["active_reservations"], [])
         self.assertEqual(retained["ambiguous_responses"], [])
@@ -1260,11 +1366,18 @@ class RuntimeTest(unittest.TestCase):
 
         additional_ambiguity = {
             **expected_audit,
-            "active_reservations": ["ambiguous", "ambiguous"],
-            "ambiguous_responses": ["unattributed trigger response", "unattributed trigger response"],
+            "active_reservations": ["ambiguous", "ambiguous", "ambiguous"],
+            "ambiguous_responses": [
+                "unattributed trigger response",
+                "unattributed trigger response",
+                "unattributed trigger response",
+            ],
         }
         with self.assertRaisesRegex(ControllerError, "cannot be isolated"):
-            run_review_stop(additional_ambiguity, pins=(ambiguous[0]["fingerprint"],))
+            run_review_stop(
+                additional_ambiguity,
+                pins=tuple(item["fingerprint"] for item in ambiguous),
+            )
 
     def test_archived_completed_hosted_response_uses_exact_uncheckpointed_observation_fingerprint(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"

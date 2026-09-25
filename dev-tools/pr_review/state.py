@@ -540,7 +540,7 @@ class ReviewAllocation:
     stop_patch_id: str | None = None
     stop_reason: str | None = None
     stop_summary_disposition_fingerprints: tuple[str, ...] = ()
-    retained_ambiguous_fingerprint: str | None = None
+    retained_ambiguous_fingerprints: tuple[str, ...] = ()
     retained_ambiguous_reason: str | None = None
 
     def __post_init__(self) -> None:
@@ -582,7 +582,7 @@ class ReviewAllocation:
         if self.stop_basis is None:
             if any(value is not None for value in stop_values):
                 raise StateError("review allocation stop fields require a stop basis")
-            if self.stop_summary_disposition_fingerprints or self.retained_ambiguous_fingerprint is not None:
+            if self.stop_summary_disposition_fingerprints or self.retained_ambiguous_fingerprints:
                 raise StateError("stop audit details require a stop basis")
         else:
             if self.stop_basis not in {"allocated", "direct_human"}:
@@ -601,18 +601,22 @@ class ReviewAllocation:
                 raise StateError("review allocation stop summary disposition fingerprints are malformed")
             if len(set(self.stop_summary_disposition_fingerprints)) != len(self.stop_summary_disposition_fingerprints):
                 raise StateError("review allocation stop summary disposition fingerprints must be unique")
-        if (self.retained_ambiguous_fingerprint is None) != (self.retained_ambiguous_reason is None):
+        if not isinstance(self.retained_ambiguous_fingerprints, tuple) or any(
+            not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+            for value in self.retained_ambiguous_fingerprints
+        ):
+            raise StateError("retained ambiguous evidence requires exact fingerprints")
+        if len(set(self.retained_ambiguous_fingerprints)) != len(self.retained_ambiguous_fingerprints):
+            raise StateError("retained ambiguous fingerprints must be unique")
+        if bool(self.retained_ambiguous_fingerprints) != (self.retained_ambiguous_reason is not None):
             raise StateError("retained ambiguous evidence requires both fingerprint and reason")
-        if self.retained_ambiguous_fingerprint is not None:
-            if not FINGERPRINT.fullmatch(self.retained_ambiguous_fingerprint):
-                raise StateError("retained ambiguous evidence requires an exact fingerprint")
-            if (
-                not isinstance(self.retained_ambiguous_reason, str)
-                or not self.retained_ambiguous_reason.strip()
-                or len(self.retained_ambiguous_reason) > 500
-                or any(ord(character) < 0x20 for character in self.retained_ambiguous_reason)
-            ):
-                raise StateError("retained ambiguous evidence requires a bounded reason without controls")
+        if self.retained_ambiguous_fingerprints and (
+            not isinstance(self.retained_ambiguous_reason, str)
+            or not self.retained_ambiguous_reason.strip()
+            or len(self.retained_ambiguous_reason) > 500
+            or any(ord(character) < 0x20 for character in self.retained_ambiguous_reason)
+        ):
+            raise StateError("retained ambiguous evidence requires a bounded reason without controls")
 
     @property
     def identity(self) -> str:
@@ -643,7 +647,7 @@ class ReviewAllocation:
             "stop_patch_id": self.stop_patch_id,
             "stop_reason": self.stop_reason,
             "stop_summary_disposition_fingerprints": list(self.stop_summary_disposition_fingerprints),
-            "retained_ambiguous_fingerprint": self.retained_ambiguous_fingerprint,
+            "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
         }
 
@@ -673,6 +677,7 @@ class ReviewAllocation:
             "stop_patch_id",
             "stop_reason",
             "stop_summary_disposition_fingerprints",
+            "retained_ambiguous_fingerprints",
             "retained_ambiguous_fingerprint",
             "retained_ambiguous_reason",
         }
@@ -684,6 +689,18 @@ class ReviewAllocation:
         raw_stop_dispositions = value.get("stop_summary_disposition_fingerprints", ())
         if isinstance(raw_stop_dispositions, list):
             raw_stop_dispositions = tuple(raw_stop_dispositions)
+        raw_retained_fingerprints = value.get("retained_ambiguous_fingerprints")
+        legacy_retained_fingerprint = value.get("retained_ambiguous_fingerprint")
+        if raw_retained_fingerprints is None:
+            raw_retained_fingerprints = (
+                () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
+            )
+        elif isinstance(raw_retained_fingerprints, list):
+            raw_retained_fingerprints = tuple(raw_retained_fingerprints)
+        else:
+            raise StateError("retained ambiguous fingerprints must be a JSON array")
+        if legacy_retained_fingerprint is not None and raw_retained_fingerprints != (legacy_retained_fingerprint,):
+            raise StateError("legacy retained ambiguous fingerprint conflicts with the fingerprint set")
         try:
             return cls(
                 pr=value["pr"],
@@ -709,7 +726,7 @@ class ReviewAllocation:
                 stop_patch_id=value.get("stop_patch_id"),
                 stop_reason=value.get("stop_reason"),
                 stop_summary_disposition_fingerprints=raw_stop_dispositions,
-                retained_ambiguous_fingerprint=value.get("retained_ambiguous_fingerprint"),
+                retained_ambiguous_fingerprints=raw_retained_fingerprints,
                 retained_ambiguous_reason=value.get("retained_ambiguous_reason"),
             )
         except KeyError as exc:

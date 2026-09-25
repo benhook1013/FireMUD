@@ -402,12 +402,13 @@ class LiveEvidence:
         pr: int,
         expected_anchor: Mapping[str, Any],
         retained_ambiguous_fingerprints: Sequence[str] = (),
+        prior_hosted_fingerprints: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Refresh complete review evidence for a human-directed channel stop.
 
-        A retained ambiguous response remains explicitly non-counting. The pin is
-        accepted only when it names one verified immutable terminal response and
-        removes only that response's matching generic audit blockers.
+        Retained ambiguous responses remain explicitly non-counting. Each pin
+        must name one verified immutable terminal response; only those exact
+        response blockers are removed from the generic audit.
         """
 
         required_anchor = ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
@@ -422,6 +423,14 @@ class LiveEvidence:
             raise ControllerError("retained Hosted ambiguity requires an exact immutable fingerprint")
         if len(set(pins)) != len(pins):
             raise ControllerError("retained Hosted ambiguity fingerprints must be unique")
+        prior_fingerprints = tuple(prior_hosted_fingerprints)
+        if any(
+            not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+            for fingerprint in prior_fingerprints
+        ):
+            raise ControllerError("prior Hosted transition evidence requires exact immutable fingerprints")
+        if len(set(prior_fingerprints)) != len(prior_fingerprints):
+            raise ControllerError("prior Hosted transition fingerprints must be unique")
 
         # All earlier commands may have populated these caches. A stop decision
         # is an authorization boundary, so refresh the paginated public snapshot
@@ -463,7 +472,7 @@ class LiveEvidence:
         # as the exact head supplied by the controller's fresh stack selection.
         audit = self.legacy_transition_reauthorization_audit(
             pr,
-            (),
+            prior_fingerprints,
             {
                 "child_head": child_head,
                 "live_base_ref": current.base_ref_name,
@@ -808,8 +817,7 @@ class LiveEvidence:
                 else None
             )
             if (
-                not ambiguous_responses
-                and state.state == "completed"
+                state.state == "completed"
                 and state.terminal is True
                 and state.attributed is True
                 and state.response_id == response_id

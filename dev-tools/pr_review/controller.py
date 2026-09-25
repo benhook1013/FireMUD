@@ -1487,6 +1487,7 @@ class ReviewController:
         pr: int,
         current: AnchorFacts,
         retained_ambiguous_fingerprints: tuple[str, ...],
+        prior_hosted_fingerprints: tuple[str, ...],
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
@@ -1496,6 +1497,7 @@ class ReviewController:
                     pr,
                     current.as_dict(),
                     retained_ambiguous_fingerprints=retained_ambiguous_fingerprints,
+                    prior_hosted_fingerprints=prior_hosted_fingerprints,
                 )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
@@ -1512,7 +1514,9 @@ class ReviewController:
             }
         elif callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
             try:
-                audit = provider.legacy_transition_reauthorization_audit(pr, (), current.as_dict())
+                audit = provider.legacy_transition_reauthorization_audit(
+                    pr, prior_hosted_fingerprints, current.as_dict()
+                )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
         else:
@@ -1540,55 +1544,71 @@ class ReviewController:
             raise ControllerError("review-stop audit has malformed terminal ambiguity evidence")
         if not isinstance(retained_ambiguities, Sequence) or isinstance(retained_ambiguities, (str, bytes)):
             raise ControllerError("review-stop audit has malformed retained ambiguity evidence")
-        retained_fingerprints = {
+        terminal_fingerprints = [
+            item.get("fingerprint")
+            for item in terminal_ambiguities
+            if isinstance(item, Mapping) and isinstance(item.get("fingerprint"), str)
+        ]
+        retained_fingerprints = [
             item.get("fingerprint")
             for item in retained_ambiguities
             if isinstance(item, Mapping) and isinstance(item.get("fingerprint"), str)
-        }
-        if any(
-            not isinstance(item, Mapping)
-            or not isinstance(item.get("fingerprint"), str)
-            or item["fingerprint"] not in retained_fingerprints
-            for item in terminal_ambiguities
+        ]
+        if (
+            len(terminal_fingerprints) != len(terminal_ambiguities)
+            or len(retained_fingerprints) != len(retained_ambiguities)
+            or len(set(terminal_fingerprints)) != len(terminal_fingerprints)
+            or len(set(retained_fingerprints)) != len(retained_fingerprints)
+            or not set(terminal_fingerprints).issubset(retained_fingerprints)
+            or not set(retained_fingerprints).issubset(terminal_fingerprints)
         ):
             raise ControllerError("review stop is blocked by unretained terminal ambiguity")
         return audit
 
-    def _stop_ambiguity_pin(
+    def _stop_ambiguity_pins(
         self,
         histories: Mapping[policy.Channel, Sequence[Any]],
-        fingerprint: str | None,
+        fingerprints: tuple[str, ...],
         reason: str | None,
         audit: Mapping[str, Any],
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[tuple[str, ...], str | None]:
         candidates = [
             value
             for history in histories.values()
             for value in history
             if _field(value, "terminal_ambiguous") is True
         ]
-        if fingerprint is None:
-            if candidates:
-                raise ControllerError("terminal ambiguous evidence requires an exact fingerprint and retention reason")
-            if reason is not None:
-                raise ControllerError("an ambiguity reason requires --retain-ambiguous-fingerprint")
-            return None, None
-        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
-            raise ControllerError("retained ambiguity fingerprint must be an exact lowercase SHA-256")
+        if not fingerprints:
+            if candidates or reason is not None:
+                raise ControllerError("terminal ambiguous evidence requires exact fingerprints and a retention reason")
+            return (), None
+        if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in fingerprints):
+            raise ControllerError("retained ambiguity fingerprints must be exact lowercase SHA-256 values")
+        if len(set(fingerprints)) != len(fingerprints):
+            raise ControllerError("retained ambiguity fingerprints must be unique")
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
             raise ControllerError("retaining terminal ambiguity requires a reason of at most 500 characters")
         if any(ord(character) < 0x20 for character in reason):
             raise ControllerError("ambiguity retention reason must not contain control characters")
-        matches = [value for value in candidates if _field(value, "fingerprint") == fingerprint]
-        if len(matches) != 1:
-            raise ControllerError("retained ambiguity fingerprint does not identify one terminal response")
-        matching_audit = [
-            item for item in audit.get("retained_ambiguous", ())
-            if isinstance(item, Mapping) and item.get("fingerprint") == fingerprint
+        candidate_fingerprints = [_field(value, "fingerprint") for value in candidates]
+        if (
+            any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in candidate_fingerprints)
+            or len(set(candidate_fingerprints)) != len(candidate_fingerprints)
+            or set(fingerprints) != set(candidate_fingerprints)
+        ):
+            raise ControllerError("retained ambiguity fingerprints must identify every current terminal response")
+        audit_fingerprints = [
+            item.get("fingerprint")
+            for item in audit.get("retained_ambiguous", ())
+            if isinstance(item, Mapping)
         ]
-        if len(matching_audit) != 1:
-            raise ControllerError("complete evidence audit did not retain the exact terminal response fingerprint")
-        return fingerprint, reason.strip()
+        if (
+            len(audit_fingerprints) != len(audit.get("retained_ambiguous", ()))
+            or len(set(audit_fingerprints)) != len(audit_fingerprints)
+            or set(audit_fingerprints) != set(fingerprints)
+        ):
+            raise ControllerError("complete evidence audit did not retain every exact terminal response fingerprint")
+        return fingerprints, reason.strip()
 
     def _check_stop_evidence(
         self,
@@ -1599,20 +1619,23 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         *,
         checkpoint_pin: str | None,
-        retained_ambiguous_fingerprint: str | None = None,
+        retained_ambiguous_fingerprints: tuple[str, ...] = (),
         ambiguity_reason: str | None = None,
-    ) -> tuple[Any, tuple[str, str] | None, dict[policy.Channel, list[Any]]]:
+    ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
+        transition = self._legacy_transition_for(state, pr, current)
+        prior_hosted_fingerprints = transition.hosted_fingerprints if transition is not None else ()
         audit = self._stop_audit(
             pr,
             current,
-            (retained_ambiguous_fingerprint,) if retained_ambiguous_fingerprint is not None else (),
+            retained_ambiguous_fingerprints,
+            prior_hosted_fingerprints,
         )
-        retained_fingerprint, retained_reason = self._stop_ambiguity_pin(
-            histories, retained_ambiguous_fingerprint, ambiguity_reason, audit
+        retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
+            histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
         )
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
@@ -1671,12 +1694,18 @@ class ReviewController:
                         "over_ceiling",
                     )
                 ):
-                    if _field(value, "terminal_ambiguous") is True and _field(value, "fingerprint") == retained_fingerprint:
+                    if (
+                        _field(value, "terminal_ambiguous") is True
+                        and _field(value, "fingerprint") in retained_fingerprints
+                    ):
                         continue
                     raise ControllerError(f"{selected.value} channel has unresolved review evidence")
                 checkpoint_id = _field(value, "checkpoint", "checkpoint_id")
                 if isinstance(checkpoint_id, str) and checkpoint_id.startswith(("trigger:", "pending-capture:")):
-                    if _field(value, "terminal_ambiguous") is True and _field(value, "fingerprint") == retained_fingerprint:
+                    if (
+                        _field(value, "terminal_ambiguous") is True
+                        and _field(value, "fingerprint") in retained_fingerprints
+                    ):
                         continue
                     raise ControllerError(f"{selected.value} channel has pending or ambiguous review evidence")
         history = histories[channel]
@@ -1703,7 +1732,8 @@ class ReviewController:
         reviewed_head = _field(latest, "head", "reviewed_head")
         if accepted > 0 and reviewed_head.casefold() == current.child_head.casefold():
             raise ControllerError("accepted findings need a published corrected head before review can stop")
-        return latest, (retained_fingerprint, retained_reason) if retained_fingerprint else None, histories
+        retained = (retained_fingerprints, retained_reason) if retained_fingerprints else None
+        return latest, retained, histories
 
     def _stop_progress(
         self,
@@ -1764,7 +1794,7 @@ class ReviewController:
                 current,
                 reconciliation_result,
                 checkpoint_pin=allocation.stop_checkpoint,
-                retained_ambiguous_fingerprint=allocation.retained_ambiguous_fingerprint,
+                retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                 ambiguity_reason=allocation.retained_ambiguous_reason,
             )
         except ControllerError as exc:
@@ -1782,7 +1812,7 @@ class ReviewController:
             "stop_reviewed_head": allocation.stop_reviewed_head,
             "stop_head": allocation.stop_head,
             "stop_reason": allocation.stop_reason,
-            "retained_ambiguous_fingerprint": allocation.retained_ambiguous_fingerprint,
+            "retained_ambiguous_fingerprints": list(allocation.retained_ambiguous_fingerprints),
             "checkpoint": allocation.stop_checkpoint,
             "accepted": None,
         }
@@ -1922,7 +1952,7 @@ class ReviewController:
             and not (
                 allocation.stop_basis == "allocated"
                 and _field(item, "terminal_ambiguous") is True
-                and _field(item, "fingerprint") == allocation.retained_ambiguous_fingerprint
+                and _field(item, "fingerprint") in allocation.retained_ambiguous_fingerprints
             )
         ):
             return result("EXHAUSTED_PENDING", "current review, finding, or thread obligations remain", checkpoint, accepted)
@@ -1960,7 +1990,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=allocation.stop_checkpoint,
-                    retained_ambiguous_fingerprint=allocation.retained_ambiguous_fingerprint,
+                    retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                     ambiguity_reason=allocation.retained_ambiguous_reason,
                 )
             except ControllerError as error:
@@ -1975,7 +2005,7 @@ class ReviewController:
                 "stop_reviewed_head": allocation.stop_reviewed_head,
                 "stop_head": allocation.stop_head,
                 "stop_reason": allocation.stop_reason,
-                "retained_ambiguous_fingerprint": allocation.retained_ambiguous_fingerprint,
+                "retained_ambiguous_fingerprints": list(allocation.retained_ambiguous_fingerprints),
             }
         if allocation.handoff_checkpoint is None:
             return result("EXHAUSTED_PENDING", "review allocation exhausted; an explicit stop decision is required", checkpoint, accepted)
@@ -2427,7 +2457,7 @@ class ReviewController:
         reason: str,
         head: str | None = None,
         checkpoint: str | None = None,
-        retain_ambiguous_fingerprint: str | None = None,
+        retain_ambiguous_fingerprints: Sequence[str] = (),
         ambiguity_reason: str | None = None,
     ) -> dict[str, Any]:
         """Record a direct human stop or consume a granted one-result allocation."""
@@ -2438,8 +2468,13 @@ class ReviewController:
             raise ControllerError("review stop channel must be hosted or cli") from exc
         normalized_reason = self._stop_reason(reason)
         normalized_head = _sha(head, "review stop head") if head is not None else None
-        if (retain_ambiguous_fingerprint is None) != (ambiguity_reason is None):
-            raise ControllerError("terminal ambiguity retention requires both an exact fingerprint and a reason")
+        if not isinstance(retain_ambiguous_fingerprints, Sequence) or isinstance(
+            retain_ambiguous_fingerprints, (str, bytes)
+        ):
+            raise ControllerError("retained ambiguity fingerprints must be a sequence")
+        retained_fingerprint_values = tuple(retain_ambiguous_fingerprints)
+        if bool(retained_fingerprint_values) != (ambiguity_reason is not None):
+            raise ControllerError("terminal ambiguity retention requires exact fingerprints and a reason")
         state = self._state()
         if pr not in state.ordered_prs:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
@@ -2471,10 +2506,10 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=checkpoint,
-                retained_ambiguous_fingerprint=retain_ambiguous_fingerprint,
+                retained_ambiguous_fingerprints=retained_fingerprint_values,
                 ambiguity_reason=ambiguity_reason,
             )
-            retained_fingerprint, retained_reason = retained or (None, None)
+            retained_fingerprints, retained_reason = retained or ((), None)
             history = checked_histories[selected]
             if previous is not None and previous.stop_basis is not None:
                 prior_view = self._allocation_progress(
@@ -2540,7 +2575,7 @@ class ReviewController:
                 stop_patch_id=current.patch_id,
                 stop_reason=normalized_reason,
                 stop_summary_disposition_fingerprints=self._stop_summary_fingerprints(state, pr),
-                retained_ambiguous_fingerprint=retained_fingerprint,
+                retained_ambiguous_fingerprints=retained_fingerprints,
                 retained_ambiguous_reason=retained_reason,
             )
 
@@ -2561,7 +2596,7 @@ class ReviewController:
             "stop_head": current.child_head,
             "stop_basis": basis,
             "reason": normalized_reason,
-            "retained_ambiguous_fingerprint": retained_fingerprint,
+            "retained_ambiguous_fingerprints": list(retained_fingerprints),
         }
 
     def _validate_decision_identity(
