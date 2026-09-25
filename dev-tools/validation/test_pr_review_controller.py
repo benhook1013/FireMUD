@@ -43,6 +43,44 @@ MERGE_1 = "e" * 40
 MERGE_2 = "f" * 40
 
 
+def _git(root, *args, input_text=None):
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        input=input_text,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit_tree_case(root, *, conflict=False):
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+    _git(root, "config", "user.name", "FireMUD test")
+    _git(root, "config", "user.email", "test@example.invalid")
+
+    def make_tree(files):
+        entries = []
+        for name, content in sorted(files.items()):
+            blob = _git(root, "hash-object", "-w", "--stdin", input_text=content)
+            entries.append(f"100644 blob {blob}\t{name}\n")
+        return _git(root, "mktree", input_text="".join(entries))
+
+    def make_commit(tree, message, parent=None):
+        args = ["-c", "user.name=FireMUD test", "-c", "user.email=test@example.invalid", "commit-tree", tree]
+        if parent is not None:
+            args.extend(("-p", parent))
+        args.extend(("-m", message))
+        return _git(root, *args)
+
+    common = make_commit(make_tree({"common.txt": "common\n"}), "common")
+    base_files = {"base.txt": "base\n", "common.txt": "base version\n" if conflict else "common\n"}
+    head_files = {"head.txt": "head\n", "common.txt": "head version\n" if conflict else "common\n"}
+    base = make_commit(make_tree(base_files), "base", common)
+    head = make_commit(make_tree(head_files), "head", common)
+    expected = None if conflict else make_tree({**base_files, **head_files})
+    return base, head, expected
+
+
 class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
@@ -1561,21 +1599,33 @@ class ControllerTests(unittest.TestCase):
             ["git", "-C", str(DefaultGitProvider().root), *patch_diff_args("a" * 40, "b" * 40)],
         )
 
-    def test_default_git_provider_returns_tree_for_exact_clean_test_merge(self):
-        results = [
-            CompletedProcess(["git"], 0, b"", b""),
-            CompletedProcess(["git"], 0, b"", b""),
-            CompletedProcess(["git"], 0, f"{MERGE_1}\n".encode(), b""),
-            CompletedProcess(["git"], 0, "tree\n", ""),
-        ]
-        with patch("pr_review.controller.subprocess.run", side_effect=results) as run:
-            actual = DefaultGitProvider(timeout_seconds=11).test_merge_tree(BASE, HEAD_1)
+    def test_default_git_provider_returns_tree_for_exact_clean_test_merge_on_installed_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            base, head, expected_tree = _commit_tree_case(root)
+            refs_before = _git(root, "for-each-ref", "--format=%(refname) %(objectname)")
+            status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
+            worktrees_before = _git(root, "worktree", "list", "--porcelain")
 
-        self.assertEqual(actual, MERGE_1)
-        self.assertEqual(
-            run.call_args_list[2].args[0],
-            ["git", "-C", str(DefaultGitProvider().root), "merge-tree", "--write-tree", BASE, HEAD_1],
-        )
+            actual = DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
+
+            self.assertEqual(actual, expected_tree)
+            self.assertEqual(_git(root, "for-each-ref", "--format=%(refname) %(objectname)"), refs_before)
+            self.assertEqual(_git(root, "status", "--porcelain", "--untracked-files=all"), status_before)
+            self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_default_git_provider_rejects_conflict_and_cleans_temporary_worktree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            base, head, _ = _commit_tree_case(root, conflict=True)
+            worktrees_before = _git(root, "worktree", "list", "--porcelain")
+
+            with self.assertRaisesRegex(ControllerError, "do not produce a clean test merge"):
+                DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
+
+            self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
 
     def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
         with patch(

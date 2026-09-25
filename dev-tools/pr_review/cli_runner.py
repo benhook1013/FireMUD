@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from . import github as github_api
 from . import hosted
+from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
 
 
@@ -340,22 +341,25 @@ def _test_merge_commit(
 ) -> str:
     """Create an isolated local merge commit for one exact base/head pair."""
 
-    merged = _git(
-        runner,
-        source_root,
-        "merge-tree",
-        "--write-tree",
-        base,
-        head,
-        check=False,
-        timeout=timeout,
-    )
-    if merged.returncode != 0:
-        raise ReviewRunnerError("current default base and PR head do not produce a clean test merge")
-    lines = [line.strip() for line in merged.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise ReviewRunnerError("current default base and PR head test merge returned no tree")
-    tree = _sha(lines[0], "test-merge tree")
+    def run_git(args, *, check, text, timeout):
+        return runner.run(
+            args,
+            capture_output=True,
+            check=check,
+            text=text,
+            timeout=timeout,
+        )
+
+    try:
+        tree = test_merge_tree(
+            source_root,
+            base,
+            head,
+            run=run_git,
+            timeout_seconds=timeout,
+        )
+    except TestMergeError as error:
+        raise ReviewRunnerError(str(error)) from error
     merge = _sha(
         _git_output(
             runner,

@@ -30,6 +30,7 @@ from .cli_runner import (
     ReviewTarget,
     StaleReviewTargetError,
 )
+from .git_merge import TestMergeError, test_merge_tree
 from .hosted import default_trigger_record_path, parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
 from .state import (
@@ -201,32 +202,21 @@ class DefaultGitProvider:
         normalized_head = _sha(head, "test-merge head")
         self._ensure_commit(normalized_base)
         self._ensure_commit(normalized_head)
-        result = self._run_process(
-            [
-                "git",
-                "-C",
-                str(self.root),
-                "merge-tree",
-                "--write-tree",
+
+        def run_git(args, *, check, text, timeout):
+            del timeout
+            return self._run_process(args, check=check, text=text)
+
+        try:
+            return test_merge_tree(
+                self.root,
                 normalized_base,
                 normalized_head,
-            ],
-            check=False,
-        )
-        if result.returncode != 0:
-            raise ControllerError("current default base and PR head do not produce a clean test merge")
-        try:
-            output = result.stdout.decode("utf-8") if isinstance(result.stdout, bytes) else result.stdout
-        except UnicodeDecodeError as error:
-            raise ControllerError("current default base and PR head test merge returned malformed output") from error
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        if not lines:
-            raise ControllerError("current default base and PR head test merge returned no tree")
-        tree = _sha(lines[0], "test-merge tree")
-        tree_type = self._run("cat-file", "-t", tree)
-        if tree_type != "tree":
-            raise ControllerError("current default base and PR head test merge returned a non-tree object")
-        return tree
+                run=run_git,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except TestMergeError as error:
+            raise ControllerError(str(error)) from error
 
 
 class EmptyEvidence:
