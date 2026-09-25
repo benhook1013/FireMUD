@@ -32,7 +32,22 @@ production_policy_applies_to_changes() {
   # production overlay resources remain attestation-gated below.
   while IFS= read -r changed_file; do
     case "$changed_file" in
-      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*|k8s/postgres|k8s/postgres/*)
+      k8s/overlays/prod|k8s/overlays/prod/*)
+        return 0
+        ;;
+    esac
+  done <<<"$changed_files"
+
+  return 1
+}
+
+kubernetes_policy_applies_to_changes() {
+  local changed_files="$1"
+  local changed_file
+
+  while IFS= read -r changed_file; do
+    case "$changed_file" in
+      k8s/*)
         return 0
         ;;
     esac
@@ -153,6 +168,7 @@ run_preflight_policy_checks() {
   local promotion_attestation=""
   local backup_readiness=""
   local deployment_ref=""
+  local static_policy_applies="false"
   local production_pr_validation="false"
 
   if [[ "${GITHUB_EVENT_NAME:-}" = "pull_request" && -n "${GITHUB_BASE_REF:-}" ]]; then
@@ -163,6 +179,10 @@ run_preflight_policy_checks() {
       local status=$?
       echo "::endgroup::"
       return "$status"
+    fi
+
+    if kubernetes_policy_applies_to_changes "$changed_files"; then
+      static_policy_applies="true"
     fi
 
     if production_policy_applies_to_changes "$changed_files"; then
@@ -207,7 +227,11 @@ PY
     fi
   fi
 
-  if [[ "$production_pr_validation" = "true" ]]; then
+  if [[ "$static_policy_applies" = "true" ]]; then
+    if [[ "$production_pr_validation" != "true" ]]; then
+      deployment_ref="$(git rev-parse HEAD)"
+    fi
+
     if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
       FIREMUD_DEPLOYMENT_REF="$deployment_ref" \
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
@@ -221,7 +245,7 @@ PY
       return "$status"
     fi
   else
-    echo "Skipping static preflight policy enforcement because no production attestation context is present."
+    echo "Skipping ci-static preflight because no PR k8s/* changes were detected; any PR k8s/* change runs static preflight, while production-overlay changes also require production attestation."
     echo "Overlay render and image validation still run below."
   fi
   echo "::endgroup::"

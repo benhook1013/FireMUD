@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -20,10 +21,44 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
 
 class StateError(ValueError):
     """Raised when private review-stack state is invalid or unavailable."""
+
+
+def _fingerprint_value(value: Any) -> Any:
+    """Return a deterministic JSON-compatible representation for one observation."""
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _fingerprint_value(dataclasses.asdict(value))
+    if isinstance(value, Mapping):
+        return {
+            str(key): _fingerprint_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_fingerprint_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise StateError("legacy transition evidence contains an unsupported value")
+
+
+def observation_fingerprint(value: Any) -> str:
+    """Hash one immutable evidence observation for a legacy transition."""
+
+    try:
+        encoded = json.dumps(
+            _fingerprint_value(value),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise StateError("legacy transition evidence is not fingerprintable") from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -364,6 +399,341 @@ class StackReconciliationDecision:
 
 
 @dataclasses.dataclass(frozen=True)
+class LegacyEvidenceTransition:
+    """Explicitly make one exact set of legacy observations non-counting."""
+
+    pr: int
+    child_head: str
+    parent_identity: str
+    parent_head: str
+    merge_base: str
+    patch_id: str
+    hosted_fingerprints: tuple[str, ...] = ()
+    cli_fingerprints: tuple[str, ...] = ()
+    reason: str = ""
+    retired_hosted_fingerprints: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("legacy transition PR must be a positive integer")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                self.child_head,
+                self.parent_identity,
+                self.parent_head,
+                self.merge_base,
+                self.patch_id,
+                self.reason,
+            )
+        ):
+            raise StateError("legacy transitions require complete identities and a reason")
+        for name in ("hosted_fingerprints", "cli_fingerprints"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, str) or FINGERPRINT.fullmatch(value) is None for value in values
+            ):
+                raise StateError(f"legacy transition {name} must contain SHA-256 fingerprints")
+            if len(set(values)) != len(values):
+                raise StateError(f"legacy transition {name} fingerprints must be unique")
+        retired = self.retired_hosted_fingerprints
+        if not isinstance(retired, tuple) or any(
+            not isinstance(value, str) or FINGERPRINT.fullmatch(value) is None for value in retired
+        ):
+            raise StateError("legacy transition retired Hosted fingerprints must be SHA-256 fingerprints")
+        if len(set(retired)) != len(retired) or not set(retired).issubset(self.hosted_fingerprints):
+            raise StateError("retired Hosted fingerprints must be unique members of the audited Hosted set")
+        if not self.hosted_fingerprints and not self.cli_fingerprints:
+            raise StateError("legacy transition requires at least one legacy observation")
+
+    def matches(self, pr: int, anchor: Mapping[str, Any]) -> bool:
+        return self.pr == pr and all(
+            getattr(self, field) == anchor.get(field)
+            for field in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        )
+
+    def fingerprints_for(self, channel: str) -> tuple[str, ...]:
+        if channel == "hosted":
+            return self.hosted_fingerprints
+        if channel == "cli":
+            return self.cli_fingerprints
+        raise StateError("legacy transition channel must be hosted or cli")
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> LegacyEvidenceTransition:
+        allowed = {
+            "pr",
+            "child_head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+            "hosted_fingerprints",
+            "cli_fingerprints",
+            "retired_hosted_fingerprints",
+            "reason",
+        }
+        if set(value) - allowed:
+            raise StateError("legacy transition contains fields outside the private schema")
+        try:
+            hosted = value.get("hosted_fingerprints", ())
+            cli = value.get("cli_fingerprints", ())
+            retired_hosted = value.get("retired_hosted_fingerprints", ())
+            if isinstance(hosted, list):
+                hosted = tuple(hosted)
+            if isinstance(cli, list):
+                cli = tuple(cli)
+            if isinstance(retired_hosted, list):
+                retired_hosted = tuple(retired_hosted)
+            return cls(
+                pr=value["pr"],
+                child_head=value["child_head"],
+                parent_identity=value["parent_identity"],
+                parent_head=value["parent_head"],
+                merge_base=value["merge_base"],
+                patch_id=value["patch_id"],
+                hosted_fingerprints=hosted,
+                cli_fingerprints=cli,
+                retired_hosted_fingerprints=retired_hosted,
+                reason=value["reason"],
+            )
+        except StateError:
+            raise
+        except (KeyError, AttributeError, TypeError) as exc:
+            raise StateError("legacy transition record is malformed") from exc
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewAllocation:
+    """A durable one-result allocation or explicit channel-stop decision.
+
+    The allocation is bound to the complete stack identity observed when an
+    operator made the promise. The controller may consume it only after a
+    completed result for that identity. New stop decisions record the exact
+    reviewed checkpoint and the current live anchor separately; legacy handoff
+    fields remain readable for state migration and are never newly issued.
+    """
+
+    pr: int
+    channel: str
+    head: str
+    parent_identity: str
+    parent_head: str
+    merge_base: str
+    patch_id: str
+    baseline_checkpoints: tuple[str, ...]
+    reason: str
+    handoff_checkpoint: str | None = None
+    handoff_head: str | None = None
+    handoff_validation: str | None = None
+    stop_basis: str | None = None
+    stop_checkpoint: str | None = None
+    stop_reviewed_head: str | None = None
+    stop_reviewed_patch_id: str | None = None
+    stop_head: str | None = None
+    stop_parent_identity: str | None = None
+    stop_parent_head: str | None = None
+    stop_merge_base: str | None = None
+    stop_patch_id: str | None = None
+    stop_reason: str | None = None
+    stop_summary_disposition_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("review allocation PR must be a positive integer")
+        if self.channel not in {"hosted", "cli"}:
+            raise StateError("review allocation channel must be hosted or cli")
+        for name in ("head", "parent_head", "merge_base"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
+                raise StateError(f"review allocation {name} must be an exact SHA")
+        for name in ("parent_identity", "patch_id", "reason"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise StateError(f"review allocation {name} must be a non-empty string")
+        if not isinstance(self.baseline_checkpoints, tuple):
+            raise StateError("review allocation baseline checkpoints must be a tuple")
+        if any(not isinstance(item, str) or not item.strip() for item in self.baseline_checkpoints):
+            raise StateError("review allocation baseline checkpoints must be non-empty strings")
+        if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
+            raise StateError("review allocation baseline checkpoints must be unique")
+        handoff_values = (self.handoff_checkpoint, self.handoff_head, self.handoff_validation)
+        if any(value is not None for value in handoff_values):
+            if not all(isinstance(value, str) and value.strip() for value in handoff_values):
+                raise StateError("review allocation handoff proof must be complete")
+            if not EXACT_SHA.fullmatch(self.handoff_head or ""):
+                raise StateError("review allocation handoff head must be an exact SHA")
+        stop_values = (
+            self.stop_checkpoint,
+            self.stop_reviewed_head,
+            self.stop_reviewed_patch_id,
+            self.stop_head,
+            self.stop_parent_identity,
+            self.stop_parent_head,
+            self.stop_merge_base,
+            self.stop_patch_id,
+            self.stop_reason,
+        )
+        if self.stop_basis is None:
+            if any(value is not None for value in stop_values):
+                raise StateError("review allocation stop fields require a stop basis")
+            if self.stop_summary_disposition_fingerprints or self.retained_ambiguous_fingerprints:
+                raise StateError("stop audit details require a stop basis")
+        else:
+            if self.stop_basis not in {"allocated", "direct_human"}:
+                raise StateError("review allocation stop basis must be allocated or direct_human")
+            if not all(isinstance(value, str) and value.strip() for value in stop_values):
+                raise StateError("review allocation stop proof must be complete")
+            for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if not EXACT_SHA.fullmatch(getattr(self, name) or ""):
+                    raise StateError(f"review allocation {name} must be an exact SHA")
+            if len(self.stop_reason or "") > 500 or any(ord(character) < 0x20 for character in self.stop_reason or ""):
+                raise StateError("review allocation stop reason must be at most 500 characters without controls")
+            if not isinstance(self.stop_summary_disposition_fingerprints, tuple) or any(
+                not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+                for value in self.stop_summary_disposition_fingerprints
+            ):
+                raise StateError("review allocation stop summary disposition fingerprints are malformed")
+            if len(set(self.stop_summary_disposition_fingerprints)) != len(self.stop_summary_disposition_fingerprints):
+                raise StateError("review allocation stop summary disposition fingerprints must be unique")
+        if not isinstance(self.retained_ambiguous_fingerprints, tuple) or any(
+            not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+            for value in self.retained_ambiguous_fingerprints
+        ):
+            raise StateError("retained ambiguous evidence requires exact fingerprints")
+        if len(set(self.retained_ambiguous_fingerprints)) != len(self.retained_ambiguous_fingerprints):
+            raise StateError("retained ambiguous fingerprints must be unique")
+        if bool(self.retained_ambiguous_fingerprints) != (self.retained_ambiguous_reason is not None):
+            raise StateError("retained ambiguous evidence requires both fingerprint and reason")
+        if self.retained_ambiguous_fingerprints and (
+            not isinstance(self.retained_ambiguous_reason, str)
+            or not self.retained_ambiguous_reason.strip()
+            or len(self.retained_ambiguous_reason) > 500
+            or any(ord(character) < 0x20 for character in self.retained_ambiguous_reason)
+        ):
+            raise StateError("retained ambiguous evidence requires a bounded reason without controls")
+
+    @property
+    def identity(self) -> str:
+        return f"{self.pr}:{self.channel}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pr": self.pr,
+            "channel": self.channel,
+            "head": self.head,
+            "parent_identity": self.parent_identity,
+            "parent_head": self.parent_head,
+            "merge_base": self.merge_base,
+            "patch_id": self.patch_id,
+            "baseline_checkpoints": list(self.baseline_checkpoints),
+            "reason": self.reason,
+            "handoff_checkpoint": self.handoff_checkpoint,
+            "handoff_head": self.handoff_head,
+            "handoff_validation": self.handoff_validation,
+            "stop_basis": self.stop_basis,
+            "stop_checkpoint": self.stop_checkpoint,
+            "stop_reviewed_head": self.stop_reviewed_head,
+            "stop_reviewed_patch_id": self.stop_reviewed_patch_id,
+            "stop_head": self.stop_head,
+            "stop_parent_identity": self.stop_parent_identity,
+            "stop_parent_head": self.stop_parent_head,
+            "stop_merge_base": self.stop_merge_base,
+            "stop_patch_id": self.stop_patch_id,
+            "stop_reason": self.stop_reason,
+            "stop_summary_disposition_fingerprints": list(self.stop_summary_disposition_fingerprints),
+            "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
+            "retained_ambiguous_reason": self.retained_ambiguous_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
+        allowed = {
+            "pr",
+            "channel",
+            "head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+            "baseline_checkpoints",
+            "reason",
+            "handoff_checkpoint",
+            "handoff_head",
+            "handoff_validation",
+            "stop_basis",
+            "stop_checkpoint",
+            "stop_reviewed_head",
+            "stop_reviewed_patch_id",
+            "stop_head",
+            "stop_parent_identity",
+            "stop_parent_head",
+            "stop_merge_base",
+            "stop_patch_id",
+            "stop_reason",
+            "stop_summary_disposition_fingerprints",
+            "retained_ambiguous_fingerprints",
+            "retained_ambiguous_fingerprint",
+            "retained_ambiguous_reason",
+        }
+        if set(value) - allowed:
+            raise StateError("review allocation contains fields outside the private schema")
+        raw_checkpoints = value.get("baseline_checkpoints")
+        if not isinstance(raw_checkpoints, list):
+            raise StateError("review allocation baseline checkpoints must be a JSON array")
+        raw_stop_dispositions = value.get("stop_summary_disposition_fingerprints", ())
+        if isinstance(raw_stop_dispositions, list):
+            raw_stop_dispositions = tuple(raw_stop_dispositions)
+        raw_retained_fingerprints = value.get("retained_ambiguous_fingerprints")
+        legacy_retained_fingerprint = value.get("retained_ambiguous_fingerprint")
+        if raw_retained_fingerprints is None:
+            raw_retained_fingerprints = (
+                () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
+            )
+        elif isinstance(raw_retained_fingerprints, list):
+            raw_retained_fingerprints = tuple(raw_retained_fingerprints)
+        else:
+            raise StateError("retained ambiguous fingerprints must be a JSON array")
+        if legacy_retained_fingerprint is not None and raw_retained_fingerprints != (legacy_retained_fingerprint,):
+            raise StateError("legacy retained ambiguous fingerprint conflicts with the fingerprint set")
+        try:
+            return cls(
+                pr=value["pr"],
+                channel=value["channel"],
+                head=value["head"],
+                parent_identity=value["parent_identity"],
+                parent_head=value["parent_head"],
+                merge_base=value["merge_base"],
+                patch_id=value["patch_id"],
+                baseline_checkpoints=tuple(raw_checkpoints),
+                reason=value["reason"],
+                handoff_checkpoint=value.get("handoff_checkpoint"),
+                handoff_head=value.get("handoff_head"),
+                handoff_validation=value.get("handoff_validation"),
+                stop_basis=value.get("stop_basis"),
+                stop_checkpoint=value.get("stop_checkpoint"),
+                stop_reviewed_head=value.get("stop_reviewed_head"),
+                stop_reviewed_patch_id=value.get("stop_reviewed_patch_id"),
+                stop_head=value.get("stop_head"),
+                stop_parent_identity=value.get("stop_parent_identity"),
+                stop_parent_head=value.get("stop_parent_head"),
+                stop_merge_base=value.get("stop_merge_base"),
+                stop_patch_id=value.get("stop_patch_id"),
+                stop_reason=value.get("stop_reason"),
+                stop_summary_disposition_fingerprints=raw_stop_dispositions,
+                retained_ambiguous_fingerprints=raw_retained_fingerprints,
+                retained_ambiguous_reason=value.get("retained_ambiguous_reason"),
+            )
+        except KeyError as exc:
+            raise StateError("review allocation contains malformed private records") from exc
+
+
+@dataclasses.dataclass(frozen=True)
 class ReviewState:
     """The complete persisted document, excluding all live review observations."""
 
@@ -371,7 +741,9 @@ class ReviewState:
     policy_overrides: Mapping[str, PolicyOverride] = dataclasses.field(default_factory=dict)
     judgments: tuple[Judgment, ...] = ()
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
+    legacy_transitions: tuple[LegacyEvidenceTransition, ...] = ()
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
+    allocations: Mapping[str, ReviewAllocation] = dataclasses.field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -388,8 +760,18 @@ class ReviewState:
                 or not isinstance(override, PolicyOverride)
             ):
                 raise StateError("policy overrides must be keyed by PR and channel")
+        for identity, allocation in self.allocations.items():
+            if (
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[1-9][0-9]*:(?:hosted|cli)", identity)
+                or not isinstance(allocation, ReviewAllocation)
+                or allocation.identity != identity
+            ):
+                raise StateError("review allocations must be keyed by matching PR and channel")
         if any(not isinstance(item, SummaryFindingDisposition) for item in self.summary_dispositions):
             raise StateError("summary dispositions must contain validated disposition records")
+        if any(not isinstance(item, LegacyEvidenceTransition) for item in self.legacy_transitions):
+            raise StateError("legacy transitions must contain validated transition records")
         identities = [item.identity for item in self.summary_dispositions]
         if len(set(identities)) != len(identities):
             raise StateError("summary dispositions must have unique exact finding identities")
@@ -401,7 +783,9 @@ class ReviewState:
             "policy_overrides": {identity: item.to_dict() for identity, item in sorted(self.policy_overrides.items())},
             "judgments": [item.to_dict() for item in self.judgments],
             "reconciliations": [item.to_dict() for item in self.reconciliations],
+            "legacy_transitions": [item.to_dict() for item in self.legacy_transitions],
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
+            "allocations": {identity: item.to_dict() for identity, item in sorted(self.allocations.items())},
         }
 
     @classmethod
@@ -414,7 +798,9 @@ class ReviewState:
             "policy_overrides",
             "judgments",
             "reconciliations",
+            "legacy_transitions",
             "summary_dispositions",
+            "allocations",
         }:
             raise StateError("state contains fields outside the private configuration schema")
         if value.get("schema_version") != SCHEMA_VERSION:
@@ -424,8 +810,14 @@ class ReviewState:
             raise StateError("policy overrides must be an object")
         if any(not isinstance(item, Mapping) for item in raw_overrides.values()):
             raise StateError("policy override records must be objects")
+        raw_allocations = value.get("allocations", {})
+        if not isinstance(raw_allocations, Mapping):
+            raise StateError("review allocations must be an object")
+        if any(not isinstance(item, Mapping) for item in raw_allocations.values()):
+            raise StateError("review allocation records must be objects")
         try:
             overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
+            allocations = {identity: ReviewAllocation.from_dict(item) for identity, item in raw_allocations.items()}
             return cls(
                 ordered_prs=tuple(value.get("ordered_prs", ())),
                 policy_overrides=overrides,
@@ -433,9 +825,13 @@ class ReviewState:
                 reconciliations=tuple(
                     StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
                 ),
+                legacy_transitions=tuple(
+                    LegacyEvidenceTransition.from_dict(item) for item in value.get("legacy_transitions", ())
+                ),
                 summary_dispositions=tuple(
                     SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
                 ),
+                allocations=allocations,
             )
         except StateError:
             raise

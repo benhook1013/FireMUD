@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
+import static net.firedevops.firemud.gamesession.jooq.tables.TickBatch.TICK_BATCH;
 import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -81,7 +82,64 @@ class GameplayCommandRepositoryIntegrationTest {
   @BeforeEach
   void cleanTable() {
     dsl.execute(
-        "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer RESTART IDENTITY CASCADE");
+        "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer, tick_batch, tick_effect "
+            + "RESTART IDENTITY CASCADE");
+  }
+
+  @Test
+  void cleanTableClearsFixedTickBatchAndEffectIdsForReuse() {
+    dsl.insertInto(TICK_BATCH)
+        .set(TICK_BATCH.TICK_BATCH_ID, "fixed-test-batch")
+        .set(TICK_BATCH.TENANT_ID, 1L)
+        .set(TICK_BATCH.GAME_INSTANCE_ID, 7L)
+        .set(TICK_BATCH.REGION_ID, "region-1")
+        .set(TICK_BATCH.REGION_EPOCH, 1L)
+        .set(TICK_BATCH.EXECUTOR_FENCE, "fence")
+        .set(TICK_BATCH.BATCH_SOURCE, "FRESH_STAGE")
+        .set(TICK_BATCH.STATUS, "STAGED")
+        .set(TICK_BATCH.REQUIRES_SOLO_TICK, false)
+        .set(TICK_BATCH.COMMAND_COUNT, 1)
+        .set(TICK_BATCH.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .execute();
+    dsl.insertInto(TICK_EFFECT)
+        .set(TICK_EFFECT.EFFECT_ID, "fixed-test-effect")
+        .set(TICK_EFFECT.TICK_BATCH_ID, "fixed-test-batch")
+        .set(TICK_EFFECT.EFFECT_TYPE, "TEST")
+        .set(TICK_EFFECT.TARGET_AGGREGATE, "test:1")
+        .set(TICK_EFFECT.STATUS, "STAGED")
+        .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .set(TICK_EFFECT.EFFECT_KEY, "fixed-test-effect-key")
+        .execute();
+
+    cleanTable();
+
+    assertThat(dsl.fetchCount(TICK_BATCH)).isZero();
+    assertThat(dsl.fetchCount(TICK_EFFECT)).isZero();
+    dsl.insertInto(TICK_BATCH)
+        .set(TICK_BATCH.TICK_BATCH_ID, "fixed-test-batch")
+        .set(TICK_BATCH.TENANT_ID, 1L)
+        .set(TICK_BATCH.GAME_INSTANCE_ID, 7L)
+        .set(TICK_BATCH.REGION_ID, "region-1")
+        .set(TICK_BATCH.REGION_EPOCH, 1L)
+        .set(TICK_BATCH.EXECUTOR_FENCE, "fence")
+        .set(TICK_BATCH.BATCH_SOURCE, "FRESH_STAGE")
+        .set(TICK_BATCH.STATUS, "STAGED")
+        .set(TICK_BATCH.REQUIRES_SOLO_TICK, false)
+        .set(TICK_BATCH.COMMAND_COUNT, 1)
+        .set(TICK_BATCH.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .execute();
+    dsl.insertInto(TICK_EFFECT)
+        .set(TICK_EFFECT.EFFECT_ID, "fixed-test-effect")
+        .set(TICK_EFFECT.TICK_BATCH_ID, "fixed-test-batch")
+        .set(TICK_EFFECT.EFFECT_TYPE, "TEST")
+        .set(TICK_EFFECT.TARGET_AGGREGATE, "test:1")
+        .set(TICK_EFFECT.STATUS, "STAGED")
+        .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .set(TICK_EFFECT.EFFECT_KEY, "fixed-test-effect-key")
+        .execute();
+
+    assertThat(dsl.fetchCount(TICK_BATCH)).isEqualTo(1);
+    assertThat(dsl.fetchCount(TICK_EFFECT)).isEqualTo(1);
   }
 
   @Test
@@ -472,6 +530,20 @@ class GameplayCommandRepositoryIntegrationTest {
         .containsExactly("STAGED", stagedAt);
 
     assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isFalse();
+    dsl.insertInto(TICK_BATCH)
+        .set(TICK_BATCH.TICK_BATCH_ID, "batch-stage-1")
+        .set(TICK_BATCH.TENANT_ID, 1L)
+        .set(TICK_BATCH.GAME_INSTANCE_ID, 7L)
+        .set(TICK_BATCH.REGION_ID, "region-1")
+        .set(TICK_BATCH.REGION_EPOCH, 12L)
+        .set(TICK_BATCH.EXECUTOR_FENCE, "fence-stage-1")
+        .set(TICK_BATCH.BATCH_SOURCE, "FRESH_STAGE")
+        .set(TICK_BATCH.STATUS, "STAGED")
+        .set(TICK_BATCH.REQUIRES_SOLO_TICK, false)
+        .set(TICK_BATCH.COMMAND_COUNT, 1)
+        .set(TICK_BATCH.EXPECTED_EFFECT_COUNT, 1)
+        .set(TICK_BATCH.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .execute();
     dsl.insertInto(TICK_EFFECT)
         .set(TICK_EFFECT.EFFECT_ID, "effect-stage-1")
         .set(TICK_EFFECT.TICK_BATCH_ID, "batch-stage-1")

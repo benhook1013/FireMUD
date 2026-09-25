@@ -171,6 +171,23 @@ def github_payload(checks: list[dict] | None = None) -> dict:
 
 
 class StatusTest(unittest.TestCase):
+    def test_cli_status_defaults_to_windowed_overview_and_keeps_full_scan_explicit(self) -> None:
+        controller = Mock()
+        controller.status_overview.return_value = {"mode": "windowed"}
+        controller.status.return_value = {"mode": "full"}
+
+        with patch.object(cli, "default_controller", return_value=controller):
+            overview, overview_exit = cli._dispatch(cli._parser().parse_args(["status", "--json"]))
+            full, full_exit = cli._dispatch(
+                cli._parser().parse_args(["status", "--full-scan", "--json"])
+            )
+
+        self.assertEqual((overview_exit, full_exit), (0, 0))
+        self.assertEqual(overview, {"mode": "windowed"})
+        self.assertEqual(full, {"mode": "full"})
+        controller.status_overview.assert_called_once_with()
+        controller.status.assert_called_once_with()
+
     def _ready_report(self, payload: dict, **kwargs) -> dict:
         with patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}):
             return status.build_report(
@@ -253,6 +270,130 @@ class StatusTest(unittest.TestCase):
                         path.write_text(json.dumps(payload), encoding="utf-8")
                         with self.assertRaisesRegex(TypeError, expected):
                             github.load_pull_request(path, "owner/repo", 2838)
+
+    def test_identity_batch_names_every_configured_pr_without_repository_list_limit(self) -> None:
+        numbers = (12, 931)
+
+        def identity(number: int) -> dict:
+            return {
+                "number": number,
+                "state": "OPEN",
+                "isDraft": False,
+                "mergedAt": None,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+                "headRefName": f"feature-{number}",
+                "headRefOid": HEAD,
+                "mergeable": "MERGEABLE",
+                "headRepository": {"nameWithOwner": "owner/repo"},
+                "comments": {"nodes": []},
+                "reviews": {"nodes": []},
+            }
+
+        payload = {"data": {"repository": {f"pr_{number}": identity(number) for number in numbers}}}
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            result = github.fetch_pr_identity_batch("owner/repo", numbers)
+
+        self.assertEqual(set(result), set(numbers))
+        self.assertTrue(all(result[number]["number"] == number for number in numbers))
+        query_text = query.call_args.args[0]
+        self.assertIn("pr_12: pullRequest(number:12)", query_text)
+        self.assertIn("pr_931: pullRequest(number:931)", query_text)
+        self.assertNotIn("pullRequests(", query_text)
+        self.assertNotIn("--limit", query_text)
+
+    def test_identity_batch_marks_missing_alias_unknown_and_fails_on_graphql_errors(self) -> None:
+        item = {
+            "number": 12,
+            "state": "OPEN",
+            "isDraft": False,
+            "mergedAt": None,
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature-12",
+            "headRefOid": HEAD,
+            "mergeable": "MERGEABLE",
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "comments": {"nodes": []},
+            "reviews": {"nodes": []},
+        }
+        with patch.object(
+            github,
+            "run_gh_query",
+            return_value={"data": {"repository": {"pr_12": item, "pr_931": None}}},
+        ):
+            result = github.fetch_pr_identity_batch("owner/repo", (12, 931))
+        self.assertIsNone(result[931])
+
+        with patch.object(
+            github,
+            "run_gh_query",
+            return_value={"errors": [{"message": "partial"}], "data": {"repository": {}}},
+        ), self.assertRaisesRegex(RuntimeError, "contains errors"):
+            github.fetch_pr_identity_batch("owner/repo", (12,))
+
+    def test_cli_selected_tail_uses_scoped_status_instead_of_default_full_scan(self) -> None:
+        class FakeStore:
+            @staticmethod
+            def load():
+                return type("State", (), {"summary_dispositions": ()})()
+
+        class FakeController:
+            store = FakeStore()
+            repository = "owner/repo"
+
+            def __init__(self) -> None:
+                self.full_status_calls = 0
+                self.selected = []
+
+            def status(self):
+                self.full_status_calls += 1
+                return {"prs": []}
+
+            def status_for_pr(self, number: int):
+                self.selected.append(number)
+                return {
+                    "prs": [
+                        {
+                            "pr": value,
+                            "head": HEAD,
+                            "base": "feature-parent",
+                            "parent_head": BASE,
+                            "reconciliation": "COHERENT",
+                            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                            "allocations": {
+                                "hosted": {"status": "HANDED_OFF", "reason": ""},
+                                "cli": {"status": "HANDED_OFF", "reason": ""},
+                            },
+                        }
+                        for value in range(1, number + 1)
+                    ]
+                }
+
+        controller = FakeController()
+        live_report = {
+            "pr_number": 6,
+            "pull_request": {
+                "headRefOid": HEAD,
+                "baseRefName": "feature-parent",
+                "baseRefOid": BASE,
+            },
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+        }
+        args = cli._parser().parse_args(["status", "--pr", "6", "--json"])
+        with (
+            patch.object(cli, "_controller", return_value=(controller, None)),
+            patch.object(cli.status_module, "status", return_value=live_report),
+        ):
+            result, exit_status = cli._dispatch(args)
+
+        self.assertEqual(exit_status, 0)
+        self.assertEqual(controller.selected, [6])
+        self.assertEqual(controller.full_status_calls, 0)
+        self.assertEqual([item["pr"] for item in result["review_stack"]["prs"]], list(range(1, 7)))
 
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()
@@ -762,6 +903,7 @@ class StatusTest(unittest.TestCase):
                         }
                     ]
                 }
+                controller.status_for_pr.return_value = controller.status.return_value
 
                 with (
                     patch.object(cli, "default_controller", return_value=controller),
@@ -801,6 +943,7 @@ class StatusTest(unittest.TestCase):
                 }
             ]
         }
+        controller.status_for_pr.return_value = controller.status.return_value
 
         with (
             patch.object(cli, "default_controller", return_value=controller),
@@ -832,6 +975,7 @@ class StatusTest(unittest.TestCase):
                 }
             ]
         }
+        controller.status_for_pr.return_value = controller.status.return_value
         report = {
             "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
             "reasons": [],

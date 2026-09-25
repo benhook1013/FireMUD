@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -638,19 +639,16 @@ class SecretProjectionServiceTest {
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
     KubernetesClient client = secretClient.client();
+    String role = HostedIdentityContract.INGRESS_ROLE;
+    String sourceName = plan.sourceSecretName(role);
+    String predecessorName = sourceName + "-previous";
     Map<String, String> acceptedData =
         Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
-    String acceptedRevision =
-        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, acceptedData);
+    String acceptedRevision = SecretProjectionService.revisionForRole(role, acceptedData);
     String acceptedSpki = "1".repeat(64);
     Map<String, String> acceptedAnnotations = acceptedAnnotations(acceptedRevision, acceptedSpki);
     Secret existing =
-        ownedSecret(
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            plan.ingressSecretName(),
-            acceptedData,
-            acceptedAnnotations);
+        ownedSecret(plan, role, plan.ingressSecretName(), acceptedData, acceptedAnnotations);
     existing.getMetadata().setResourceVersion("7");
     Map<String, String> replacementData =
         Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
@@ -661,13 +659,12 @@ class SecretProjectionServiceTest {
         .thenReturn(existingResource);
     when(existingResource.get()).thenReturn(existing);
     Resource<Secret> predecessorResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
-        .thenReturn(predecessorResource);
+    when(secretClient.identitySecrets().withName(predecessorName)).thenReturn(predecessorResource);
     Secret prior =
         ownedSecret(
             plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            plan.ingressSecretName() + "-previous",
+            role,
+            predecessorName,
             acceptedData,
             acceptedAnnotations(acceptedRevision, acceptedSpki));
     prior.getMetadata().setNamespace(plan.identityNamespace());
@@ -687,15 +684,7 @@ class SecretProjectionServiceTest {
 
     var result =
         service.project(
-            client,
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            replacement,
-            2,
-            2,
-            "2".repeat(64),
-            "cert-manager",
-            ALWAYS_CURRENT);
+            client, plan, role, replacement, 2, 2, "2".repeat(64), "cert-manager", ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -710,10 +699,80 @@ class SecretProjectionServiceTest {
         acceptedSpki, annotations.get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
     assertEquals("pending", annotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
     assertEquals("projected", result.state());
+    verify(secretClient.identitySecrets()).withName(predecessorName);
+    ArgumentCaptor<Secret> predecessorCandidate = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.identitySecrets()).resource(predecessorCandidate.capture());
+    assertEquals(predecessorName, predecessorCandidate.getValue().getMetadata().getName());
     verify(predecessorReplacementResource).lockResourceVersion("6");
     verify(lockedPredecessorResource).replace();
     verify(replacementResource).lockResourceVersion("7");
     verify(lockedReplacementResource).replace();
+  }
+
+  @Test
+  void publicationRotationStoresPredecessorUnderCanonicalSourceName() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    String workload = "game-design-service";
+    String role = HostedIdentityContract.grpcPublicationRole(workload);
+    String projectionName = plan.grpcPublicationSecretName(workload);
+    String sourceName = plan.sourceSecretName(role);
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    String acceptedRevision = SecretProjectionService.revisionForRole(role, acceptedData);
+    String acceptedSpki = "1".repeat(64);
+    Secret existing =
+        ownedSecret(
+            plan,
+            role,
+            projectionName,
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, acceptedSpki));
+    existing.getMetadata().setResourceVersion("7");
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    Secret replacement =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(projectionName)).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(sourceName + "-previous"))
+        .thenReturn(predecessorResource);
+    when(predecessorResource.get()).thenReturn(null);
+    Resource<Secret> predecessorCreate = mock(Resource.class);
+    when(secretClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(predecessorCreate);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
+    when(secretClient.runtimeSecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+
+    var result =
+        new SecretProjectionService()
+            .project(
+                secretClient.client(),
+                plan,
+                role,
+                replacement,
+                2,
+                2,
+                "2".repeat(64),
+                "cert-manager",
+                ALWAYS_CURRENT);
+
+    ArgumentCaptor<Secret> predecessor = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.identitySecrets()).resource(predecessor.capture());
+    verify(secretClient.identitySecrets()).withName(sourceName + "-previous");
+    assertEquals(sourceName + "-previous", predecessor.getValue().getMetadata().getName());
+    assertEquals(plan.identityNamespace(), predecessor.getValue().getMetadata().getNamespace());
+    assertEquals(acceptedData, predecessor.getValue().getData());
+    verify(secretClient.identitySecrets(), never()).withName(projectionName + "-previous");
+    assertEquals("projected", result.state());
+    var order = inOrder(predecessorCreate, lockedReplacementResource);
+    order.verify(predecessorCreate).create();
+    order.verify(lockedReplacementResource).replace();
   }
 
   @Test
@@ -1335,6 +1394,15 @@ class SecretProjectionServiceTest {
         gatewaySource = source;
       }
     }
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      stubProjectionAndSource(
+          secretClient,
+          plan,
+          HostedIdentityContract.grpcPublicationRole(workload),
+          acceptedData,
+          acceptedData,
+          acceptedData);
+    }
     stubCertificate(
         secretClient.client(),
         plan,
@@ -1500,6 +1568,15 @@ class SecretProjectionServiceTest {
       if (HostedIdentityContract.INGRESS_ROLE.equals(role)) {
         ingressSource = source;
       }
+    }
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      stubProjectionAndSource(
+          secretClient,
+          plan,
+          HostedIdentityContract.grpcPublicationRole(workload),
+          acceptedData,
+          acceptedData,
+          acceptedData);
     }
     stubCertificate(
         secretClient.client(),

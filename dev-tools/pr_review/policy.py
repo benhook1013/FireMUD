@@ -28,6 +28,8 @@ class ReviewStatus(str, Enum):
     OVER_CEILING = "OVER_CEILING"
     JUDGMENT_REQUIRED = "JUDGMENT_REQUIRED"
     PROVISIONAL = "PROVISIONAL"
+    ALLOCATION_EXHAUSTED = "ALLOCATION_EXHAUSTED"
+    HUMAN_STOPPED = "HUMAN_STOPPED"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,6 +54,7 @@ class Evidence:
     unreconciled: bool = False
     over_ceiling: bool = False
     parent_moved: bool = False
+    non_counting: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -89,8 +92,8 @@ def _override(state: ReviewState, pr: int, channel: Channel, evidence: Evidence)
     candidate = state.policy_overrides.get(f"{pr}:{channel.value}")
     if not candidate or not candidate.applies(evidence.head, evidence.checkpoint, evidence.patch_id):
         return None
-    # An override can shorten the required dry streak, never turn malformed,
-    # accepted, provisional, or uncorrected evidence into a completed round.
+    # An exact-bound override sets the required dry streak, never turns
+    # malformed, accepted, provisional, or uncorrected evidence into a completed round.
     if not _valid_complete(evidence, channel) or evidence.corrected_state is not True or evidence.accepted != 0:
         return None
     return candidate
@@ -127,6 +130,7 @@ def _review_entries(history: Iterable[Evidence | Mapping[str, Any]]) -> list[Evi
         item
         for value in history
         if not (item := Evidence.from_value(value)).correction
+        and not item.non_counting
         and item.completed is True
         and item.attributable is True
         and item.provisional is False
@@ -143,6 +147,7 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
             index
             for index, item in enumerate(history)
             if not item.correction
+            and not item.non_counting
             and item.completed is True
             and item.attributable is True
             and item.provisional is False
@@ -150,7 +155,11 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
         default=-1,
     )
     last_provisional = max(
-        (index for index, item in enumerate(history) if not item.correction and item.provisional),
+        (
+            index
+            for index, item in enumerate(history)
+            if not item.correction and not item.non_counting and item.provisional
+        ),
         default=-1,
     )
     return (
@@ -174,6 +183,7 @@ def taper_satisfied(
     if allow_uncorrected_state and not retained_patch_id:
         return False
     materialized = [Evidence.from_value(value) for value in history]
+    materialized = [item for item in materialized if not item.non_counting]
     values = _review_entries(materialized)
     if _same_head_provisional_barrier(materialized, values):
         return False
@@ -225,8 +235,13 @@ def completion_status(
     all_items = [Evidence.from_value(value) for value in evidence]
     if len({item.pr for item in all_items}) > 1:
         return ReviewStatus.MISSING_EVIDENCE
-    history = [item for item in all_items if not item.correction]
+    history = [item for item in all_items if not item.correction and not item.non_counting]
     if not history:
+        if all_items and any(item.non_counting for item in all_items):
+            reconciliation_blocker = _blocked(Evidence(all_items[0].pr, "", ""), reconciliation)
+            if reconciliation_blocker:
+                return reconciliation_blocker
+            return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:
         blocked = _blocked(item, None)
@@ -247,7 +262,7 @@ def completion_status(
     if latest.anchored is not True:
         return ReviewStatus.READY
     override = _override(state, latest.pr, selected, latest)
-    required = 2 if selected == Channel.HOSTED else 3
+    required = 1 if selected == Channel.HOSTED else 3
     if override:
         value = override.hosted_zero_useful if selected == Channel.HOSTED else override.cli_zero_useful
         if value is not None:
@@ -290,13 +305,34 @@ def select_review_target(
     *,
     reconciliation_by_pr: Mapping[int, ReconciliationStatus | str] | None = None,
     other_channel_heads: Mapping[int, str] | None = None,
+    handed_off_prs: Iterable[int] = (),
+    human_stopped_prs: Iterable[int] = (),
+    exhausted_prs: Iterable[int] = (),
+    allocation_blocks: Mapping[int, str] | None = None,
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
     selected = Channel(channel)
     reconciliation_by_pr = reconciliation_by_pr or {}
     other_channel_heads = other_channel_heads or {}
+    handed_off = set(handed_off_prs)
+    human_stopped = set(human_stopped_prs)
+    exhausted = set(exhausted_prs)
+    allocation_blocks = allocation_blocks or {}
+    encountered_human_stop = False
     for pr in live_prs:
+        if pr in handed_off:
+            continue
+        if pr in human_stopped:
+            encountered_human_stop = True
+            continue
+        if pr in allocation_blocks:
+            return ChannelDecision(selected, pr, ReviewStatus.JUDGMENT_REQUIRED, allocation_blocks[pr])
+        if pr in exhausted:
+            return ChannelDecision(
+                selected, pr, ReviewStatus.ALLOCATION_EXHAUSTED,
+                f"{pr} has consumed its {selected.value} allocation; an explicit stop decision is required",
+            )
         history = evidence_by_pr.get(pr, ())
         all_items = [Evidence.from_value(value) for value in history]
         if any(item.pr != pr for item in all_items):
@@ -306,7 +342,7 @@ def select_review_target(
                 ReviewStatus.MISSING_EVIDENCE,
                 f"{pr} has evidence bound to another PR",
             )
-        evidence = [item for item in all_items if not item.correction]
+        evidence = [item for item in all_items if not item.correction and not item.non_counting]
         reviews = _review_entries(evidence)
         latest = reviews[-1] if reviews else Evidence(pr, "", "")
         blocked = None
@@ -333,5 +369,12 @@ def select_review_target(
             status,
             f"{pr} is the earliest incomplete {selected.value} target",
             latest.provisional or status == ReviewStatus.PROVISIONAL,
+        )
+    if encountered_human_stop:
+        return ChannelDecision(
+            selected,
+            None,
+            ReviewStatus.HUMAN_STOPPED,
+            f"all {selected.value} targets are complete or explicitly stopped",
         )
     return ChannelDecision(selected, None, ReviewStatus.COMPLETE, f"all {selected.value} targets are complete")

@@ -150,6 +150,8 @@ def check_contract(items: list[dict]) -> None:
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
+    certificate_status_policy = actual_policies["firemud-trust-bootstrap-certificate-status"]
+    certificate_status = certificate_status_policy["spec"]
     for needle in (
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
         "request.operation == 'CREATE' &&",
@@ -175,11 +177,35 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
+        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
     ):
         require(certificate, needle, "Certificate boundary")
+    status_rules = certificate_status["matchConstraints"]["resourceRules"]
+    if len(status_rules) != 1 or set(status_rules[0]["resources"]) != {"certificates/status"}:
+        fail("Certificate status boundary must cover only certificates/status")
+    if status_rules[0].get("operations") != ["UPDATE"]:
+        fail("Certificate status boundary must cover only status updates")
+    status_match = certificate_status["matchConditions"][0]["expression"]
+    if " ".join(status_match.split()) != (
+        "has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer'"
+    ):
+        fail("Certificate status boundary must match only internal CA Certificates")
+    if len(certificate_status["validations"]) != 1:
+        fail("Certificate status boundary must have exactly one validation")
+    status_validation = certificate_status["validations"][0]
+    if " ".join(status_validation["expression"].split()) != (
+        "request.userInfo.groups.exists(group, group == 'system:masters') || "
+        "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && "
+        "object.spec == oldObject.spec)"
+    ):
+        fail("Certificate status updates must be limited to cert-manager or system:masters for an unchanged spec")
+    if status_validation.get("message") != (
+        "only cert-manager or trusted system:masters may update status for an unchanged internal Certificate"
+    ):
+        fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$",
         "standalone Certificate validation",
     )
     require(

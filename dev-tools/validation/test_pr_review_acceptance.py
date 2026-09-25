@@ -10,17 +10,19 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli, state
-from pr_review.acceptance import AcceptanceFixtureError, load
+from pr_review.acceptance import AcceptanceFixtureError, FixtureReviewAdapter, load
 
 BASE = "a" * 40
 HEAD_1 = "b" * 40
 HEAD_2 = "c" * 40
+LEGACY_HEAD = "d" * 40
 
 
 def fixture_payload() -> dict[str, object]:
@@ -32,6 +34,7 @@ def fixture_payload() -> dict[str, object]:
         "branch_heads": {"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
         "ancestors": [[BASE, HEAD_1], [HEAD_1, HEAD_2], [BASE, HEAD_2]],
         "merge_bases": {f"{BASE}...{HEAD_1}": BASE, f"{HEAD_1}...{HEAD_2}": HEAD_1},
+        "test_merge_trees": {f"{BASE}...{HEAD_1}": "e" * 40, f"{BASE}...{HEAD_2}": "f" * 40},
         "patch_ids": {f"{BASE}...{HEAD_1}": "patch-1", f"{HEAD_1}...{HEAD_2}": "patch-2"},
         "pull_requests": [
             {
@@ -85,6 +88,26 @@ def fixture_payload_with_uppercase_default_sha() -> dict[str, object]:
     return payload
 
 
+def fixture_payload_for_allocation() -> dict[str, object]:
+    payload = fixture_payload()
+    payload["ordered_prs"] = [1]
+    payload["pull_requests"] = [payload["pull_requests"][0]]
+    payload["review_results"] = {
+        "1": {
+            "hosted": [
+                {"status": "productive", "record_evidence": True, "accepted": 1, "raw": 1},
+            ],
+            "cli": [
+                {"status": "rate_limited"},
+                {"status": "partial"},
+                {"status": "stale"},
+                {"status": "duplicate"},
+            ],
+        }
+    }
+    return payload
+
+
 class AcceptanceCliTest(unittest.TestCase):
     def run_cli(self, fixture: Path, isolated: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -102,6 +125,63 @@ class AcceptanceCliTest(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def test_allocation_handoff_subcommand_is_removed_in_favor_of_stop(self):
+        stop = cli._parser().parse_args(
+            ["decide", "stop", "--pr", "1", "--channel", "hosted", "--reason", "human judgment"]
+        )
+        self.assertEqual(stop.decide_command, "stop")
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(
+                ["decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted", "--head", HEAD_1,
+                 "--reason", "legacy handoff"]
+            )
+
+    def test_live_status_never_calls_an_exhausted_allocation_merge_ready(self):
+        report = {
+            "pull_request": {"headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE},
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "READY"},
+        }
+        controller = SimpleNamespace(
+            repository="fixture/firemud",
+            store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
+            status=lambda: {
+                "prs": [{
+                    "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
+                    "reconciliation": "COHERENT", "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                    "allocations": {"hosted": {"status": "EXHAUSTED_PENDING", "reason": "handoff pending"}},
+                }]
+            },
+        )
+        controller.status_for_pr = lambda _pr: controller.status()
+        args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
+        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
+            "pr_review.cli.status_module.status", return_value=report
+        ):
+            result, code = cli._dispatch(args)
+
+        self.assertEqual(code, 0)
+        self.assertFalse(result["ready"])
+        self.assertIn("hosted review allocation is EXHAUSTED_PENDING", result["reasons"][0])
+
+        controller.status = lambda: {
+            "prs": [{
+                "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
+                "reconciliation": "COHERENT", "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
+                "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
+            }]
+        }
+        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
+            "pr_review.cli.status_module.status", return_value={**report, "reasons": [], "ready": True}
+        ):
+            result, code = cli._dispatch(args)
+
+        self.assertEqual(code, 0)
+        self.assertFalse(result["ready"])
+        self.assertTrue(any("not taper or merge-readiness proof" in reason for reason in result["reasons"]))
 
     def test_public_commands_use_isolated_state_and_simulated_review_adapters(self):
         canonical = state.state_path()
@@ -181,6 +261,22 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(existing.controller().show_stack()["ordered_prs"], [2])
             self.assertEqual(state.StateStore(existing_state).load().ordered_prs, (2,))
 
+    def test_direct_default_base_without_test_merge_tree_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload.pop("test_merge_trees")
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            status = self.run_cli(fixture, isolated, "status", "--json")
+            self.assertEqual(status.returncode, 0, status.stderr)
+            pr = json.loads(status.stdout)["prs"][0]
+            self.assertEqual(pr["reconciliation"], "UNRECONCILED")
+            self.assertIn("fixture has no test-merge tree", pr["reason"])
+
     def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
         canonical = state.state_path()
         before = canonical.read_bytes() if canonical.exists() else None
@@ -190,6 +286,7 @@ class AcceptanceCliTest(unittest.TestCase):
             isolated = root / "state.json"
             payload = fixture_payload()
             payload["ancestors"] = []
+            payload.pop("test_merge_trees")
             payload["evidence"]["1"]["cli"] = []
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -218,6 +315,387 @@ class AcceptanceCliTest(unittest.TestCase):
             sidecar = root / "state.json.fixture-evidence.json"
             self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_legacy_transition_and_fresh_reviews_are_isolated_and_no_quota(self):
+        canonical = state.state_path()
+        before = canonical.read_bytes() if canonical.exists() else None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "legacy.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["evidence"]["1"] = {
+                "hosted": [
+                    {
+                        "pr": 1,
+                        "head": LEGACY_HEAD,
+                        "checkpoint": "trigger-uncheckpointed:42",
+                        "held": True,
+                    }
+                ],
+                "cli": [
+                    {
+                        "pr": 1,
+                        "head": LEGACY_HEAD,
+                        "checkpoint": "legacy-cli",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": False,
+                        "child_head": LEGACY_HEAD,
+                        "corrected_state": True,
+                        "accepted": 3,
+                        "raw": 4,
+                        "parent_head": "9" * 40,
+                        "patch_id": "",
+                    }
+                ],
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            before_transition = self.run_cli(fixture, isolated, "status", "--json")
+            self.assertEqual(before_transition.returncode, 0, before_transition.stderr)
+            self.assertEqual(before_transition and json.loads(before_transition.stdout)["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+            transition = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "legacy review records lack modern anchors",
+            )
+            self.assertEqual(transition.returncode, 0, transition.stderr)
+            transitioned = json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)
+            self.assertEqual(transitioned["prs"][0]["reconciliation"], "COHERENT")
+            self.assertEqual(transitioned["prs"][0]["channels"], {"hosted": "READY", "cli": "READY"})
+
+            hosted = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            cli = self.run_cli(fixture, isolated, "run", "cli", "--expect-pr", "1")
+            self.assertEqual(hosted.returncode, 0, hosted.stderr)
+            self.assertEqual(cli.returncode, 0, cli.stderr)
+            self.assertIn("quota_consumed=False", hosted.stdout)
+            self.assertIn("quota_consumed=False", cli.stdout)
+
+            evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
+            self.assertEqual(evidence["policy"]["cli"][0]["checkpoint"], "legacy-cli")
+            self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"][0]["pr"], 1)
+            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_legacy_reauthorization_after_fix_head_is_explicit_and_no_quota(self):
+        canonical = state.state_path()
+        before = canonical.read_bytes() if canonical.exists() else None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "legacy-reauthorization.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["evidence"]["1"] = {
+                "hosted": [
+                    {
+                        "pr": 1,
+                        "head": LEGACY_HEAD,
+                        "checkpoint": "trigger-uncheckpointed:42",
+                        "held": True,
+                    }
+                ],
+                "cli": [
+                    {
+                        "pr": 1,
+                        "head": LEGACY_HEAD,
+                        "checkpoint": "legacy-cli",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": False,
+                        "child_head": LEGACY_HEAD,
+                        "corrected_state": True,
+                        "accepted": 3,
+                        "raw": 4,
+                        "parent_head": "9" * 40,
+                        "patch_id": "",
+                    }
+                ],
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            initial = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "retire the unanchored legacy observations",
+            )
+            self.assertEqual(initial.returncode, 0, initial.stderr)
+
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": LEGACY_HEAD,
+                    "checkpoint": "trigger-uncheckpointed:42",
+                    "held": True,
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "modern-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "raw": 1,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                },
+            ]
+            payload["branch_heads"]["feature-1"] = HEAD_2
+            payload["pull_requests"][0]["head"] = HEAD_2
+            payload["merge_bases"][f"{BASE}...{HEAD_2}"] = BASE
+            payload["patch_ids"][f"{BASE}...{HEAD_2}"] = "patch-advanced"
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            blocked = self.run_cli(fixture, isolated, "status", "--json")
+            self.assertEqual(blocked.returncode, 0, blocked.stderr)
+            blocked_status = json.loads(blocked.stdout)["prs"][0]
+            self.assertEqual(blocked_status["reconciliation"], "COHERENT")
+            self.assertEqual(blocked_status["channels"]["hosted"], "HELD")
+
+            implicit = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_2,
+                "--reason",
+                "must require explicit reauthorization",
+            )
+            self.assertEqual(implicit.returncode, 1)
+            self.assertIn("explicit reauthorization", implicit.stderr)
+
+            payload["evidence"]["1"]["hosted"].append(
+                {
+                    "pr": 1,
+                    "head": HEAD_2,
+                    "checkpoint": "trigger:99",
+                    "held": True,
+                }
+            )
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            active = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_2,
+                "--reason",
+                "must not dismiss a newer active reservation",
+                "--reauthorize",
+            )
+            self.assertEqual(active.returncode, 1)
+            self.assertIn("active or ambiguous", active.stderr)
+            payload["evidence"]["1"]["hosted"].pop()
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            reauthorized = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_2,
+                "--reason",
+                "carry the same immutable legacy observations to the fixed head",
+                "--reauthorize",
+            )
+            self.assertEqual(reauthorized.returncode, 0, reauthorized.stderr)
+            transitioned = json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)
+            self.assertEqual(transitioned["prs"][0]["channels"], {"hosted": "READY", "cli": "READY"})
+
+            hosted = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            cli_run = self.run_cli(fixture, isolated, "run", "cli", "--expect-pr", "1")
+            self.assertEqual(hosted.returncode, 0, hosted.stderr)
+            self.assertEqual(cli_run.returncode, 0, cli_run.stderr)
+            self.assertIn("quota_consumed=False", hosted.stdout)
+            self.assertIn("quota_consumed=False", cli_run.stdout)
+
+            evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
+            self.assertEqual(evidence["policy"]["hosted"][1]["checkpoint"], "modern-hosted")
+            self.assertEqual(len(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"]), 2)
+            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_missing_hosted_fingerprint_retirement_is_audited_and_no_quota(self):
+        canonical = state.state_path()
+        before = canonical.read_bytes() if canonical.exists() else None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "missing-hosted-retirement.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            legacy_hosted = {
+                "pr": 1,
+                "head": LEGACY_HEAD,
+                "checkpoint": "trigger-uncheckpointed:42",
+                "held": True,
+            }
+            legacy_cli = {
+                "pr": 1,
+                "head": LEGACY_HEAD,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "child_head": LEGACY_HEAD,
+                "corrected_state": True,
+                "accepted": 3,
+                "raw": 4,
+                "parent_head": "9" * 40,
+                "patch_id": "",
+            }
+            payload["evidence"]["1"] = {"hosted": [legacy_hosted], "cli": [legacy_cli]}
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            initial = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "retire the unanchored legacy observations",
+            )
+            self.assertEqual(initial.returncode, 0, initial.stderr)
+            fingerprint = state.observation_fingerprint(legacy_hosted)
+
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "modern-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "raw": 1,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                }
+            ]
+            payload["branch_heads"]["feature-1"] = HEAD_2
+            payload["pull_requests"][0]["head"] = HEAD_2
+            payload["merge_bases"][f"{BASE}...{HEAD_2}"] = BASE
+            payload["patch_ids"][f"{BASE}...{HEAD_2}"] = "patch-advanced"
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_2,
+                "--reason",
+                "retire the exact missing Hosted fingerprint",
+                "--reauthorize",
+                "--retire-missing-hosted-fingerprint",
+                fingerprint,
+                "--json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            decision = json.loads(result.stdout)
+            self.assertEqual(decision["retirement"]["retired_missing_hosted_fingerprints"], [fingerprint])
+            status = json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)
+            self.assertEqual(
+                status["legacy_transitions"][-1]["retired_hosted_fingerprints"], [fingerprint]
+            )
+
+            payload["evidence"]["1"]["hosted"].append(legacy_hosted)
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            raw = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
+            self.assertIn(legacy_hosted, raw["policy"]["hosted"])
+            self.assertEqual(
+                json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)["prs"][0]["channels"],
+                {"hosted": "READY", "cli": "READY"},
+            )
+            for channel in ("hosted", "cli"):
+                run = self.run_cli(fixture, isolated, "run", channel, "--expect-pr", "1")
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertIn("quota_consumed=False", run.stdout)
+            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_missing_hosted_fingerprint_fixture_audit_classifies_present_blockers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            fingerprint = "f" * 64
+            payload = fixture_payload()
+            payload["evidence"]["1"] = {
+                "hosted": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:42",
+                        "fingerprint": fingerprint,
+                        "active_reservation": True,
+                    }
+                ],
+                "cli": [
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "unmatched", "unmatched_response": True},
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "ambiguous", "ambiguous_response": True},
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "summary-actions:1",
+                        "actionable": True,
+                        "reason": "an actionable summary finding remains",
+                    },
+                ],
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            acceptance = load(fixture, isolated)
+
+            audit = acceptance.evidence.legacy_transition_reauthorization_audit(
+                1,
+                (fingerprint,),
+                {"child_head": HEAD_1, "live_base_ref": "develop", "live_base_tip": BASE},
+            )
+
+            self.assertEqual(audit["complete"], True)
+            self.assertEqual(audit["active_reservations"], ["trigger:42"])
+            self.assertEqual(audit["unmatched_responses"], ["unmatched"])
+            self.assertEqual(audit["ambiguous_responses"], ["ambiguous"])
+            self.assertEqual(audit["unresolved_findings"], ["an actionable summary finding remains"])
 
     def test_default_base_tip_accepts_case_differences_in_fixture_branch_sha(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -313,6 +791,282 @@ class AcceptanceCliTest(unittest.TestCase):
             )
             self.assertFalse(fixture_request_lock.exists())
             self.assertFalse(canonical_request_lock.exists())
+
+    def test_allocation_fixture_consumes_one_result_and_stops_after_corrected_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload_for_allocation()
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            grant = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "bounded acceptance capacity",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+
+            first = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("result=productive", first.stdout)
+            self.assertIn("recorded_evidence=True", first.stdout)
+            second = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("ALLOCATION_EXHAUSTED", second.stderr)
+
+            shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            allocation = json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]
+            self.assertEqual(allocation["status"], "EXHAUSTED_PENDING")
+            checkpoint = allocation["checkpoint"]
+            self.assertIsInstance(checkpoint, str)
+
+            corrected = json.loads(json.dumps(payload))
+            corrected["branch_heads"]["feature-1"] = HEAD_2
+            corrected["merge_bases"][f"{BASE}...{HEAD_2}"] = BASE
+            corrected["patch_ids"][f"{BASE}...{HEAD_2}"] = "patch-corrected"
+            corrected["pull_requests"][0]["head"] = HEAD_2
+            fixture.write_text(json.dumps(corrected), encoding="utf-8")
+
+            stopped = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_2,
+                "--checkpoint",
+                checkpoint,
+                "--reason",
+                "findings corrected and review discovery stopped",
+                "--json",
+            )
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            stopped_payload = json.loads(stopped.stdout)
+            self.assertEqual(stopped_payload["stop_basis"], "allocated")
+            self.assertEqual(stopped_payload["reviewed_head"], HEAD_1)
+            self.assertEqual(stopped_payload["stop_head"], HEAD_2)
+            final = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(final.returncode, 0, final.stderr)
+            self.assertEqual(
+                json.loads(final.stdout)["prs"][0]["allocations"]["hosted"]["status"],
+                "STOPPED",
+            )
+            self.assertEqual(json.loads(final.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_fixture_result_sequence_is_persisted_and_nonterminal_results_do_not_create_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload_for_allocation()
+            payload["review_results"]["1"]["hosted"] = [
+                {"status": "rate_limited"},
+                {"status": "partial"},
+                {"status": "stale"},
+                {"status": "duplicate"},
+            ]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            grant = self.run_cli(
+                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "nonterminal result sequence",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+            for expected in ("rate_limited", "partial", "stale", "duplicate"):
+                result = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"result={expected}", result.stdout)
+                shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+                self.assertEqual(shown.returncode, 0, shown.stderr)
+                self.assertEqual(
+                    json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]["status"], "PROMISED"
+                )
+            sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
+            self.assertEqual(sidecar["evidence"], [])
+
+    def test_dry_fixture_results_get_distinct_defaults_and_duplicate_checkpoint_is_not_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture_path = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["review_results"] = {
+                "1": {
+                    "hosted": [
+                        {"status": "dry", "record_evidence": True},
+                        {"status": "dry", "record_evidence": True},
+                        {"status": "dry", "record_evidence": True, "checkpoint": "explicit-dry"},
+                        {"status": "dry", "record_evidence": True, "checkpoint": "explicit-dry"},
+                    ]
+                }
+            }
+            fixture_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            acceptance = load(fixture_path, isolated)
+            controller = acceptance.controller()
+            target = controller.resolve_hosted_target(expected_pr=1)
+            adapter = FixtureReviewAdapter("hosted", acceptance.evidence)
+
+            first_result = acceptance.evidence.next_result(target, "hosted")
+            self.assertIsNotNone(first_result)
+            self.assertEqual(first_result["_fixture_result_position"], 1)
+            first_checkpoint = acceptance.evidence.record_result(target, "hosted", first_result)
+            second = adapter(target)
+            third = adapter(target)
+            fourth = adapter(target)
+
+            self.assertIsNotNone(first_checkpoint)
+            self.assertNotEqual(first_checkpoint, second["recorded_checkpoint"])
+            self.assertTrue(second["recorded_evidence"])
+            self.assertEqual(third["recorded_checkpoint"], "explicit-dry")
+            self.assertTrue(third["recorded_evidence"])
+            self.assertIsNone(fourth["recorded_checkpoint"])
+            self.assertFalse(fourth["recorded_evidence"])
+
+            sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
+            self.assertEqual(
+                [item["checkpoint"] for item in sidecar["evidence"]],
+                [first_checkpoint, second["recorded_checkpoint"], "explicit-dry"],
+            )
+            self.assertNotIn("_fixture_result_position", sidecar["evidence"][0])
+
+    def test_allocation_stop_keeps_findings_and_next_parent_gates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["review_results"] = {
+                "1": {"hosted": [{"status": "dry", "record_evidence": True, "checkpoint": "allocated-dry"}]}
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+            grant = self.run_cli(
+                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "one review then handoff",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+            first = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            held = json.loads(json.dumps(payload))
+            held["evidence"]["1"]["hosted"] = [
+                {"pr": 1, "head": HEAD_1, "checkpoint": "unresolved-thread", "held": True}
+            ]
+            fixture.write_text(json.dumps(held), encoding="utf-8")
+            blocked = self.run_cli(
+                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry",
+                "--reason", "attempted before thread resolution",
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("unresolved actionable finding or thread", blocked.stderr)
+            blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertNotEqual(blocked_next.returncode, 0)
+            self.assertIn("expected PR #2, but selected PR #1", blocked_next.stderr)
+
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            stopped = self.run_cli(
+                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry",
+                "--reason", "thread resolved and review discovery stopped",
+            )
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertEqual(json.loads(shown.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+            next_pr = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertEqual(next_pr.returncode, 0, next_pr.stderr)
+            self.assertIn("pr=2", next_pr.stdout)
+
+            moved = json.loads(json.dumps(payload))
+            moved["pull_requests"][1]["base_tip"] = "d" * 40
+            fixture.write_text(json.dumps(moved), encoding="utf-8")
+            blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertNotEqual(blocked_next.returncode, 0)
+            self.assertIn("PARENT_MOVED", blocked_next.stderr)
+
+    def test_direct_human_stop_preserves_old_unanchored_checkpoint_without_taper_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": BASE,
+                    "checkpoint": "legacy-hosted-6-5",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": False,
+                    "held": True,
+                    "unmatched_response": True,
+                    "accepted": 5,
+                    "raw": 6,
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "latest-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "raw": 0,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                },
+            ]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+
+            stopped = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--checkpoint",
+                "latest-hosted",
+                "--reason",
+                "stop discovery while retaining historical findings",
+                "--json",
+            )
+
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(json.loads(stopped.stdout)["stop_basis"], "direct_human")
+            status = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(status.returncode, 0, status.stderr)
+            self.assertEqual(json.loads(status.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
 
 if __name__ == "__main__":

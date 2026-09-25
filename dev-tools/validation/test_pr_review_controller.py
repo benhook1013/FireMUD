@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import fcntl
 import hashlib
 import json
 import subprocess
@@ -12,12 +13,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner
+from pr_review import cli_runner, hosted
 from pr_review.cli import _parser
 from pr_review.controller import (
     ControllerError,
@@ -25,13 +27,16 @@ from pr_review.controller import (
     LivePullRequest,
     PullRequestSnapshot,
     ReviewController,
+    StaleReviewTarget,
     WrongStackTarget,
     compact_result,
     json_result,
 )
+from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
-from pr_review.state import StateStore
+from pr_review.runtime import LiveEvidence
+from pr_review.state import LegacyEvidenceTransition, StateStore, observation_fingerprint
 
 BASE = "a" * 40
 PARENT = "b" * 40
@@ -41,10 +46,50 @@ MERGE_1 = "e" * 40
 MERGE_2 = "f" * 40
 
 
+def _git(root, *args, input_text=None):
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        input=input_text,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit_tree_case(root, *, conflict=False):
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+    _git(root, "config", "user.name", "FireMUD test")
+    _git(root, "config", "user.email", "test@example.invalid")
+
+    def make_tree(files):
+        entries = []
+        for name, content in sorted(files.items()):
+            blob = _git(root, "hash-object", "-w", "--stdin", input_text=content)
+            entries.append(f"100644 blob {blob}\t{name}\n")
+        return _git(root, "mktree", input_text="".join(entries))
+
+    def make_commit(tree, message, parent=None):
+        args = ["-c", "user.name=FireMUD test", "-c", "user.email=test@example.invalid", "commit-tree", tree]
+        if parent is not None:
+            args.extend(("-p", parent))
+        args.extend(("-m", message))
+        return _git(root, *args)
+
+    common = make_commit(make_tree({"common.txt": "common\n"}), "common")
+    base_files = {"base.txt": "base\n", "common.txt": "base version\n" if conflict else "common\n"}
+    head_files = {"head.txt": "head\n", "common.txt": "head version\n" if conflict else "common\n"}
+    base = make_commit(make_tree(base_files), "base", common)
+    head = make_commit(make_tree(head_files), "head", common)
+    expected = None if conflict else make_tree({**base_files, **head_files})
+    return base, head, expected
+
+
 class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
         self.remote_heads_calls = 0
+        self.test_merge_calls = []
+        self.test_merge_error = None
 
     def remote_heads(self):
         self.remote_heads_calls += 1
@@ -65,6 +110,12 @@ class FakeGit:
     def patch_identity(self, merge_base, head):
         return f"patch-{head[:4]}"
 
+    def test_merge_tree(self, base, head):
+        self.test_merge_calls.append((base, head))
+        if self.test_merge_error is not None:
+            raise self.test_merge_error
+        return MERGE_1
+
 
 class FakeGitHub:
     def __init__(self, values):
@@ -74,7 +125,128 @@ class FakeGitHub:
         return self.values[number]
 
 
-def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_repository="owner/repo"):
+class AuditedEvidence(dict):
+    def __init__(self, *args, audit=None, on_audit=None, **kwargs):
+        self.backing = args[0] if args and isinstance(args[0], dict) else None
+        super().__init__(*args, **kwargs)
+        self.audit = audit or {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+        self.on_audit = on_audit
+        self.audit_calls = []
+        self.stop_audit_calls = []
+
+    def get(self, key, default=None):
+        if self.backing is not None:
+            return self.backing.get(key, default)
+        return super().get(key, default)
+
+    def legacy_transition_reauthorization_audit(self, pr_number, fingerprints, anchor):
+        self.audit_calls.append((pr_number, fingerprints, anchor))
+        if self.on_audit is not None:
+            self.on_audit()
+        return self.audit
+
+    def review_stop_audit(
+        self,
+        pr_number,
+        anchor,
+        retained_ambiguous_fingerprints=(),
+        prior_hosted_fingerprints=(),
+    ):
+        self.stop_audit_calls.append(
+            (pr_number, tuple(retained_ambiguous_fingerprints), tuple(prior_hosted_fingerprints))
+        )
+        if self.on_audit is not None:
+            self.on_audit()
+        audit = dict(self.audit)
+        audit.setdefault("head", anchor["child_head"])
+        audit.setdefault("anchor", dict(anchor))
+        pinned = set(retained_ambiguous_fingerprints)
+        audit["retained_ambiguous"] = [
+            item for item in audit.get("retained_ambiguous", ())
+            if isinstance(item, dict) and item.get("fingerprint") in pinned
+        ]
+        return audit
+
+
+class CountingEvidence(AuditedEvidence):
+    def __init__(self, *args, active_targets=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.history_reads = []
+        self.active_targets = set(active_targets)
+        self.active_target_reads = 0
+
+    def get(self, key, default=None):
+        if isinstance(key, tuple) and len(key) == 2 and key[1] in {"hosted", "cli"}:
+            self.history_reads.append(key)
+        return super().get(key, default)
+
+    def active_review_targets(self, pr_numbers, identities):
+        self.active_target_reads += 1
+        return self.active_targets.intersection(pr_numbers)
+
+
+def _stacked_prs(count, *, merged=()):
+    merged_numbers = set(merged)
+    values = {}
+    heads = {"develop": BASE}
+    previous = None
+    for number in range(1, count + 1):
+        head = f"{number:040x}"
+        if previous is None:
+            base_ref, base_tip = "develop", BASE
+        else:
+            base_ref, base_tip = f"feature-{previous[0]}", previous[1]
+        is_merged = number in merged_numbers
+        values[number] = LivePullRequest(
+            number,
+            head,
+            base_ref,
+            base_tip,
+            f"feature-{number}",
+            merged=is_merged,
+            state="MERGED" if is_merged else "OPEN",
+            mergeable="MERGEABLE",
+            head_repository="owner/repo",
+        )
+        heads[f"feature-{number}"] = head
+        if not is_merged:
+            previous = (number, head)
+    return values, heads
+
+
+def _batch_identity(item):
+    return {
+        "number": item.number,
+        "state": item.state,
+        "isDraft": False,
+        "mergedAt": "2026-09-26T00:00:00Z" if item.merged else None,
+        "baseRefName": item.base_ref,
+        "baseRefOid": item.base_tip,
+        "headRefName": item.head_ref,
+        "headRefOid": item.head,
+        "mergeable": item.mergeable,
+        "headRepository": {"nameWithOwner": item.head_repository},
+        "comments": {"nodes": []},
+        "reviews": {"nodes": []},
+    }
+
+
+def pr(
+    number,
+    head,
+    base_ref="develop",
+    base_tip=BASE,
+    *,
+    merged=False,
+    head_repository="owner/repo",
+    mergeable="MERGEABLE",
+):
     return LivePullRequest(
         number,
         head,
@@ -82,6 +254,7 @@ def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_re
         base_tip,
         f"feature-{number}",
         merged=merged,
+        mergeable=mergeable,
         head_repository=head_repository,
     )
 
@@ -90,14 +263,1543 @@ class ControllerTests(unittest.TestCase):
     def make(self, values, evidence=None, *, heads=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        provider = evidence if evidence is not None else {}
+        if not callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
+            provider = AuditedEvidence(provider)
         return ReviewController(
             store=StateStore(Path(directory.name) / "state.json"),
             github=FakeGitHub(values),
             git=FakeGit(heads),
-            evidence=evidence or {},
+            evidence=provider,
             repository="owner/repo",
         )
 
+    def test_stop_uses_the_hosted_request_runner_lock_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            controller = ReviewController(
+                store=StateStore(common / "firemud" / "pr-review-stack.json"),
+                repository="owner/repo",
+            )
+
+            cli_path, hosted_path = controller._stop_lock_paths(42)
+
+            self.assertEqual(cli_path, common / "firemud" / "pr-review" / "cli.lock")
+            trigger_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self.assertEqual(hosted_path, trigger_path.parent / "request.lock")
+
+    def test_stop_cli_accepts_multiple_exact_ambiguity_fingerprints(self):
+        fingerprints = ("f" * 64, "e" * 64)
+
+        args = _parser().parse_args(
+            [
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--reason",
+                "human stop",
+                "--retain-ambiguous-fingerprint",
+                fingerprints[0],
+                "--retain-ambiguous-fingerprint",
+                fingerprints[1],
+                "--ambiguity-reason",
+                "both terminal responses lack attributable review objects",
+            ]
+        )
+
+        self.assertEqual(args.retain_ambiguous_fingerprint, list(fingerprints))
+
+    def test_stop_cli_exposes_exact_head_over_ceiling_acknowledgment(self):
+        args = _parser().parse_args(
+            [
+                "decide", "stop", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "audited human stop",
+                "--acknowledge-over-ceiling",
+            ]
+        )
+        self.assertTrue(args.acknowledge_over_ceiling)
+
+    def make_legacy_retirement_case(self, *, audit=None, on_audit=None):
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_head": "1" * 40,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = AuditedEvidence(
+            {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]},
+            audit=audit,
+            on_audit=on_audit,
+        )
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(pr=1, head=HEAD_1, reason="record the prior legacy transition")
+        legacy_fingerprint = observation_fingerprint(legacy_hosted)
+        modern_hosted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "modern-hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        evidence[(1, "hosted")].append(modern_hosted)
+        evidence[(1, "hosted")].remove(legacy_hosted)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        return controller, evidence, values, legacy_hosted, legacy_fingerprint
+    @staticmethod
+    def allocation_evidence(
+        number=1,
+        head=HEAD_1,
+        checkpoint="before-allocation",
+        *,
+        accepted=0,
+        completed=True,
+        attributable=True,
+        anchored=True,
+        **extra,
+    ):
+        return {
+            "pr": number,
+            "head": head,
+            "checkpoint": checkpoint,
+            "completed": completed,
+            "attributable": attributable,
+            "anchored": anchored,
+            "corrected_state": completed,
+            "accepted": accepted,
+            "child_head": head,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{head[:4]}",
+            **extra,
+        }
+
+    def grant_allocation(self, *, channel="hosted", evidence=None, values=None, heads=None):
+        values = values or {1: pr(1, HEAD_1)}
+        controller = self.make(
+            values,
+            evidence or {(1, channel): [self.allocation_evidence(completed=False)]},
+            heads=heads or {"feature-1": values[1].head},
+        )
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel=channel,
+            head=HEAD_1,
+            reason="one bounded result before capacity handoff",
+        )
+        return controller
+
+    def test_allocation_is_promised_before_review_and_does_not_make_pr_complete(self):
+        controller = self.grant_allocation()
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["allocations"]["hosted"]["status"], "PROMISED")
+        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+
+    def test_first_review_can_be_allocated_without_historical_checkpoints(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+
+        granted = controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="first complete review"
+        )
+
+        self.assertEqual(granted["allocation"]["baseline_checkpoints"], [])
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
+
+    def test_direct_human_stop_is_a_distinct_review_status_and_needs_no_ci_evidence(self):
+        hosted = self.allocation_evidence(checkpoint="latest-hosted")
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [hosted]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="Overseer stopped further review discovery",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["reviewed_head"], HEAD_1)
+        self.assertEqual(stopped["stop_head"], HEAD_1)
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_direct_human_stop_ignores_only_audit_proven_terminal_rate_limit(self):
+        old_head = "7" * 40
+        cooldown_until = "2999-01-01T00:00:00Z"
+        latest = self.allocation_evidence(checkpoint="latest-hosted")
+        rate_limit = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger:42",
+            "rate_limited": True,
+            "trigger_id": 42,
+            "response_id": 43,
+            "terminal": True,
+            "attributable": True,
+            "cooldown_until": cooldown_until,
+        }
+        provider = AuditedEvidence(
+            {(1, "hosted"): [latest, rate_limit]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "terminal_rate_limits": [
+                    {
+                        "trigger_id": 42,
+                        "response_id": 43,
+                        "captured_head": old_head,
+                        "cooldown_until": cooldown_until,
+                        "terminal": True,
+                        "attributable": True,
+                    }
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="the prior Hosted response was a terminal rate limit",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_direct_human_stop_does_not_ignore_unproven_rate_limit_history(self):
+        old_head = "7" * 40
+        provider = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": old_head,
+                        "checkpoint": "trigger:42",
+                        "rate_limited": True,
+                        "trigger_id": 42,
+                        "response_id": 43,
+                        "terminal": True,
+                        "attributable": True,
+                        "cooldown_until": "2999-01-01T00:00:00Z",
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved review evidence"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="a rate-limit flag without audit identity must still block",
+            )
+
+    def test_direct_human_stop_can_acknowledge_only_current_head_over_ceiling_notice(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+            "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+        }
+        provider = AuditedEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker],
+                (1, "cli"): [marker],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"]],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable finding or thread"):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+        with self.assertRaisesRegex(ControllerError, "requires the exact live head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+        with self.assertRaisesRegex(ControllerError, "does not match the live pull-request head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_2,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            reason="Overseer acknowledges the current 101-file provider limitation",
+            acknowledge_over_ceiling=True,
+        )
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(
+            stopped["allocation"]["stop_reason"],
+            "[acknowledged current over-ceiling limitation] Overseer acknowledges the current 101-file provider limitation",
+        )
+        status = controller.status()["prs"][0]
+        self.assertEqual(status["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_over_ceiling_acknowledgment_rejects_conflicting_duplicate_checkpoint(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+            "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+        }
+        conflicting_marker = {**marker, "head": HEAD_2}
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker],
+                (1, "cli"): [conflicting_marker],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"]],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "conflicting duplicate over-ceiling checkpoint metadata"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+    def test_over_ceiling_acknowledgment_cannot_be_spoofed_or_used_by_allocated_stop(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "reserved acknowledgment prefix"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="[acknowledged current over-ceiling limitation] forged ordinary stop",
+            )
+
+        allocated_evidence = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        )
+        allocated = self.grant_allocation(evidence=allocated_evidence)
+        allocated_evidence[(1, "hosted")].append(
+            self.allocation_evidence(checkpoint="allocated-result")
+        )
+        with self.assertRaisesRegex(ControllerError, "only to a direct human stop"):
+            allocated.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                checkpoint="allocated-result",
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+    def test_over_ceiling_acknowledgment_does_not_ignore_other_stop_blockers(self):
+        marker = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "over-ceiling:5748509184",
+            "over_ceiling": True,
+        }
+        provider = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [marker["checkpoint"], "review-threads:42"],
+            },
+        )
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable finding or thread"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="human stop",
+                acknowledge_over_ceiling=True,
+            )
+
+    def test_hosted_stop_is_blocked_by_current_head_cli_accepted_finding(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-findings", accepted=1, channel="cli")],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="CLI findings on the live head have no published correction",
+            )
+
+    def test_hosted_stop_allows_older_cli_findings_on_corrected_descendant(self):
+        values = {1: pr(1, HEAD_2)}
+        controller = self.make(
+            values,
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted", head=HEAD_1)],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-findings", head=HEAD_1, accepted=1, channel="cli")],
+            },
+            heads={"feature-1": HEAD_2},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="the accepted CLI findings are on an older head with a published descendant",
+        )
+
+        self.assertEqual(stopped["stop_head"], HEAD_2)
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_resolved_cli_provisional_history_does_not_block_direct_hosted_stop(self):
+        provisional = self.allocation_evidence(
+            checkpoint="cli-provisional",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        completed_cli = self.allocation_evidence(checkpoint="cli-completed", channel="cli")
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [provisional, completed_cli],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="stop after the normal CLI review superseded provisional history",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_current_cli_provisional_state_still_blocks_direct_hosted_stop(self):
+        completed_cli = self.allocation_evidence(checkpoint="cli-completed", channel="cli")
+        provisional = self.allocation_evidence(
+            checkpoint="cli-current-provisional",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [completed_cli, provisional],
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "cli channel has provisional review evidence"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="a provisional result on the current head is unresolved",
+            )
+
+    def test_stale_later_cli_provisional_does_not_replace_latest_attributable_checkpoint(self):
+        stale_head = "7" * 40
+        provisional = self.allocation_evidence(
+            head=stale_head,
+            checkpoint="stale-cli-provisional",
+            provisional=True,
+            non_counting=True,
+            channel="cli",
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {
+                (1, "cli"): [
+                    self.allocation_evidence(checkpoint="latest-cli", channel="cli"),
+                    provisional,
+                ]
+            },
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="cli",
+            reason="the later provisional observation belongs to a stale head",
+        )
+
+        self.assertEqual(stopped["reviewed_head"], HEAD_1)
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+
+    def test_equivalent_history_retain_can_preserve_stop_across_rebased_head(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="reviewed-head")]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.git.patch_identity = lambda _merge_base, _head: "same-owned-patch"
+        evidence[(1, "hosted")][0]["patch_id"] = "same-owned-patch"
+        controller.set_stack([1])
+        controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="stop further hosted discovery after human review",
+        )
+
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (HEAD_1, HEAD_2)
+        without_judgment = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(without_judgment["status"], "INVALID")
+        self.assertIn("stopped head", without_judgment["reason"])
+
+        controller.decide_judgment(
+            pr=1,
+            channel="hosted",
+            decision="retain",
+            head=HEAD_2,
+            checkpoint="reviewed-head",
+            reason="same owned patch after coherent head rewrite",
+        )
+        retained = controller.status()["prs"][0]
+        self.assertEqual(retained["reconciliation"], "COHERENT")
+        self.assertEqual(retained["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(retained["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_stop_rejects_missing_or_stale_checkpoint_and_active_reservation(self):
+        pending = {1: pr(1, HEAD_1)}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.make(pending, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "completed attributable checkpoint"):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="latest"))
+        with self.assertRaisesRegex(ControllerError, "does not match the latest attributable"):
+            controller.decide_stop(pr=1, channel="hosted", checkpoint="stale", reason="human stop")
+
+        provider = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest")]},
+            audit={
+                "complete": True,
+                "active_reservations": ["review active"],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        active = self.make(pending, provider, heads={"feature-1": HEAD_1})
+        active.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "active review or reservation"):
+            active.decide_stop(pr=1, channel="hosted", reason="human stop")
+
+    def test_all_terminal_ambiguous_responses_require_exact_non_counting_retention(self):
+        fingerprints = ("f" * 64, "e" * 64)
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": fingerprints[0],
+                        "trigger_id": 123,
+                        "response_id": 124,
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:223",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": fingerprints[1],
+                        "trigger_id": 223,
+                        "response_id": 224,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {"fingerprint": fingerprints[0]},
+                    {"fingerprint": fingerprints[1]},
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": fingerprints[0], "trigger_id": 123, "response_id": 124},
+                    {"fingerprint": fingerprints[1], "trigger_id": 223, "response_id": 224},
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        state = controller.store.load()
+        live, reconciliation = controller._reconciliation(state)
+        current = controller._anchor(1, live[1], reconciliation.links[1])
+        prior_fingerprint = "d" * 64
+        transition = LegacyEvidenceTransition(
+            pr=1,
+            child_head=current.child_head,
+            parent_identity=current.parent_identity,
+            parent_head=current.parent_head,
+            merge_base=current.merge_base,
+            patch_id=current.patch_id,
+            hosted_fingerprints=(prior_fingerprint,),
+            reason="previous exact-anchor legacy evidence decision",
+        )
+        controller.store.update(
+            lambda current_state: dataclasses.replace(
+                current_state,
+                legacy_transitions=current_state.legacy_transitions + (transition,),
+            )
+        )
+
+        with self.assertRaisesRegex(
+            ControllerError,
+            "active review or reservation|unretained terminal ambiguity|exact fingerprints|every current terminal",
+        ):
+            controller.decide_stop(pr=1, channel="hosted", reason="human stop")
+        with self.assertRaisesRegex(ControllerError, "unretained terminal ambiguity"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="human stop",
+                retain_ambiguous_fingerprints=(fingerprints[0],),
+                ambiguity_reason="response has no attributable review object",
+            )
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="Overseer accepts this review-discovery stop",
+            retain_ambiguous_fingerprints=fingerprints,
+            ambiguity_reason="terminal response does not provide an attributable review object",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["retained_ambiguous_fingerprints"], list(fingerprints))
+        self.assertEqual(
+            stopped["allocation"]["retained_ambiguous_reason"],
+            "terminal response does not provide an attributable review object",
+        )
+        self.assertEqual(evidence.stop_audit_calls[-1][1], fingerprints)
+        self.assertEqual(evidence.stop_audit_calls[-1][2], ())
+
+    def test_direct_hosted_stop_keeps_archived_ambiguity_historical_and_pins_latest(self):
+        old_head = "7" * 40
+        old_fingerprint = "d" * 64
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:5826936635",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 5826936635,
+                        "response_id": 5826937548,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": old_fingerprint,
+                        "captured_head": old_head,
+                        "response_at": "2026-09-01T00:00:00Z",
+                    },
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    },
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": latest_fingerprint, "trigger_id": 5826936635, "response_id": 5826937548}
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="preserve old non-counting ambiguity and retain the latest response",
+            retain_ambiguous_fingerprints=(latest_fingerprint,),
+            ambiguity_reason="latest terminal response is explicitly non-counting",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["allocation"]["retained_ambiguous_fingerprints"], [latest_fingerprint])
+        self.assertEqual(
+            stopped["allocation"]["retained_ambiguous_reason"],
+            "latest terminal response is explicitly non-counting",
+        )
+        self.assertEqual(evidence.stop_audit_calls[-1][1], (latest_fingerprint,))
+
+    def test_direct_hosted_stop_does_not_waive_live_or_unknown_ambiguity(self):
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        live_evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 123,
+                        "response_id": 124,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    }
+                ],
+                "retained_ambiguous": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, live_evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "latest terminal ambiguity"):
+            controller.decide_stop(pr=1, channel="hosted", reason="live ambiguity is unpinned")
+
+        old_fingerprint = "d" * 64
+        unknown_head_evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": "7" * 40,
+                        "checkpoint": "trigger:old-unknown-head",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": old_fingerprint,
+                        "trigger_id": 223,
+                        "response_id": 224,
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:latest",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 123,
+                        "response_id": 124,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous", "ambiguous"],
+                "unmatched_responses": [],
+                "ambiguous_responses": [
+                    "unattributed trigger response",
+                    "unattributed trigger response",
+                ],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": old_fingerprint,
+                        "response_at": "2026-09-01T00:00:00Z",
+                    },
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    },
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": latest_fingerprint, "trigger_id": 123, "response_id": 124}
+                ],
+            },
+        )
+        unknown_head = self.make(
+            {1: pr(1, HEAD_1)}, unknown_head_evidence, heads={"feature-1": HEAD_1}
+        )
+        unknown_head.set_stack([1])
+        with self.assertRaisesRegex(
+            ControllerError,
+            "active review or reservation|unretained terminal ambiguity",
+        ):
+            unknown_head.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="unknown old capture remains blocking",
+                retain_ambiguous_fingerprints=(latest_fingerprint,),
+                ambiguity_reason="latest terminal response is explicitly non-counting",
+            )
+
+    def test_direct_hosted_stop_rejects_current_ambiguity_missing_from_complete_audit(self):
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        unaudited_fingerprint = "8" * 64
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:latest",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:unaccounted-current",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": unaudited_fingerprint,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    }
+                ],
+                "retained_ambiguous": [{"fingerprint": latest_fingerprint}],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "every current terminal response"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="current history has an unaccounted terminal ambiguity",
+                retain_ambiguous_fingerprints=(latest_fingerprint,),
+                ambiguity_reason="latest terminal response is explicitly non-counting",
+            )
+
+    def test_direct_cli_stop_preserves_historical_hosted_evidence_and_pins_latest(self):
+        old_head = "7" * 40
+        old_fingerprint = "d" * 64
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        evidence = AuditedEvidence(
+            {
+                (1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")],
+                (1, "hosted"): [
+                    self.allocation_evidence(
+                        head=old_head,
+                        checkpoint="legacy-hosted-6-5",
+                        accepted=5,
+                        anchored=False,
+                        held=True,
+                    ),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:5826936635",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 5826936635,
+                        "response_id": 5826937548,
+                    },
+                ],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "historical_unmatched_responses": [
+                    "a public Hosted checkpoint has no unique attributable trigger"
+                ],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": old_fingerprint,
+                        "captured_head": old_head,
+                        "response_at": "2026-09-01T00:00:00Z",
+                    },
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    },
+                ],
+                "retained_ambiguous": [
+                    {"fingerprint": latest_fingerprint, "trigger_id": 5826936635, "response_id": 5826937548}
+                ],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="cli",
+            reason="human stops further discovery after the latest CLI checkpoint",
+            retain_ambiguous_fingerprints=(latest_fingerprint,),
+            ambiguity_reason="latest terminal Hosted response remains explicitly non-counting",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["allocation"]["channel"], "cli")
+        self.assertEqual(stopped["allocation"]["retained_ambiguous_fingerprints"], [latest_fingerprint])
+
+    def test_direct_cli_stop_still_blocks_unpinned_current_hosted_ambiguity(self):
+        latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
+        evidence = AuditedEvidence(
+            {
+                (1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")],
+                (1, "hosted"): [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:5826936635",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": latest_fingerprint,
+                        "trigger_id": 5826936635,
+                        "response_id": 5826937548,
+                    }
+                ],
+            },
+            audit={
+                "complete": True,
+                "active_reservations": ["ambiguous"],
+                "unmatched_responses": [],
+                "ambiguous_responses": ["unattributed trigger response"],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [
+                    {
+                        "fingerprint": latest_fingerprint,
+                        "captured_head": HEAD_1,
+                        "response_at": "2026-09-25T00:00:00Z",
+                    }
+                ],
+                "retained_ambiguous": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "latest terminal ambiguity"):
+            controller.decide_stop(pr=1, channel="cli", reason="current Hosted ambiguity is unpinned")
+
+    def test_direct_cli_stop_still_blocks_current_unmatched_response(self):
+        evidence = AuditedEvidence(
+            {(1, "cli"): [self.allocation_evidence(checkpoint="latest-cli")]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": ["current-head response has no attributable trigger"],
+                "historical_unmatched_responses": ["old Hosted result remains historical"],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "unmatched review response"):
+            controller.decide_stop(pr=1, channel="cli", reason="current unmatched response remains")
+
+    def test_direct_hosted_stop_preserves_old_unanchored_checkpoint_without_reauthorizing_history(self):
+        old_head = "7" * 40
+        old_checkpoint = self.allocation_evidence(
+            head=old_head,
+            checkpoint="legacy-hosted-6-5",
+            accepted=5,
+            anchored=False,
+            held=True,
+        )
+        latest = self.allocation_evidence(checkpoint="latest-hosted", accepted=0)
+        evidence = AuditedEvidence(
+            {(1, "hosted"): [old_checkpoint, latest]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "historical_unmatched_responses": ["a public Hosted checkpoint has no unique attributable trigger"],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            reason="retain historical findings while ending further discovery",
+        )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(stopped["checkpoint"], "latest-hosted")
+        self.assertFalse(stopped["allocation"]["retained_ambiguous_fingerprints"])
+
+    def test_allocated_stop_keeps_existing_unanchored_evidence_hold(self):
+        evidence = AuditedEvidence(
+            {(1, "hosted"): [self.allocation_evidence(completed=False)]},
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "historical_unmatched_responses": ["legacy checkpoint remains historical"],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+            },
+        )
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(
+                    head=BASE,
+                    checkpoint="old-unanchored",
+                    anchored=False,
+                ),
+                self.allocation_evidence(checkpoint="allocated-dry"),
+            )
+        )
+
+        with self.assertRaisesRegex(ControllerError, "historical unmatched evidence outside a direct Hosted stop"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="allocated result cannot waive unrelated held evidence",
+            )
+
+    def test_direct_stop_still_rejects_unresolved_threads_and_unpublished_old_findings(self):
+        latest = self.allocation_evidence(checkpoint="latest-hosted")
+        unresolved = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "review-threads:0:1",
+            "held": True,
+            "reason": "one unresolved outdated thread",
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [latest, unresolved]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "unresolved review evidence"):
+            controller.decide_stop(pr=1, channel="hosted", reason="thread is still actionable")
+
+        old_head = "7" * 40
+        old_finding = self.allocation_evidence(
+            head=old_head,
+            checkpoint="legacy-hosted-4-4",
+            accepted=4,
+            anchored=False,
+            held=True,
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [old_finding, latest]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (old_head, HEAD_1)
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_stop(pr=1, channel="hosted", reason="accepted old findings remain unpublished")
+
+    def test_direct_stop_rejects_changed_head_and_wrong_terminal_fingerprint(self):
+        provider = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    self.allocation_evidence(checkpoint="latest-hosted"),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "terminal_ambiguous": True,
+                        "fingerprint": "f" * 64,
+                        "trigger_id": 123,
+                        "response_id": 124,
+                    },
+                ]
+            },
+            audit={
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "ambiguous_terminal_responses": [{"fingerprint": "f" * 64}],
+                "retained_ambiguous": [{"fingerprint": "f" * 64}],
+            },
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "does not match the live pull-request head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_2,
+                reason="pin the wrong live head",
+                retain_ambiguous_fingerprints=("f" * 64,),
+                ambiguity_reason="terminal response is non-counting",
+            )
+        with self.assertRaisesRegex(ControllerError, "unretained terminal ambiguity"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="retain the wrong response",
+                retain_ambiguous_fingerprints=("0" * 64,),
+                ambiguity_reason="terminal response is non-counting",
+            )
+
+    def test_completed_result_consumes_once_until_an_explicit_stop(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-dry", accepted=1))
+
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["allocations"]["hosted"]["status"], "EXHAUSTED_PENDING")
+        self.assertEqual(result["allocations"]["hosted"]["checkpoint"], "allocated-dry")
+        self.assertEqual(result["channels"]["hosted"], "READY")
+        with self.assertRaisesRegex(ControllerError, "ALLOCATION_EXHAUSTED"):
+            controller.resolve_hosted_target()
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_stop(
+                pr=1, channel="hosted", head=HEAD_1,
+                checkpoint="allocated-dry", reason="accepted findings are not yet published",
+            )
+
+    def test_ineligible_completed_observation_does_not_invalidate_one_valid_allocation_result(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-unanchored", anchored=False),
+                self.allocation_evidence(checkpoint="allocated-valid"),
+            )
+        )
+
+        progress = controller.status()["prs"][0]["allocations"]["hosted"]
+
+        self.assertEqual(progress["status"], "EXHAUSTED_PENDING")
+        self.assertEqual(progress["checkpoint"], "allocated-valid")
+
+    def test_two_valid_results_invalidate_one_review_allocation(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-first"),
+                self.allocation_evidence(checkpoint="allocated-second"),
+            )
+        )
+
+        progress = controller.status()["prs"][0]["allocations"]["hosted"]
+
+        self.assertEqual(progress["status"], "INVALID")
+        self.assertIn("multiple completed results match", progress["reason"])
+
+    def test_consumed_dry_and_useful_allocations_cannot_be_renewed(self):
+        for label, accepted in (("dry", 0), ("useful", 1)):
+            with self.subTest(result=label):
+                evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+                controller = self.grant_allocation(evidence=evidence)
+                evidence[(1, "hosted")].append(
+                    self.allocation_evidence(checkpoint=f"allocated-{label}", accepted=accepted)
+                )
+
+                with self.assertRaisesRegex(ControllerError, "consumed or"):
+                    controller.decide_allocation(
+                        action="renew",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_1,
+                        reason="do not erase consumed progress",
+                    )
+
+    def test_invalid_progress_with_matching_completed_results_cannot_be_renewed(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-nondescendant"))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        original_is_ancestor = controller.git.is_ancestor
+
+        def reject_review_ancestry(ancestor, descendant):
+            if (ancestor, descendant) == (HEAD_1, HEAD_2):
+                return False
+            return original_is_ancestor(ancestor, descendant)
+
+        with (
+            patch.object(controller.git, "is_ancestor", side_effect=reject_review_ancestry),
+            self.assertRaisesRegex(ControllerError, "consumed or"),
+        ):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_2,
+                reason="do not renew after a non-descendant review result",
+            )
+
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].extend(
+            (
+                self.allocation_evidence(checkpoint="allocated-first"),
+                self.allocation_evidence(checkpoint="allocated-second"),
+            )
+        )
+
+        with self.assertRaisesRegex(ControllerError, "consumed or"):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="do not renew after ambiguous completed results",
+            )
+
+    def test_stopped_allocation_cannot_be_renewed(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        stopped = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            checkpoint="allocated",
+            reason="stop discovery after the allocated result",
+        )
+        self.assertEqual(stopped["stop_basis"], "allocated")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+
+        with self.assertRaisesRegex(ControllerError, "consumed or stopped"):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="do not reopen a stopped allocation",
+            )
+
+    def test_pre_review_identity_move_can_still_renew_allocation(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+
+        renewed = controller.decide_allocation(
+            action="renew",
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            reason="rebind after a pre-review identity move",
+        )
+
+        self.assertEqual(renewed["allocation"]["head"], HEAD_2)
+        self.assertEqual(renewed["allocation"]["baseline_checkpoints"], ["before-allocation"])
+
+    def test_allocation_ancestry_lookup_failure_is_invalid_without_breaking_status_or_target_selection(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        original_is_ancestor = controller.git.is_ancestor
+
+        def fail_corrected_head_lookup(ancestor, descendant):
+            if (ancestor, descendant) == (HEAD_1, HEAD_2):
+                raise ControllerError("git fetch failed")
+            return original_is_ancestor(ancestor, descendant)
+
+        with patch.object(controller.git, "is_ancestor", side_effect=fail_corrected_head_lookup):
+            allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+            self.assertEqual(allocation["status"], "INVALID")
+            self.assertIn("could not verify corrected-head ancestry", allocation["reason"])
+            with self.assertRaises(ControllerError):
+                controller.resolve_hosted_target()
+
+    def test_productive_result_requires_corrected_head_before_stop(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
+
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                checkpoint="allocated-findings",
+                reason="findings remain on the promised head",
+            )
+
+    def test_accepted_fix_head_can_be_stopped_after_publication(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+
+        result = controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            checkpoint="allocated-findings",
+            reason="accepted findings are published and validated",
+        )
+
+        self.assertEqual(result["stop_basis"], "allocated")
+        self.assertEqual(result["allocation"]["stop_reviewed_head"], HEAD_1)
+        self.assertEqual(result["allocation"]["stop_head"], HEAD_2)
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "STOPPED")
+
+    def test_duplicate_stale_partial_and_rate_limited_results_do_not_consume(self):
+        cases = (
+            (
+                "duplicate",
+                [self.allocation_evidence(checkpoint="allocated"), self.allocation_evidence(checkpoint="allocated")],
+                "INVALID",
+            ),
+            ("partial", [self.allocation_evidence(checkpoint="partial", completed=False)], "PROMISED"),
+            ("rate-limited", [self.allocation_evidence(checkpoint="limited", rate_limited=True)], "PROMISED"),
+        )
+        for label, later, expected_status in cases:
+            with self.subTest(result=label):
+                evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+                controller = self.grant_allocation(evidence=evidence)
+                evidence[(1, "hosted")].extend(later)
+                view = controller.status()["prs"][0]["allocations"]["hosted"]
+                self.assertNotEqual(view["status"], "HANDED_OFF")
+                self.assertEqual(view["status"], expected_status)
+
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="stale", head=HEAD_2))
+        values[1] = pr(1, HEAD_2)
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "INVALID")
+
+    def test_hosted_and_cli_allocations_are_independent(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence(completed=False)],
+            (1, "cli"): [self.allocation_evidence(completed=False)],
+        }
+        controller = self.make(values, evidence)
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="Hosted handoff"
+        )
+
+        result = controller.status()["prs"][0]
+
+        self.assertIn("hosted", result["allocations"])
+        self.assertNotIn("cli", result["allocations"])
+        self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
+
+    def test_cancel_removes_allocation_and_renew_rebinds_reason(self):
+        controller = self.grant_allocation()
+        renewed = controller.decide_allocation(
+            action="renew", pr=1, channel="hosted", head=HEAD_1, reason="renewed after operator review"
+        )
+        self.assertEqual(renewed["allocation"]["reason"], "renewed after operator review")
+
+        cancelled = controller.decide_allocation(
+            action="cancel", pr=1, channel="hosted", head=HEAD_1, reason="cancelled by Overseer"
+        )
+        self.assertEqual(cancelled["allocations"], [])
+        self.assertNotIn("hosted", controller.status()["prs"][0]["allocations"])
+
+    def test_next_pr_is_selected_after_stop_but_parent_movement_blocks_it(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence(completed=False)],
+            (2, "hosted"): [
+                self.allocation_evidence(
+                    2,
+                    HEAD_2,
+                    "child-before",
+                    completed=False,
+                    parent_identity="1",
+                    parent_head=HEAD_1,
+                )
+            ],
+        }
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.set_stack([1, 2])
+        controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="parent handoff"
+        )
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        controller.decide_stop(
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            checkpoint="allocated",
+            reason="stop review discovery on the first stack item",
+        )
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 2)
+
+        values[1] = pr(1, "7" * 40)
+        controller.git.heads["feature-1"] = "7" * 40
+        with self.assertRaises(ControllerError):
+            controller.resolve_hosted_target()
     def test_default_git_provider_translates_timeout_expired(self):
         provider = DefaultGitProvider(timeout_seconds=7)
         with patch(
@@ -124,6 +1826,64 @@ class ControllerTests(unittest.TestCase):
             ["git", "-C", str(DefaultGitProvider().root), *patch_diff_args("a" * 40, "b" * 40)],
         )
 
+    def test_default_git_provider_returns_tree_for_exact_clean_test_merge_on_installed_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            base, head, expected_tree = _commit_tree_case(root)
+            refs_before = _git(root, "for-each-ref", "--format=%(refname) %(objectname)")
+            status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
+            worktrees_before = _git(root, "worktree", "list", "--porcelain")
+
+            actual = DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
+
+            self.assertEqual(actual, expected_tree)
+            self.assertEqual(_git(root, "for-each-ref", "--format=%(refname) %(objectname)"), refs_before)
+            self.assertEqual(_git(root, "status", "--porcelain", "--untracked-files=all"), status_before)
+            self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_default_git_provider_rejects_conflict_and_cleans_temporary_worktree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            base, head, _ = _commit_tree_case(root, conflict=True)
+            worktrees_before = _git(root, "worktree", "list", "--porcelain")
+
+            with self.assertRaisesRegex(ControllerError, "do not produce a clean test merge"):
+                DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
+
+            self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
+        tree = "9" * 40
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append((args, kwargs))
+            git_args = args[args.index("-C") + 2:]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unknown option --write-tree\n")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if "merge" in git_args:
+                return CompletedProcess(args, 0, "", "")
+            if git_args == ["write-tree"]:
+                return CompletedProcess(args, 0, f"{tree}\n", "")
+            if git_args[:2] == ["cat-file", "-t"]:
+                return CompletedProcess(args, 0, "tree\n", "")
+            if git_args[:2] == ["worktree", "remove"]:
+                return CompletedProcess(args, 0, "", "")
+            raise AssertionError(f"unexpected command: {args}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            actual = test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+
+        self.assertEqual(actual, tree)
+        self.assertTrue(calls)
+        fallback_add = next(args for args, _ in calls if "worktree" in args and "add" in args)
+        self.assertIn("filter.lfs.process=", fallback_add)
+        self.assertIn("filter.lfs.smudge=cat", fallback_add)
+
     def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
         with patch(
             "pr_review.controller.subprocess.run",
@@ -141,6 +1901,366 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
         controller.status()
         self.assertEqual(controller.git.remote_heads_calls, 1)
+
+    def test_reconciliation_caches_only_successful_test_merge_trees_by_exact_tuple(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+
+        controller.status()
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1)])
+
+        next_head = "8" * 40
+        controller.github.values[1] = pr(1, next_head)
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls[-1], (BASE, next_head))
+
+        next_base = "9" * 40
+        controller.github.values[1] = pr(1, next_head, base_tip=next_base)
+        controller.git.heads["develop"] = next_base
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls[-1], (next_base, next_head))
+        self.assertEqual(len(controller.git.test_merge_calls), 3)
+
+    def test_failed_test_merge_is_not_cached(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+        controller.git.test_merge_error = ControllerError("temporary test-merge failure")
+
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1)])
+
+        controller.git.test_merge_error = None
+        controller.status()
+        controller.status()
+        self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1), (BASE, HEAD_1)])
+
+    def _enable_batch_status(self, controller, values, batch_values=None):
+        selected = batch_values if batch_values is not None else values
+        calls = []
+
+        def fetch(numbers):
+            calls.append(tuple(numbers))
+            return {number: _batch_identity(selected[number]) for number in numbers}
+
+        controller.github.batch_pull_requests = fetch
+        return calls
+
+    def test_status_overview_shifts_four_pr_window_after_front_merge(self):
+        ordered = list(range(1, 7))
+        before_values, before_heads = _stacked_prs(6)
+        before_evidence = CountingEvidence()
+        before = self.make(before_values, before_evidence, heads=before_heads)
+        before.set_stack(ordered)
+        self._enable_batch_status(before, before_values)
+
+        before_report = before.status_overview()
+
+        self.assertEqual(before_report["detail_window"]["deep_prs"], [1, 2, 3, 4])
+        self.assertEqual(before_report["prs"][4]["evidence_status"], "unknown")
+        self.assertEqual(before_report["prs"][4]["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in before_evidence.history_reads))
+
+        after_values, after_heads = _stacked_prs(6, merged=(1,))
+        after_evidence = CountingEvidence()
+        after = self.make(after_values, after_evidence, heads=after_heads)
+        after.set_stack(ordered)
+        self._enable_batch_status(after, after_values)
+
+        after_report = after.status_overview()
+
+        self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
+        self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
+        self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_status_overview_deepens_active_tail_target_without_allocation(self):
+        values, heads = _stacked_prs(7)
+        evidence = CountingEvidence(active_targets={6})
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(controller.store.load().allocations, {})
+        self.assertEqual(report["detail_window"]["active_targets"], [6])
+        self.assertEqual(report["detail_window"]["deep_prs"], [1, 2, 3, 4, 6])
+        self.assertFalse(any(pr_number == 5 for pr_number, _ in evidence.history_reads))
+        self.assertTrue(all(pr_number in {1, 2, 3, 4, 6} for pr_number, _ in evidence.history_reads))
+        tail = report["prs"][4]
+        self.assertEqual(tail["detail_level"], "identity_only")
+        self.assertEqual(tail["evidence_status"], "unknown")
+        self.assertEqual(tail["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
+        self.assertIn("not fetched", report["detail_window"]["tail_evidence"])
+        self.assertEqual(batch_calls, [tuple(values)])
+
+    def test_live_evidence_probe_includes_active_hosted_trigger_without_allocation(self):
+        trigger_at = "2026-09-26T01:00:00Z"
+        response_at = "2026-09-26T01:02:00Z"
+        trigger_id = 701
+        identity = {
+            "number": 6,
+            "headRefOid": HEAD_2,
+            "comments": {
+                "nodes": [
+                    {
+                        "databaseId": trigger_id,
+                        "author": {"login": "ben"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": trigger_at,
+                        "url": "https://github.test/comments/701",
+                    },
+                    {
+                        "databaseId": 702,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Full review triggered",
+                        "createdAt": response_at,
+                        "url": "https://github.test/comments/702",
+                    },
+                ]
+            },
+            "reviews": {"nodes": []},
+        }
+        record_path = Path("/tmp/current-trigger.json")
+        record = {
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 6,
+            "head_sha": HEAD_2,
+            "trigger": {
+                "id": trigger_id,
+                "created_at": trigger_at,
+                "url": "https://github.test/comments/701",
+                "author_login": "ben",
+                "type": "full",
+                "command": hosted.FULL_COMMAND,
+            },
+        }
+        evidence = LiveEvidence("owner/repo", object())
+        with (
+            patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[record_path]),
+            patch("pr_review.runtime.hosted.load_trigger_reservation", return_value=record),
+            patch.object(LiveEvidence, "_request_lock_is_held", return_value=False),
+        ):
+            active = evidence.active_review_targets((6,), {6: identity})
+
+        self.assertEqual(active, {6})
+
+    def test_live_evidence_probe_detects_manual_hosted_command_without_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            evidence = LiveEvidence("owner/repo", object(), state_store)
+            identity = {
+                5: {"comments": {"nodes": []}, "reviews": {"nodes": []}},
+                6: {
+                    "comments": {
+                        "nodes": [
+                            {
+                                "author": {"login": "human-reviewer"},
+                                "body": hosted.FULL_COMMAND,
+                            }
+                        ]
+                    },
+                    "reviews": {"nodes": []},
+                },
+            }
+            with (
+                patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[]),
+                patch(
+                    "pr_review.runtime.hosted.default_trigger_record_path",
+                    side_effect=lambda _repo, pr: Path(directory) / "records" / str(pr) / "trigger.json",
+                ),
+            ):
+                active = evidence.active_review_targets((5, 6), identity)
+
+        self.assertEqual(active, {6})
+
+    def test_live_evidence_probe_deepens_all_candidates_for_unscoped_cli_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            lock_path = Path(directory) / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.touch()
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                evidence = LiveEvidence("owner/repo", object(), state_store)
+                identities = {
+                    number: {"comments": {"nodes": []}, "reviews": {"nodes": []}}
+                    for number in (5, 6)
+                }
+                with (
+                    patch("pr_review.runtime.hosted.current_trigger_record_paths", return_value=[]),
+                    patch(
+                        "pr_review.runtime.hosted.default_trigger_record_path",
+                        side_effect=lambda _repo, pr: Path(directory) / "records" / str(pr) / "trigger.json",
+                    ),
+                ):
+                    active = evidence.active_review_targets((5, 6), identities)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(active, {5, 6})
+
+    def test_status_overview_marks_moved_tail_stale_without_readiness(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_values = dict(values)
+        batch_values[5] = dataclasses.replace(values[5], base_ref="unexpected-parent")
+        self._enable_batch_status(controller, values, batch_values)
+
+        report = controller.status_overview()
+
+        tail = report["prs"][4]
+        self.assertEqual(tail["evidence_status"], "stale")
+        self.assertEqual(tail["reconciliation"], "UNRECONCILED")
+        self.assertNotIn("READY", tail["channels"].values())
+        self.assertNotIn("COMPLETE", tail["channels"].values())
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+
+    def test_status_overview_missing_batch_identity_fails_closed_without_deep_reads(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_values = dict(values)
+        batch_values[5] = None
+        controller.github.batch_pull_requests = lambda numbers: {
+            number: None if batch_values[number] is None else _batch_identity(batch_values[number])
+            for number in numbers
+        }
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["status"], "UNKNOWN")
+        self.assertEqual(report["detail_window"]["batch_status"], "failed")
+        self.assertTrue(all(item["evidence_status"] == "unknown" for item in report["prs"]))
+        self.assertEqual(evidence.history_reads, [])
+
+    def test_selected_tail_status_reads_ancestors_but_no_later_prs(self):
+        values, heads = _stacked_prs(7)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        pull_calls = []
+        original = controller.github.pull_request
+
+        def pull(number):
+            pull_calls.append(number)
+            return original(number)
+
+        controller.github.pull_request = pull
+
+        report = controller.status_for_pr(6)
+
+        self.assertEqual([item["pr"] for item in report["prs"]], [1, 2, 3, 4, 5, 6])
+        self.assertTrue(all(number <= 6 for number in pull_calls))
+        self.assertTrue(all(pr_number <= 6 for pr_number, _ in evidence.history_reads))
+        self.assertEqual(report["scope"], "selected PR and configured ancestors")
+
+    def test_review_action_preflights_do_not_use_overview_batch_or_tail_scope(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = []
+        controller.github.batch_pull_requests = lambda numbers: batch_calls.append(tuple(numbers))
+
+        target = controller.resolve_hosted_target()
+        allocation = controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=values[1].head,
+            reason="preserve the normal fresh decision boundary",
+        )
+
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertEqual(allocation["allocation"]["pr"], 1)
+        self.assertEqual(batch_calls, [])
+        self.assertTrue({1, 2, 3}.issubset({pr_number for pr_number, _ in evidence.history_reads}))
+
+    def test_status_memoizes_stop_audit_per_invocation_but_decision_refreshes(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = CountingEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="hosted-stop")],
+                (1, "cli"): [self.allocation_evidence(checkpoint="cli-stop")],
+            }
+        )
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_stop(pr=1, channel="hosted", reason="hosted channel stop")
+        controller.decide_stop(pr=1, channel="cli", reason="CLI channel stop")
+        evidence.stop_audit_calls.clear()
+
+        controller.status()
+
+        self.assertEqual(len(evidence.stop_audit_calls), 1)
+        evidence.stop_audit_calls.clear()
+        with self.assertRaisesRegex(ControllerError, "already stopped"):
+            controller.decide_stop(pr=1, channel="hosted", reason="recheck current stop")
+        self.assertGreaterEqual(len(evidence.stop_audit_calls), 1)
+
+    def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
+        hosted = [
+            Evidence(1, PARENT, f"h{index}", raw=index, accepted=1, completed=True, attributable=True,
+                     non_counting=index == 2)
+            for index in range(1, 6)
+        ] + [
+            Evidence(1, HEAD_1, "h6", raw=0, accepted=0, completed=True, attributable=True),
+            Evidence(1, HEAD_1, "unlinked", raw=2, accepted=0, completed=True, attributable=False),
+            Evidence(1, HEAD_1, "pending", raw=0, accepted=0, provisional=True),
+            Evidence(1, HEAD_1, "quota", raw=0, accepted=0, rate_limited=True),
+        ]
+        cli = [Evidence(1, HEAD_1, "c1", raw=2, accepted=0, completed=True, attributable=True)]
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): hosted, (1, "cli"): cli})
+        controller.set_stack([1])
+
+        result = controller.status()["prs"][0]
+        self.assertEqual(result["review_activity"]["hosted"]["total"], 7)
+        self.assertEqual([item["raw"] for item in result["review_activity"]["hosted"]["recent"]], [3, 4, 5, 0, 2])
+        self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
+        self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])
+        self.assertEqual(result["review_activity"]["cli"]["total"], 1)
+        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+
+    def test_status_exposes_current_head_over_ceiling_reason_and_checkpoint_source(self):
+        evidence = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_2,
+                    "checkpoint": "over-ceiling:stale",
+                    "over_ceiling": True,
+                    "reason": "stale file ceiling notice",
+                },
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "over-ceiling:5748509184",
+                    "over_ceiling": True,
+                    "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+                },
+            ]
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        result = controller.status_for_pr(1)["prs"][0]
+
+        self.assertEqual(
+            result["channel_reasons"],
+            {
+                "hosted": [
+                    {
+                        "reason": "CodeRabbit skipped review because the PR exceeds its file ceiling",
+                        "source": "over-ceiling:5748509184",
+                        "non_counting": True,
+                    }
+                ]
+            },
+        )
 
     def test_one_private_ordered_stack_and_effective_parent(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
@@ -198,6 +2318,153 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["prs"][1]["reconciliation"], "PARENT_MOVED")
         with self.assertRaises(ControllerError):
             controller.resolve_hosted_target()
+
+    def test_direct_default_base_advance_keeps_unchanged_owned_patch_reviewable(self):
+        advanced_base = "9" * 40
+        old_review = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "hosted-before-default-advance",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 1,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip=advanced_base)},
+            {(1, "hosted"): [old_review]},
+            heads={"develop": advanced_base, "feature-1": HEAD_1},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.set_stack([1])
+
+        status = controller.status()["prs"][0]
+        target = controller.resolve_hosted_target()
+
+        self.assertEqual(status["reconciliation"], "COHERENT")
+        self.assertEqual(status["channels"]["hosted"], "READY")
+        self.assertTrue(target.default_base_front)
+        self.assertEqual(controller.git.test_merge_calls[-1], (advanced_base, HEAD_1))
+        self.assertTrue(target.has_current_default_test_merge_proof())
+        self.assertEqual(target.parent.head_sha, advanced_base)
+        self.assertEqual(target.snapshot.head_sha, HEAD_1)
+
+    def test_direct_default_front_holds_when_local_test_merge_conflicts(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip=advanced_base, mergeable="MERGEABLE")},
+            heads={"develop": advanced_base, "feature-1": HEAD_1},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.git.test_merge_error = ControllerError("overlapping changes conflict")
+        controller.set_stack([1])
+
+        status = controller.status()["prs"][0]
+
+        self.assertEqual(status["reconciliation"], "UNRECONCILED")
+        self.assertIn("test merge is unproven", status["reason"])
+        self.assertIn("overlapping changes conflict", status["reason"])
+        with self.assertRaisesRegex(ControllerError, "unreconciled|cannot run"):
+            controller.resolve_hosted_target()
+
+    def test_direct_default_base_advance_holds_conflicts_and_changed_owned_patch(self):
+        advanced_base = "9" * 40
+        for label, mergeable, prior_patch in (
+            ("conflict", "CONFLICTING", f"patch-{HEAD_1[:4]}"),
+            ("patch-change", "MERGEABLE", "old-owned-patch"),
+        ):
+            with self.subTest(case=label):
+                old_review = {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": f"hosted-before-default-advance-{label}",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": prior_patch,
+                }
+                controller = self.make(
+                    {1: pr(1, HEAD_1, base_tip=advanced_base, mergeable=mergeable)},
+                    {(1, "hosted"): [old_review]},
+                    heads={"develop": advanced_base, "feature-1": HEAD_1},
+                )
+                controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+                    (BASE, HEAD_1),
+                    (BASE, advanced_base),
+                }
+                controller.set_stack([1])
+
+                result = controller.status()["prs"][0]
+
+                self.assertIn(result["reconciliation"], {"PARENT_MOVED", "UNRECONCILED"})
+                with self.assertRaises(ControllerError):
+                    controller.resolve_hosted_target()
+
+    def test_default_base_advance_reselects_after_stale_hosted_preflight(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            heads={"develop": BASE, "feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        calls = []
+
+        def adapter(target, **kwargs):
+            calls.append((target, kwargs))
+            if len(calls) == 1:
+                controller.git.heads["develop"] = advanced_base
+                controller.github.values[1] = pr(1, HEAD_1, base_tip=advanced_base)
+                raise StaleReviewTarget("default base advanced before posting")
+            return target
+
+        controller.hosted_adapter = adapter
+
+        selected = controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(selected.snapshot.head_sha, HEAD_1)
+        self.assertEqual(selected.parent.head_sha, advanced_base)
+        self.assertTrue(selected.default_base_front)
+
+    def test_default_base_advance_does_not_relax_stacked_child_ancestry(self):
+        advanced_base = "9" * 40
+        controller = self.make(
+            {
+                1: pr(1, HEAD_1, base_tip=advanced_base),
+                2: pr(2, HEAD_2, "feature-1", HEAD_1),
+            },
+            heads={"develop": advanced_base, "feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) in {
+            (BASE, HEAD_1),
+            (BASE, advanced_base),
+        }
+        controller.set_stack([1, 2])
+
+        result = controller.status()
+
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(result["prs"][1]["reconciliation"], "UNRECONCILED")
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target(expected_pr=2)
 
     def test_wrong_target_expectation_is_checked_before_adapter(self):
         values = {1: pr(1, HEAD_1)}
@@ -758,6 +3025,519 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
         self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
 
+    def test_legacy_transition_reopens_both_channels_without_counting_or_erasing_history(self):
+        old_parent = "1" * 40
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_identity": "develop",
+            "parent_head": old_parent,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="legacy review records lack modern linked anchors",
+        )
+
+        self.assertTrue(result["recorded"])
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(controller.status()["prs"][0]["channels"], {"hosted": "READY", "cli": "READY"})
+        controller.hosted_adapter = lambda target, **kwargs: (target, kwargs)
+        controller.cli_adapter = lambda target, **kwargs: (target, kwargs)
+        self.assertEqual(controller.run_hosted(expected_pr=1)[0].snapshot.head_sha, HEAD_1)
+        self.assertEqual(controller.run_cli(expected_pr=1)[0].snapshot.head_sha, HEAD_1)
+        self.assertEqual(controller.evidence(1)["1"]["cli"][0]["checkpoint"], "legacy-cli")
+        self.assertEqual(controller.evidence(1)["1"]["hosted"][0]["checkpoint"], "trigger-uncheckpointed:42")
+        evidence[(1, "cli")].append(
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "new-modern-but-moved",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": old_parent,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            }
+        )
+        controller.git.is_ancestor = lambda ancestor, child: ancestor != old_parent
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+    def test_legacy_transition_write_fails_closed_when_transition_list_changes_concurrently(self):
+        legacy = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "cli"): [legacy]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+        original = controller.store.update
+        first = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="capture a transition for the concurrent writer fixture",
+        )["transition"]
+        transition = controller._state().legacy_transitions[-1]
+        original(lambda current: dataclasses.replace(current, legacy_transitions=()))
+
+        def concurrent_update(mutate):
+            original(lambda current: dataclasses.replace(current, legacy_transitions=(transition,)))
+            return original(mutate)
+
+        with (
+            patch.object(controller.store, "update", side_effect=concurrent_update),
+            self.assertRaisesRegex(ControllerError, "legacy transitions changed concurrently"),
+        ):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_1,
+                reason="do not overwrite a transition added after the snapshot",
+            )
+
+        self.assertEqual(len(controller._state().legacy_transitions), 1)
+        self.assertEqual(controller._state().legacy_transitions[0].to_dict(), first)
+
+    def test_legacy_transition_fails_closed_for_active_actionable_or_spoofed_records(self):
+        scenarios = {
+            "active reservation": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger:42",
+                "held": True,
+            },
+            "actionable thread": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "review-threads:1:0",
+                "held": True,
+            },
+            "spoofed patch": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "patch_id": "spoofed",
+            },
+            "spoofed projection": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "non_counting": True,
+            },
+            "same-head completed legacy evidence": {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "legacy-same-head",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+            },
+            "malformed old head": {
+                "pr": 1,
+                "head": "not-a-sha",
+                "checkpoint": "legacy-malformed-head",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+            },
+            "malformed held marker": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger-uncheckpointed:not-numeric",
+                "held": True,
+            },
+            "ambiguous held marker": {
+                "pr": 1,
+                "head": "7" * 40,
+                "checkpoint": "trigger-uncheckpointed:01",
+                "held": True,
+            },
+        }
+        for name, record in scenarios.items():
+            with self.subTest(name=name):
+                controller = self.make(
+                    {1: pr(1, HEAD_1)}, {(1, "cli"): [record]}, heads={"feature-1": HEAD_1}
+                )
+                controller.set_stack([1])
+                with self.assertRaisesRegex(ControllerError, "legacy transition"):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_1,
+                        reason="must not dismiss unsafe legacy state",
+                    )
+
+    def test_untrusted_non_counting_marker_does_not_hide_held_evidence_without_transition(self):
+        held = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "held": True,
+            "non_counting": True,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "hosted"): [held]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HELD")
+
+    def test_policy_history_without_selected_fingerprints_does_not_fingerprint_untrusted_records(self):
+        held = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "held": True,
+            "non_counting": True,
+        }
+        unsupported = {**held, "unsupported": Path("unsupported-observation")}
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "hosted"): [held, unsupported]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        status = controller.status()
+        self.assertEqual(status["prs"][0]["channels"]["hosted"], "HELD")
+
+        projected = controller._policy_history(
+            controller._state(),
+            1,
+            Channel.HOSTED,
+            SimpleNamespace(legacy_transition_fingerprints={}),
+        )
+
+        self.assertEqual(projected[0], {key: value for key, value in held.items() if key != "non_counting"})
+        self.assertEqual(
+            projected[1], {key: value for key, value in unsupported.items() if key != "non_counting"}
+        )
+
+    def test_transitioned_legacy_history_cannot_override_modern_completion_or_decision_checkpoint(self):
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+            "child_head": old_head,
+            "parent_identity": "develop",
+            "parent_head": "1" * 40,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="retire unanchored history before modern review",
+        )
+
+        def modern(channel, index):
+            return {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": f"{channel}-{index}",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "raw": 0,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            }
+
+        for channel in ("hosted", "cli"):
+            modern_history = [modern(channel, index) for index in range(3)]
+            # Provider ordering can put an older transitioned observation after
+            # later evidence; the controller marker must still exclude it.
+            evidence[(1, channel)] = modern_history + [legacy_hosted if channel == "hosted" else legacy_cli]
+
+        channels = controller.status()["prs"][0]["channels"]
+        self.assertEqual(channels, {"hosted": "COMPLETE", "cli": "COMPLETE"})
+        result = controller.decide_policy(
+            pr=1,
+            head=HEAD_1,
+            checkpoint="hosted-2",
+            hosted_zero_useful=1,
+            reason="bind the override to the latest modern checkpoint",
+        )
+        self.assertEqual(result["policy_override"]["checkpoint"], "hosted-2")
+
+    def test_legacy_transition_reauthorization_keeps_newer_review_counting_after_head_advance(self):
+        old_head = "7" * 40
+        old_parent = "1" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_head": old_parent,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="retire the unanchored legacy observations",
+        )
+
+        modern_hosted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "modern-hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 1,
+            "raw": 1,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        evidence[(1, "hosted")].append(modern_hosted)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "explicit reauthorization"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="move legacy retirement to the fixed head",
+            )
+
+        active_new_reservation = {
+            "pr": 1,
+            "head": HEAD_2,
+            "checkpoint": "trigger:99",
+            "held": True,
+        }
+        evidence[(1, "hosted")].append(active_new_reservation)
+        with self.assertRaisesRegex(ControllerError, "active or ambiguous"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="must not dismiss a newer active reservation",
+                reauthorize=True,
+            )
+        evidence[(1, "hosted")].pop()
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="move the same immutable legacy retirement to the fixed head",
+            reauthorize=True,
+        )
+        self.assertTrue(result["recorded"])
+        status = controller.status()["prs"][0]
+        self.assertEqual(status["reconciliation"], "COHERENT")
+        self.assertEqual(status["channels"], {"hosted": "READY", "cli": "READY"})
+        self.assertEqual(len(controller._state().legacy_transitions), 2)
+        self.assertEqual(controller.evidence(1)["1"]["hosted"][1]["checkpoint"], "modern-hosted")
+
+    def test_legacy_transition_retires_only_the_exact_missing_hosted_fingerprint_and_keeps_it_non_counting(self):
+        controller, evidence, _, legacy_hosted, fingerprint = self.make_legacy_retirement_case()
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="retire the one audited missing Hosted fingerprint",
+            reauthorize=True,
+            retire_missing_hosted_fingerprint=fingerprint,
+        )
+
+        self.assertTrue(result["recorded"])
+        self.assertEqual(result["retirement"]["retired_missing_hosted_fingerprints"], [fingerprint])
+        transition = controller._state().legacy_transitions[-1]
+        self.assertEqual(transition.hosted_fingerprints, (fingerprint,))
+        self.assertEqual(transition.retired_hosted_fingerprints, (fingerprint,))
+        self.assertEqual(evidence.audit_calls[0][1], (fingerprint,))
+        self.assertEqual(
+            controller.status()["legacy_transitions"][-1]["retired_hosted_fingerprints"],
+            (fingerprint,),
+        )
+
+        evidence[(1, "hosted")].append(legacy_hosted)
+        state = controller._state()
+        _, reconciliation = controller._reconciliation(state)
+        projected = controller._policy_history(state, 1, Channel.HOSTED, reconciliation)
+        reappeared = next(item for item in projected if item["checkpoint"] == legacy_hosted["checkpoint"])
+        self.assertTrue(reappeared["non_counting"])
+        repeated = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="retain the exact audited transition",
+            reauthorize=True,
+        )
+        self.assertFalse(repeated["recorded"])
+        self.assertEqual(repeated["transition"]["retired_hosted_fingerprints"], (fingerprint,))
+
+    def test_legacy_transition_missing_hosted_retirement_rejects_changed_or_nonprior_fingerprints(self):
+        controller, evidence, _, _, fingerprint = self.make_legacy_retirement_case()
+        changed = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+            "reason": "changed record",
+        }
+        evidence[(1, "hosted")].append(changed)
+        with self.assertRaisesRegex(ControllerError, "active or ambiguous"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="a changed observation is not the audited fingerprint",
+                reauthorize=True,
+                retire_missing_hosted_fingerprint=fingerprint,
+            )
+
+        evidence[(1, "hosted")].remove(changed)
+        with self.assertRaisesRegex(ControllerError, "exactly match a fingerprint from the prior transition"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="an unaudited fingerprint cannot be retired",
+                reauthorize=True,
+                retire_missing_hosted_fingerprint="0" * 64,
+            )
+        self.assertEqual(len(controller._state().legacy_transitions), 1)
+
+    def test_legacy_transition_missing_hosted_retirement_rejects_incomplete_or_blocked_audits(self):
+        blockers = (
+            ("active_reservations", "active or unresolved Hosted reservation"),
+            ("unmatched_responses", "unmatched Hosted response"),
+            ("ambiguous_responses", "ambiguous Hosted response"),
+            ("unresolved_findings", "unresolved actionable findings"),
+        )
+        for field, message in blockers:
+            with self.subTest(field=field):
+                controller, evidence, _, _, fingerprint = self.make_legacy_retirement_case()
+                evidence.audit[field] = ["blocked"]
+                with self.assertRaisesRegex(ControllerError, message):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_2,
+                        reason="all current Hosted evidence must be attributable and complete",
+                        reauthorize=True,
+                        retire_missing_hosted_fingerprint=fingerprint,
+                    )
+                self.assertEqual(len(controller._state().legacy_transitions), 1)
+
+    def test_legacy_transition_missing_hosted_retirement_rechecks_moved_parent_and_head(self):
+        for move in ("parent", "head"):
+            with self.subTest(move=move):
+                holder = {}
+
+                def move_during_audit(move=move, holder=holder):
+                    controller = holder["controller"]
+                    if move == "parent":
+                        controller.github.values[1] = pr(1, HEAD_2, base_tip="9" * 40)
+                        controller.git.heads["develop"] = "9" * 40
+                    else:
+                        controller.github.values[1] = pr(1, "8" * 40)
+                        controller.git.heads["feature-1"] = "8" * 40
+
+                controller, _, _, _, fingerprint = self.make_legacy_retirement_case(on_audit=move_during_audit)
+                holder["controller"] = controller
+                with self.assertRaisesRegex(ControllerError, "changed during missing Hosted fingerprint retirement"):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_2,
+                        reason="the live topology must remain stable through the audit",
+                        reauthorize=True,
+                        retire_missing_hosted_fingerprint=fingerprint,
+                    )
+                self.assertEqual(len(controller._state().legacy_transitions), 1)
+
+    def test_legacy_transition_requires_exact_coherent_current_topology(self):
+        legacy = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip="9" * 40)},
+            {(1, "cli"): [legacy]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "coherent exact-current live topology"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_1,
+                reason="moved topology must remain blocked",
+            )
+
     def test_reconciliation_uses_latest_completed_attributable_review_anchor(self):
         review = {
             "pr": 1,
@@ -1060,9 +3840,11 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(args.decide_command, "reconcile")
 
-    def test_unsupported_decision_error_lists_reconcile(self):
+    def test_unsupported_decision_error_lists_supported_operations(self):
         controller = self.make({})
-        with self.assertRaisesRegex(ControllerError, "retain, reopen, policy, or reconcile"):
+        with self.assertRaisesRegex(
+            ControllerError, "decision must be retain, reopen, policy, transition, or reconcile"
+        ):
             controller.decide("unsupported")
 
     def test_stack_reconciliation_rejects_wrong_checkpoint_and_incoherent_live_topology(self):
@@ -1172,6 +3954,7 @@ class ControllerTests(unittest.TestCase):
 
                 _, reconciliation = controller._reconciliation(controller._state())
 
+                self.assertEqual(reconciliation.status, "COHERENT")
                 self.assertEqual(reconciliation.status_for(2), "COHERENT")
                 self.assertEqual(reconciliation.status_for(2, "cli"), expected_channel_status)
 

@@ -627,6 +627,17 @@ contains "$waiter" 'projection_attempted=true'
 contains "$waiter" 'if [[ "$projection_attempted" == true ]]; then'
 contains "$waiter" 'Skipped waiting for complete controller projection'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
+contains "$waiter" 'publication_workloads=('
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt'
+for workload in \
+  game-design-service \
+  world-management-service \
+  entity-management-service \
+  game-logic-service \
+  automation-scripting-service; do
+  contains "$waiter" "    $workload"
+done
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
@@ -672,6 +683,8 @@ contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
 contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
+contains "$dev_demo" 'ensure-standalone-grpc-certificates.sh'
+contains "$dev_demo" 'TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 for required in \
   '--discover-api' \
@@ -1894,9 +1907,27 @@ for output_name in (
     "proof_retry_image_tag",
 ):
     assert f"steps.capture-proof-retry.outputs.{output_name}" in create_step["run"]
+standalone_grpc_shared = deploy_by_name["Prepare standalone shared gRPC TLS secret"]
+standalone_grpc_certificates = deploy_by_name["Prepare standalone gRPC certificates"]
 standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
 standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
 standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
+assert standalone_grpc_shared["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_shared["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh --shared-only "$RUNTIME_NAMESPACE"',
+]
+assert standalone_grpc_certificates["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_certificates["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh "$RUNTIME_NAMESPACE"',
+]
 assert standalone_grpc["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
     "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
@@ -1932,6 +1963,8 @@ assert standalone_secret_wait["run"].splitlines() == [
 ]
 assert (
     requested_step_index
+    < deploy_steps.index(standalone_grpc_shared)
+    < deploy_steps.index(standalone_grpc_certificates)
     < deploy_steps.index(standalone_grpc)
     < deploy_steps.index(standalone_certificates)
     < deploy_steps.index(standalone_secret_wait)
@@ -5728,6 +5761,21 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-tls)
       printf '%s' '{"metadata":{"name":"firemud-grpc-tls","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca","client.crt":"client-cert","client.key":"client-key"}}'
       ;;
+    firemud-grpc-game-design-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-game-design-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-game-design-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-world-management-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-world-management-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-world-management-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-entity-management-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-entity-management-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-entity-management-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-game-logic-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-game-logic-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-game-logic-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-automation-scripting-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-automation-scripting-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-automation-scripting-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
@@ -5843,19 +5891,19 @@ run_projection_waiter_fixture() {
   fi
 }
 
-run_projection_waiter_fixture projection-absence 0 7 2
+run_projection_waiter_fixture projection-absence 0 12 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 7 2
+run_projection_waiter_fixture projection-transport-recovery 0 12 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 7 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 7 2
-run_projection_waiter_fixture projection-overload-recovery 0 7 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 7 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 7 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 7 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 12 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 12 2
+run_projection_waiter_fixture projection-overload-recovery 0 12 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 12 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 12 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 12 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

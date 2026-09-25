@@ -3,6 +3,82 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ "${1:-}" == "--workload" ]]; then
+  umask 077
+  if [[ $# -ne 7 ]]; then
+    echo "usage: $0 --workload <ca.crt> <ca.key> <output.crt> <output.key> <runtime-namespace> <workload>" >&2
+    exit 1
+  fi
+
+  ca_cert="$2"
+  ca_key="$3"
+  output_cert="$4"
+  output_key="$5"
+  runtime_namespace="$6"
+  workload="$7"
+  for required_file in "$ca_cert" "$ca_key"; do
+    [[ -f "$required_file" ]] || {
+      echo "missing certificate authority file: $required_file" >&2
+      exit 1
+    }
+  done
+  [[ "$runtime_namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || {
+    echo "invalid runtime namespace for workload certificate: $runtime_namespace" >&2
+    exit 1
+  }
+  case "$workload" in
+    game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
+      ;;
+    *)
+      echo "unsupported gRPC publication workload: $workload" >&2
+      exit 1
+      ;;
+  esac
+
+  mkdir -p "$(dirname "$output_cert")" "$(dirname "$output_key")"
+  workload_config="$(mktemp)"
+  workload_request="$(mktemp)"
+  workload_serial="$(mktemp)"
+  trap 'rm -f "$workload_config" "$workload_request" "$workload_serial"' EXIT
+  # OpenSSL versions differ on whether an empty -CAserial file can seed a new
+  # certificate. Initialize a unique serial explicitly before signing.
+  openssl rand -hex 16 >"$workload_serial"
+  cat >"$workload_config" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = firemud-grpc-${workload}
+
+[v3_req]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = spiffe://firemud/ns/${runtime_namespace}/sa/${workload}
+DNS.1 = ${workload}
+DNS.2 = ${workload}.${runtime_namespace}
+DNS.3 = ${workload}.${runtime_namespace}.svc
+DNS.4 = ${workload}.${runtime_namespace}.svc.cluster.local
+EOF
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key" \
+    >/dev/null 2>&1
+  openssl req -new -key "$output_key" -config "$workload_config" -out "$workload_request"
+  openssl x509 -req -in "$workload_request" -CA "$ca_cert" -CAkey "$ca_key" \
+    -CAserial "$workload_serial" -out "$output_cert" -days 365 -sha256 \
+    -extensions v3_req -extfile "$workload_config" >/dev/null || {
+    echo "failed to sign publication workload certificate: $workload" >&2
+    exit 1
+  }
+  chmod 644 "$output_cert"
+  chmod 600 "$output_key"
+  exit 0
+fi
+
 # Generate self-signed CA and a shared mTLS certificate for local dev and preview.
 TARGET="${1:-}"
 if [ -n "$TARGET" ]; then

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.findRepositoryFile;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -57,9 +58,15 @@ import org.yaml.snakeyaml.Yaml;
 class HostedIdentityScopeServiceTest {
   private static final String RUNTIME_SCOPE_MARKER =
       "object.metadata.name == 'firemud-hosted-runtime-scope'";
+  private static final String IDENTITY_SCOPE_MARKER =
+      "object.metadata.name == 'firemud-hosted-identity-scope'";
+  private static final String CEL_IDENTITY_SECRET_PREFIX =
+      "(((object.metadata.namespace == 'dev' || "
+          + "object.metadata.namespace == 'dev-identity') ? 'dev' : "
+          + "object.metadata.labels['firemud.dev/identity-name'])";
   // These test-only helpers parse the checked-in CEL subset: single-quoted strings, no nested
   // exists calls, and at most one list equality for each requested rule field.
-  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
+  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']*)'");
   private static final Map<String, String> ROLE_LABELS =
       Map.of(
           "app.kubernetes.io/name",
@@ -219,7 +226,15 @@ class HostedIdentityScopeServiceTest {
 
     assertEquals(
         List.of(
-            "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge"),
+            "pr-42-tls",
+            "pr-42-telnet-tls",
+            "pr-42-gateway-internal-ws",
+            "pr-42-tcp-proxy-bridge",
+            "pr-42-grpc-game-design-service",
+            "pr-42-grpc-world-management-service",
+            "pr-42-grpc-entity-management-service",
+            "pr-42-grpc-game-logic-service",
+            "pr-42-grpc-automation-scripting-service"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 
@@ -228,7 +243,15 @@ class HostedIdentityScopeServiceTest {
     EnvironmentIdentityPlan plan = plan().withGrpcConsumers(List.of("independent-grpc-consumer"));
 
     assertEquals(
-        List.of("independent-grpc-consumer", "spring-cloud-gateway", "tcp-proxy-service"),
+        List.of(
+            "independent-grpc-consumer",
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service",
+            "spring-cloud-gateway",
+            "tcp-proxy-service"),
         HostedIdentityScopeService.requiredDeploymentNames(plan));
   }
 
@@ -260,6 +283,25 @@ class HostedIdentityScopeServiceTest {
     assertEquals(
         HostedIdentityScopeService.requiredDeploymentNames(planner.plan("dev-demo")),
         admittedDeploymentNames);
+  }
+
+  @Test
+  void identitySecretNamesExactlyMatchAdmissionAllowlistsForPreviewAndDev() throws IOException {
+    EnvironmentIdentityPlanner planner =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties());
+    for (String identityName : List.of("pr-42", "dev-demo")) {
+      EnvironmentIdentityPlan plan = planner.plan(identityName);
+      List<String> generatedSecretNames = HostedIdentityScopeService.identitySecretNames(plan);
+
+      assertEquals(
+          generatedSecretNames,
+          admittedIdentitySecretNames(plan, List.of("get")),
+          identityName + " identity Secret get allowlist");
+      assertEquals(
+          generatedSecretNames,
+          admittedIdentitySecretNames(plan, List.of("update", "patch", "delete")),
+          identityName + " identity Secret mutation allowlist");
+    }
   }
 
   @Test
@@ -763,6 +805,13 @@ class HostedIdentityScopeServiceTest {
     assertEquals("hosted identity scope RoleBinding roleRef drifted", roleRefFailure.getMessage());
   }
 
+  @Test
+  void celListParserTreatsBlankExpressionAsEmptyList() {
+    assertEquals(List.of(), splitCelList(""));
+    assertEquals(List.of(), splitCelList(" \t\n "));
+    assertEquals(List.of("'get'", "'list'"), splitCelList("'get', 'list'"));
+  }
+
   private static IllegalStateException assertRoleDriftFailsClosed(Role current, Role desired) {
     RoleClient fixture = roleClient();
     when(fixture.operation().get()).thenReturn(current);
@@ -831,6 +880,53 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static List<String> admittedRuntimeDeploymentNames() throws IOException {
+    String runtimeScopeExpression =
+        scopeRoleAdmissionExpression(RUNTIME_SCOPE_MARKER, "runtime-scope");
+    List<String> deploymentRules =
+        celExistsRuleBodies(runtimeScopeExpression).stream()
+            .filter(
+                rule ->
+                    Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
+                        && Optional.of(List.of("deployments"))
+                            .equals(celListEquality(rule, "resources"))
+                        && celListEquality(rule, "resourceNames").isPresent())
+            .toList();
+    assertEquals(
+        1, deploymentRules.size(), "runtime deployment matcher must have exactly one rule");
+    String deploymentRule = deploymentRules.get(0);
+    assertEquals(
+        List.of("get", "update", "patch"),
+        celListEquality(deploymentRule, "verbs")
+            .orElseThrow(() -> new AssertionError("runtime deployment verbs must exist")));
+    return celListEquality(deploymentRule, "resourceNames")
+        .orElseThrow(() -> new AssertionError("runtime deployment resourceNames must exist"));
+  }
+
+  private static List<String> admittedIdentitySecretNames(
+      EnvironmentIdentityPlan plan, List<String> verbs) throws IOException {
+    String identityScopeExpression =
+        scopeRoleAdmissionExpression(IDENTITY_SCOPE_MARKER, "identity-scope");
+    List<String> secretRules =
+        celExistsRuleBodies(identityScopeExpression).stream()
+            .filter(
+                rule ->
+                    Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
+                        && Optional.of(List.of("secrets"))
+                            .equals(celListEquality(rule, "resources"))
+                        && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
+                        && celListExpressions(rule, "resourceNames").isPresent())
+            .toList();
+    assertEquals(
+        1,
+        secretRules.size(),
+        "identity Secret allowlist must have exactly one matching Role rule");
+    return celListExpressions(secretRules.get(0), "resourceNames").orElseThrow().stream()
+        .map(expression -> evaluateIdentitySecretName(expression, plan))
+        .toList();
+  }
+
+  private static String scopeRoleAdmissionExpression(String marker, String scopeDescription)
+      throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
     Map<?, ?> scopeRolePolicy;
     try (var reader = Files.newBufferedReader(admissionPath)) {
@@ -848,34 +944,19 @@ class HostedIdentityScopeServiceTest {
     }
     Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
     List<?> validations = (List<?>) spec.get("validations");
-    List<String> runtimeScopeExpressions =
+    List<String> scopeExpressions =
         validations.stream()
             .map(Map.class::cast)
             .map(validation -> validation.get("expression"))
             .filter(String.class::isInstance)
             .map(String.class::cast)
-            .filter(expression -> expression.contains(RUNTIME_SCOPE_MARKER))
+            .filter(expression -> expression.contains(marker))
             .toList();
     assertEquals(
-        1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
-    List<String> deploymentRules =
-        celExistsRuleBodies(runtimeScopeExpressions.get(0)).stream()
-            .filter(
-                rule ->
-                    Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
-                        && Optional.of(List.of("deployments"))
-                            .equals(celListEquality(rule, "resources"))
-                        && celListEquality(rule, "resourceNames").isPresent())
-            .toList();
-    assertEquals(
-        1, deploymentRules.size(), "runtime deployment matcher must have exactly one rule");
-    String deploymentRule = deploymentRules.get(0);
-    assertEquals(
-        List.of("get", "update", "patch"),
-        celListEquality(deploymentRule, "verbs")
-            .orElseThrow(() -> new AssertionError("runtime deployment verbs must exist")));
-    return celListEquality(deploymentRule, "resourceNames")
-        .orElseThrow(() -> new AssertionError("runtime deployment resourceNames must exist"));
+        1,
+        scopeExpressions.size(),
+        "exactly one " + scopeDescription + " admission branch must exist");
+    return scopeExpressions.get(0);
   }
 
   private static List<String> celExistsRuleBodies(String expression) {
@@ -910,28 +991,92 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static Optional<List<String>> celListEquality(String expression, String field) {
-    Pattern equality = Pattern.compile("r\\." + Pattern.quote(field) + "\\s*==\\s*\\[([^\\]]*)]");
-    var matches = equality.matcher(expression).results().toList();
-    if (matches.isEmpty()) {
+    Optional<List<String>> expressions = celListExpressions(expression, field);
+    if (expressions.isEmpty()) {
       return Optional.empty();
     }
-    assertEquals(1, matches.size(), "CEL rule must contain one equality for " + field);
-    return Optional.of(celStringLiterals(matches.get(0).group(1)));
+    return Optional.of(
+        expressions.get().stream()
+            .map(
+                element -> {
+                  var literal = CEL_STRING_LITERAL.matcher(element);
+                  assertTrue(literal.matches(), "CEL list element must be a string literal");
+                  return literal.group(1);
+                })
+            .toList());
   }
 
-  private static Path findRepositoryFile(String relativePath) {
-    Path directory = Path.of("").toAbsolutePath();
-    while (directory != null) {
-      Path candidate = directory.resolve(relativePath);
-      if (Files.isRegularFile(candidate)) {
-        return candidate;
-      }
-      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
-        break;
-      }
-      directory = directory.getParent();
+  private static Optional<List<String>> celListExpressions(String expression, String field) {
+    String marker = "r." + field + " == [";
+    int markerStart = expression.indexOf(marker);
+    if (markerStart < 0) {
+      return Optional.empty();
     }
-    throw new AssertionError("could not locate repository file " + relativePath);
+    int listStart = markerStart + marker.length();
+    int listEnd = matchingClosingBracket(expression, listStart);
+    assertTrue(listEnd >= 0, "unterminated CEL list equality for " + field);
+    return Optional.of(splitCelList(expression.substring(listStart, listEnd)));
+  }
+
+  private static int matchingClosingBracket(String expression, int listStart) {
+    int bracketDepth = 1;
+    boolean inString = false;
+    for (int index = listStart; index < expression.length(); index++) {
+      char current = expression.charAt(index);
+      if (current == '\'' && (index == 0 || expression.charAt(index - 1) != '\\')) {
+        inString = !inString;
+      } else if (!inString && current == '[') {
+        bracketDepth++;
+      } else if (!inString && current == ']' && --bracketDepth == 0) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private static List<String> splitCelList(String expression) {
+    if (expression.isBlank()) {
+      return List.of();
+    }
+    java.util.ArrayList<String> elements = new java.util.ArrayList<>();
+    int elementStart = 0;
+    int parenthesisDepth = 0;
+    int bracketDepth = 0;
+    boolean inString = false;
+    for (int index = 0; index < expression.length(); index++) {
+      char current = expression.charAt(index);
+      if (current == '\'' && (index == 0 || expression.charAt(index - 1) != '\\')) {
+        inString = !inString;
+      } else if (!inString && current == '(') {
+        parenthesisDepth++;
+      } else if (!inString && current == ')') {
+        parenthesisDepth--;
+      } else if (!inString && current == '[') {
+        bracketDepth++;
+      } else if (!inString && current == ']') {
+        bracketDepth--;
+      } else if (!inString && current == ',' && parenthesisDepth == 0 && bracketDepth == 0) {
+        elements.add(expression.substring(elementStart, index).trim());
+        elementStart = index + 1;
+      }
+    }
+    elements.add(expression.substring(elementStart).trim());
+    return List.copyOf(elements);
+  }
+
+  private static String evaluateIdentitySecretName(
+      String expression, EnvironmentIdentityPlan plan) {
+    var literal = CEL_STRING_LITERAL.matcher(expression.trim());
+    if (literal.matches()) {
+      return literal.group(1);
+    }
+    var suffix = Pattern.compile("\\+\\s*'([^']+)'\\s*\\)*$").matcher(expression.trim());
+    assertTrue(suffix.find(), "identity Secret name expression must append a string suffix");
+    assertEquals(
+        CEL_IDENTITY_SECRET_PREFIX,
+        expression.trim().substring(0, suffix.start()).trim(),
+        "identity Secret name expression must use the canonical environment prefix");
+    return plan.runtimeNamespace() + suffix.group(1);
   }
 
   private static List<String> celStringLiterals(String expression) {

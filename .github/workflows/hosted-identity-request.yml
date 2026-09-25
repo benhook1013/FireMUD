@@ -880,6 +880,24 @@ jobs:
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             --projections "$IDENTITY_NAME" "$RUNTIME_NAMESPACE" 900
 
+      - name: Prepare standalone shared gRPC TLS secret
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh --shared-only "$RUNTIME_NAMESPACE"
+
+      - name: Prepare standalone gRPC certificates
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/standalone-certificate-writer.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh "$RUNTIME_NAMESPACE"
+
       - name: Prepare standalone gRPC TLS secret
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:

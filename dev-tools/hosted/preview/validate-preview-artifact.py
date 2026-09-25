@@ -59,6 +59,13 @@ SERVICE_IMAGES = {
     "tcp-proxy-service",
     "world-management-service",
 }
+PUBLICATION_GRPC_WORKLOADS = {
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+}
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES
@@ -118,13 +125,17 @@ EXPECTED_OBJECTS = {
 INFRASTRUCTURE_IMAGES = {
     "postgres:16",
     "redis:7.4.3",
-    "quay.io/minio/minio:RELEASE.2024-05-10T01-41-38Z",
+    "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",
+    "ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf",
 }
 EXPECTED_SECRET_REFS = {
     "firemud-secret",
     "jwt-signing-keys",
     "minio-credentials",
     "firemud-grpc-tls",
+}
+PUBLICATION_GRPC_SECRET_OWNERS = {
+    f"firemud-grpc-{service}": service for service in PUBLICATION_GRPC_WORKLOADS
 }
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
@@ -442,7 +453,7 @@ EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
     "minio": _infrastructure_deployment_spec(
         "minio",
         1000,
-        "quay.io/minio/minio:RELEASE.2024-05-10T01-41-38Z",
+        "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",
         ["server", "/data"],
         9000,
         "minio-data",
@@ -747,6 +758,47 @@ def _is_sanitized_secret_reference(value: object) -> bool:
     )
 
 
+def _is_publication_grpc_secret_volume_source(
+    document: object, path: str, value: object
+) -> bool:
+    """Allow a publication TLS Secret only in its owning Deployment's grpc-tls volume."""
+
+    if not isinstance(value, str) or not isinstance(document, dict):
+        return False
+    owner = PUBLICATION_GRPC_SECRET_OWNERS.get(value)
+    if owner is None:
+        return False
+    metadata = document.get("metadata")
+    if (
+        document.get("kind") != "Deployment"
+        or not isinstance(metadata, dict)
+        or metadata.get("name") != owner
+    ):
+        return False
+    match = re.fullmatch(
+        r"object\.spec\.template\.spec\.volumes\[(\d+)\]\.secret\.secretName",
+        path,
+    )
+    if match is None:
+        return False
+    spec = document.get("spec")
+    template = spec.get("template") if isinstance(spec, dict) else None
+    pod = template.get("spec") if isinstance(template, dict) else None
+    volumes = pod.get("volumes") if isinstance(pod, dict) else None
+    index = int(match.group(1))
+    if not isinstance(volumes, list) or index >= len(volumes):
+        return False
+    volume = volumes[index]
+    if not isinstance(volume, dict):
+        return False
+    source = volume.get("secret")
+    return (
+        volume.get("name") == "grpc-tls"
+        and isinstance(source, dict)
+        and source.get("secretName") == value
+    )
+
+
 def _is_manifest_secret_reference(value: object, expected_namespace: str) -> bool:
     return isinstance(value, str) and (
         _is_expected_secret_reference(value)
@@ -928,10 +980,21 @@ def _validate_firemud_config_shape(
     _validate_firemud_config_data(data, allow_redacted=allow_redacted)
 
 
-def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None:
+def _validate_sanitized_secret_refs(
+    value: object,
+    path: str = "object",
+    root_document: dict | None = None,
+) -> None:
+    if root_document is None and isinstance(value, dict):
+        root_document = value
     if isinstance(value, dict):
         for key, child in value.items():
-            if key == "secretName" and not _is_sanitized_secret_reference(child):
+            if key == "secretName" and not (
+                _is_sanitized_secret_reference(child)
+                or _is_publication_grpc_secret_volume_source(
+                    root_document, f"{path}.{key}", child
+                )
+            ):
                 fail(f"{path}.{key} contains an unapproved Secret reference")
             if key in {"secretRef", "secretKeyRef"} and isinstance(child, dict):
                 name = child.get("name")
@@ -954,10 +1017,14 @@ def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None
                 name = child.get("name")
                 if not _is_sanitized_secret_reference(name):
                     fail(f"{path}.{key}.name contains an unapproved Secret reference")
-            _validate_sanitized_secret_refs(child, f"{path}.{key}")
+            _validate_sanitized_secret_refs(
+                child, f"{path}.{key}", root_document
+            )
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            _validate_sanitized_secret_refs(child, f"{path}[{index}]")
+            _validate_sanitized_secret_refs(
+                child, f"{path}[{index}]", root_document
+            )
 
 
 def _validate_restricted_pod_security(pod: object, path: str) -> None:
@@ -1482,10 +1549,59 @@ def validate_service_consumers(
         if len(containers) != 1 or containers[0].get("name") != service:
             fail(f"Deployment/{service} has an unexpected container layout")
 
+        container = containers[0]
+        if service in PUBLICATION_GRPC_WORKLOADS:
+            workload_namespace_entries = [
+                entry
+                for entry in container.get("env", [])
+                if isinstance(entry, dict)
+                and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+            ]
+            if len(workload_namespace_entries) != 1 or workload_namespace_entries[0] != {
+                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                "valueFrom": {
+                    "fieldRef": {"fieldPath": "metadata.namespace"}
+                },
+            }:
+                fail(
+                    f"Deployment/{service} must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+                    "to metadata.namespace"
+                )
+        expected_grpc_paths = (
+            {
+                "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
+                "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
+            }
+            if service in PUBLICATION_GRPC_WORKLOADS
+            else {
+                "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
+                "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+            }
+        )
+        declared_grpc_paths = {
+            entry.get("name"): entry.get("value")
+            for entry in container.get("env", [])
+            if isinstance(entry, dict)
+        }
+        for env_name, expected_path in expected_grpc_paths.items():
+            if declared_grpc_paths.get(env_name) != expected_path:
+                fail(
+                    f"Deployment/{service} must configure {env_name} as {expected_path}"
+                )
+
+        grpc_secret_name = (
+            f"firemud-grpc-{service}"
+            if service in PUBLICATION_GRPC_WORKLOADS
+            else "firemud-grpc-tls"
+        )
         expected_mounts = {
-            "grpc-tls": ("/tls", "firemud-grpc-tls"),
+            "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
         }
+        if service in PUBLICATION_GRPC_WORKLOADS:
+            expected_mounts["grpc-trust"] = ("/grpc-trust", "firemud-grpc-tls")
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
@@ -1551,6 +1667,23 @@ def validate_service_consumers(
                 )
                 if source.get("secretName") != source_name:
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
+                if volume_name == "grpc-trust":
+                    expected_source = {
+                        "secretName": source_name,
+                        "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                    }
+                    if source != expected_source:
+                        fail(f"Deployment/{service} has an unsafe grpc-trust projection")
+                if volume_name == "grpc-tls" and service in PUBLICATION_GRPC_WORKLOADS:
+                    expected_source = {
+                        "secretName": source_name,
+                        "items": [
+                            {"key": "tls.crt", "path": "tls.crt"},
+                            {"key": "tls.key", "path": "tls.key"},
+                        ],
+                    }
+                    if source != expected_source:
+                        fail(f"Deployment/{service} has an unsafe grpc-tls projection")
                 if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"}:
                     expected_source = {
                         "secretName": source_name,
@@ -1928,8 +2061,11 @@ def validate_manifest(
         for location, value in walk(document):
             if location.endswith(".nodePort"):
                 fail(f"{location} retains a PR-selected nodePort")
-            if location.endswith(".secretName") and not _is_manifest_secret_reference(
-                value, expected_namespace
+            if location.endswith(".secretName") and not (
+                _is_manifest_secret_reference(value, expected_namespace)
+                or _is_publication_grpc_secret_volume_source(
+                    document, location, value
+                )
             ):
                 fail(f"{location} contains an unapproved Secret reference")
             if location.endswith(

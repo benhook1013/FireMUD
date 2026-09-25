@@ -31,6 +31,10 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- .name -}}
 {{- end -}}
 
+{{- define "firemud.grpcWorkloadNames" -}}
+{{- list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service" | toJson -}}
+{{- end -}}
+
 {{- define "firemud.grpcSecretName" -}}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
@@ -158,4 +162,12 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
   value: /gateway-ws-client-tls/tls.key
 - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
   value: /gateway-ws-client-tls/ca.crt
+{{- end -}}
+
+{{- define "firemud.grpcSecretNameForService" -}}
+{{- if has .serviceName (include "firemud.grpcWorkloadNames" .root | fromJsonArray) -}}
+{{- printf "firemud-grpc-%s" .serviceName -}}
+{{- else -}}
+{{- include "firemud.grpcSecretName" .root -}}
+{{- end -}}
 {{- end -}}

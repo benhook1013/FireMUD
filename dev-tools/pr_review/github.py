@@ -12,6 +12,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,9 @@ def run_gh_query(query: str, variables: dict[str, str | int]) -> dict[str, Any]:
 _BASE_QUERY = """
 query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
+    number
+    baseRefName
+    baseRefOid
     headRefOid
     commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
     reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {
@@ -462,6 +466,82 @@ def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("gh pr view returned a non-object payload")
     return value
+
+
+def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+    """Fetch bounded live identity/activity summaries for every requested PR.
+
+    Aliased ``pullRequest(number: ...)`` fields keep this query bound to the
+    configured stack rather than to a repository listing limit.  The small
+    recent comment/review samples are only used to find active Hosted work;
+    complete evidence still comes from :func:`fetch_pull_request`.
+    """
+
+    owner, name = parse_repo(repo)
+    numbers = tuple(pr_numbers)
+    if any(isinstance(number, bool) or not isinstance(number, int) or number <= 0 for number in numbers):
+        raise ValueError("pull-request identity batch requires positive PR numbers")
+    if len(set(numbers)) != len(numbers):
+        raise ValueError("pull-request identity batch requires unique PR numbers")
+    result: dict[int, dict[str, Any] | None] = {number: None for number in numbers}
+    if not numbers:
+        return result
+
+    # Keep each request comfortably within GitHub GraphQL's query-cost limit
+    # while ensuring every configured number is covered without list truncation.
+    for offset in range(0, len(numbers), 25):
+        chunk = numbers[offset : offset + 25]
+        selections = "\n".join(
+            f"pr_{number}: pullRequest(number:{number}) {{ "
+            "number state isDraft mergedAt baseRefName baseRefOid headRefName headRefOid mergeable "
+            "headRepository { nameWithOwner } "
+            "comments(last:5) { nodes { databaseId author { login } body createdAt url } } "
+            "reviews(last:5) { nodes { databaseId author { login } body state submittedAt url commit { oid } } } "
+            "}"
+            for number in chunk
+        )
+        query = f"""
+query($owner:String!, $repo:String!) {{
+  repository(owner:$owner, name:$repo) {{
+    {selections}
+  }}
+}}
+""".strip()
+        payload = run_gh_query(query, {"owner": owner, "repo": name})
+        errors = payload.get("errors")
+        if errors is not None and (not isinstance(errors, list) or errors):
+            raise RuntimeError("GitHub GraphQL response contains errors")
+        try:
+            repository = payload["data"]["repository"]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError("GitHub response has no repository identity batch") from exc
+        if not isinstance(repository, dict):
+            raise TypeError("GitHub response has no repository identity batch")
+        for number in chunk:
+            item = repository.get(f"pr_{number}")
+            if item is None:
+                continue
+            if not isinstance(item, dict) or item.get("number") != number:
+                continue
+            required = (
+                "state",
+                "baseRefName",
+                "baseRefOid",
+                "headRefName",
+                "headRefOid",
+                "mergeable",
+            )
+            if any(not isinstance(item.get(field), str) or not item[field] for field in required):
+                continue
+            if not isinstance(item.get("isDraft"), bool):
+                continue
+            for connection in ("comments", "reviews"):
+                value = item.get(connection)
+                if not isinstance(value, dict) or not isinstance(value.get("nodes"), list):
+                    break
+            else:
+                result[number] = item
+    return result
 
 
 def repository_metadata(repo: str) -> dict[str, Any]:

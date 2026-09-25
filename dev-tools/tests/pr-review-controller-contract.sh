@@ -79,11 +79,26 @@ grep -Fq 'merge-base SHA' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require merge-base anchoring'
 grep -Fq 'unique patch identity' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require patch anchoring'
-grep -Fq 'two consecutive corrected-state zero-useful' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'one corrected-state zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define Hosted taper'
 grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define CLI taper'
 grep -Fq -- '--allow-unreconciled' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define provisional CLI semantics'
+
+grep -Fq 'review_results' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance fixtures do not expose deterministic review result sequences'
+grep -Fq 'result_positions' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance fixtures do not persist result sequence positions'
+grep -Fq 'simulated = True' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance adapter is not marked simulated for live-trigger guards'
+awk '
+  /^    allocation = decide_commands\.add_parser\(/ {
+    getline
+    if ($0 ~ /^        "allocation",/) found = 1
+  }
+  END { exit !found }
+' dev-tools/pr_review/cli.py \
+  || fail 'public CLI does not register the allocation decision subcommand'
 
 printf 'pr-review controller contract: passed\n'

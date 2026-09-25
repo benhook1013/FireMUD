@@ -138,6 +138,18 @@ if [[ "${1:-}" == "--projections" ]]; then
     "${projection_prefix}-tcp-proxy-bridge|tcp-proxy-bridge|tls.crt,tls.key,ca.crt"
     "firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"
   )
+  publication_workloads=(
+    game-design-service
+    world-management-service
+    entity-management-service
+    game-logic-service
+    automation-scripting-service
+  )
+  for workload in "${publication_workloads[@]}"; do
+    projections+=(
+      "firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt"
+    )
+  done
   initialize_wait_state "$timeout_seconds"
   all_projections_ready=true
   for projection in "${projections[@]}"; do

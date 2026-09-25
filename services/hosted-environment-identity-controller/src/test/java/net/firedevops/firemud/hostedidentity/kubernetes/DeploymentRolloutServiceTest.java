@@ -56,6 +56,229 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
+  void publicationRevisionRollsEachProtectedDeploymentAndBlocksReadinessUntilAllReady() {
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
+    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      publicationRevisions.put(role, "publication-current-" + role);
+    }
+    assertEquals(5L, publicationRevisions.values().stream().distinct().count());
+    DeploymentClientGraph graph =
+        deploymentClient(
+            plan,
+            "tcp-proxy-service",
+            "account-service",
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service");
+    when(graph.resources().get("tcp-proxy-service").get())
+        .thenReturn(
+            readyDeployment(
+                "tcp-proxy-service",
+                Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-current"),
+                3L));
+    when(graph.resources().get("account-service").get())
+        .thenReturn(
+            readyDeployment(
+                "account-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "grpc-current"),
+                3L));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      String publicationRevision =
+          "game-logic-service".equals(workload)
+              ? "publication-old-" + role
+              : publicationRevisions.get(role);
+      when(graph.resources().get(workload).get())
+          .thenReturn(
+              readyDeployment(
+                  workload,
+                  Map.of(
+                      HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                      expectedPublicationRevision("grpc-current", publicationRevision)),
+                  3L));
+    }
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    String gameLogicRole = HostedIdentityContract.grpcPublicationRole("game-logic-service");
+    when(graph.resources().get("game-logic-service").get())
+        .thenReturn(
+            readyDeployment(
+                "game-logic-service",
+                Map.of(
+                    HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                    expectedPublicationRevision(
+                        "grpc-current", "publication-old-" + gameLogicRole)),
+                3L))
+        .thenAnswer(invocation -> replacement.getValue());
+    ReplaceDeletable<Deployment> lockedGameLogic = mock(ReplaceDeletable.class);
+    when(graph.resources().get("game-logic-service").lockResourceVersion("rv-3"))
+        .thenReturn(lockedGameLogic);
+
+    DeploymentRolloutService.RolloutResult result =
+        new DeploymentRolloutService()
+            .sync(
+                graph.client(),
+                plan,
+                "telnet-current",
+                "gateway-current",
+                "grpc-current",
+                publicationRevisions,
+                () -> {});
+
+    assertEquals(false, result.ready());
+    assertEquals(true, result.telnetReady());
+    assertEquals(false, result.grpcReady());
+    verify(lockedGameLogic).replace(replacement.capture());
+    assertEquals(
+        expectedPublicationRevision("grpc-current", publicationRevisions.get(gameLogicRole)),
+        replacement
+            .getValue()
+            .getSpec()
+            .getTemplate()
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+
+    Deployment converged = replacement.getValue();
+    converged.getMetadata().setGeneration(4L);
+    converged.getStatus().setObservedGeneration(4L);
+    DeploymentRolloutService.RolloutResult secondResult =
+        new DeploymentRolloutService()
+            .sync(
+                graph.client(),
+                plan,
+                "telnet-current",
+                "gateway-current",
+                "grpc-current",
+                publicationRevisions,
+                () -> {});
+
+    assertEquals(true, secondResult.ready());
+    assertEquals(true, secondResult.telnetReady());
+    assertEquals(true, secondResult.grpcReady());
+    assertEquals(4L, converged.getMetadata().getGeneration());
+    assertEquals(4L, converged.getStatus().getObservedGeneration());
+    verify(graph.resources().get("game-logic-service"), times(2)).get();
+    verify(graph.resources().get("game-logic-service")).lockResourceVersion("rv-3");
+    verify(lockedGameLogic, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      if (!"game-logic-service".equals(workload)) {
+        verify(graph.resources().get(workload), never()).lockResourceVersion(anyString());
+      }
+    }
+    verify(graph.resources().get("account-service"), never()).lockResourceVersion(anyString());
+  }
+
+  @Test
+  void sharedGrpcRevisionRollsEveryPublicationWorkloadAndLeavesUnrelatedWorkloadUntouched() {
+    EnvironmentIdentityPlan plan = planWithConsumers();
+    String[] deploymentNames =
+        java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("tcp-proxy-service", "logging-admin-service"),
+                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream())
+            .toArray(String[]::new);
+    DeploymentClientGraph graph = deploymentClient(plan, deploymentNames);
+    when(graph.resources().get("tcp-proxy-service").get())
+        .thenReturn(
+            readyDeployment(
+                "tcp-proxy-service",
+                Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-current"),
+                3L));
+
+    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    Map<String, ReplaceDeletable<Deployment>> lockedResources = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      String publicationRevision = "publication-current-" + role;
+      assertEquals(false, plan.grpcConsumers().contains(workload));
+      publicationRevisions.put(role, publicationRevision);
+      RollableScalableResource<Deployment> resource = graph.resources().get(workload);
+      when(resource.get())
+          .thenReturn(
+              readyDeployment(
+                  workload,
+                  Map.of(
+                      HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                      expectedPublicationRevision("grpc-old", publicationRevision)),
+                  3L));
+      ReplaceDeletable<Deployment> locked = mock(ReplaceDeletable.class);
+      when(resource.lockResourceVersion("rv-3")).thenReturn(locked);
+      lockedResources.put(workload, locked);
+    }
+
+    DeploymentRolloutService.RolloutResult result =
+        new DeploymentRolloutService()
+            .sync(
+                graph.client(),
+                plan,
+                "telnet-current",
+                "gateway-current",
+                "grpc-new",
+                publicationRevisions,
+                () -> {});
+
+    assertEquals(false, result.ready());
+    assertEquals(true, result.telnetReady());
+    assertEquals(false, result.grpcReady());
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+      verify(lockedResources.get(workload)).replace(replacement.capture());
+      assertEquals(
+          expectedPublicationRevision("grpc-new", publicationRevisions.get(role)),
+          replacement
+              .getValue()
+              .getSpec()
+              .getTemplate()
+              .getMetadata()
+              .getAnnotations()
+              .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+      verify(graph.resources().get(workload)).lockResourceVersion("rv-3");
+    }
+    verify(graph.resources().get("tcp-proxy-service"), never()).lockResourceVersion(anyString());
+    verify(graph.resources().get("logging-admin-service"), never()).get();
+    verify(graph.resources().get("logging-admin-service"), never())
+        .lockResourceVersion(anyString());
+  }
+
+  @Test
+  void rejectsPublicationWorkloadOverlappingGrpcConsumerBeforeAnyRolloutMutation() {
+    String overlappingWorkload = HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.getFirst();
+    EnvironmentIdentityPlan plan = planWithConsumers(overlappingWorkload);
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", overlappingWorkload);
+    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      publicationRevisions.put(
+          HostedIdentityContract.grpcPublicationRole(workload), "publication-current");
+    }
+    Runnable runtimeProfileFence = mock(Runnable.class);
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .sync(
+                        graph.client(),
+                        plan,
+                        "telnet-current",
+                        "gateway-current",
+                        "grpc-current",
+                        publicationRevisions,
+                        runtimeProfileFence));
+
+    assertEquals(
+        "gRPC consumer overlaps publication workload: " + overlappingWorkload,
+        failure.getMessage());
+    verify(runtimeProfileFence, never()).run();
+    verify(graph.resources().get("tcp-proxy-service"), never()).get();
+    verify(graph.resources().get(overlappingWorkload), never()).get();
+  }
+
+  @Test
   void gatewayInternalWsOnlyRevisionRollsOnlyGatewayAndPreservesReadinessSemantics() {
     EnvironmentIdentityPlan plan = planWithConsumers("spring-cloud-gateway", "account-service");
     DeploymentClientGraph graph =
@@ -760,5 +983,17 @@ class DeploymentRolloutServiceTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     return plan.withGrpcConsumers(List.of(consumers));
+  }
+
+  private static String expectedPublicationRevision(
+      String grpcRevision, String publicationRevision) {
+    return "v1|shared-grpc|"
+        + grpcRevision.length()
+        + "|"
+        + grpcRevision
+        + "|publication-leaf|"
+        + publicationRevision.length()
+        + "|"
+        + publicationRevision;
   }
 }

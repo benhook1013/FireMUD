@@ -14,13 +14,16 @@ from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status,
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
 from pr_review.state import (
     Judgment,
+    LegacyEvidenceTransition,
     PolicyOverride,
+    ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
     StateError,
     StateStore,
     SummaryFindingDisposition,
     adjudicate_summary_findings,
+    observation_fingerprint,
 )
 
 
@@ -39,6 +42,144 @@ def _append_prs(path: str, prs: tuple[int, ...]) -> None:
 
 
 class ReviewStateStackTest(unittest.TestCase):
+    def test_review_allocation_round_trips_and_is_keyed_by_pr_and_channel(self):
+        allocation = ReviewAllocation(
+            pr=2849,
+            channel="hosted",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base="c" * 40,
+            patch_id="patch-2849",
+            baseline_checkpoints=("checkpoint-1", "checkpoint-2"),
+            reason="one final Hosted result before handoff",
+            handoff_checkpoint="handoff-1",
+            handoff_head="d" * 40,
+            handoff_validation="focused contracts and required CI passed",
+        )
+        state = ReviewState(allocations={allocation.identity: allocation})
+
+        restored = ReviewState.from_dict(state.to_dict())
+
+        self.assertEqual(restored, state)
+        self.assertEqual(restored.allocations["2849:hosted"].baseline_checkpoints, ("checkpoint-1", "checkpoint-2"))
+
+    def test_review_allocation_stop_round_trips_reviewed_and_final_heads_separately(self):
+        allocation = ReviewAllocation(
+            pr=2818,
+            channel="hosted",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base="c" * 40,
+            patch_id="current-owned-patch",
+            baseline_checkpoints=("latest-checkpoint",),
+            reason="pre-granted one-result allocation",
+            stop_basis="allocated",
+            stop_checkpoint="latest-checkpoint",
+            stop_reviewed_head="d" * 40,
+            stop_reviewed_patch_id="reviewed-owned-patch",
+            stop_head="a" * 40,
+            stop_parent_identity="develop",
+            stop_parent_head="b" * 40,
+            stop_merge_base="c" * 40,
+            stop_patch_id="current-owned-patch",
+            stop_reason="human stopped discovery after adjudication",
+            stop_summary_disposition_fingerprints=("e" * 64,),
+            retained_ambiguous_fingerprints=("f" * 64, "e" * 64),
+            retained_ambiguous_reason="terminal response lacks attributable review object",
+        )
+
+        restored = ReviewAllocation.from_dict(allocation.to_dict())
+
+        self.assertEqual(restored, allocation)
+        self.assertNotEqual(restored.stop_reviewed_head, restored.stop_head)
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64, "e" * 64))
+
+    def test_review_allocation_reads_the_legacy_single_retained_fingerprint(self):
+        legacy = {
+            "pr": 2818,
+            "channel": "hosted",
+            "head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "current-owned-patch",
+            "baseline_checkpoints": ["latest-checkpoint"],
+            "reason": "pre-granted one-result allocation",
+            "stop_basis": "direct_human",
+            "stop_checkpoint": "latest-checkpoint",
+            "stop_reviewed_head": "d" * 40,
+            "stop_reviewed_patch_id": "reviewed-owned-patch",
+            "stop_head": "a" * 40,
+            "stop_parent_identity": "develop",
+            "stop_parent_head": "b" * 40,
+            "stop_merge_base": "c" * 40,
+            "stop_patch_id": "current-owned-patch",
+            "stop_reason": "human stopped discovery after adjudication",
+            "stop_summary_disposition_fingerprints": [],
+            "retained_ambiguous_fingerprint": "f" * 64,
+            "retained_ambiguous_reason": "terminal response lacks attributable review object",
+        }
+
+        restored = ReviewAllocation.from_dict(legacy)
+
+        self.assertEqual(restored.retained_ambiguous_fingerprints, ("f" * 64,))
+        self.assertEqual(restored.to_dict()["retained_ambiguous_fingerprints"], ["f" * 64])
+
+    def test_old_state_without_allocations_remains_readable(self):
+        state = ReviewState.from_dict({"schema_version": 1, "ordered_prs": [2849]})
+
+        self.assertEqual(state.ordered_prs, (2849,))
+        self.assertEqual(state.allocations, {})
+
+    def test_review_allocation_rejects_malformed_or_incomplete_records(self):
+        base = {
+            "pr": 2849,
+            "channel": "hosted",
+            "head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "patch-2849",
+            "baseline_checkpoints": ["checkpoint-1"],
+            "reason": "handoff",
+        }
+        for name, value in (
+            ("head", "short"),
+            ("parent_identity", " "),
+            ("baseline_checkpoints", ["checkpoint-1", "checkpoint-1"]),
+            ("baseline_checkpoints", "checkpoint-1"),
+            ("handoff_checkpoint", "handoff-1"),
+            ("handoff_head", "not-a-sha"),
+        ):
+            with self.subTest(name=name, value=value):
+                malformed = {**base, name: value}
+                with self.assertRaises(StateError):
+                    ReviewAllocation.from_dict(malformed)
+
+        with self.assertRaisesRegex(StateError, "outside the private schema"):
+            ReviewAllocation.from_dict({**base, "unexpected": True})
+
+    def test_review_state_rejects_mismatched_allocation_key_and_malformed_mapping(self):
+        allocation = ReviewAllocation(
+            2849,
+            "hosted",
+            "a" * 40,
+            "develop",
+            "b" * 40,
+            "c" * 40,
+            "patch-2849",
+            ("checkpoint-1",),
+            "handoff",
+        )
+        with self.assertRaisesRegex(StateError, "matching PR and channel"):
+            ReviewState(allocations={"2849:cli": allocation})
+        with self.assertRaisesRegex(StateError, "review allocations must be an object"):
+            ReviewState.from_dict({"schema_version": 1, "allocations": []})
+        with self.assertRaisesRegex(StateError, "review allocation records must be objects"):
+            ReviewState.from_dict({"schema_version": 1, "allocations": {"2849:hosted": None}})
+
     def test_state_is_schema_versioned_and_atomic_store_keeps_only_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "firemud" / "pr-review-stack.json"
@@ -86,9 +227,38 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
             self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
             self.assertEqual(document["summary_dispositions"][0]["summary_id"], 71)
+            self.assertEqual(document["allocations"], {})
             self.assertNotIn("live_head", json.dumps(document))
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
+
+    def test_legacy_transition_round_trips_exact_anchor_and_fingerprints(self):
+        transition = LegacyEvidenceTransition(
+            2818,
+            "a" * 40,
+            "develop",
+            "b" * 40,
+            "c" * 40,
+            "patch-id",
+            (observation_fingerprint({"checkpoint": "hosted"}),),
+            (observation_fingerprint({"checkpoint": "cli"}),),
+            "legacy evidence lacks modern anchors",
+            (observation_fingerprint({"checkpoint": "hosted"}),),
+        )
+        state = ReviewState(ordered_prs=(2818,), legacy_transitions=(transition,))
+        self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
+        anchor = {
+            "child_head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "patch-id",
+        }
+        self.assertTrue(transition.matches(2818, anchor))
+        self.assertFalse(transition.matches(1, anchor))
+        for field in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id"):
+            with self.subTest(field=field):
+                self.assertFalse(transition.matches(2818, {**anchor, field: f"wrong-{field}"}))
 
     def test_malformed_nested_state_records_raise_state_error(self):
         malformed_states = (
@@ -318,25 +488,24 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewStatus.MISSING_EVIDENCE,
         )
 
-    def test_hosted_default_requires_two_corrected_state_dry_rounds_but_override_allows_one(self):
-        first = Evidence(
-            1, "h", "c1", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
-        )
-        second = Evidence(
-            1, "h", "c2", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
-        )
+    def test_hosted_default_requires_one_corrected_zero_useful_round_and_cli_keeps_three(self):
         state = ReviewState(ordered_prs=(1,))
-        self.assertEqual(completion_status(state, Channel.HOSTED, (first,)), ReviewStatus.READY)
-        self.assertEqual(completion_status(state, Channel.HOSTED, (first, second)), ReviewStatus.COMPLETE)
-        override = ReviewState(
-            ordered_prs=(1,),
-            policy_overrides={
-                "1:hosted": PolicyOverride(
-                    hosted_zero_useful=1, head="h", checkpoint="c1", reason="narrow close-out", patch_id="p"
-                )
-            },
+        corrected = Evidence(
+            1, "h", "corrected", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
         )
-        self.assertEqual(completion_status(override, Channel.HOSTED, (first,)), ReviewStatus.COMPLETE)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (corrected,)), ReviewStatus.COMPLETE)
+
+        accepted = dataclasses.replace(corrected, checkpoint="accepted", accepted=1, raw=1)
+        uncorrected = dataclasses.replace(corrected, checkpoint="uncorrected", corrected_state=False)
+        unattributable = dataclasses.replace(corrected, checkpoint="unattributable", attributable=False)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (accepted,)), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (uncorrected,)), ReviewStatus.MISSING_EVIDENCE)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (unattributable,)), ReviewStatus.READY)
+
+        cli_rounds = tuple(dataclasses.replace(corrected, checkpoint=f"cli-{index}") for index in range(1, 4))
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds[:1]), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds[:2]), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.CLI, cli_rounds), ReviewStatus.COMPLETE)
 
     def test_merged_predecessors_collapse_to_nearest_unmerged_or_default(self):
         snapshots = {
@@ -432,6 +601,31 @@ class ReviewStateStackTest(unittest.TestCase):
         second_history = tuple(dataclasses.replace(item, pr=2) for item in history)
         target = select_review_target(state, Channel.CLI, (1, 2, 3), {1: history, 2: second_history, 3: ()})
         self.assertEqual((target.target, target.status), (3, ReviewStatus.MISSING_EVIDENCE))
+
+    def test_explicit_channel_stop_skips_only_that_pr_and_reports_distinct_status(self):
+        state = ReviewState(ordered_prs=(1, 2))
+        target = select_review_target(
+            state,
+            Channel.HOSTED,
+            (1, 2),
+            {1: (), 2: ()},
+            human_stopped_prs=(1,),
+        )
+
+        self.assertEqual((target.target, target.status), (2, ReviewStatus.MISSING_EVIDENCE))
+
+    def test_all_explicitly_stopped_targets_report_human_stopped_not_tapered(self):
+        target = select_review_target(
+            ReviewState(ordered_prs=(1, 2)),
+            Channel.CLI,
+            (1, 2),
+            {1: (), 2: ()},
+            human_stopped_prs=(1, 2),
+        )
+
+        self.assertIsNone(target.target)
+        self.assertEqual(target.status, ReviewStatus.HUMAN_STOPPED)
+        self.assertIn("explicitly stopped", target.reason)
 
     def test_evidence_bound_to_another_pr_cannot_advance_target(self):
         state = ReviewState(ordered_prs=(1, 2))
@@ -543,6 +737,43 @@ class ReviewStateStackTest(unittest.TestCase):
         state = ReviewState(ordered_prs=(1,))
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
+
+    def test_non_counting_legacy_history_starts_fresh_without_satisfying_taper(self):
+        history = tuple(
+            Evidence(
+                1,
+                "h",
+                f"legacy-{index}",
+                anchored=False,
+                completed=True,
+                attributable=True,
+                non_counting=True,
+            )
+            for index in range(3)
+        )
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
+        self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+        self.assertEqual(select_review_target(state, Channel.CLI, (1,), {1: history}).status, ReviewStatus.READY)
+
+    def test_non_counting_history_does_not_hide_reconciliation_blockers(self):
+        history = (
+            Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),
+        )
+        state = ReviewState(ordered_prs=(1,))
+
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.PARENT_MOVED),
+            ReviewStatus.PARENT_MOVED,
+        )
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.UNRECONCILED),
+            ReviewStatus.UNRECONCILED,
+        )
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.COHERENT),
+            ReviewStatus.READY,
+        )
 
     def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
         reviews = tuple(

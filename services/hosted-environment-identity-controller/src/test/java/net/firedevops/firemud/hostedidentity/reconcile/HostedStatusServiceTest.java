@@ -9,6 +9,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
@@ -727,6 +729,27 @@ class HostedStatusServiceTest {
     returned.setRevision("mutated-output");
 
     assertEquals("sha256:" + "a".repeat(64), getRole(status, roleField).getRevision());
+  }
+
+  @Test
+  void statusDtoDefensivelyCopiesPublicationRoleMap() {
+    var inputRole = new HostedEnvironmentIdentityStatus.RoleStatus();
+    inputRole.setRevision("sha256:" + "a".repeat(64));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> input = new LinkedHashMap<>();
+    input.put("grpc-publication-game-design-service", inputRole);
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(input);
+
+    inputRole.setRevision("mutated-input");
+    input.put("unexpected", new HostedEnvironmentIdentityStatus.RoleStatus());
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> returned = status.getGrpcPublication();
+    returned.get("grpc-publication-game-design-service").setRevision("mutated-output");
+    returned.clear();
+
+    assertEquals(
+        "sha256:" + "a".repeat(64),
+        status.getGrpcPublication().get("grpc-publication-game-design-service").getRevision());
+    assertEquals(1, status.getGrpcPublication().size());
   }
 
   @Test

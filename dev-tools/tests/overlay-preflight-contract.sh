@@ -336,6 +336,31 @@ assert_production_change_requires_attestation() {
   assert_balanced_preflight_group "Missing-attestation failure for $fixture_path"
 }
 
+if (
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'design/architecture/deployment-note.md'
+  }
+  python3() {
+    echo "Non-Kubernetes change unexpectedly invoked static preflight: $*" >&2
+    return 1
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+) >"$OUTPUT_FILE" 2>&1; then
+  :
+else
+  echo "Non-Kubernetes change failed the static-preflight skip contract" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -Fqx 'Skipping ci-static preflight because no PR k8s/* changes were detected; any PR k8s/* change runs static preflight, while production-overlay changes also require production attestation.' "$OUTPUT_FILE" || {
+  echo "Static-preflight skip diagnostic does not distinguish Kubernetes changes from production-attested changes" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
+
 assert_shared_change_runs_ordinary_overlay_checks() {
   local fixture_path="$1"
   (
@@ -350,6 +375,11 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     }
     python3() {
       if [[ "$#" -eq 2 && "$2" = production ]]; then
+        if [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" != "ci-static" ]]; then
+          echo "ordinary static preflight used the wrong context" >&2
+          return 1
+        fi
+        printf 'validated static preflight: %s\n' "${FIREMUD_DEPLOYMENT_REF:-}"
         return 0
       fi
       command python3 "$@"
@@ -375,8 +405,8 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     exit 1
   }
   if [[ "$fixture_path" = k8s/overlays/stage/kustomization.yaml ]]; then
-    grep -Fqx 'Skipping static preflight policy enforcement because no production attestation context is present.' "$OUTPUT_FILE" || {
-      echo "Non-rendering change did not skip production promotion preflight: $fixture_path" >&2
+    grep -Fqx "validated static preflight: $(git rev-parse HEAD)" "$OUTPUT_FILE" || {
+      echo "Stage overlay change did not run static preflight at the current HEAD: $fixture_path" >&2
       cat "$OUTPUT_FILE" >&2
       exit 1
     }
@@ -385,12 +415,49 @@ assert_shared_change_runs_ordinary_overlay_checks() {
 }
 
 for changed_file in \
-  'k8s/overlays/prod/kustomization.yaml' \
-  'k8s/base/account-service.yaml' \
-  'k8s/postgres/pg-dump-cronjob.yaml'; do
+  'k8s/overlays/prod' \
+  'k8s/overlays/prod/kustomization.yaml'; do
   assert_production_change_requires_attestation "$changed_file"
 done
 
+assert_nonproduction_change_runs_static_preflight() {
+  local test_changed_file="$1"
+  (
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+    changed_files_between_base_and_head() {
+      printf '%s\n' "$test_changed_file"
+    }
+    python3() {
+      if [[ "$#" -ne 2 \
+        || "$1" != "$REPO_ROOT/dev-tools/deploy/preflight.py" \
+        || "$2" != production \
+        || "${FIREMUD_PREFLIGHT_CONTEXT:-}" != ci-static \
+        || "${FIREMUD_DEPLOYMENT_REF:-}" != "$(git rev-parse HEAD)" \
+        || -n "${FIREMUD_PROMOTION_ATTESTATION:-}" \
+        || -n "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
+        echo "Shared Kubernetes change received incorrect static preflight inputs" >&2
+        return 1
+      fi
+      printf 'validated static preflight without production attestation\n'
+    }
+    GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+  ) >"$OUTPUT_FILE" 2>&1
+
+  grep -q "validated static preflight without production attestation" "$OUTPUT_FILE" || {
+    echo "Kubernetes change did not run static preflight without production attestation: $1" >&2
+    cat "$OUTPUT_FILE" >&2
+    exit 1
+  }
+  assert_balanced_preflight_group "Static preflight for $test_changed_file"
+}
+
+for changed_file in \
+  'k8s/base/account-service.yaml' \
+  'k8s/postgres/pg-dump-cronjob.yaml' \
+  'k8s/velero/schedule.yaml'; do
+  assert_nonproduction_change_runs_static_preflight "$changed_file"
+done
 for changed_file in \
   'k8s/overlays/stage/kustomization.yaml' \
   'design/operations/deployments/production/backup-readiness/deploy-123.json' \
@@ -646,20 +713,38 @@ assert_balanced_preflight_group "Production preflight failure"
   changed_files_between_base_and_head() {
     printf '%s\n' 'k8s/overlays/stage/kustomization.yaml'
   }
+  python3() {
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" ]]; then
+      return 0
+    fi
+    echo "unexpected stage static preflight arguments" >&2
+    return 1
+  }
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1
 
-grep -q "Skipping static preflight policy enforcement because no production attestation context is present." "$OUTPUT_FILE" || {
-  echo "Non-production overlay validation did not take the policy-skip path" >&2
+if grep -Fq "Skipping ci-static preflight" "$OUTPUT_FILE"; then
+  echo "Stage overlay validation skipped static preflight" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
-}
+fi
 
 if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
     printf '%s\n' 'k8s/velero/verify-backups-cronjob.yaml'
+  }
+  python3() {
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" ]]; then
+      return 0
+    fi
+    echo "unexpected Velero static preflight arguments" >&2
+    return 1
   }
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1; then
@@ -668,10 +753,239 @@ if ! (
   exit 1
 fi
 
-grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+if grep -q "must include exactly one attestation file" "$OUTPUT_FILE"; then
   echo "Standalone Velero pre-release assets incorrectly required production attestation" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
+fi
+
+for environment_and_overlay in 'staging stage' 'production prod'; do
+  read -r environment overlay <<<"$environment_and_overlay"
+  rendered_overlay="$REPO_ROOT/k8s/overlays/$overlay"
+  kubectl kustomize "$rendered_overlay" >"$OUTPUT_FILE"
+  python3 - "$REPO_ROOT" "$environment" "$OUTPUT_FILE" <<'PY'
+import copy
+import importlib.util
+import pathlib
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+environment = sys.argv[2]
+rendered_path = pathlib.Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location(
+    "overlay_preflight_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+documents = module.parse_documents(rendered_path.read_text(encoding="utf-8"))
+proxy = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
+    raise SystemExit(
+        f"{environment} TCP Proxy render must use Recreate for exclusive bridge identity"
+    )
+
+expected_path = (
+    root / f"design/operations/environments/{environment}/expected-bindings.yaml"
+)
+expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+# Keep this contract focused on rendered WebSocket values and bridge rollout strategy;
+# endpoint resolution has its own focused preflight coverage.
+module.canonical_gateway_ws_endpoint = lambda documents, expected: (
+    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
+    [],
+)
+strategy_issue = (
+    "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
+)
+_, current_issues = module.validate_gateway_ws_values(documents, expected)
+if strategy_issue in current_issues:
+    raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
+
+mutation = copy.deepcopy(documents)
+mutated_proxy = next(
+    document
+    for document in mutation
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+mutated_proxy["spec"].pop("strategy", None)
+_, mutation_issues = module.validate_gateway_ws_values(mutation, expected)
+if strategy_issue not in mutation_issues:
+    raise SystemExit(
+        f"{environment} preflight accepted a TCP Proxy render without Recreate"
+    )
+PY
+done
+
+(
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  require_cmd() {
+    :
+  }
+  check_stage_has_no_backup_schedules_unless_enabled() {
+    :
+  }
+  check_images_exist() {
+    :
+  }
+  changed_files_between_base_and_head() {
+    printf '%s\n' \
+      'k8s/overlays/prod/kustomization.yaml' \
+      'design/operations/deployments/production/attestations/deploy-123.json'
+  }
+  production_preflight_invoked="false"
+  python3() {
+    if [[ "${1:-}" == "-" ]]; then
+      printf 'rollback-compatible\n'
+      return 0
+    fi
+    if [[ "${1:-}" == "$REPO_ROOT/dev-tools/deploy/preflight.py" && "${2:-}" == "production" ]]; then
+      if [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" != "ci-static" ]]; then
+        echo "unexpected preflight context: ${FIREMUD_PREFLIGHT_CONTEXT:-}" >&2
+        return 1
+      fi
+      production_preflight_invoked="true"
+      return 0
+    fi
+    echo "unexpected python3 invocation: $*" >&2
+    return 1
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+  if [[ "$production_preflight_invoked" != "true" ]]; then
+    echo "Validator main did not invoke canonical production preflight" >&2
+    exit 1
+  fi
+)
+
+set +e
+(
+  set -e
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'k8s/base/account-service.yaml'
+  }
+  kubectl_render_trace="$(mktemp)"
+  docker_image_inspect_trace="$(mktemp)"
+  trap 'rm -f "$kubectl_render_trace" "$docker_image_inspect_trace"' EXIT
+  python3_invoked="false"
+  kubectl() {
+    if [[ "${1:-}" != "kustomize" ]]; then
+      echo "unexpected kubectl invocation: $*" >&2
+      return 1
+    fi
+    printf '%s\n' "${2:-}" >>"$kubectl_render_trace"
+    printf '%s\n' \
+      'apiVersion: v1' \
+      'kind: ConfigMap' \
+      'metadata:' \
+      '  name: contract' \
+      'data:' \
+      '  image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }
+  docker() {
+    if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
+      printf '%s\n' "${3:-}" >>"$docker_image_inspect_trace"
+      return 0
+    fi
+    echo "unexpected docker invocation: $*" >&2
+    return 1
+  }
+  python3() {
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" \
+      && -z "${FIREMUD_PROMOTION_ATTESTATION:-}" \
+      && -z "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
+      python3_invoked="true"
+      return 0
+    fi
+    echo "unexpected static preflight invocation: $*" >&2
+    return 1
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+  if [[ "$python3_invoked" != "true" ]]; then
+    echo "Shared-base validation skipped static preflight" >&2
+    exit 1
+  fi
+  mapfile -t kubectl_render_calls <"$kubectl_render_trace"
+  mapfile -t docker_image_inspect_calls <"$docker_image_inspect_trace"
+  if [[ "${#kubectl_render_calls[@]}" -ne 3 ]]; then
+    echo "Expected stage backup-marker plus stage/prod image renders, got ${#kubectl_render_calls[@]}" >&2
+    exit 1
+  fi
+  if [[ "${kubectl_render_calls[0]}" != "$ROOT_DIR/k8s/overlays/stage" || \
+    "${kubectl_render_calls[1]}" != "$ROOT_DIR/k8s/overlays/stage" || \
+    "${kubectl_render_calls[2]}" != "$ROOT_DIR/k8s/overlays/prod" ]]; then
+    printf 'Unexpected overlay render sequence: %s\n' "${kubectl_render_calls[*]}" >&2
+    exit 1
+  fi
+  if [[ "${#docker_image_inspect_calls[@]}" -ne 2 ]]; then
+    echo "Expected both stage/prod image validations, got ${#docker_image_inspect_calls[@]}" >&2
+    exit 1
+  fi
+) >"$OUTPUT_FILE" 2>&1
+shared_base_status=$?
+set -e
+if [[ "$shared_base_status" -ne 0 ]]; then
+  echo "Shared-base main-path validation contract failed" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit "$shared_base_status"
+fi
+
+if grep -Fq "Skipping ci-static preflight" "$OUTPUT_FILE"; then
+  echo "Shared-base main path skipped static policy enforcement" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+early_main_trace="$(mktemp)"
+trap 'rm -f "$OUTPUT_FILE" "$early_main_trace"' EXIT
+set +e
+(
+  set -e
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  require_cmd() {
+    :
+  }
+  check_stage_has_no_backup_schedules_unless_enabled() {
+    echo "stage marker check failed" >&2
+    return 23
+  }
+  check_images_exist() {
+    printf 'later image check succeeded: %s\n' "$1" >>"$early_main_trace"
+    return 0
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+) >"$OUTPUT_FILE" 2>&1
+early_main_status=$?
+set -e
+
+if [[ "$early_main_status" -eq 0 ]]; then
+  echo "Validator main masked an early stage-marker failure" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+grep -Fq "stage marker check failed" "$OUTPUT_FILE" || {
+  echo "Early stage-marker failure did not reach validator main" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
 }
+if [[ -s "$early_main_trace" ]]; then
+  echo "Validator main continued to successful later image checks after a stage-marker failure" >&2
+  cat "$early_main_trace" >&2
+  exit 1
+fi
 
 echo "overlay preflight contract checks passed"

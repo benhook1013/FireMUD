@@ -20,7 +20,10 @@ These scripts are shared because they manage infrastructure or validation behavi
   - creates or updates the shared GHCR image-pull secret in the target namespace
 
 - `ensure-grpc-tls-secret.sh`
-  - creates or updates the hosted environment's gRPC TLS secret from the local development cert helper
+  - preserves the shared bundle for non-publication workloads; in standalone mode it validates the five issuer-projected publication leaves, adds only their public CA certificate to shared trust, and removes retained runtime-local signing material after replacement is proven
+
+- `ensure-standalone-grpc-certificates.sh`
+  - uses the scoped certificate-writer credential to request the five fixed `firemud-ca-issuer` publication Certificates in `dev` or a canonical `pr-N` namespace, then waits for Ready without reading their private keys
 
 - `wait-for-runtime-images.sh`
   - for a pull request, waits for a `runtime-images.yml` run whose exact base, head, and test-merge identities match, then waits for the trusted publisher to publish the immutable `pr-merge-<merge-sha>` tag

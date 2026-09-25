@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -61,6 +62,13 @@ def _pair_key(left: str, right: str) -> str:
     return f"{left}...{right}"
 
 
+_SIMULATED_RESULTS = {"dry", "productive", "rate_limited", "partial", "stale", "duplicate"}
+
+
+def _result_key(pr: int, channel: str) -> str:
+    return f"{pr}:{channel}"
+
+
 class FixtureGitHub:
     """Read-only pull-request provider backed only by the fixture."""
 
@@ -94,6 +102,14 @@ class FixtureGit:
         self._merge_bases = {
             str(key): _sha(value, f"merge_bases[{key!r}]") for key, value in merge_bases.items()
         }
+        test_merge_trees = _mapping(fixture.get("test_merge_trees", {}), "test_merge_trees")
+        self._test_merge_trees: dict[str, str] = {}
+        for key, value in test_merge_trees.items():
+            if not isinstance(key, str) or key.count("...") != 1:
+                raise AcceptanceFixtureError("test_merge_trees keys must identify one base/head pair")
+            base, head = key.split("...", 1)
+            normalized_key = _pair_key(_sha(base, "test-merge tree base"), _sha(head, "test-merge tree head"))
+            self._test_merge_trees[normalized_key] = _sha(value, f"test_merge_trees[{key!r}]")
         patches = _mapping(fixture.get("patch_ids", {}), "patch_ids")
         self._patch_ids = {str(key): value for key, value in patches.items()}
         if any(not isinstance(value, str) or not value for value in self._patch_ids.values()):
@@ -133,14 +149,26 @@ class FixtureGit:
         except KeyError as exc:
             raise AcceptanceFixtureError(f"fixture has no patch identity for {merge_base} and {head}") from exc
 
+    def test_merge_tree(self, base: str, head: str) -> str:
+        key = _pair_key(_sha(base, "test-merge base"), _sha(head, "test-merge head"))
+        try:
+            return self._test_merge_trees[key]
+        except KeyError as exc:
+            raise AcceptanceFixtureError(f"fixture has no test-merge tree for {base} and {head}") from exc
+
 
 class FixtureEvidence:
     """Fixture evidence plus atomically persisted, isolated simulated discoveries."""
 
-    def __init__(self, fixture: Mapping[str, Any], state_path: Path, repository: str) -> None:
+    def __init__(
+        self, fixture: Mapping[str, Any], state_path: Path, repository: str, github: FixtureGitHub
+    ) -> None:
         values = _mapping(fixture.get("evidence", {}), "evidence")
         self._values: dict[tuple[int, str], tuple[Any, ...]] = {}
+        results = _mapping(fixture.get("review_results", {}), "review_results")
+        self._results: dict[tuple[int, str], tuple[Mapping[str, Any], ...]] = {}
         self.repository = repository
+        self.github = github
         self.path = state_path.with_name(f"{state_path.name}.fixture-evidence.json")
         self.lock_path = state_path.with_name(f".{state_path.name}.fixture-evidence.lock")
         for pr_key, channels in values.items():
@@ -155,30 +183,379 @@ class FixtureEvidence:
                 if any(not isinstance(item, Mapping) for item in raw):
                     raise AcceptanceFixtureError(f"evidence[{pr_key!r}][{channel!r}] entries must be objects")
                 self._values[(pr, channel)] = tuple(raw)
+        for pr_key, channels in results.items():
+            if not isinstance(pr_key, str) or not pr_key.isdecimal():
+                raise AcceptanceFixtureError("review_results PR keys must be positive decimal strings")
+            pr = _positive_pr(int(pr_key), "review_results PR")
+            channel_values = _mapping(channels, f"review_results[{pr_key!r}]")
+            for channel in ("hosted", "cli"):
+                raw = channel_values.get(channel, [])
+                if not isinstance(raw, list):
+                    raise AcceptanceFixtureError(
+                        f"review_results[{pr_key!r}][{channel!r}] must be an array"
+                    )
+                checked: list[Mapping[str, Any]] = []
+                for index, item in enumerate(raw):
+                    if not isinstance(item, Mapping):
+                        raise AcceptanceFixtureError(
+                            f"review_results[{pr_key!r}][{channel!r}][{index}] must be an object"
+                        )
+                    status = str(item.get("status", "")).casefold()
+                    if status not in _SIMULATED_RESULTS:
+                        raise AcceptanceFixtureError(
+                            f"review_results[{pr_key!r}][{channel!r}][{index}] has unsupported status {status!r}"
+                        )
+                    if "record_evidence" in item and not isinstance(item["record_evidence"], bool):
+                        raise AcceptanceFixtureError(
+                            f"review_results[{pr_key!r}][{channel!r}][{index}] record_evidence must be boolean"
+                        )
+                    if "evidence" in item and not isinstance(item["evidence"], Mapping):
+                        raise AcceptanceFixtureError(
+                            f"review_results[{pr_key!r}][{channel!r}][{index}] evidence must be an object"
+                        )
+                    checked.append(dict(item))
+                self._results[(pr, channel)] = tuple(checked)
 
-    def _recorded(self) -> list[dict[str, Any]]:
+    def _sidecar(self) -> dict[str, Any]:
         if not self.path.exists():
-            return []
+            return {"schema_version": 1, "repository": self.repository, "evidence": [], "result_positions": {}}
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise AcceptanceFixtureError("isolated synthetic evidence is unreadable") from exc
-        if not isinstance(payload, dict) or set(payload) != {"schema_version", "repository", "evidence"}:
+        required = {"schema_version", "repository", "evidence"}
+        if not isinstance(payload, dict) or not required <= set(payload) or set(payload) - (required | {"result_positions"}):
             raise AcceptanceFixtureError("isolated synthetic evidence has an invalid schema")
         if payload["schema_version"] != 1 or payload["repository"] != self.repository:
             raise AcceptanceFixtureError("isolated synthetic evidence belongs to another fixture repository")
         entries = payload["evidence"]
         if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
             raise AcceptanceFixtureError("isolated synthetic evidence entries are invalid")
-        return entries
+        positions = payload.get("result_positions", {})
+        if not isinstance(positions, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            for key, value in positions.items()
+        ):
+            raise AcceptanceFixtureError("isolated synthetic result positions are invalid")
+        return {
+            "schema_version": 1,
+            "repository": self.repository,
+            "evidence": entries,
+            "result_positions": positions,
+        }
+
+    def _recorded(self) -> list[dict[str, Any]]:
+        return self._sidecar()["evidence"]
+
+    def _write_sidecar(self, payload: Mapping[str, Any]) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(dict(payload), handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.replace(temporary, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def history(self, pr: int, channel: str) -> Sequence[Any]:
         baseline = self._values.get((pr, channel), ())
-        if channel != "cli":
-            return baseline
-        recorded = tuple(item for item in self._recorded() if item.get("pr") == pr)
+        recorded = tuple(
+            item
+            for item in self._recorded()
+            if item.get("pr") == pr and item.get("channel", "cli") == channel
+        )
         return (*baseline, *recorded)
 
+    def review_stop_audit(
+        self,
+        pr: int,
+        expected_anchor: Mapping[str, Any],
+        retained_ambiguous_fingerprints: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """Expose complete fixture evidence through the live stop-audit contract."""
+
+        live = self.github.pull_request(pr)
+        expected_head = expected_anchor.get("child_head")
+        expected_parent = expected_anchor.get("parent_head")
+        expected_parent_identity = expected_anchor.get("parent_identity")
+        if (
+            not isinstance(expected_head, str)
+            or expected_head.casefold() != live.head.casefold()
+            or not isinstance(expected_parent, str)
+            or expected_parent.casefold() != live.base_tip.casefold()
+            or (
+                isinstance(expected_parent_identity, str)
+                and not expected_parent_identity.isdecimal()
+                and expected_parent_identity != live.base_ref
+            )
+        ):
+            raise AcceptanceFixtureError("fixture PR head or parent moved during review stop")
+
+        pins = tuple(retained_ambiguous_fingerprints)
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in pins):
+            raise AcceptanceFixtureError("fixture stop audit received a malformed terminal ambiguity fingerprint")
+        if len(set(pins)) != len(pins):
+            raise AcceptanceFixtureError("fixture stop audit received duplicate terminal ambiguity fingerprints")
+        histories = {channel: tuple(self.history(pr, channel)) for channel in ("hosted", "cli")}
+        terminal = [
+            {"channel": channel, **dict(value)}
+            for channel, values in histories.items()
+            for value in values
+            if isinstance(value, Mapping) and value.get("terminal_ambiguous") is True
+        ]
+        retained: list[dict[str, Any]] = []
+        for fingerprint in pins:
+            matches = [item for item in terminal if item.get("fingerprint") == fingerprint]
+            if len(matches) != 1:
+                raise AcceptanceFixtureError("fixture stop pin does not identify one terminal ambiguous observation")
+            retained.append(matches[0])
+        retained_fingerprints = {item["fingerprint"] for item in retained}
+
+        active_reservations: list[Any] = []
+        unmatched_responses: list[Any] = []
+        historical_unmatched_responses: list[Any] = []
+        ambiguous_responses: list[Any] = []
+        unresolved_findings: list[Any] = []
+        checkpoints: list[dict[str, Any]] = []
+
+        def is_historical_unanchored_checkpoint(channel: str, value: Mapping[str, Any]) -> bool:
+            head = value.get("head", value.get("reviewed_head"))
+            checkpoint = value.get("checkpoint", value.get("checkpoint_id"))
+            return (
+                channel == "hosted"
+                and value.get("completed") is True
+                and value.get("attributable") is True
+                and value.get("anchored") is False
+                and value.get("provisional") is not True
+                and value.get("correction") is not True
+                and isinstance(head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", head) is not None
+                and head.casefold() != expected_head.casefold()
+                and isinstance(checkpoint, str)
+                and bool(checkpoint)
+                and not checkpoint.startswith(
+                    (
+                        "trigger:",
+                        "trigger-uncheckpointed:",
+                        "pending-capture:",
+                        "review-threads:",
+                        "summary-actions:",
+                        "over-ceiling:",
+                    )
+                )
+            )
+
+        for channel, values in histories.items():
+            for value in values:
+                if not isinstance(value, Mapping):
+                    raise AcceptanceFixtureError("fixture stop evidence entries must be objects")
+                historical_unanchored = is_historical_unanchored_checkpoint(channel, value)
+                if value.get("active_reservation") is True or value.get("active_review") is True:
+                    active_reservations.append(value.get("checkpoint", "active fixture review"))
+                if value.get("unmatched_response") is True and value.get("fingerprint") not in retained_fingerprints:
+                    destination = historical_unmatched_responses if historical_unanchored else unmatched_responses
+                    destination.append(value.get("checkpoint", "unmatched fixture response"))
+                if value.get("ambiguous_response") is True and value.get("fingerprint") not in retained_fingerprints:
+                    ambiguous_responses.append(value.get("checkpoint", "ambiguous fixture response"))
+                if any(
+                    value.get(flag) is True
+                    for flag in ("held", "unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
+                ) and value.get("fingerprint") not in retained_fingerprints and not (
+                    historical_unanchored
+                    and value.get("held") is True
+                    and not any(
+                        value.get(flag) is True
+                        for flag in ("unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
+                    )
+                ):
+                    unresolved_findings.append(value.get("reason") or value.get("checkpoint", "unresolved fixture finding"))
+                if value.get("completed") is True and value.get("attributable") is True:
+                    checkpoints.append({"channel": channel, **dict(value)})
+
+        return {
+            "complete": True,
+            "head": live.head,
+            "anchor": dict(expected_anchor),
+            "active_reservations": active_reservations,
+            "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": historical_unmatched_responses,
+            "ambiguous_responses": ambiguous_responses,
+            "unresolved_findings": unresolved_findings,
+            "checkpoints": checkpoints,
+            "ambiguous_terminal_responses": terminal,
+            "retained_ambiguous": retained,
+        }
+
+    def legacy_transition_reauthorization_audit(
+        self,
+        pr: int,
+        expected_hosted_fingerprints: tuple[str, ...],
+        expected_anchor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Treat the isolated fixture's explicit evidence arrays as its complete source."""
+
+        if pr not in {number for number, _ in self._values}:
+            raise AcceptanceFixtureError(f"fixture has no evidence history for PR #{pr}")
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in expected_hosted_fingerprints):
+            raise AcceptanceFixtureError("fixture retirement audit received a malformed Hosted fingerprint")
+        live = self.github.pull_request(pr)
+        expected_head = expected_anchor.get("child_head")
+        expected_base_ref = expected_anchor.get("live_base_ref")
+        expected_base_tip = expected_anchor.get("live_base_tip")
+        if (
+            not isinstance(expected_head, str)
+            or expected_head.casefold() != live.head.casefold()
+            or not isinstance(expected_base_ref, str)
+            or expected_base_ref != live.base_ref
+            or not isinstance(expected_base_tip, str)
+            or expected_base_tip.casefold() != live.base_tip.casefold()
+        ):
+            raise AcceptanceFixtureError("fixture PR head or base moved during missing Hosted fingerprint retirement")
+        audit = self.review_stop_audit(
+            pr,
+            {
+                "child_head": expected_head,
+                "parent_identity": expected_base_ref,
+                "parent_head": expected_base_tip,
+            },
+        )
+        return {
+            "complete": audit["complete"],
+            "active_reservations": audit["active_reservations"],
+            "unmatched_responses": [
+                *audit["unmatched_responses"],
+                *audit["historical_unmatched_responses"],
+            ],
+            "ambiguous_responses": audit["ambiguous_responses"],
+            "unresolved_findings": audit["unresolved_findings"],
+        }
+    def next_result(self, target: ReviewTarget, channel: str) -> Mapping[str, Any] | None:
+        """Consume one configured result exactly once across command invocations."""
+
+        pr = target.snapshot.number
+        configured = self._results.get((pr, channel), ())
+        if not configured:
+            return None
+        key = _result_key(pr, channel)
+        with self.lock_path.open("a+", encoding="utf-8") as lock:
+            os.fchmod(lock.fileno(), 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                payload = self._sidecar()
+                positions = payload["result_positions"]
+                index = positions.get(key, 0)
+                if index >= len(configured):
+                    raise AcceptanceFixtureError(
+                        f"review_results for PR #{pr} {channel} are exhausted"
+                    )
+                result = dict(configured[index])
+                result["_fixture_result_position"] = index + 1
+                positions[key] = index + 1
+                self._write_sidecar(payload)
+                return result
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def record_result(self, target: ReviewTarget, channel: str, result: Mapping[str, Any]) -> str | None:
+        """Persist only explicitly requested terminal evidence from a fixture result."""
+
+        if not result.get("record_evidence", False):
+            return None
+        status = str(result.get("status", "")).casefold()
+        if status not in _SIMULATED_RESULTS:
+            raise AcceptanceFixtureError(f"unsupported simulated review result status {status!r}")
+        supplied = result.get("evidence", {})
+        if not isinstance(supplied, Mapping):
+            raise AcceptanceFixtureError("simulated review result evidence must be an object")
+        if status in {"rate_limited", "partial", "stale", "duplicate"}:
+            completed = False
+            attributable = False
+        else:
+            completed = True
+            attributable = True
+        checkpoint = supplied.get("checkpoint") or result.get("checkpoint")
+        if checkpoint is None:
+            result_position = result.get("_fixture_result_position", 1)
+            if (
+                isinstance(result_position, bool)
+                or not isinstance(result_position, int)
+                or result_position <= 0
+            ):
+                raise AcceptanceFixtureError("simulated review result position must be a positive integer")
+            checkpoint = (
+                f"fixture-{channel}-{target.snapshot.number}-{target.snapshot.head_sha[:12]}"
+                f"-result-{result_position}"
+            )
+        if not isinstance(checkpoint, str) or not checkpoint.strip():
+            raise AcceptanceFixtureError("simulated review result checkpoint must be non-empty")
+        accepted = supplied.get("accepted", result.get("accepted", 1 if status == "productive" else 0))
+        raw = supplied.get("raw", result.get("raw", accepted))
+        if isinstance(accepted, bool) or not isinstance(accepted, int) or accepted < 0:
+            raise AcceptanceFixtureError("simulated review result accepted count must be non-negative")
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < accepted:
+            raise AcceptanceFixtureError("simulated review result raw count must be >= accepted")
+        evidence = {
+            "pr": target.snapshot.number,
+            "head": target.snapshot.head_sha,
+            "child_head": target.snapshot.head_sha,
+            "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
+            "parent_head": target.parent.head_sha,
+            "merge_base": target.merge_base,
+            "patch_id": target.patch_identity,
+            "checkpoint": checkpoint,
+            "completed": completed,
+            "attributable": attributable,
+            "anchored": bool(supplied.get("anchored", completed)),
+            "corrected_state": bool(supplied.get("corrected_state", completed)),
+            "provisional": bool(supplied.get("provisional", False)),
+            "accepted": accepted,
+            "raw": raw,
+            "rate_limited": status == "rate_limited",
+        }
+        protected = {
+            "pr",
+            "head",
+            "child_head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+        }
+        for key, value in supplied.items():
+            if key not in evidence and key not in protected:
+                evidence[key] = value
+        with self.lock_path.open("a+", encoding="utf-8") as lock:
+            os.fchmod(lock.fileno(), 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                payload = self._sidecar()
+                evidence_entries = payload["evidence"]
+                if any(
+                    item.get("pr") == target.snapshot.number
+                    and item.get("channel", "cli") == channel
+                    and item.get("checkpoint") == checkpoint
+                    for item in evidence_entries
+                ):
+                    return None
+                evidence["channel"] = channel
+                evidence_entries.append(evidence)
+                self._write_sidecar(payload)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return checkpoint
     def record_provisional(self, target: ReviewTarget, reason: str) -> None:
         """Atomically reserve one synthetic child/parent discovery identity."""
 
@@ -190,7 +567,10 @@ class FixtureEvidence:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
                 recorded = self._recorded()
-                existing = (*self._values.get((pr, "cli"), ()), *recorded)
+                existing = (
+                    *self._values.get((pr, "cli"), ()),
+                    *(item for item in recorded if item.get("channel", "cli") == "cli"),
+                )
                 if any(
                     item.get("provisional") is True
                     and item.get("pr") == pr
@@ -204,6 +584,7 @@ class FixtureEvidence:
                 recorded.append(
                     {
                         "pr": pr,
+                        "channel": "cli",
                         "head": head,
                         "child_head": head,
                         "parent_head": parent_head,
@@ -221,28 +602,9 @@ class FixtureEvidence:
                         "reason": reason,
                     }
                 )
-                with tempfile.NamedTemporaryFile(
-                    mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
-                ) as handle:
-                    temporary = Path(handle.name)
-                    os.fchmod(handle.fileno(), 0o600)
-                    json.dump(
-                        {"schema_version": 1, "repository": self.repository, "evidence": recorded},
-                        handle,
-                        sort_keys=True,
-                    )
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                try:
-                    os.replace(temporary, self.path)
-                    directory_fd = os.open(self.path.parent, os.O_RDONLY)
-                    try:
-                        os.fsync(directory_fd)
-                    finally:
-                        os.close(directory_fd)
-                finally:
-                    temporary.unlink(missing_ok=True)
+                payload = self._sidecar()
+                payload["evidence"] = recorded
+                self._write_sidecar(payload)
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
@@ -250,11 +612,16 @@ class FixtureEvidence:
 class FixtureReviewAdapter:
     """Return deterministic review results without posting or consuming quota."""
 
+    simulated = True
+
     def __init__(self, channel: str, evidence: FixtureEvidence) -> None:
         self.channel = channel
         self.evidence = evidence
 
     def __call__(self, target: ReviewTarget, **kwargs: Any) -> dict[str, Any]:
+        configured = self.evidence.next_result(target, self.channel)
+        result = dict(configured) if configured is not None else {"status": "dry"}
+        checkpoint = self.evidence.record_result(target, self.channel, result)
         if self.channel == "cli" and kwargs.get("allow_unreconciled"):
             self.evidence.record_provisional(target, str(kwargs.get("reason", "")))
         return {
@@ -268,6 +635,9 @@ class FixtureReviewAdapter:
             "provisional": bool(kwargs.get("allow_unreconciled", False)),
             "review_started": False,
             "quota_consumed": False,
+            "result": result["status"],
+            "recorded_checkpoint": checkpoint,
+            "recorded_evidence": checkpoint is not None,
         }
 
 
@@ -283,9 +653,11 @@ class AcceptanceFixture:
             "branch_heads",
             "ancestors",
             "merge_bases",
+            "test_merge_trees",
             "patch_ids",
             "pull_requests",
             "evidence",
+            "review_results",
         }
         unexpected = set(payload) - allowed
         if unexpected:
@@ -373,7 +745,7 @@ class AcceptanceFixture:
         payload["default_base_tip"] = default_tip
         self.github = FixtureGitHub(pull_requests)
         self.git = FixtureGit(payload)
-        self.evidence = FixtureEvidence(payload, self.state_path, self.repository)
+        self.evidence = FixtureEvidence(payload, self.state_path, self.repository, self.github)
         self.pull_requests = pull_requests
         self.initial_stack = tuple(ordered)
 
@@ -393,6 +765,7 @@ class AcceptanceFixture:
             repository=self.repository,
             hosted_adapter=FixtureReviewAdapter("hosted", self.evidence),
             cli_adapter=FixtureReviewAdapter("cli", self.evidence),
+            isolated_fixture=True,
         )
         return controller
 
