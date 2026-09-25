@@ -34,6 +34,7 @@ def fixture_payload() -> dict[str, object]:
         "branch_heads": {"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
         "ancestors": [[BASE, HEAD_1], [HEAD_1, HEAD_2], [BASE, HEAD_2]],
         "merge_bases": {f"{BASE}...{HEAD_1}": BASE, f"{HEAD_1}...{HEAD_2}": HEAD_1},
+        "test_merge_trees": {f"{BASE}...{HEAD_1}": "e" * 40, f"{BASE}...{HEAD_2}": "f" * 40},
         "patch_ids": {f"{BASE}...{HEAD_1}": "patch-1", f"{HEAD_1}...{HEAD_2}": "patch-2"},
         "pull_requests": [
             {
@@ -155,6 +156,7 @@ class AcceptanceCliTest(unittest.TestCase):
                 }]
             },
         )
+        controller.status_for_pr = lambda _pr: controller.status()
         args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
             "pr_review.cli.status_module.status", return_value=report
@@ -259,6 +261,22 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(existing.controller().show_stack()["ordered_prs"], [2])
             self.assertEqual(state.StateStore(existing_state).load().ordered_prs, (2,))
 
+    def test_direct_default_base_without_test_merge_tree_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload.pop("test_merge_trees")
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            status = self.run_cli(fixture, isolated, "status", "--json")
+            self.assertEqual(status.returncode, 0, status.stderr)
+            pr = json.loads(status.stdout)["prs"][0]
+            self.assertEqual(pr["reconciliation"], "UNRECONCILED")
+            self.assertIn("fixture has no test-merge tree", pr["reason"])
+
     def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
         canonical = state.state_path()
         before = canonical.read_bytes() if canonical.exists() else None
@@ -268,6 +286,7 @@ class AcceptanceCliTest(unittest.TestCase):
             isolated = root / "state.json"
             payload = fixture_payload()
             payload["ancestors"] = []
+            payload.pop("test_merge_trees")
             payload["evidence"]["1"]["cli"] = []
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -633,6 +652,50 @@ class AcceptanceCliTest(unittest.TestCase):
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertIn("quota_consumed=False", run.stdout)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_missing_hosted_fingerprint_fixture_audit_classifies_present_blockers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            fingerprint = "f" * 64
+            payload = fixture_payload()
+            payload["evidence"]["1"] = {
+                "hosted": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:42",
+                        "fingerprint": fingerprint,
+                        "active_reservation": True,
+                    }
+                ],
+                "cli": [
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "unmatched", "unmatched_response": True},
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "ambiguous", "ambiguous_response": True},
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "summary-actions:1",
+                        "actionable": True,
+                        "reason": "an actionable summary finding remains",
+                    },
+                ],
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            acceptance = load(fixture, isolated)
+
+            audit = acceptance.evidence.legacy_transition_reauthorization_audit(
+                1,
+                (fingerprint,),
+                {"child_head": HEAD_1, "live_base_ref": "develop", "live_base_tip": BASE},
+            )
+
+            self.assertEqual(audit["complete"], True)
+            self.assertEqual(audit["active_reservations"], ["trigger:42"])
+            self.assertEqual(audit["unmatched_responses"], ["unmatched"])
+            self.assertEqual(audit["ambiguous_responses"], ["ambiguous"])
+            self.assertEqual(audit["unresolved_findings"], ["an actionable summary finding remains"])
 
     def test_default_base_tip_accepts_case_differences_in_fixture_branch_sha(self):
         with tempfile.TemporaryDirectory() as directory:

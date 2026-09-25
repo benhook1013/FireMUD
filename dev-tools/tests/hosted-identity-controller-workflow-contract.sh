@@ -303,10 +303,14 @@ assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"
 assert setup_smoke_python_step["with"] == {"requirements": "smoke"}
 assert run_smoke_step["if"] == smoke_gate
 assert dump_logs_step["if"] == (
-    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
+    "&& steps.minio-source.outputs.server_image_id != '' "
+    "&& steps.minio-source.outputs.client_image_id != '' }}"
 )
 assert stop_smoke_step["if"] == (
-    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
+    "&& steps.minio-source.outputs.server_image_id != '' "
+    "&& steps.minio-source.outputs.client_image_id != '' }}"
 )
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]

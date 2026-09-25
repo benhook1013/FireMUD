@@ -76,6 +76,16 @@ ZERO_FINDING_PATTERNS = (
     re.compile(r"\b0\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
     re.compile(r"\bno\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
 )
+POSITIVE_FINDING_COUNT_PATTERNS = (
+    re.compile(
+        r"\b(?:actionable\s+)?comments?\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b0*[1-9]\d*\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:findings?|issues?)\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b", re.IGNORECASE
+    ),
+)
 INCOMPLETE_FILE_COVERAGE = re.compile(
     r"\b(?:\d+\s*(?:of|/)\s*\d+\s+)?(?:changed\s+)?files?\b.{0,100}"
     r"\b(?:not\s+reviewed|not\s+processed|skipped|omitted|could\s+not\s+be\s+reviewed|"
@@ -737,13 +747,65 @@ def _zero_finding_summary(comments: list[dict[str, Any]], head: str, after: date
 
 
 def _summary_proves_complete_zero_findings(body: str) -> bool:
-    """Require explicit complete file coverage and no positive open-issue claim."""
+    """Require complete file coverage and reject any positive finding count or claim."""
 
     if _summary_has_explicit_incompleteness(body):
         return False
     text = _unquoted(body)
-    return _summary_proves_complete_file_coverage(text) and any(
-        pattern.search(text) for pattern in ZERO_FINDING_PATTERNS
+    if any(pattern.search(text) for pattern in POSITIVE_FINDING_COUNT_PATTERNS):
+        return False
+    return _summary_proves_complete_file_coverage(text) and any(pattern.search(text) for pattern in ZERO_FINDING_PATTERNS)
+
+
+def _reviewed_label_counts(text: str) -> set[int]:
+    """Return reviewed counts without treating "not reviewed" as reviewed."""
+
+    reviewed_text = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
+    return {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(reviewed_text)}
+
+
+def _summary_has_explicit_incomplete_coverage(body: str) -> bool:
+    """Require positive, quantitative evidence that the review omitted files."""
+
+    text = _unquoted(body)
+    if any(count > 0 for count in (int(match.group(1)) for match in FILE_NOT_REVIEWED_COUNT.finditer(text))):
+        return True
+
+    selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
+    if (
+        len(selected_counts) == len(reviewed_counts) == 1
+        and next(iter(reviewed_counts)) < next(iter(selected_counts))
+    ):
+        return True
+
+    ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
+    ratios.extend(tuple(map(int, match.groups())) for match in FILE_COVERAGE_COUNT.finditer(text))
+    return any(reviewed < selected for reviewed, selected in ratios)
+
+
+def _is_finished_action_response(body: str, *, allow_action_wrapper: bool) -> bool:
+    """Match the plain finish reply or one exact, provider-format action wrapper."""
+
+    text = _unquoted(body).strip()
+    if re.fullmatch(r"full\s+review\s+finished\.", text, re.IGNORECASE):
+        return True
+    if not allow_action_wrapper:
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return (
+        len(lines) == 6
+        and lines[0] == "<!-- This is an auto-generated reply by CodeRabbit -->"
+        and re.fullmatch(
+            re.escape(COMMAND_INVOCATION_MARKER) + r"\s+v2:[0-9a-f]{64}\s+-->",
+            lines[1],
+            re.IGNORECASE,
+        )
+        is not None
+        and lines[2] == "<details>"
+        and lines[3] == "<summary>✅ Action performed</summary>"
+        and lines[4] == "Full review finished."
+        and lines[5] == "</details>"
     )
 
 
@@ -760,7 +822,7 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
             return True
 
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
-    reviewed_counts = {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
     ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
     if len(selected_counts) > 1 or len(reviewed_counts) > 1 or len(set(ratios)) > 1:
         return True
@@ -774,7 +836,7 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
 
 def _summary_proves_complete_file_coverage(text: str) -> bool:
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
-    reviewed_counts = {int(match.group(1)) for match in FILE_REVIEWED_LABEL_COUNT.finditer(text)}
+    reviewed_counts = _reviewed_label_counts(text)
     not_reviewed_counts = [int(match.group(1)) for match in FILE_NOT_REVIEWED_COUNT.finditer(text)]
     ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
     if selected_counts and reviewed_counts:
@@ -800,20 +862,22 @@ def _summary_proves_complete_file_coverage(text: str) -> bool:
     )
 
 
-def provider_format_zero_finding_summary(
+def _provider_format_terminal_summary(
     payload: dict[str, Any],
     head: str,
     after: datetime,
     response_id: int | None,
     before: datetime | None = None,
+    *,
+    require_incomplete_coverage: bool = False,
 ) -> dict[str, Any] | None:
-    """Prove a clean zero result when CodeRabbit omits its usual zero sentence.
+    """Prove a terminal result when CodeRabbit omits its usual result markers.
 
-    This provider-format path is deliberately stricter than the established
-    literal-sentence path. It requires an exact SHA in an edited summary,
-    affirmative complete-file coverage, no open-issue claim, a generic finish
-    reply with immutable identity, and complete issue/review/inline history
-    without any other CodeRabbit output in the trigger window.
+    The zero-result path requires affirmative complete-file coverage and no
+    open-issue claim. The incomplete path instead requires explicit positive
+    evidence of omitted file coverage. Both require an exact SHA in an edited
+    summary, a generic finish reply with immutable identity, and complete
+    issue/review/inline history without other CodeRabbit output in the window.
     """
 
     if not isinstance(head, str) or EXACT_SHA.fullmatch(head) is None:
@@ -847,7 +911,10 @@ def provider_format_zero_finding_summary(
     if (
         not is_coderabbit_login(response_author)
         or not isinstance(response_body, str)
-        or re.fullmatch(r"full\s+review\s+finished\.", _unquoted(response_body).strip(), re.IGNORECASE) is None
+        or not _is_finished_action_response(
+            response_body,
+            allow_action_wrapper=require_incomplete_coverage,
+        )
         or response_at is None
         or response_updated is None
         or response_at <= after
@@ -856,6 +923,10 @@ def provider_format_zero_finding_summary(
         or (before is not None and response_updated >= before)
         or _rate_limit(response_body, response_at) is not None
     ):
+        return None
+    if require_incomplete_coverage and before is not None:
+        # A later trigger makes a post-finish summary edit ambiguous even when
+        # its body still names the old captured head.
         return None
 
     summary_candidates: list[tuple[datetime, int, dict[str, Any]]] = []
@@ -881,9 +952,13 @@ def provider_format_zero_finding_summary(
             created is None
             or updated is None
             or updated <= after
-            or updated > response_updated
+            or (not require_incomplete_coverage and updated > response_updated)
             or (before is not None and updated >= before)
-            or created > response_updated
+            or (
+                created >= response_at
+                if require_incomplete_coverage
+                else created > response_updated
+            )
             or _rate_limit(body, updated) is not None
         ):
             continue
@@ -893,7 +968,12 @@ def provider_format_zero_finding_summary(
     summary = max(summary_candidates, key=lambda value: (value[0], value[1]))[2]
     summary_id = immutable_database_id(summary)
     summary_body = summary.get("body") or ""
-    if summary_id is None or not _summary_proves_complete_zero_findings(summary_body):
+    if summary_id is None:
+        return None
+    if require_incomplete_coverage:
+        if not _summary_has_explicit_incomplete_coverage(summary_body):
+            return None
+    elif not _summary_proves_complete_zero_findings(summary_body):
         return None
 
     def in_window(value: str | None) -> bool | None:
@@ -937,6 +1017,37 @@ def provider_format_zero_finding_summary(
             if created_in_window or updated_in_window:
                 return None
     return summary
+
+
+def provider_format_zero_finding_summary(
+    payload: dict[str, Any],
+    head: str,
+    after: datetime,
+    response_id: int | None,
+    before: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Prove a clean zero result when CodeRabbit omits its usual zero sentence."""
+
+    return _provider_format_terminal_summary(payload, head, after, response_id, before)
+
+
+def provider_format_incomplete_coverage_summary(
+    payload: dict[str, Any],
+    head: str,
+    after: datetime,
+    response_id: int | None,
+    before: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Prove terminal non-counting status from an exact-head incomplete summary."""
+
+    return _provider_format_terminal_summary(
+        payload,
+        head,
+        after,
+        response_id,
+        before,
+        require_incomplete_coverage=True,
+    )
 
 
 def _state_base(repo: str, pr: int, record: dict[str, Any], current_head: str) -> dict[str, Any]:
@@ -1093,7 +1204,18 @@ def trigger_state(
                     immutable_database_id(item),
                     next_dt,
                 )
-            state = "completed" if zero_summary is not None else "ambiguous"
+            if zero_summary is not None:
+                state = "completed"
+            elif provider_format_incomplete_coverage_summary(
+                payload,
+                record["head_sha"],
+                trigger_dt,
+                immutable_database_id(item),
+                next_dt,
+            ) is not None:
+                state = "failed_incomplete_coverage"
+            else:
+                state = "ambiguous"
             candidates.append((created, state, item, None))
     for review in reviews:
         if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
@@ -1154,6 +1276,9 @@ def trigger_state(
             reason="no attributable terminal response",
         )
     _, state, response, cooldown = max(candidates, key=lambda item: (item[0], immutable_database_id(item[2]) or -1))
+    incomplete_coverage = state == "failed_incomplete_coverage"
+    if incomplete_coverage:
+        state = "failed"
     response_at = response.get("createdAt") or response.get("submittedAt")
     response_id = immutable_database_id(response)
     if state == "active" and response_id is None:
@@ -1216,6 +1341,8 @@ def trigger_state(
         "noop": "request acknowledged without reviewing commits",
         "failed": "CodeRabbit explicitly reported a review failure",
     }[state]
+    if incomplete_coverage:
+        reason = "CodeRabbit finished after explicitly reporting incomplete file coverage"
     return TriggerState(
         state,
         True,

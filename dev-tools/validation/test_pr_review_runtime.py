@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError
+from pr_review.controller import ControllerError, StaleReviewTarget
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -848,6 +848,58 @@ class RuntimeTest(unittest.TestCase):
                     HostedRunner("owner/repo", live)(target, expect_pr=42)
                 self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
 
+    def test_hosted_post_boundary_detects_parent_advance_when_pr_snapshot_is_stale(self) -> None:
+        advanced_base = "9" * 40
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_calls = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                post_calls.append(args)
+                output = comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", side_effect=(BASE, BASE, advanced_base)),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "effective parent changed across the Hosted posting boundary"),
+            ):
+                HostedRunner("owner/repo", live)(selected, expect_pr=42)
+            record = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(record["status"], "posted_boundary_changed")
+        self.assertEqual(record["anchor"]["parent_head"], BASE)
+        self.assertEqual(record["trigger"]["id"], 123)
+        self.assertEqual(len(post_calls), 1)
+
     def test_hosted_request_floor_failure_leaves_no_reservation_or_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
@@ -882,12 +934,99 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(post_calls, [])
 
+    def test_hosted_runner_rejects_a_default_base_move_before_writing_or_posting(self) -> None:
+        advanced_base = "9" * 40
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update(
+            {
+                "number": 42,
+                "baseRefName": "develop",
+                "baseRefOid": advanced_base,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            calls = []
+
+            def subprocess_call(args, **kwargs):
+                calls.append(args)
+                if args == ["gh", "api", "user"]:
+                    return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+                raise AssertionError("stale target must not issue a Hosted POST")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=subprocess_call),
+                self.assertRaisesRegex(StaleReviewTarget, "base advanced"),
+            ):
+                HostedRunner("owner/repo", live)(selected, expect_pr=42)
+
+            self.assertFalse(path.exists())
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0], ["gh", "api", "user"])
+
+    def test_hosted_runner_reselects_when_base_moves_while_mergeability_is_unknown(self) -> None:
+        advanced_base = "9" * 40
+        selected_snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            selected_snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        current = PullRequestSnapshot(
+            42,
+            "OPEN",
+            "develop",
+            advanced_base,
+            HEAD,
+            "feature",
+            1,
+            mergeable="UNKNOWN",
+        )
+        live = LiveGitHub("owner/repo")
+        with (
+            patch.object(live, "pull_request", return_value=current),
+            patch("pr_review.runtime.subprocess.run") as run,
+            self.assertRaisesRegex(StaleReviewTarget, "base advanced"),
+        ):
+            HostedRunner("owner/repo", live)(selected, expect_pr=42)
+        run.assert_not_called()
+
     @staticmethod
     def _payload(comments=None, reviews=None, threads=None, *, head=HEAD):
         return {
             "data": {
                 "repository": {
                     "pullRequest": {
+                        "number": 42,
+                        "baseRefName": "develop",
+                        "baseRefOid": BASE,
                         "headRefOid": head,
                         "comments": {"nodes": comments or []},
                         "reviews": {"nodes": reviews or []},
@@ -969,6 +1108,88 @@ class RuntimeTest(unittest.TestCase):
             unknown_reply = {**future_reply, "body": hosted.REVIEW_LIMIT_MARKER}
             unknown = self._history(common, self._payload([trigger, unknown_reply]))
             self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in unknown))
+
+    def test_review_stop_audit_excludes_only_proven_terminal_rate_limit_reservations(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        response_at = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        cooldown_until = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = self._trigger_record(created=trigger_at)
+        old_head = "7" * 40
+        record["head_sha"] = old_head
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="rate_limited",
+            terminal=True,
+            attributed=True,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=old_head,
+            cooldown_until=cooldown_until,
+            reason="CodeRabbit explicitly rate limited the request",
+        )
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        generic_audit = {
+            "complete": True,
+            "active_reservations": ["rate_limited", "review active"],
+            "unmatched_responses": [],
+            "historical_unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=state),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            audit = observer.review_stop_audit(42, anchor)
+
+        self.assertEqual(audit["active_reservations"], ["review active"])
+        self.assertEqual(audit["terminal_rate_limits"], [
+            {
+                "trigger_id": 10,
+                "response_id": 11,
+                "captured_head": old_head,
+                "cooldown_until": cooldown_until,
+                "terminal": True,
+                "attributable": True,
+            }
+        ])
+        self.assertIn("active Hosted reservation: review active", audit["blockers"])
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (

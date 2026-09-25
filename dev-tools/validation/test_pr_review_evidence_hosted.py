@@ -685,6 +685,67 @@ class HostedEvidenceTests(unittest.TestCase):
             hosted.prepare_full_trigger(PR, PR + 1)
         self.assertEqual(hosted.prepare_full_trigger(PR)["command"], hosted.FULL_COMMAND)
 
+    def test_positive_finding_count_overrides_incidental_zero_finding_phrase(self):
+        contradictory_summaries = (
+            (
+                "Actionable comments posted: 2\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "Actionable comments posted: 02\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "02 findings\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+        )
+        legitimate_zero = (
+            "Actionable comments posted: 0\n"
+            "No issues found.\n"
+            "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+        )
+
+        for summary in contradictory_summaries:
+            with self.subTest(summary=summary.splitlines()[0]):
+                self.assertFalse(hosted._summary_proves_complete_zero_findings(summary))
+        self.assertTrue(hosted._summary_proves_complete_zero_findings(legitimate_zero))
+
+    def test_not_reviewed_label_is_excluded_from_reviewed_count(self):
+        summary = (
+            "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. "
+            "Files reviewed: 61."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), {61})
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_not_reviewed_only_label_does_not_supply_a_reviewed_count(self):
+        summary = "Files selected: 89. Files not reviewed: 28."
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), set())
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_reviewed_count_still_proves_complete_coverage_and_conflicts_fail_closed(self):
+        complete = "Files selected: 89. Files not reviewed: 0. Files reviewed: 89."
+        inconsistent = (
+            "Files selected: 89. Files not reviewed: 28. "
+            "Files reviewed: 61. Files reviewed: 60."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(complete), {89})
+        self.assertFalse(hosted._summary_has_explicit_incompleteness(complete))
+        self.assertTrue(hosted._summary_proves_complete_file_coverage(complete))
+        self.assertEqual(hosted._reviewed_label_counts(inconsistent), {60, 61})
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(inconsistent))
+
     def test_rate_limit_cannot_count_as_completed_review(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         reply = comment(
@@ -776,14 +837,94 @@ class HostedEvidenceTests(unittest.TestCase):
             "updatedAt": "2026-09-23T00:02:30Z",
         }
         extra_issue_comment = comment(22, "coderabbitai", "A post-trigger bot comment.", "2026-09-23T00:02:30Z")
-        for invalid_summary in (incomplete, stale, mismatched_head):
+        incomplete_state = state_for(incomplete)
+        self.assertEqual(incomplete_state.state, "failed")
+        self.assertTrue(incomplete_state.terminal)
+        self.assertTrue(incomplete_state.attributed)
+        self.assertEqual(incomplete_state.head_sha, HEAD)
+        self.assertEqual(incomplete_state.response_id, 11)
+        self.assertIn("incomplete file coverage", incomplete_state.reason)
+
+        for invalid_summary in (stale, mismatched_head):
             with self.subTest(summary=invalid_summary["body"]):
-                self.assertNotEqual(state_for(invalid_summary).state, "completed")
-        self.assertNotEqual(
+                self.assertEqual(state_for(invalid_summary).state, "ambiguous")
+        self.assertEqual(
             state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
-            "completed",
+            "ambiguous",
         )
-        self.assertNotEqual(state_for(extra_comments=[extra_issue_comment]).state, "completed")
+        self.assertEqual(state_for(extra_comments=[extra_issue_comment]).state, "ambiguous")
+
+        intervening_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:45Z")
+        self.assertEqual(state_for(extra_comments=[intervening_trigger]).state, "ambiguous")
+
+        bot_review = {
+            "databaseId": 23,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:30Z",
+            "commit": {"oid": HEAD},
+        }
+        self.assertEqual(
+            hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, incomplete, reply], [bot_review]),
+                trigger_record(),
+            ).state,
+            "ambiguous",
+        )
+
+        missing_threads = review_payload([trigger, incomplete, reply])
+        del missing_threads["data"]["repository"]["pullRequest"]["reviewThreads"]
+        self.assertEqual(hosted.trigger_state(REPO, PR, missing_threads, trigger_record()).state, "ambiguous")
+
+        summary_after_reply = {**incomplete, "updatedAt": "2026-09-23T00:03:40Z"}
+        post_reply_incomplete_state = state_for(summary_after_reply)
+        self.assertEqual(post_reply_incomplete_state.state, "failed")
+        self.assertTrue(post_reply_incomplete_state.terminal)
+        self.assertTrue(post_reply_incomplete_state.attributed)
+
+        wrapped_reply = {
+            **reply,
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: "
+                "v2:6a355c47ffcf4ddd532604823fb155b76256a51f568b7e5a4e92ef6f3565c6f9 -->\n"
+                "<details>\n"
+                "<summary>✅ Action performed</summary>\n"
+                "Full review finished.\n"
+                "</details>"
+            ),
+        }
+        self.assertEqual(
+            state_for(summary_after_reply, selected_reply=wrapped_reply).state,
+            "failed",
+        )
+        self.assertEqual(state_for(summary, selected_reply=wrapped_reply).state, "ambiguous")
+
+        altered_action = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace("✅ Action performed", "✅ Review complete"),
+        }
+        extra_text = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace(
+                "Full review finished.", "Full review finished.\nAn issue requires attention."
+            ),
+        }
+        self.assertEqual(state_for(summary_after_reply, selected_reply=altered_action).state, "ambiguous")
+        self.assertEqual(state_for(summary_after_reply, selected_reply=extra_text).state, "ambiguous")
+
+        later_bot_output = comment(24, "coderabbitai[bot]", "Another review update.", "2026-09-23T00:03:45Z")
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[intervening_trigger]).state,
+            "ambiguous",
+        )
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[later_bot_output]).state,
+            "ambiguous",
+        )
 
         limited = {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}
         active = {**reply, "body": "Full review triggered"}

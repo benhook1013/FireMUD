@@ -11,12 +11,13 @@ import stat
 import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
-from .controller import ControllerError, DefaultGitProvider, ReviewController
+from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
 from .state import (
     StateError,
     StateStore,
@@ -43,6 +44,11 @@ class LiveGitHub:
 
     def metadata(self, number: int) -> dict[str, Any]:
         return github.fetch_pr_metadata(self.repo, number)
+
+    def batch_pull_requests(self, numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+        """Fetch the current lightweight identity/activity view for a whole stack."""
+
+        return github.fetch_pr_identity_batch(self.repo, numbers)
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = self.metadata(number)
@@ -111,6 +117,109 @@ class LiveEvidence:
         if pr not in self._payloads:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
         return self._payloads[pr]
+
+    @staticmethod
+    def _request_lock_is_held(path: Path) -> bool:
+        """Check an existing request lock without creating or changing a file."""
+
+        if not path.exists():
+            return False
+        try:
+            with path.open("r") as handle:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            # A lock file that cannot be inspected is not safe to treat as idle.
+            return True
+        return False
+
+    def active_review_targets(
+        self,
+        pr_numbers: Sequence[int],
+        identities: Mapping[int, Mapping[str, Any] | None],
+    ) -> set[int]:
+        """Find PRs with a live request or a possibly active Hosted trigger.
+
+        The batch identity query carries only the most recent few public events.
+        If that bounded sample cannot prove a trigger terminal, the PR is
+        conservatively included for the normal complete evidence reconciliation.
+        A repository-wide CLI lock does not encode its selected PR, so every
+        configured PR becomes a deep candidate while that lock is held.
+        """
+
+        active: set[int] = set()
+        active_trigger_states = {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}
+        terminal_trigger_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
+        if self.state_store is None:
+            active.update(pr_numbers)
+        else:
+            state_path = self.state_store.path
+            if state_path.name != "pr-review-stack.json":
+                active.update(pr_numbers)
+            else:
+                cli_lock_path = state_path.parent.parent / "firemud" / "pr-review" / "cli.lock"
+                if self._request_lock_is_held(cli_lock_path):
+                    active.update(pr_numbers)
+        for pr in pr_numbers:
+            lock_path = hosted.default_trigger_record_path(self.repo, pr).parent / "request.lock"
+            if self._request_lock_is_held(lock_path):
+                active.add(pr)
+            try:
+                identity = identities.get(pr)
+                if not isinstance(identity, Mapping):
+                    active.add(pr)
+                    continue
+                comment_connection = identity.get("comments")
+                comments = comment_connection.get("nodes") if isinstance(comment_connection, Mapping) else None
+                if not isinstance(comments, list):
+                    active.add(pr)
+                    continue
+                manual_trigger_seen = False
+                for comment in comments:
+                    if not isinstance(comment, Mapping):
+                        manual_trigger_seen = True
+                        break
+                    author = comment.get("author")
+                    login = author.get("login") if isinstance(author, Mapping) else None
+                    body = comment.get("body")
+                    if not isinstance(login, str) or not isinstance(body, str):
+                        manual_trigger_seen = True
+                        break
+                    if not github.is_coderabbit_login(login) and hosted.normalize_command(body) == hosted.FULL_COMMAND:
+                        manual_trigger_seen = True
+                        break
+                if manual_trigger_seen:
+                    active.add(pr)
+                    continue
+                paths = hosted.current_trigger_record_paths(self.repo, pr)
+                if len(paths) > 1:
+                    active.add(pr)
+                    continue
+                if not paths:
+                    continue
+                path = paths[0]
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                if record.get("status") in {"posting", "posted_boundary_changed", "posted_boundary_unverified"}:
+                    active.add(pr)
+                    continue
+                if record.get("status") == "retired":
+                    continue
+                pull_request = dict(identity)
+                if not isinstance(pull_request.get("comments"), Mapping) or not isinstance(
+                    pull_request.get("reviews"), Mapping
+                ):
+                    active.add(pr)
+                    continue
+                payload = {"data": {"repository": {"pullRequest": pull_request}}}
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                if state.state in active_trigger_states or state.state not in terminal_trigger_states:
+                    active.add(pr)
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                active.add(pr)
+        return active
 
     @staticmethod
     def _comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -478,6 +587,7 @@ class LiveEvidence:
         }
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
+        terminal_rate_limits: list[dict[str, Any]] = []
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
@@ -487,6 +597,36 @@ class LiveEvidence:
             observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
             if observation is not None:
                 ambiguous_terminal_responses.append(observation)
+            cooldown_value = getattr(state, "cooldown_until", None)
+            cooldown_until = hosted.parse_timestamp(cooldown_value)
+            trigger_id = state.trigger_comment_id
+            response_id = state.response_id
+            captured_head = record.get("head_sha")
+            if (
+                state.state == "rate_limited"
+                and state.terminal is True
+                and state.attributed is True
+                and isinstance(trigger_id, int)
+                and not isinstance(trigger_id, bool)
+                and trigger_id > 0
+                and isinstance(response_id, int)
+                and not isinstance(response_id, bool)
+                and response_id > 0
+                and isinstance(captured_head, str)
+                and hosted.EXACT_SHA.fullmatch(captured_head) is not None
+                and cooldown_until is not None
+                and cooldown_until > datetime.now(timezone.utc)
+            ):
+                terminal_rate_limits.append(
+                    {
+                        "trigger_id": trigger_id,
+                        "response_id": response_id,
+                        "captured_head": captured_head,
+                        "cooldown_until": cooldown_value,
+                        "terminal": True,
+                        "attributable": True,
+                    }
+                )
         fingerprints = [item["fingerprint"] for item in ambiguous_terminal_responses]
         if len(set(fingerprints)) != len(fingerprints):
             raise ControllerError("terminal ambiguous Hosted responses have duplicate immutable fingerprints")
@@ -500,6 +640,10 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
+        if len(terminal_rate_limits) > active_reservations.count("rate_limited"):
+            raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")
+        for _item in terminal_rate_limits:
+            active_reservations.remove("rate_limited")
         if pins:
             terminal_count = len(ambiguous_terminal_responses)
             if (
@@ -546,6 +690,7 @@ class LiveEvidence:
             "unresolved_findings": unresolved_findings,
             "checkpoints": checkpoints,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
+            "terminal_rate_limits": terminal_rate_limits,
             "retained_ambiguous": list(retained_by_fingerprint.values()),
         }
 
@@ -1440,6 +1585,10 @@ class LiveEvidence:
                             "head": state.head_sha,
                             "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
                             "rate_limited": True,
+                            "trigger_id": state.trigger_comment_id,
+                            "response_id": state.response_id,
+                            "terminal": state.terminal,
+                            "attributable": state.attributed,
                             "held": reset is None,
                             "unstable": reset is None,
                             "reason": "Hosted cooldown remains active"
@@ -1506,13 +1655,38 @@ class HostedRunner:
             raise ControllerError("authenticated GitHub user has no trusted login identity")
         return login
 
+    @staticmethod
+    def _base_advanced(target: ReviewTarget, current: PullRequestSnapshot) -> bool:
+        return (
+            target.default_base_front
+            and current.number == target.snapshot.number
+            and current.head_sha.casefold() == target.snapshot.head_sha.casefold()
+            and current.base_ref_name == target.parent.ref_name
+            and current.base_sha.casefold() != target.snapshot.base_sha.casefold()
+            and current.state.upper() == "OPEN"
+            and current.base_exists
+            and target.has_current_default_test_merge_proof()
+        )
+
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
+        if target.default_base_front and not target.has_current_default_test_merge_proof():
+            raise ControllerError("direct default-base target has no verified current base/head test merge")
         pr = target.snapshot.number
         hosted.assert_expected_pr(pr, expect_pr)
         before = self.live.pull_request(pr)
         if before != target.snapshot:
+            if self._base_advanced(target, before):
+                raise StaleReviewTarget("default base advanced after Hosted target selection")
             raise ControllerError("pull request changed after Hosted target selection")
-        if self.live.branch_head(target.parent.ref_name) != target.parent.head_sha:
+        parent_tip = self.live.branch_head(target.parent.ref_name)
+        if parent_tip != target.parent.head_sha:
+            if (
+                target.default_base_front
+                and before.head_sha.casefold() == target.snapshot.head_sha.casefold()
+                and before.base_ref_name == target.parent.ref_name
+                and target.has_current_default_test_merge_proof()
+            ):
+                raise StaleReviewTarget("default base advanced after Hosted target selection")
             raise ControllerError("effective parent changed after Hosted target selection")
         path = hosted.default_trigger_record_path(self.repo, pr)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1583,13 +1757,37 @@ class HostedRunner:
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
                 reservation_head = reservation_pr.get("headRefOid") if isinstance(reservation_pr, dict) else None
+                reservation_base_ref = reservation_pr.get("baseRefName") if isinstance(reservation_pr, dict) else None
+                reservation_base = reservation_pr.get("baseRefOid") if isinstance(reservation_pr, dict) else None
                 if (
                     not isinstance(reservation_pr, dict)
                     or not isinstance(reservation_head, str)
-                    or reservation_head.casefold() != target.snapshot.head_sha.casefold()
                 ):
+                    raise ControllerError("pull request identity is incomplete before the Hosted posting boundary")
+                if (
+                    reservation_head.casefold() != target.snapshot.head_sha.casefold()
+                    or reservation_base_ref != target.snapshot.base_ref_name
+                    or not isinstance(reservation_base, str)
+                    or reservation_base.casefold() != target.snapshot.base_sha.casefold()
+                ):
+                    if (
+                        target.default_base_front
+                        and reservation_head.casefold() == target.snapshot.head_sha.casefold()
+                        and reservation_base_ref == target.parent.ref_name
+                        and isinstance(reservation_base, str)
+                        and reservation_base.casefold() != target.snapshot.base_sha.casefold()
+                        and target.has_current_default_test_merge_proof()
+                    ):
+                        raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("pull request changed before the Hosted posting boundary")
-                if self.live.branch_head(target.parent.ref_name) != target.parent.head_sha:
+                current_parent_tip = self.live.branch_head(target.parent.ref_name)
+                if current_parent_tip != target.parent.head_sha:
+                    if (
+                        target.default_base_front
+                        and reservation_head.casefold() == target.snapshot.head_sha.casefold()
+                        and target.has_current_default_test_merge_proof()
+                    ):
+                        raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("effective parent changed before the Hosted posting boundary")
                 posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -1633,13 +1831,40 @@ class HostedRunner:
                 or hosted.normalize_command(str(normalized.get("body") or "")) != hosted.FULL_COMMAND
             ):
                 raise ControllerError("Hosted request response has no immutable full-review identity")
-            after = self.live.pull_request(pr)
             before_identity = (before.head_sha.casefold(), before.base_ref_name, before.base_sha.casefold())
-            after_identity = (after.head_sha.casefold(), after.base_ref_name, after.base_sha.casefold())
-            status = "posted" if after_identity == before_identity else "posted_boundary_changed"
+            after_identity: tuple[str, str, str] | None = None
+            after_parent_tip: str | None = None
+            boundary_verification_errors: list[str] = []
+            try:
+                after = self.live.pull_request(pr)
+                after_identity = (after.head_sha.casefold(), after.base_ref_name, after.base_sha.casefold())
+            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                boundary_verification_errors.append(f"PR refresh failed: {type(exc).__name__}: {exc}")
+            try:
+                observed_parent_tip = self.live.branch_head(target.parent.ref_name)
+                if not isinstance(observed_parent_tip, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", observed_parent_tip):
+                    raise ValueError("effective parent tip is malformed")
+                after_parent_tip = observed_parent_tip.casefold()
+            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                boundary_verification_errors.append(f"parent-tip refresh failed: {type(exc).__name__}: {exc}")
+            boundary_changed = (
+                (after_identity is not None and after_identity != before_identity)
+                or (after_parent_tip is not None and after_parent_tip != target.parent.head_sha.casefold())
+            )
+            if boundary_changed:
+                status = "posted_boundary_changed"
+            elif boundary_verification_errors:
+                status = "posted_boundary_unverified"
+            else:
+                status = "posted"
             record = {
                 **posting,
                 "status": status,
+                **(
+                    {"posting_boundary_verification_errors": boundary_verification_errors}
+                    if boundary_verification_errors
+                    else {}
+                ),
                 "trigger": {
                     "id": trigger_id,
                     "created_at": normalized["createdAt"],
@@ -1650,8 +1875,10 @@ class HostedRunner:
                 },
             }
             hosted.atomic_write_json(path, record)
-            if status != "posted":
-                raise ControllerError("pull request changed across the Hosted posting boundary")
+            if status == "posted_boundary_changed":
+                raise ControllerError("pull request or effective parent changed across the Hosted posting boundary")
+            if status == "posted_boundary_unverified":
+                raise ControllerError("Hosted posting boundary could not be fully verified after POST")
             return {
                 "channel": "hosted",
                 "pr": pr,

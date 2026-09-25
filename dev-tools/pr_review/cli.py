@@ -71,6 +71,11 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="show live stack or one-PR status")
     status.add_argument("--pr", type=_positive_int)
     status.add_argument("--json", action="store_true", dest="as_json")
+    status.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="deeply fetch and reconcile every configured PR",
+    )
 
     run = commands.add_parser("run", help="run the automatically selected review target")
     run_commands = run.add_subparsers(dest="run_command", required=True)
@@ -122,6 +127,11 @@ def _parser() -> argparse.ArgumentParser:
     stop.add_argument("--checkpoint")
     stop.add_argument("--retain-ambiguous-fingerprint", action="append", default=[])
     stop.add_argument("--ambiguity-reason")
+    stop.add_argument(
+        "--acknowledge-over-ceiling",
+        action="store_true",
+        help="acknowledge only current-head over-ceiling skip evidence for a direct human stop; requires --head",
+    )
     stop.add_argument("--json", action="store_true", dest="as_json")
     summary_disposition = decide_commands.add_parser(
         "summary-disposition",
@@ -222,6 +232,30 @@ def _render(value: Any, as_json: bool = False) -> str:
     return str(value)
 
 
+def _render_status_overview(report: Mapping[str, Any]) -> str:
+    window = report.get("detail_window", {})
+    lines = [
+        (
+            f"review stack: {report.get('status', 'UNKNOWN')} · "
+            f"detail window={len(window.get('deep_prs', []))}/{window.get('unmerged_limit', 4)} unmerged"
+        )
+    ]
+    for item in report.get("prs", []):
+        channels = item.get("channels", {})
+        lines.append(
+            f"#{item.get('pr')} {item.get('state', 'UNKNOWN')} · head={str(item.get('head') or 'unknown')[:12]} · "
+            f"Hosted={channels.get('hosted', 'UNKNOWN')} · CLI={channels.get('cli', 'UNKNOWN')} · "
+            f"evidence={item.get('evidence_status', 'unknown')} ({item.get('detail_level', 'unknown')})"
+        )
+    if window.get("active_target_error"):
+        lines.append(f"active target scan: unknown · {window['active_target_error']}")
+    if window.get("deep_error"):
+        lines.append(f"deep evidence: unavailable · {window['deep_error']}")
+    if window.get("reason"):
+        lines.append(f"live identity batch: unavailable · {window['reason']}")
+    return "\n".join(lines)
+
+
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     controller, fixture = _controller(args)
     if args.command == "stack":
@@ -230,13 +264,19 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
 
     if args.command == "status":
         if args.pr is None:
-            return fixture.status(controller) if fixture is not None else controller.status(), 0
+            if fixture is not None:
+                return fixture.status(controller), 0
+            if args.full_scan:
+                report = controller.status()
+                return (report if args.as_json else _render(report)), 0
+            report = controller.status_overview()
+            return (report if args.as_json else _render_status_overview(report)), 0
         if fixture is not None:
             return fixture.status(controller, args.pr), 0
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
         report = status_module.status(args.pr, summary_dispositions=summary_dispositions)
-        stack_report = controller.status()
+        stack_report = controller.status() if args.full_scan else controller.status_for_pr(args.pr)
         report["review_stack"] = stack_report
         stack_item = next((item for item in stack_report.get("prs", []) if item.get("pr") == args.pr), None)
         review_reasons: list[str] = []
@@ -445,6 +485,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 retain_ambiguous_fingerprints=args.retain_ambiguous_fingerprint,
                 ambiguity_reason=args.ambiguity_reason,
+                acknowledge_over_ceiling=args.acknowledge_over_ceiling,
             ), 0
         if args.decide_command == "reconcile":
             return controller.decide_reconciliation(

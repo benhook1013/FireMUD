@@ -33,6 +33,7 @@ on:
       - 'dev-tools/backups/smoke-backup-verifier-image.sh'
       - 'docker/backup-verifier.Dockerfile'
       - 'dev-tools/certs/generate-dev-certs.sh'
+      - 'dev-tools/minio/**'
       - 'dev-tools/hosted/controller/smoke-paused-controller-image.sh'
       - 'dev-tools/smoke/**'
       - 'dev-tools/verify-compose-health.sh'
@@ -337,6 +338,7 @@ jobs:
                   const runtimePrefixes = [
                     "buildSrc/",
                     "docker/",
+                    "dev-tools/minio/",
                     "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
@@ -441,6 +443,7 @@ jobs:
             const runtimePrefixes = [
               "buildSrc/",
               "docker/",
+              "dev-tools/minio/",
               "dev-tools/smoke/",
               "gradle/",
               "protos/",

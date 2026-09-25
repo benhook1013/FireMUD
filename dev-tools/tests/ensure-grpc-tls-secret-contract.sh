@@ -233,6 +233,14 @@ set -euo pipefail
 if [[ "${FORCE_EXPIRED_CERT_CHECK:-false}" == true && "$*" == *' -checkend 0 '* ]]; then
   exit 1
 fi
+if [[ "${FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT:-false}" == true &&
+  "$*" == *' -noout -ext basicConstraints' ]]; then
+  printf 'X509v3 Basic Constraints: critical\n    CA:TRUE\n'
+  for ((line = 0; line < 16384; line++)); do
+    printf '    unrelated extension detail to exercise complete output capture\n'
+  done
+  exit 0
+fi
 exec "$REAL_OPENSSL" "$@"
 EOF
 chmod +x "$mock_bin/openssl"
@@ -281,6 +289,18 @@ if ! run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
 fi
 grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
+  exit 1
+}
+large_constraints_log="$fixture_dir/large-constraints.log"
+if ! FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT=true run_helper complete "$large_constraints_log" \
+  "$fixture_dir/large-constraints-state" "" 30 >"$fixture_dir/large-constraints.out" \
+  2>"$fixture_dir/large-constraints.err"; then
+  cat "$fixture_dir/large-constraints.out" "$fixture_dir/large-constraints.err" >&2
+  echo "the helper failed to validate a CA extension after capturing its complete output" >&2
+  exit 1
+fi
+grep -Fq '5 distinct publication leaves' "$fixture_dir/large-constraints.out" || {
+  echo "the helper did not accept valid CA constraints with large extension output" >&2
   exit 1
 }
 if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log" || \
@@ -472,6 +492,31 @@ grep -Fq 'aggregate 5s window' "$fixture_dir/aggregate-timeout.err" || {
 }
 if grep -q '^delete ' "$aggregate_timeout_log"; then
   echo "the helper deleted legacy Secrets before all projections met the aggregate deadline" >&2
+  exit 1
+fi
+
+# A non-CA certificate whose subject contains CA:TRUE must not satisfy the
+# projected issuer Basic Constraints check.
+openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/non-ca.key"
+openssl req -new -key "$fixture_dir/non-ca.key" -subj '/CN=CA:TRUE' -out "$fixture_dir/non-ca.csr"
+cat >"$fixture_dir/non-ca.ext" <<'EOF'
+[leaf]
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+EOF
+openssl x509 -req -in "$fixture_dir/non-ca.csr" -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" -CAcreateserial -days 30 -sha256 -extfile "$fixture_dir/non-ca.ext" -extensions leaf -out "$data_dir/game-design-service-ca.crt"
+non_ca_log="$fixture_dir/non-ca-ca-projection.log"
+if run_helper complete "$non_ca_log" "$fixture_dir/non-ca-state" >"$fixture_dir/non-ca.out" 2>"$fixture_dir/non-ca.err"; then
+  echo "the helper accepted a non-CA certificate whose subject contains CA:TRUE" >&2
+  exit 1
+fi
+grep -Fq 'cert-manager CA projection is not a CA certificate: dev/firemud-grpc-game-design-service' "$fixture_dir/non-ca.err" || {
+  echo "the helper rejected the non-CA projection for an unexpected reason" >&2
+  cat "$fixture_dir/non-ca.err" >&2
+  exit 1
+}
+if grep -Eq '^(apply|delete) ' "$non_ca_log"; then
+  echo "the helper mutated Kubernetes Secrets before rejecting the non-CA projection" >&2
   exit 1
 fi
 

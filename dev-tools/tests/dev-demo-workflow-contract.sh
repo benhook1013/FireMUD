@@ -879,6 +879,38 @@ positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
     raise SystemExit(f"dev-demo hosted-controller lifecycle order is invalid: {ordered}")
 
+standalone_grpc_setup = (
+    "Prepare dev-demo shared gRPC TLS secret",
+    "Ensure dev-demo standalone gRPC certificates",
+    "Ensure dev-demo gRPC TLS secret exists",
+)
+standalone_grpc_positions = [deploy_names.index(name) for name in standalone_grpc_setup]
+render_position = deploy_names.index("Validate dev-demo chart render")
+deploy_position = deploy_names.index("Deploy dev-demo release")
+if standalone_grpc_positions != sorted(standalone_grpc_positions) or any(
+    position >= render_position or position >= deploy_position
+    for position in standalone_grpc_positions
+):
+    raise SystemExit(
+        "dev-demo standalone gRPC leaf and trust Secrets must be prepared before rendering and Helm apply"
+    )
+for step_name, helper in (
+    (
+        "Prepare dev-demo shared gRPC TLS secret",
+        "ensure-grpc-tls-secret.sh --shared-only",
+    ),
+    (
+        "Ensure dev-demo standalone gRPC certificates",
+        "ensure-standalone-grpc-certificates.sh",
+    ),
+    (
+        "Ensure dev-demo gRPC TLS secret exists",
+        "ensure-grpc-tls-secret.sh",
+    ),
+):
+    if helper not in deploy_by_name[step_name].get("run", ""):
+        raise SystemExit(f"dev-demo {step_name} must invoke {helper}")
+
 identity_steps = (
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
