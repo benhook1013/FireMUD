@@ -4,6 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
+# The shared Smoke Compose stack consumes only the trusted, immutable MinIO
+# images. The PR-local workflow supplies its separately built images through
+# docker-compose.pr-local-minio.override.yml.
+grep -Fq 'image: ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a' "$ROOT_DIR/docker/docker-compose.yml"
+grep -Fq 'image: ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf' "$ROOT_DIR/docker/docker-compose.yml"
+grep -Fq 'image: ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a' "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml"
+grep -Fq '"ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a"' "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+grep -Fq '"ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf"' "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+if grep -Fq 'quay.io/minio/' "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"; then
+    echo "preview validation must not allow Quay MinIO images" >&2
+    exit 1
+fi
+grep -Fq '"ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",' "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+if grep -Eq 'image: quay\.io/minio/(minio|mc):' "$ROOT_DIR/docker/docker-compose.yml"; then
+    echo "shared Smoke Compose must not pull MinIO from Quay" >&2
+    exit 1
+fi
+
 command -v openssl >/dev/null 2>&1 || {
     echo "openssl is required to generate TLS certificates for this smoke contract" >&2
     exit 1
