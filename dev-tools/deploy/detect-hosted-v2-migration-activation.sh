@@ -24,35 +24,26 @@ if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$event_name" == push ]]; then
-  base_sha="$event_before_sha"
-  if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$base_sha" =~ ^0{40}$ ]]; then
-    echo "refusing hosted deployment: push before-SHA is absent or malformed; V2 migration status is unknown" >&2
-    exit 1
-  fi
-  reason_source="trusted push before-SHA"
-else
-  namespace_json="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"
-  if [[ -z "$namespace_json" ]]; then
-    echo "refusing hosted deployment: namespace $namespace is absent, so its deployed-head ancestry cannot be proven" >&2
-    exit 1
-  fi
-  if ! base_sha="$(jq -e -r \
-    --arg namespace "$namespace" '
-      select(.metadata.name == $namespace)
-      | select((.metadata.labels // {})["firemud.dev/dev-demo"] == "true")
-      | select((.metadata.labels // {})["firemud.dev/environment-class"] == "dev-demo-cluster")
-      | (.metadata.annotations // {})["firemud.dev/last-dev-demo-head-sha"] // empty
-    ' <<<"$namespace_json")"; then
-    echo "refusing hosted deployment: namespace $namespace lacks a trusted deployed-head annotation" >&2
-    exit 1
-  fi
-  reason_source="trusted deployed-head annotation"
-  base_sha="${base_sha,,}"
-  if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "refusing hosted deployment: namespace $namespace has a malformed deployed-head annotation" >&2
-    exit 1
-  fi
+namespace_json="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"
+if [[ -z "$namespace_json" ]]; then
+  echo "refusing hosted deployment: namespace $namespace is absent, so its deployed-head ancestry cannot be proven" >&2
+  exit 1
+fi
+if ! base_sha="$(jq -e -r \
+  --arg namespace "$namespace" '
+    select(.metadata.name == $namespace)
+    | select((.metadata.labels // {})["firemud.dev/dev-demo"] == "true")
+    | select((.metadata.labels // {})["firemud.dev/environment-class"] == "dev-demo-cluster")
+    | (.metadata.annotations // {})["firemud.dev/last-dev-demo-head-sha"] // empty
+  ' <<<"$namespace_json")"; then
+  echo "refusing hosted deployment: namespace $namespace lacks a trusted deployed-head annotation" >&2
+  exit 1
+fi
+reason_source="trusted deployed-head annotation"
+base_sha="${base_sha,,}"
+if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "refusing hosted deployment: namespace $namespace has a malformed deployed-head annotation" >&2
+  exit 1
 fi
 
 if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
@@ -66,6 +57,20 @@ fi
 if ! git merge-base --is-ancestor "$base_sha" "$head_sha"; then
   echo "refusing hosted deployment: $reason_source is not an ancestor of the target SHA" >&2
   exit 1
+fi
+if [[ "$event_name" == push && -n "$event_before_sha" ]]; then
+  if [[ ! "$event_before_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$event_before_sha" =~ ^0{40}$ ]]; then
+    echo "refusing hosted deployment: supplied push before-SHA is malformed" >&2
+    exit 1
+  fi
+  if ! git cat-file -e "${event_before_sha}^{commit}" 2>/dev/null; then
+    echo "refusing hosted deployment: supplied push before-SHA is not available for ancestry proof" >&2
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor "$event_before_sha" "$head_sha"; then
+    echo "refusing hosted deployment: supplied push before-SHA is not an ancestor of the target SHA" >&2
+    exit 1
+  fi
 fi
 
 if ! changed_paths="$(git diff --name-only "$base_sha" "$head_sha")"; then

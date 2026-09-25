@@ -97,7 +97,7 @@ assert set(scale_rules[0].get("resourceNames") or []) == {
     "game-session-service",
     "automation-scripting-service",
 }
-assert set(scale_rules[0].get("verbs") or []) == {"get", "update"}
+assert set(scale_rules[0].get("verbs") or []) == {"get", "update", "patch"}
 endpoint_slice_rules = [
     rule
     for rule in rules(runtime_role)

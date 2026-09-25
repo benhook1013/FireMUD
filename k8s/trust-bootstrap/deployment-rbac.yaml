@@ -79,7 +79,7 @@ rules:
       - account-service
       - game-session-service
       - automation-scripting-service
-    verbs: ["get", "update"]
+    verbs: ["get", "update", "patch"]
   # Service admission is restored only after the trusted migration helper
   # observes that these services have no EndpointSlice endpoints.
   - apiGroups: ["discovery.k8s.io"]

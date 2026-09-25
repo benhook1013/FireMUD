@@ -125,10 +125,10 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
-  {{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") }}
+  {{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") }}
   # A TCP Proxy bridge-identity withdrawal must not leave an old pod serving
   # while a replacement is blocked on a missing/revoked controller projection.
-  # The persistence writers use the same non-rolling boundary for V2 migrations.
+  # Account, Game Session, and Automation writers use this boundary for migrations.
   strategy:
     type: Recreate
   {{- end }}
