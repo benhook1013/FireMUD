@@ -29,7 +29,7 @@ from .cli_runner import (
     PullRequestSnapshot,
     ReviewTarget,
 )
-from .hosted import prepare_full_trigger
+from .hosted import parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
 from .state import (
     Judgment,
@@ -1527,22 +1527,7 @@ class ReviewController:
             raise ControllerError("review-stop evidence audit observed a stale pull-request head")
         if audit.get("anchor") is not None and audit.get("anchor") != current.as_dict():
             raise ControllerError("review-stop evidence audit observed a stale stack identity")
-        for field, description in (
-            ("active_reservations", "active review or reservation"),
-            ("unmatched_responses", "unmatched review response"),
-            ("ambiguous_responses", "unresolved evidence ambiguity"),
-            ("unresolved_findings", "unresolved actionable finding or thread"),
-        ):
-            values = audit.get(field, [])
-            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
-                raise ControllerError(f"review-stop audit has malformed {field}")
-            if values:
-                raise ControllerError(f"review stop is blocked by an {description}")
-        historical_unmatched = audit.get("historical_unmatched_responses", [])
-        if not isinstance(historical_unmatched, Sequence) or isinstance(historical_unmatched, (str, bytes)):
-            raise ControllerError("review-stop audit has malformed historical unmatched-response evidence")
-        if historical_unmatched and not allow_historical_unmatched:
-            raise ControllerError("review stop is blocked by historical unmatched evidence outside a direct Hosted stop")
+
         terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
         retained_ambiguities = audit.get("retained_ambiguous", [])
         if not isinstance(terminal_ambiguities, Sequence) or isinstance(terminal_ambiguities, (str, bytes)):
@@ -1564,11 +1549,88 @@ class ReviewController:
             or len(retained_fingerprints) != len(retained_ambiguities)
             or len(set(terminal_fingerprints)) != len(terminal_fingerprints)
             or len(set(retained_fingerprints)) != len(retained_fingerprints)
-            or not set(terminal_fingerprints).issubset(retained_fingerprints)
-            or not set(retained_fingerprints).issubset(terminal_fingerprints)
+        ):
+            raise ControllerError("review-stop audit has malformed terminal ambiguity fingerprints")
+
+        # A terminal response captured against an earlier, proven ancestor head
+        # remains visible in the history but is no longer an active reservation.
+        # The newest terminal response is never historical: it must be retained
+        # by its exact fingerprint, and unknown heads remain blockers.
+        historical_terminal_fingerprints: set[str] = set()
+        terminal_times = [
+            parse_timestamp(item.get("response_at")) if isinstance(item, Mapping) else None
+            for item in terminal_ambiguities
+        ]
+        if (
+            allow_historical_unmatched
+            and terminal_ambiguities
+            and all(timestamp is not None for timestamp in terminal_times)
+        ):
+            newest_time = max(timestamp for timestamp in terminal_times if timestamp is not None)
+            newest_fingerprints = {
+                fingerprint
+                for fingerprint, timestamp in zip(terminal_fingerprints, terminal_times, strict=True)
+                if timestamp == newest_time
+            }
+            if not newest_fingerprints.issubset(retained_fingerprints):
+                raise ControllerError("review stop requires exact retention of the latest terminal ambiguity")
+            for item, fingerprint, timestamp in zip(
+                terminal_ambiguities, terminal_fingerprints, terminal_times, strict=True
+            ):
+                captured_head = item.get("captured_head") if isinstance(item, Mapping) else None
+                if (
+                    timestamp is None
+                    or timestamp >= newest_time
+                    or not isinstance(captured_head, str)
+                    or re.fullmatch(r"[0-9a-fA-F]{40}", captured_head) is None
+                    or captured_head.casefold() == current.child_head.casefold()
+                    or fingerprint in retained_fingerprints
+                ):
+                    continue
+                try:
+                    is_historical_ancestor = self.git.is_ancestor(captured_head, current.child_head)
+                except (OSError, subprocess.SubprocessError, ValueError):
+                    is_historical_ancestor = False
+                if is_historical_ancestor:
+                    historical_terminal_fingerprints.add(fingerprint)
+
+        if (
+            not set(retained_fingerprints).issubset(terminal_fingerprints)
+            or set(retained_fingerprints) != set(retained_ambiguous_fingerprints)
+            or not (set(terminal_fingerprints) - historical_terminal_fingerprints).issubset(retained_fingerprints)
         ):
             raise ControllerError("review stop is blocked by unretained terminal ambiguity")
-        return audit
+
+        normalized_audit = dict(audit)
+        normalized_audit["historical_terminal_fingerprints"] = tuple(sorted(historical_terminal_fingerprints))
+        for field, description in (
+            ("active_reservations", "active review or reservation"),
+            ("unmatched_responses", "unmatched review response"),
+            ("ambiguous_responses", "unresolved evidence ambiguity"),
+            ("unresolved_findings", "unresolved actionable finding or thread"),
+        ):
+            values = normalized_audit.get(field, [])
+            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+                raise ControllerError(f"review-stop audit has malformed {field}")
+            if field in {"active_reservations", "ambiguous_responses"} and historical_terminal_fingerprints:
+                expected = (
+                    ("ambiguous", len(historical_terminal_fingerprints))
+                    if field == "active_reservations"
+                    else ("unattributed trigger response", len(historical_terminal_fingerprints))
+                )
+                if values.count(expected[0]) == expected[1] and expected[1] > 0:
+                    values = list(values)
+                    for _ in range(expected[1]):
+                        values.remove(expected[0])
+                    normalized_audit[field] = values
+            if values:
+                raise ControllerError(f"review stop is blocked by an {description}")
+        historical_unmatched = audit.get("historical_unmatched_responses", [])
+        if not isinstance(historical_unmatched, Sequence) or isinstance(historical_unmatched, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed historical unmatched-response evidence")
+        if historical_unmatched and not allow_historical_unmatched:
+            raise ControllerError("review stop is blocked by historical unmatched evidence outside a direct Hosted stop")
+        return normalized_audit
 
     def _stop_ambiguity_pins(
         self,
@@ -1577,6 +1639,7 @@ class ReviewController:
         reason: str | None,
         audit: Mapping[str, Any],
     ) -> tuple[tuple[str, ...], str | None]:
+        historical_fingerprints = set(audit.get("historical_terminal_fingerprints", ()))
         candidates = [
             value
             for history in histories.values()
@@ -1599,7 +1662,7 @@ class ReviewController:
         if (
             any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in candidate_fingerprints)
             or len(set(candidate_fingerprints)) != len(candidate_fingerprints)
-            or set(fingerprints) != set(candidate_fingerprints)
+            or set(fingerprints) | historical_fingerprints != set(candidate_fingerprints)
         ):
             raise ControllerError("retained ambiguity fingerprints must identify every current terminal response")
         audit_fingerprints = [
@@ -1640,6 +1703,9 @@ class ReviewController:
         )
         retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
             histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
+        )
+        non_blocking_ambiguity_fingerprints = set(retained_fingerprints) | set(
+            audit.get("historical_terminal_fingerprints", ())
         )
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
@@ -1700,7 +1766,7 @@ class ReviewController:
                 ):
                     if (
                         _field(value, "terminal_ambiguous") is True
-                        and _field(value, "fingerprint") in retained_fingerprints
+                        and _field(value, "fingerprint") in non_blocking_ambiguity_fingerprints
                     ):
                         continue
                     checkpoint = _field(value, "checkpoint", "checkpoint_id")
@@ -1751,7 +1817,7 @@ class ReviewController:
                 if isinstance(checkpoint_id, str) and checkpoint_id.startswith(("trigger:", "pending-capture:")):
                     if (
                         _field(value, "terminal_ambiguous") is True
-                        and _field(value, "fingerprint") in retained_fingerprints
+                        and _field(value, "fingerprint") in non_blocking_ambiguity_fingerprints
                     ):
                         continue
                     raise ControllerError(f"{selected.value} channel has pending or ambiguous review evidence")
