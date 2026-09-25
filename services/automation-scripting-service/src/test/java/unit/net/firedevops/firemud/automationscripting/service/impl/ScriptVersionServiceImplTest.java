@@ -25,12 +25,28 @@ class ScriptVersionServiceImplTest {
   }
 
   @Test
-  void notifyUpdateSkipsTemporalTrackingForExistingReadinessIdentity() {
+  void notifyUpdateStartsTemporalTrackingForActiveReadinessRetry() {
     ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
     TemporalScriptPatchReadinessOrchestrator orchestrator =
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
+    when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(true);
+
+    service.notifyUpdate("1", "patch-1", List.of("guard-script"));
+
+    verify(commandService).notifyUpdate("1", "patch-1", List.of("guard-script"));
+    verify(orchestrator).startTracking("1", "patch-1");
+  }
+
+  @Test
+  void notifyUpdateSkipsTemporalTrackingWhenReadinessIsTerminal() {
+    ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
+    TemporalScriptPatchReadinessOrchestrator orchestrator =
+        mock(TemporalScriptPatchReadinessOrchestrator.class);
+    ScriptVersionServiceImpl service =
+        new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
+
     when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(false);
 
     service.notifyUpdate("1", "patch-1", List.of("guard-script"));

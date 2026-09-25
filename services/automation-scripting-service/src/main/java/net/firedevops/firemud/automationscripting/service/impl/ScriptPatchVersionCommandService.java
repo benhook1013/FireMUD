@@ -11,8 +11,10 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -77,10 +79,13 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
-    if (!readinessProjectionService.beginPatchReadiness(
-        tenantId, scriptPatchVersion, defs.size())) {
+    boolean readinessCreated =
+        readinessProjectionService.beginPatchReadiness(tenantId, scriptPatchVersion, defs.size());
+    if (!readinessCreated && !hasActiveReadinessIdentity(tenantId, scriptPatchVersion)) {
       return false;
     }
+    // Only new or explicitly active readiness identities reach this point. Replay downstream
+    // work under the same idempotency keys so an active retry can finish missing steps.
     defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
     scheduleDefinitionService.refreshPatchSchedules(
         tenantId, scriptPatchVersion, defs, affectedScripts);
@@ -92,6 +97,17 @@ public class ScriptPatchVersionCommandService {
     }
     logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
     return true;
+  }
+
+  private boolean hasActiveReadinessIdentity(String tenantId, String scriptPatchVersion) {
+    return readinessProjectionService
+        .getProjection(tenantId, scriptPatchVersion)
+        .map(ReadinessStatusSummary::status)
+        .map(
+            status ->
+                status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_PENDING_VALIDATION
+                    || status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING)
+        .orElse(false);
   }
 
   private void admitOnLoad(

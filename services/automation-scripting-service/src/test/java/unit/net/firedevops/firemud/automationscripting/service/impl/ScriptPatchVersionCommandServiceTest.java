@@ -10,12 +10,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -124,7 +127,7 @@ class ScriptPatchVersionCommandServiceTest {
   }
 
   @Test
-  void notifyUpdateSkipsDownstreamWorkForExistingReadinessIdentity() {
+  void notifyUpdateReplaysDownstreamWorkForExistingReadinessIdentity() {
     ScriptDefinition def = new ScriptDefinition();
     def.setTenantId(1L);
     def.setName("npc-barkeep");
@@ -133,11 +136,113 @@ class ScriptPatchVersionCommandServiceTest {
             1L, "v1-script.1", List.of("npc-barkeep")))
         .thenReturn(List.of(def));
     when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", 1)).thenReturn(false);
+    when(readinessProjectionService.getProjection("1", "v1-script.1"))
+        .thenReturn(
+            Optional.of(
+                new ReadinessStatusSummary(
+                    "1",
+                    "v1-script.1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING,
+                    "tenant_readiness_running",
+                    "",
+                    1L)));
+
+    org.assertj.core.api.Assertions.assertThat(
+            service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+        .isTrue();
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    verify(scheduleDefinitionService)
+        .refreshPatchSchedules("1", "v1-script.1", List.of(def), List.of("npc-barkeep"));
+    verify(scheduleInstanceService).reconcilePinnedPatchInstances("1", "v1-script.1");
+    ArgumentCaptor<TriggerScriptEventRequest> requestCaptor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(scriptEventIngressService)
+        .admit(requestCaptor.capture(), eq("automation-scripting-service"));
+    org.assertj.core.api.Assertions.assertThat(requestCaptor.getValue().getScriptEventId())
+        .isEqualTo("onload:1:v1-script.1:npc-barkeep");
+  }
+
+  @Test
+  void notifyUpdateSkipsReplayForSupersededReadinessIdentity() {
+    ScriptDefinition def = new ScriptDefinition();
+    def.setTenantId(1L);
+    def.setName("npc-barkeep");
+    def.setDefinition("{}");
+    when(repository.findByTenantIdAndScriptVersionAndNameIn(
+            1L, "v1-script.1", List.of("npc-barkeep")))
+        .thenReturn(List.of(def));
+    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", 1)).thenReturn(false);
+    when(readinessProjectionService.getProjection("1", "v1-script.1"))
+        .thenReturn(
+            Optional.of(
+                new ReadinessStatusSummary(
+                    "1",
+                    "v1-script.1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_SUPERSEDED,
+                    "superseded_by_newer_patch",
+                    "v1-script.2",
+                    2L)));
 
     org.assertj.core.api.Assertions.assertThat(
             service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
         .isFalse();
+
     verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    verify(readinessProjectionService).getProjection("1", "v1-script.1");
+    verifyNoInteractions(
+        scheduleDefinitionService, scheduleInstanceService, scriptEventIngressService);
+  }
+
+  @Test
+  void notifyUpdateSkipsReplayWhenReadinessProjectionIsMissing() {
+    ScriptDefinition def = new ScriptDefinition();
+    def.setTenantId(1L);
+    def.setName("npc-barkeep");
+    def.setDefinition("{}");
+    when(repository.findByTenantIdAndScriptVersionAndNameIn(
+            1L, "v1-script.1", List.of("npc-barkeep")))
+        .thenReturn(List.of(def));
+    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", 1)).thenReturn(false);
+    when(readinessProjectionService.getProjection("1", "v1-script.1"))
+        .thenReturn(Optional.empty());
+
+    org.assertj.core.api.Assertions.assertThat(
+            service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+        .isFalse();
+
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    verify(readinessProjectionService).getProjection("1", "v1-script.1");
+    verifyNoInteractions(
+        scheduleDefinitionService, scheduleInstanceService, scriptEventIngressService);
+  }
+
+  @Test
+  void notifyUpdateSkipsReplayForUnrecognizedReadinessStatus() {
+    ScriptDefinition def = new ScriptDefinition();
+    def.setTenantId(1L);
+    def.setName("npc-barkeep");
+    def.setDefinition("{}");
+    when(repository.findByTenantIdAndScriptVersionAndNameIn(
+            1L, "v1-script.1", List.of("npc-barkeep")))
+        .thenReturn(List.of(def));
+    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", 1)).thenReturn(false);
+    when(readinessProjectionService.getProjection("1", "v1-script.1"))
+        .thenReturn(
+            Optional.of(
+                new ReadinessStatusSummary(
+                    "1",
+                    "v1-script.1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED,
+                    "unknown",
+                    "",
+                    1L)));
+
+    org.assertj.core.api.Assertions.assertThat(
+            service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+        .isFalse();
+
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    verify(readinessProjectionService).getProjection("1", "v1-script.1");
     verifyNoInteractions(
         scheduleDefinitionService, scheduleInstanceService, scriptEventIngressService);
   }
