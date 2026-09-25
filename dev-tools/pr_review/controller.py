@@ -1489,6 +1489,7 @@ class ReviewController:
         retained_ambiguous_fingerprints: tuple[str, ...],
         *,
         allow_historical_unmatched: bool = False,
+        allow_historical_terminal_ambiguity: bool = False,
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
@@ -1562,7 +1563,7 @@ class ReviewController:
             for item in terminal_ambiguities
         ]
         if (
-            allow_historical_unmatched
+            allow_historical_terminal_ambiguity
             and terminal_ambiguities
             and all(timestamp is not None for timestamp in terminal_times)
         ):
@@ -1688,6 +1689,7 @@ class ReviewController:
         *,
         checkpoint_pin: str | None,
         allow_historical_unmatched: bool = False,
+        allow_historical_terminal_ambiguity: bool = False,
         retained_ambiguous_fingerprints: tuple[str, ...] = (),
         ambiguity_reason: str | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
@@ -1700,6 +1702,7 @@ class ReviewController:
             current,
             retained_ambiguous_fingerprints,
             allow_historical_unmatched=allow_historical_unmatched,
+            allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
         )
         retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
             histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
@@ -1907,10 +1910,8 @@ class ReviewController:
                 current,
                 reconciliation_result,
                 checkpoint_pin=allocation.stop_checkpoint,
-                allow_historical_unmatched=(
-                    allocation.stop_basis == "direct_human"
-                    and allocation.channel == policy.Channel.HOSTED.value
-                ),
+                allow_historical_unmatched=allocation.stop_basis == "direct_human",
+                allow_historical_terminal_ambiguity=allocation.stop_basis == "direct_human",
                 retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                 ambiguity_reason=allocation.retained_ambiguous_reason,
             )
@@ -2643,9 +2644,8 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=checkpoint,
-                allow_historical_unmatched=(
-                    basis == "direct_human" and selected == policy.Channel.HOSTED
-                ),
+                allow_historical_unmatched=basis == "direct_human",
+                allow_historical_terminal_ambiguity=basis == "direct_human",
                 retained_ambiguous_fingerprints=retained_fingerprint_values,
                 ambiguity_reason=ambiguity_reason,
             )
