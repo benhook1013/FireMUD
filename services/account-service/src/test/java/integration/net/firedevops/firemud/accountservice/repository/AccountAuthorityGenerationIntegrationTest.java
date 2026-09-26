@@ -142,7 +142,7 @@ class AccountAuthorityGenerationIntegrationTest {
     assertThat(snapshot.memberships())
         .extracting(state -> state.scope())
         .containsExactly(membershipAA);
-    assertThat(snapshot.issuanceFence().value()).isEqualTo(3L);
+    assertThat(snapshot.issuanceFence().value()).isEqualTo(1L);
     assertThat(
             inTransaction(transaction, () -> repository.read(lowerIssuerScope)).scope().issuerId())
         .isEqualTo("issuer-a");

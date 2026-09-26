@@ -45,7 +45,8 @@ public class AccountAuthorityGenerationRepository {
     if (scope.kind() == ScopeKind.MEMBERSHIP) {
       requireAccountState(scope.accountId(), true);
       readScopeState(AuthorityScope.tenant(scope.tenantId()), true);
-      advanceIssuanceFence(scope.accountId(), null);
+      // Establishing a never-joined pair does not invalidate existing callers. Only an
+      // explicit authority advance may change the account-local issuance fence.
     }
     insertGeneration(scope);
     if (scope.kind() == ScopeKind.ACCOUNT) {

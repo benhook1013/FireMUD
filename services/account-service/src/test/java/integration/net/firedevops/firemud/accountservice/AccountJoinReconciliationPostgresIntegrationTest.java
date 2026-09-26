@@ -116,7 +116,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertOperation(fixture, "COMMITTED", "JOINED", 0, null);
     assertThat(
             dsl.resultQuery(
-                    "SELECT COUNT(*) FROM account_join_operations WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED' AND membership_id = ? AND outcome_membership_version = 1 AND outcome_membership_authority_generation = 1",
+                    "SELECT COUNT(*) FROM account_join_operations WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED' AND membership_id = ? AND outcome_membership_version = 2 AND outcome_membership_authority_generation = 1",
                     fixture.requestId(),
                     membershipId)
                 .fetchOne(0, Long.class))
@@ -168,7 +168,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
             row -> {
               assertThat(row.get("lifecycle_state", String.class)).isEqualTo("ACTIVE");
               assertThat(row.get("gameplay_admission_allowed", Boolean.class)).isTrue();
-              assertThat(row.get("membership_version", Long.class)).isEqualTo(1L);
+              assertThat(row.get("membership_version", Long.class)).isEqualTo(2L);
               assertThat(row.get("membership_authority_generation", Long.class)).isEqualTo(1L);
             });
     assertThat(membershipAuthorityGeneration(fixture)).isEqualTo(2L);
@@ -363,22 +363,44 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     dsl.transaction(
         configuration -> {
           org.jooq.DSLContext transactionDsl = org.jooq.impl.DSL.using(configuration);
+          var membershipState =
+              transactionDsl.fetchOne(
+                  "SELECT generation, source_version FROM account_authority_generations "
+                      + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? "
+                      + "AND tenant_uuid = ? FOR UPDATE",
+                  fixture.accountUuid(),
+                  fixture.tenantUuid());
+          assertThat(membershipState).isNotNull();
+          long membershipGeneration = membershipState.get("generation", Long.class);
+          long membershipSourceVersion = membershipState.get("source_version", Long.class);
           int generationUpdates =
               transactionDsl.execute(
                   "UPDATE account_authority_generations "
                       + "SET generation = generation + 1, source_version = source_version + 1 "
                       + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? "
-                      + "AND tenant_uuid = ? AND generation = 1 AND source_version = 1",
+                      + "AND tenant_uuid = ? AND generation = ? AND source_version = ?",
                   fixture.accountUuid(),
-                  fixture.tenantUuid());
+                  fixture.tenantUuid(),
+                  membershipGeneration,
+                  membershipSourceVersion);
           assertThat(generationUpdates).isEqualTo(1);
+          var fenceState =
+              transactionDsl.fetchOne(
+                  "SELECT issuance_fence, source_version FROM account_authority_issuance_fences "
+                      + "WHERE account_uuid = ? FOR UPDATE",
+                  fixture.accountUuid());
+          assertThat(fenceState).isNotNull();
+          long issuanceFence = fenceState.get("issuance_fence", Long.class);
+          long fenceSourceVersion = fenceState.get("source_version", Long.class);
           int fenceUpdates =
               transactionDsl.execute(
                   "UPDATE account_authority_issuance_fences "
                       + "SET issuance_fence = issuance_fence + 1, "
                       + "source_version = source_version + 1 "
-                      + "WHERE account_uuid = ? AND issuance_fence = 1 AND source_version = 1",
-                  fixture.accountUuid());
+                      + "WHERE account_uuid = ? AND issuance_fence = ? AND source_version = ?",
+                  fixture.accountUuid(),
+                  issuanceFence,
+                  fenceSourceVersion);
           assertThat(fenceUpdates).isEqualTo(1);
         });
   }
@@ -482,7 +504,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(countMemberships(fixture)).isEqualTo(1L);
     assertThat(
             dsl.resultQuery(
-                    "SELECT COUNT(*) FROM account_tenant_membership WHERE id = ? AND account_id = ? AND tenant_id = ? AND lifecycle_state = 'ACTIVE' AND gameplay_admission_allowed = TRUE AND authority_provenance = 'EXPLICIT_JOIN' AND membership_version = 1 AND membership_authority_generation = 1",
+                    "SELECT COUNT(*) FROM account_tenant_membership WHERE id = ? AND account_id = ? AND tenant_id = ? AND lifecycle_state = 'ACTIVE' AND gameplay_admission_allowed = TRUE AND authority_provenance = 'EXPLICIT_JOIN' AND membership_version = 2 AND membership_authority_generation = 1",
                     membershipId,
                     fixture.accountId(),
                     fixture.tenantId())
@@ -537,7 +559,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(event.accountId()).isEqualTo(fixture.accountUuid().toString());
     assertThat(event.tenantId()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(event.membershipLifecycleState()).isEqualTo("ACTIVE");
-    assertThat(event.membershipVersion()).isEqualTo("1");
+    assertThat(event.membershipVersion()).isEqualTo("2");
     assertThat(event.roles()).containsExactly("player");
     assertThat(event.gameplayAdmissionAllowed()).isTrue();
     assertThat(event.canonicalJson()).isEqualTo(payloadJson);

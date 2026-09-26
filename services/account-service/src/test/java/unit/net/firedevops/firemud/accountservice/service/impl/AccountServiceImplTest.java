@@ -214,6 +214,9 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(AccountTenantMembership.class)))
         .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireNewMembershipBaseline(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(new AccountMembershipAuthorityEventProducer.NewMembershipBaseline(1L, 1L));
     when(membershipAuthorityEventProducer.publishReactivatedMembershipChange(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
@@ -452,7 +455,7 @@ class AccountServiceImplTest {
     assertTrue(first.success());
     assertEquals("JOINED", first.outcomeCode());
     assertEquals(701L, first.membershipId());
-    assertEquals(1L, first.membershipVersion());
+    assertEquals(2L, first.membershipVersion());
     assertTrue(retried.success());
     assertTrue(retried.replayed());
     assertNotNull(onboardingToken.connectToken());
@@ -475,7 +478,7 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountTenantMembershipRoleSnapshotRepository)
         .replace(
             org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
-            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.eq(2L),
             roleSnapshotCaptor.capture());
     assertEquals(java.util.List.of("player"), roleSnapshotCaptor.getValue().stream().toList());
     org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
@@ -487,7 +490,9 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.contains("join-attempt-1"));
     assertEquals("COMMITTED", retainedOperation.get().status());
     org.mockito.Mockito.verify(membershipAuthorityEventProducer)
-        .initializeNewMembershipAuthority(11L, 7L);
+        .preparePairAuthorityForJoin(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireNewMembershipBaseline(11L, 7L);
     org.mockito.Mockito.verify(membershipAuthorityEventProducer)
         .publishNewMembershipChange(
             org.mockito.ArgumentMatchers.eq(11L),
@@ -505,8 +510,8 @@ class AccountServiceImplTest {
                     new JoinPublicProductionRequest("different-scope", "join-attempt-1")));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
 
-    when(accountTenantMembershipRoleSnapshotRepository.findForUpdate(11L, 7L, 701L, 1L))
-        .thenReturn(Optional.of(new RoleSnapshot(11L, 7L, 701L, 1L, java.util.List.of("player"))));
+    when(accountTenantMembershipRoleSnapshotRepository.findForUpdate(11L, 7L, 701L, 2L))
+        .thenReturn(Optional.of(new RoleSnapshot(11L, 7L, 701L, 2L, java.util.List.of("player"))));
     when(membershipTransitionReceiptRepository.findLatestReceipt(11L, 7L))
         .thenReturn(
             Optional.of(
@@ -531,7 +536,7 @@ class AccountServiceImplTest {
             11L,
             7L,
             joinedMembership.get(),
-            new RoleSnapshot(11L, 7L, 701L, 1L, java.util.List.of("player")),
+            new RoleSnapshot(11L, 7L, 701L, 2L, java.util.List.of("player")),
             "join-attempt-1",
             false);
   }
@@ -832,7 +837,7 @@ class AccountServiceImplTest {
     assertNotNull(retainedOperation.get().intentDigest());
     assertEquals(null, retainedOperation.get().requestDigest());
     assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
-    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(3))
         .commit(org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(1))
         .rollback(org.mockito.ArgumentMatchers.any());

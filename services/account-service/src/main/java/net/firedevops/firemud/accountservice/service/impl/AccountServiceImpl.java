@@ -610,6 +610,32 @@ public class AccountServiceImpl implements AccountService {
       requireMatchingJoinIntent(claimed, requestId, callerBinding, retained);
     }
 
+    JoinOperation beforeAttempt =
+        accountJoinOperationRepository
+            .find(requestId)
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        "AUTH_UNAVAILABLE", "JOIN request claim is not yet readable"));
+    if ("PENDING".equals(beforeAttempt.status())) {
+      try {
+        // A first JOIN consumes a previously committed positive absence baseline; creating it
+        // inside the JOIN transaction would never make that baseline durable while absent.
+        joinTransactionTemplate.execute(
+            transactionStatus -> {
+              membershipAuthorityEventProducer.preparePairAuthorityForJoin(
+                  accountId, retained.tenantId());
+              return null;
+            });
+      } catch (RuntimeException unavailablePairAuthority) {
+        recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE",
+            "JOIN membership pair authority is unavailable; retry the same request",
+            unavailablePairAuthority);
+      }
+    }
+
     try {
       return joinTransactionTemplate.execute(
           transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
@@ -725,13 +751,14 @@ public class AccountServiceImpl implements AccountService {
     boolean transitioned = false;
     String membershipTransitionType = null;
     if (membership == null) {
-      membershipAuthorityEventProducer.initializeNewMembershipAuthority(
-          accountId, scope.tenantId());
+      var absenceBaseline =
+          membershipAuthorityEventProducer.requireNewMembershipBaseline(
+              accountId, scope.tenantId());
       membership = new AccountTenantMembership();
       membership.setAccount(requireAccount(accountId));
       membership.setTenantId(scope.tenantId());
-      membership.setMembershipVersion(1L);
-      membership.setMembershipAuthorityGeneration(1L);
+      membership.setMembershipVersion(Math.addExact(absenceBaseline.membershipVersion(), 1L));
+      membership.setMembershipAuthorityGeneration(absenceBaseline.membershipAuthorityGeneration());
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
@@ -741,9 +768,13 @@ public class AccountServiceImpl implements AccountService {
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
-      RoleSnapshot roleSnapshot =
-          requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
-      membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
+      RoleSnapshot roleSnapshot;
+      try {
+        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+        membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
+      } catch (IllegalStateException contradictoryRetainedEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
       membershipAuthorityEventProducer.requireExistingMembershipAuthorityMatches(
           accountId, scope.tenantId(), membership, roleSnapshot);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
@@ -764,19 +795,27 @@ public class AccountServiceImpl implements AccountService {
       membershipTransitionType = "MEMBERSHIP_REACTIVATED";
     } else if ("ACTIVE".equals(membership.getLifecycleState())
         && membership.isGameplayAdmissionAllowed()) {
-      RoleSnapshot roleSnapshot =
-          requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
-      if (!roleSnapshot.roles().contains("player")) {
-        throw new IllegalStateException(
-            "Active Account membership lacks its required player role snapshot");
+      RoleSnapshot roleSnapshot;
+      try {
+        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+      } catch (IllegalStateException contradictoryRoleEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
       }
-      MembershipTransitionReceipt receipt =
-          membershipTransitionReceiptRepository
-              .findLatestReceipt(accountId, scope.tenantId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Active Account membership lacks a provisional transition receipt"));
+      if (!roleSnapshot.roles().contains("player")) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
+      MembershipTransitionReceipt receipt;
+      try {
+        receipt =
+            membershipTransitionReceiptRepository
+                .findLatestReceipt(accountId, scope.tenantId())
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Active Account membership lacks a provisional transition receipt"));
+      } catch (IllegalStateException contradictoryReceiptEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
       Checkpoint checkpoint =
           membershipAuthorityEventProducer.requireCurrentMembershipEvent(
               accountId,
