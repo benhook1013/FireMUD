@@ -438,10 +438,12 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
         if type(raw) is not int or type(accepted) is not int or raw < 0 or not 0 <= accepted <= raw:
             continue
         reviewed_head = _field(item, "head", "reviewed_head")
+        observed_at = parse_timestamp(_field(item, "observed_at"))
         results.append(
             {
                 "raw": raw,
                 "accepted": accepted,
+                "completed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
                 "attributable": _field(item, "attributable") is True,
                 "current_head": isinstance(reviewed_head, str) and reviewed_head == current_head,
                 "non_counting": _field(item, "non_counting") is True,

@@ -2204,25 +2204,47 @@ class ControllerTests(unittest.TestCase):
 
     def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
         hosted = [
-            Evidence(1, PARENT, f"h{index}", raw=index, accepted=1, completed=True, attributable=True,
-                     non_counting=index == 2)
+            {
+                **dataclasses.asdict(Evidence(1, PARENT, f"h{index}", raw=index, accepted=1,
+                                               completed=True, attributable=True,
+                                               non_counting=index == 2)),
+                "observed_at": f"2026-09-{index:02d}T12:00:00Z",
+            }
             for index in range(1, 6)
         ] + [
             Evidence(1, HEAD_1, "h6", raw=0, accepted=0, completed=True, attributable=True),
-            Evidence(1, HEAD_1, "unlinked", raw=2, accepted=0, completed=True, attributable=False),
+            {
+                **dataclasses.asdict(Evidence(1, HEAD_1, "unlinked", raw=2, accepted=0,
+                                               completed=True, attributable=False)),
+                "observed_at": "invalid",
+            },
             Evidence(1, HEAD_1, "pending", raw=0, accepted=0, provisional=True),
             Evidence(1, HEAD_1, "quota", raw=0, accepted=0, rate_limited=True),
         ]
-        cli = [Evidence(1, HEAD_1, "c1", raw=2, accepted=0, completed=True, attributable=True)]
+        cli = [{
+            **dataclasses.asdict(Evidence(1, HEAD_1, "c1", raw=2, accepted=0,
+                                           completed=True, attributable=True)),
+            "observed_at": "2026-09-07T14:30:00+12:00",
+        }]
         controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): hosted, (1, "cli"): cli})
         controller.set_stack([1])
 
         result = controller.status()["prs"][0]
         self.assertEqual(result["review_activity"]["hosted"]["total"], 7)
         self.assertEqual([item["raw"] for item in result["review_activity"]["hosted"]["recent"]], [3, 4, 5, 0, 2])
+        self.assertEqual(
+            [item["completed_at"] for item in result["review_activity"]["hosted"]["recent"]],
+            ["2026-09-03T12:00:00Z", "2026-09-04T12:00:00Z", "2026-09-05T12:00:00Z", None, None],
+        )
+        self.assertEqual(
+            set(result["review_activity"]["hosted"]["recent"][0]),
+            {"raw", "accepted", "completed_at", "attributable", "current_head", "non_counting"},
+        )
+        self.assertFalse(result["review_activity"]["hosted"]["recent"][0]["current_head"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
         self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])
         self.assertEqual(result["review_activity"]["cli"]["total"], 1)
+        self.assertEqual(result["review_activity"]["cli"]["recent"][0]["completed_at"], "2026-09-07T02:30:00Z")
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
 
     def test_status_exposes_current_head_over_ceiling_reason_and_checkpoint_source(self):
