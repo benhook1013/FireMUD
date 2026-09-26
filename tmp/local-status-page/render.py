@@ -198,10 +198,10 @@ def channel_label(channel: str, state: str, pr: int, targets: dict) -> str:
             detail = (
                 "waiting its turn"
                 if target.get("pr") is not None and target.get("pr") != pr and target.get("status") != "UNKNOWN"
-                else "selection unverified"
+                else "request status unknown"
             )
         else:
-            detail = "eligible; selection unverified"
+            detail = "request status unknown"
     else:
         detail = {
             "RATE_LIMITED": "cooldown active",

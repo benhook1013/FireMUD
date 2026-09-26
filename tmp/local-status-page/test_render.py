@@ -28,8 +28,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual("Hosted new request blocked", page.channel_label("hosted", "HELD", 42, targets))
         self.assertEqual("Hosted human bypass", page.channel_label("hosted", "HUMAN_STOPPED", 42, targets))
         self.assertEqual("Hosted human bypass", page.channel_label("hosted", "OVERRIDE", 42, targets))
-        self.assertEqual("CLI eligible; selection unverified", page.channel_label("cli", "READY", 42, {}))
-        self.assertEqual("CLI selection unverified", page.channel_label("cli", "READY", 42,
+        self.assertEqual("CLI request status unknown", page.channel_label("cli", "READY", 42, {}))
+        self.assertEqual("CLI request status unknown", page.channel_label("cli", "READY", 42,
                          {"cli": {"pr": None, "status": "UNKNOWN"}}))
 
     def fixture(self):
@@ -151,7 +151,7 @@ class StatusPageTest(unittest.TestCase):
         front_evidence = front.split('<div class="front-evidence">', 1)[1]
         self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span>/'
                       '<span class="deletions">−531</span> lines</span>', front_evidence)
-        self.assertIn('<span class="front-controller-state">Hosted eligible; selection unverified · CLI new request blocked</span>', front_evidence)
+        self.assertIn('<span class="front-controller-state">Hosted request status unknown · CLI new request blocked</span>', front_evidence)
         self.assertNotIn('front-fact', front_copy)
         self.assertLess(front_evidence.index('<div class="front-facts">'), front_evidence.index('<div class="activity-grid">'))
         self.assertNotIn('At the review front', front)
@@ -247,7 +247,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('queue-status-front">REVIEW FRONT', row(42))
         self.assertIn('queue-status-reviewing">REVIEWING', row(43))
         self.assertIn('queue-status-queued">QUEUED', row(44))
-        self.assertIn('Hosted human bypass · CLI eligible; selection unverified', row(44))
+        self.assertIn('Hosted human bypass · CLI request status unknown', row(44))
         self.assertIn('queue-status-review-closed">REVIEW CLOSED', row(45))
         self.assertIn('Hosted human bypass · CLI human bypass', row(45))
         self.assertIn('queue-status-pending">PENDING', row(46))
@@ -534,7 +534,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                   "merged_at": {43: (NOW - timedelta(minutes=12)).isoformat()},
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
-        self.assertIn('<span class="sub">Hosted new request blocked · CLI eligible; selection unverified</span>', result)
+        self.assertIn('<span class="sub">Hosted new request blocked · CLI request status unknown</span>', result)
         self.assertIn('<li id="pr-43" class="merged"><span class="order" aria-label="Queue position 2">02</span>', result)
         merged_row = result.split('<li id="pr-43"', 1)[1].split('</li>', 1)[0]
         front_row = result.split('<li id="pr-42"', 1)[1].split('</li>', 1)[0]
@@ -546,7 +546,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                       '<span class="sub"><time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time></span>', merged_row)
         self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-front">REVIEW FRONT</span>'
-                      '<span class="sub">Hosted new request blocked · CLI eligible; selection unverified</span>', front_row)
+                      '<span class="sub">Hosted new request blocked · CLI request status unknown</span>', front_row)
         self.assertNotIn('Hosted parent changed', merged_row)
         self.assertNotIn('CLI parent changed', merged_row)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
@@ -589,8 +589,8 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertIn('<span class="sub">Hosted new request blocked · CLI new request blocked</span>', row(42))
         self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted parent changed · CLI parent changed</span>', row(43))
         self.assertIn('<span class="sub">Hosted parent changed · CLI parent changed</span>', row(43))
-        self.assertIn('<span class="sub">Hosted cooldown active · CLI eligible; selection unverified</span>', row(44))
-        self.assertIn('<span class="sub">Hosted eligible; selection unverified · CLI eligible; selection unverified</span>', row(45))
+        self.assertIn('<span class="sub">Hosted cooldown active · CLI request status unknown</span>', row(44))
+        self.assertIn('<span class="sub">Hosted request status unknown · CLI request status unknown</span>', row(45))
         self.assertEqual(2, row(46).count('class="sub"'))
         self.assertNotIn("Ready for review", result)
         self.assertNotIn("Review eligibility unavailable", result)
@@ -646,7 +646,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         def row(number):
             return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
-        self.assertIn("Hosted eligible; selection unverified · CLI new request blocked", row(42))
+        self.assertIn("Hosted request status unknown · CLI new request blocked", row(42))
         self.assertIn("Hosted new request blocked · CLI new request blocked", row(43))
         self.assertIn("Hosted new request blocked · CLI parent changed", row(44))
         self.assertIn("Hosted human bypass · CLI new request blocked", row(45))
