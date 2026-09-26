@@ -274,8 +274,7 @@ public final class MembershipAuthorityEventV1Codec {
       throw invalid("event.membershipVersion", "must be a one-tenant version map");
     }
     if (membershipVersion.size() != 1 || !membershipVersion.has(eventTenantId)) {
-      throw invalid(
-          "event.membershipVersion", "must contain exactly the event tenantId key");
+      throw invalid("event.membershipVersion", "must contain exactly the event tenantId key");
     }
     requirePositiveDecimal(membershipVersion, eventTenantId, "event.membershipVersion");
   }
