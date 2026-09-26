@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
   @Test
-  void authenticationCanonicalizesMappedEmailAndMissingMembershipDeniesAdmission()
+  void authenticationCanonicalizesMappedEmailAndMembershipLifecycleMatchesAdmission()
       throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
@@ -33,17 +33,26 @@ class AccountRuntimeStubServerTest {
                     .getAccountId())
             .isEqualTo("7");
 
-        server.setMembershipExists(false);
+        var request =
+            GetTenantMembershipForRuntimeRequest.newBuilder()
+                .setAccountId("7")
+                .setTenantId("1")
+                .setRequestId("request-1")
+                .build();
+        assertThat(stub.getTenantMembershipForRuntime(request).getMembershipLifecycleState())
+            .isEqualTo("ACTIVE");
 
-        var membership =
-            stub.getTenantMembershipForRuntime(
-                GetTenantMembershipForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
-                    .setTenantId("1")
-                    .setRequestId("request-1")
-                    .build());
+        server.denyGameplayAdmission();
+        var inactive = stub.getTenantMembershipForRuntime(request);
+        assertThat(inactive.getMembershipExists()).isTrue();
+        assertThat(inactive.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(inactive.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+
+        server.setMembershipExists(false);
+        var membership = stub.getTenantMembershipForRuntime(request);
         assertThat(membership.getMembershipExists()).isFalse();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");
       } finally {
         channel.shutdownNow();
       }
