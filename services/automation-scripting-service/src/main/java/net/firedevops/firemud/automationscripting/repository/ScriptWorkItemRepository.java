@@ -828,13 +828,13 @@ public class ScriptWorkItemRepository {
   private static void requireCoherentPluginFence(ScriptWorkItem entity) {
     AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
         entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
-    boolean hasPluginId = !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginId()).isBlank();
+    boolean hasPluginId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginId()).isBlank();
     boolean hasPluginVersionId =
         !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginVersionId()).isBlank();
     if (!hasPluginId && !hasPluginVersionId) {
       if (entity.getPluginActivationEpoch() != 0L || entity.getLifecycleRevision() != 0L) {
-        throw new IllegalArgumentException(
-            "plugin lifecycle evidence requires plugin identity");
+        throw new IllegalArgumentException("plugin lifecycle evidence requires plugin identity");
       }
     }
   }
