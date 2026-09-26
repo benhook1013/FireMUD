@@ -36,7 +36,12 @@ from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
 from pr_review.runtime import LiveEvidence
-from pr_review.state import LegacyEvidenceTransition, StateStore, observation_fingerprint
+from pr_review.state import (
+    LegacyEvidenceTransition,
+    StackReconciliationDecision,
+    StateStore,
+    observation_fingerprint,
+)
 
 BASE = "a" * 40
 PARENT = "b" * 40
@@ -2015,6 +2020,35 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["review_targets"]["cli"]["status"], "READY")
         self.assertEqual(report["ordered_prs"], [1, 2, 3])
         self.assertEqual(batch_calls, [tuple(values)])
+
+    def test_status_overview_keeps_coherent_deep_target_with_historic_saved_identity(self):
+        values, heads = _stacked_prs(3)
+        controller = self.make(values, CountingEvidence(), heads=heads)
+        controller.set_stack(list(values))
+        historical_decision = StackReconciliationDecision(
+            pr=1,
+            channel="hosted",
+            checkpoint="historic-parent",
+            prior_head="9" * 40,
+            child_head="8" * 40,
+            parent_identity="develop",
+            parent_head=BASE,
+            merge_base=BASE,
+            patch_id="historic-patch",
+            reason="historical identity predates the coherent current reconciliation",
+        )
+        controller.store.update(
+            lambda state: dataclasses.replace(state, reconciliations=(historical_decision,))
+        )
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "MISSING_EVIDENCE")
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 1)
+        self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
 
     def test_status_overview_expands_only_until_both_channel_targets_are_selected(self):
         values, heads = _stacked_prs(12)

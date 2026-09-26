@@ -454,7 +454,7 @@ Outputs:
 
 #### `SetAutomationAdmissionMode`
 
-Implementation note: the current Automation proto/runtime exposes this mutation and supports `regionId`; the owner now persists immutable request-result history and rejects fingerprint conflicts for exact retries, while the mutable state row remains only the current projection. The proto response and drain-status readback still do not expose the target acknowledgement fields; this remains implementation drift and does not relax the target validation below.
+Implementation note: the current Automation proto/runtime exposes this mutation and supports `regionId`; the owner now persists immutable request-result history and rejects fingerprint conflicts for exact retries, while the mutable state row remains only the current projection. The proto response and drain-status readback may expose matching history fields such as request ID, target mode, outcome, fingerprint, and acknowledgement timestamp, but they do not expose the history row's resulting epoch as a separately identified acknowledgement field or return the complete acknowledgement tuple. This remains implementation drift and does not relax the target validation below.
 Inputs:
 
 - `tenantId`

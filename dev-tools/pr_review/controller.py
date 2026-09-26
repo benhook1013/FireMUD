@@ -3236,7 +3236,10 @@ class ReviewController:
                         or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
                     )
                 )
-                or self._saved_identity_moved(state, pr, batch_live[pr], links[pr])
+                or (
+                    pr not in deep_by_pr
+                    and self._saved_identity_moved(state, pr, batch_live[pr], links[pr])
+                )
             ),
             None,
         )
