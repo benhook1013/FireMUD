@@ -3253,6 +3253,7 @@ class ScriptEventIngressServiceImplTest {
                     .setPayloadJson("{\"too\":\"large\"}")
                     .build()));
     verify(workItemRepository, never()).save(Mockito.any());
+    verify(repository, never()).insertIfAbsentByIdentity(Mockito.any());
     verify(repository, never()).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 

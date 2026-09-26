@@ -2407,14 +2407,32 @@ class ControllerTests(unittest.TestCase):
         controller.decide_stop(pr=1, channel="hosted", reason="hosted channel stop")
         controller.decide_stop(pr=1, channel="cli", reason="CLI channel stop")
         evidence.stop_audit_calls.clear()
+        evidence.history_reads.clear()
 
         controller.status()
 
         self.assertEqual(len(evidence.stop_audit_calls), 1)
+        self.assertEqual(evidence.history_reads.count((1, "hosted")), 1)
+        self.assertEqual(evidence.history_reads.count((1, "cli")), 1)
+        self.assertEqual(len(evidence.history_reads), 2)
         evidence.stop_audit_calls.clear()
-        with self.assertRaisesRegex(ControllerError, "already stopped"):
+        evidence.backing[(1, "hosted")].append(
+            {
+                "pr": 1,
+                "channel": "hosted",
+                "head": HEAD_1,
+                "checkpoint": "trigger:99",
+                "completed": False,
+                "attributable": False,
+                "rate_limited": True,
+                "trigger_id": 99,
+            }
+        )
+        evidence.history_reads.clear()
+        with self.assertRaisesRegex(ControllerError, "unresolved review evidence"):
             controller.decide_stop(pr=1, channel="hosted", reason="recheck current stop")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 1)
+        self.assertGreaterEqual(evidence.history_reads.count((1, "hosted")), 1)
 
     def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
         hosted = [

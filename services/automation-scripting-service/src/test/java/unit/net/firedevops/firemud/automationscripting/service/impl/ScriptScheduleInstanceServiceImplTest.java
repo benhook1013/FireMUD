@@ -219,6 +219,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)

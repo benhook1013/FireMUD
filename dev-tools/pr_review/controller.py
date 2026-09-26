@@ -2020,9 +2020,12 @@ class ReviewController:
         ambiguity_reason: str | None = None,
         acknowledge_over_ceiling: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         histories = {
-            selected: self._policy_history(state, pr, selected, reconciliation)
+            selected: self._policy_history(
+                state, pr, selected, reconciliation, history_cache=history_cache
+            )
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
         acknowledged_over_ceiling_checkpoints: tuple[str, ...] = ()
@@ -2277,6 +2280,7 @@ class ReviewController:
         reconciliation: stack.ReconciliationStatus,
         reconciliation_result: stack.Reconciliation | None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> dict[str, Any]:
         def invalid(reason: str) -> dict[str, Any]:
             return {
@@ -2336,6 +2340,7 @@ class ReviewController:
                     allocation.stop_reason
                 ),
                 stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
         except ControllerError as exc:
             return invalid(str(exc))
@@ -2392,6 +2397,7 @@ class ReviewController:
         state: ReviewState | None = None,
         reconciliation_result: stack.Reconciliation | None = None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> dict[str, Any]:
         """Derive consumption from immutable evidence; never persist a live observation."""
 
@@ -2417,6 +2423,7 @@ class ReviewController:
                 reconciliation,
                 reconciliation_result,
                 stop_audit_cache,
+                history_cache,
             )
 
         if current is None or reconciliation in {
@@ -2542,6 +2549,7 @@ class ReviewController:
                     retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
                     ambiguity_reason=allocation.retained_ambiguous_reason,
                     stop_audit_cache=stop_audit_cache,
+                    history_cache=history_cache,
                 )
             except ControllerError as error:
                 return result("INVALID", str(error), checkpoint, accepted)
@@ -2573,6 +2581,7 @@ class ReviewController:
         *,
         pr_numbers: Sequence[int] | None = None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> dict[int, dict[str, Any]]:
         views: dict[int, dict[str, Any]] = {}
         selected_prs = state.ordered_prs if pr_numbers is None else pr_numbers
@@ -2592,6 +2601,7 @@ class ReviewController:
                 state=state,
                 reconciliation_result=reconciliation,
                 stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
         return views
 
@@ -2794,6 +2804,8 @@ class ReviewController:
         review_target_prs: Sequence[int] | None = None,
         review_target_selection_complete: bool = False,
     ) -> dict[str, Any]:
+        if history_cache is None:
+            history_cache = {}
         if not state.ordered_prs:
             report = {
                 "ordered_prs": [],
@@ -2843,6 +2855,7 @@ class ReviewController:
                 channel,
                 histories[channel],
                 stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
