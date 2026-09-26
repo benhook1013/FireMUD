@@ -652,6 +652,9 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendActivity(String activityState) {
+    if (!StringUtils.hasText(activityState)) {
+      return null;
+    }
     return switch (activityState) {
       case "AUTO_AFK" -> "idle";
       case "EXPLICIT_AFK" -> "AFK";
