@@ -414,7 +414,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         coordinator.getTenantId(),
-        runtimeVersionId(coordinator.getTenantId(), coordinator.getOriginGameInstanceId()),
+        null,
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
@@ -499,7 +499,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
-        runtimeVersionId(followup.getTenantId(), followup.getOriginGameInstanceId()),
+        null,
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
@@ -581,7 +581,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         result.getTenantId(),
-        runtimeVersionId(result.getTenantId(), result.getOriginGameInstanceId()),
+        null,
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());
@@ -2011,17 +2011,6 @@ public final class GameSessionCommandControlPlaneService {
 
   private long toEpochMillis(Instant instant) {
     return instant == null ? 0L : instant.toEpochMilli();
-  }
-
-  private Long runtimeVersionId(long tenantId, Long gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId <= 0L) {
-      return null;
-    }
-    return gameInstanceRepository
-        .findById(gameInstanceId)
-        .filter(instance -> instance.getTenantId() == tenantId)
-        .map(RuntimeVersionIdResolver::resolve)
-        .orElse(null);
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(

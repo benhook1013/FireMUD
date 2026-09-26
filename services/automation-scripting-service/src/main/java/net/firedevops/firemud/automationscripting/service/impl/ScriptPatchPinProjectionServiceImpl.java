@@ -78,6 +78,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                           "INVALID_RUNTIME_PIN_TUPLE",
                           "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
+        if (!hasPositiveScriptPinEpoch(runtimeState)) {
+          scheduleInstanceService.reconcileObservedRuntimeState(
+              tenantId, gameInstanceId, runtimeState);
+          return new PinConvergenceLookup(
+              Optional.of(toUnpinnedSummary(tenantId, gameInstanceId, runtimeState, now)), "", "");
+        }
         ScriptPatchPinProjection refreshed =
             saveObservation(
                 existing.orElseGet(ScriptPatchPinProjection::new),
@@ -240,6 +246,30 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
             : now);
     projection.setProjectionRefreshedAt(now);
     return repository.save(projection);
+  }
+
+  private static PinConvergenceSummary toUnpinnedSummary(
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant observedAt) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
+    return new PinConvergenceSummary(
+        tenantId,
+        gameInstanceId,
+        "",
+        0L,
+        "",
+        0L,
+        observedAt.toEpochMilli(),
+        0L,
+        false,
+        blankToEmpty(runtimeState.getRegionId()),
+        Math.max(0L, runtimeState.getRegionEpoch()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion());
   }
 
   private PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {

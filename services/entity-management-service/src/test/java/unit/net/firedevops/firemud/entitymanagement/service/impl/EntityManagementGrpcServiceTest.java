@@ -1,9 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -84,13 +82,14 @@ import tools.jackson.databind.ObjectMapper;
 class EntityManagementGrpcServiceTest {
   private static final String TEST_NAMESPACE = "test";
 
-  private EntityManagementGrpcService configuredService(String workloadNamespace) {
+  private EntityManagementGrpcService configuredService(
+      String workloadNamespace, EntityDraftDesignDigestService digestService) {
     return new EntityManagementGrpcService(
         Mockito.mock(PingService.class),
         Mockito.mock(CharacterService.class),
         Mockito.mock(ActorStateService.class),
         Mockito.mock(ActorConditionMutationService.class),
-        Mockito.mock(EntityDraftDesignDigestService.class),
+        digestService,
         Mockito.mock(EquipmentService.class),
         Mockito.mock(InventoryService.class),
         Mockito.mock(ContainerService.class),
@@ -105,11 +104,49 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
-  void invalidConfiguredWorkloadNamespaceFailsConstruction() {
-    assertThrows(IllegalArgumentException.class, () -> configuredService(null));
-    assertThrows(IllegalArgumentException.class, () -> configuredService(" "));
-    assertThrows(IllegalArgumentException.class, () -> configuredService("not a namespace"));
-    assertDoesNotThrow(() -> configuredService(TEST_NAMESPACE));
+  void missingOrInvalidConfiguredWorkloadNamespaceDeniesDigestReadBeforeOwnerRead() {
+    try {
+      for (String workloadNamespace : new String[] {null, "", " ", "not a namespace"}) {
+        EntityDraftDesignDigestService digestService =
+            Mockito.mock(EntityDraftDesignDigestService.class);
+        EntityManagementGrpcService service = configuredService(workloadNamespace, digestService);
+        SessionContext.setContext(
+            null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+        GetDraftDesignDigestResponse response =
+            invokeDigestWithPeer(
+                service, fullDigestRequest("1", "7"), peer("game-design-service"));
+
+        assertEquals("PERMISSION_DENIED", response.getError().getCode());
+        verifyNoInteractions(digestService);
+      }
+
+      EntityDraftDesignDigestService digestService =
+          Mockito.mock(EntityDraftDesignDigestService.class);
+      EntityManagementGrpcService service =
+          new EntityManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(CharacterService.class),
+              digestService,
+              Mockito.mock(EquipmentService.class),
+              Mockito.mock(InventoryService.class),
+              Mockito.mock(ContainerService.class),
+              Mockito.mock(RoomEntityService.class),
+              effectReplayService(),
+              Mockito.mock(EntityUpgradeValidationService.class),
+              attestationService(),
+              new SimpleMeterRegistry());
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+      GetDraftDesignDigestResponse response =
+          invokeDigestWithPeer(
+              service, fullDigestRequest("1", "7"), peer("game-design-service"));
+
+      assertEquals("PERMISSION_DENIED", response.getError().getCode());
+      verifyNoInteractions(digestService);
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   private static PublicationReadGuard publicationReadGuard() {

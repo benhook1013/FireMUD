@@ -130,7 +130,10 @@ final class GameSessionRemoteControlPlaneService {
     return GetRemoteFollowupResponse.newBuilder()
         .setFollowup(
             toRemoteFollowupEntry(
-                followup, linkedTargetCommand(tenantId, followup), coordinator, new HashMap<>()))
+                followup,
+                linkedTargetCommand(tenantId, followup),
+                coordinator,
+                new HashMap<>()))
         .build();
   }
 
@@ -501,7 +504,11 @@ final class GameSessionRemoteControlPlaneService {
               followup == null ? null : targetCommandsByFollowupId.get(followup.getFollowupId());
           response.addResults(
               toRemoteFollowupResultEntry(
-                  result, coordinator, followup, targetCommand, runtimeBoundaryCache));
+                  result,
+                  coordinator,
+                  followup,
+                  targetCommand,
+                  runtimeBoundaryCache));
         });
     return response.build();
   }
@@ -640,7 +647,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         coordinator.getTenantId(),
-        runtimeVersionId(coordinator.getTenantId(), coordinator.getOriginGameInstanceId()),
+        null,
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
@@ -744,7 +751,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
-        runtimeVersionId(followup.getTenantId(), followup.getOriginGameInstanceId()),
+        null,
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
@@ -847,7 +854,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         result.getTenantId(),
-        runtimeVersionId(result.getTenantId(), result.getOriginGameInstanceId()),
+        null,
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());
@@ -2161,17 +2168,6 @@ final class GameSessionRemoteControlPlaneService {
         .setStatusReason(response.getPluginVersion().getStatusReason())
         .setLastChangedAtMs(response.getPluginVersion().getLastChangedAtMs())
         .build();
-  }
-
-  private Long runtimeVersionId(long tenantId, Long gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId <= 0L) {
-      return null;
-    }
-    return gameInstanceRepository
-        .findById(gameInstanceId)
-        .filter(instance -> instance.getTenantId() == tenantId)
-        .map(RuntimeVersionIdResolver::resolve)
-        .orElse(null);
   }
 
   private static PlayableStateScope toPlayableStateScopeStatus(String playableStateScope) {

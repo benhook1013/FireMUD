@@ -298,6 +298,27 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsKnownIllegalArgumentPublishAttemptCode() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalArgumentException(
+                "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: publish workflow does not match request"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_IDENTITY_CONFLICT", ref.get().getError().getCode());
+  }
+
+  @Test
   void publishScriptPatchVersionMapsKnownPublishAttemptStateFailures() throws Exception {
     Mockito.when(
             versionService.publishScriptPatchVersion(
@@ -344,6 +365,54 @@ class GameDesignGrpcServiceTest {
 
     assertEquals(
         "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsScriptPatchIdentityConflict() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalArgumentException(
+                "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT: artifact belongs to another request"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsUnknownIllegalArgumentToInvalidArgument() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalArgumentException("invalid patch request"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test

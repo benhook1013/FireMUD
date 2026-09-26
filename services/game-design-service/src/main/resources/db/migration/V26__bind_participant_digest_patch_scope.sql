@@ -26,10 +26,11 @@ WHERE participant.base_version_id IS NULL
         AND attempt.base_version_id > 0
   );
 
--- Recorded digests predate the explicit base column.  A patch scope can be
--- recovered only when the retained published script-only versions identify one
--- positive base for the exact tenant and patch.  Ambiguous or missing evidence
--- is deliberately left unresolved and rejected below.
+-- Recorded digests predate the explicit base column.  Recover a patch scope
+-- only when all retained script-only versions matching the exact tenant and
+-- patch identify one positive base.  Lifecycle state is mutable and is not
+-- identity evidence.  Ambiguous or missing evidence remains unresolved and is
+-- rejected below.
 UPDATE publish_recorded_participant_digest AS recorded
 SET base_version_id = (
     SELECT MIN(version_row.base_version_id)
@@ -37,7 +38,6 @@ SET base_version_id = (
     WHERE version_row.tenant_id = recorded.tenant_id
       AND version_row.script_patch_version = recorded.scope_value
       AND version_row.is_script_only = TRUE
-      AND version_row.version_state = 'PUBLISHED'
       AND version_row.base_version_id IS NOT NULL
       AND version_row.base_version_id > 0
     GROUP BY version_row.tenant_id, version_row.script_patch_version
@@ -51,7 +51,6 @@ WHERE recorded.publish_type = 'SCRIPT_PATCH'
       WHERE version_row.tenant_id = recorded.tenant_id
         AND version_row.script_patch_version = recorded.scope_value
         AND version_row.is_script_only = TRUE
-        AND version_row.version_state = 'PUBLISHED'
         AND version_row.base_version_id IS NOT NULL
         AND version_row.base_version_id > 0
   ) = 1;

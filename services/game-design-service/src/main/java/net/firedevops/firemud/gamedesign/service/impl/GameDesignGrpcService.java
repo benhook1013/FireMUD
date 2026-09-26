@@ -218,9 +218,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", "PERMISSION_DENIED", ex.getMessage()));
     } catch (IllegalArgumentException ex) {
+      String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
           GrpcAppErrors.error(
-              meterRegistry, logger, "PublishVersion", "INVALID_ARGUMENT", ex.getMessage()));
+              meterRegistry,
+              logger,
+              "PublishVersion",
+              errorCode == null ? "INVALID_ARGUMENT" : errorCode,
+              ex.getMessage()));
     } catch (PublishGateFailureException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -268,12 +273,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "PERMISSION_DENIED",
               ex.getMessage()));
     } catch (IllegalArgumentException ex) {
+      String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry,
               logger,
               "PublishScriptPatchVersion",
-              "INVALID_ARGUMENT",
+              errorCode == null ? "INVALID_ARGUMENT" : errorCode,
               ex.getMessage()));
     } catch (PublishGateFailureException ex) {
       builder.setError(
@@ -1997,7 +2003,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     return "INVALID_ARGUMENT";
   }
 
-  private String publishAttemptErrorCode(IllegalStateException failure) {
+  private String publishAttemptErrorCode(RuntimeException failure) {
     if (failure instanceof VersionPublishCommandServiceImpl.PendingReconciliationException) {
       return "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED";
     }
@@ -2015,7 +2021,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           "PUBLISH_ATTEMPT_INCOMPLETE",
           "PUBLISH_ATTEMPT_INCONSISTENT",
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
-          "PUBLISH_ATTEMPT_SCOPE_MISMATCH" -> candidate;
+          "PUBLISH_ATTEMPT_SCOPE_MISMATCH",
+          "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" -> candidate;
       default -> null;
     };
   }

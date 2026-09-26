@@ -89,7 +89,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
-  private PublicationReadGuard publicationReadGuard;
+  private final PublicationReadGuard publicationReadGuard;
 
   @Autowired
   public GameLogicGrpcService(
@@ -112,8 +112,8 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         itemRuntimeService,
         gameLogicDraftDesignDigestService,
         gameplaySessionAttestationService,
-        meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+        meterRegistry,
+        configuredPublicationReadGuard(workloadNamespace));
   }
 
   public GameLogicGrpcService(
@@ -126,15 +126,17 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.commandService = commandService;
-    this.lookAggregationService = lookAggregationService;
-    this.communicationAggregationService = communicationAggregationService;
-    this.moveAggregationService = moveAggregationService;
-    this.itemRuntimeService = itemRuntimeService;
-    this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
-    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
-    this.meterRegistry = meterRegistry;
+    this(
+        pingService,
+        commandService,
+        lookAggregationService,
+        communicationAggregationService,
+        moveAggregationService,
+        itemRuntimeService,
+        gameLogicDraftDesignDigestService,
+        gameplaySessionAttestationService,
+        meterRegistry,
+        (PublicationReadGuard) null);
   }
 
   public GameLogicGrpcService(
@@ -148,16 +150,15 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry,
       PublicationReadGuard publicationReadGuard) {
-    this(
-        pingService,
-        commandService,
-        lookAggregationService,
-        communicationAggregationService,
-        moveAggregationService,
-        itemRuntimeService,
-        gameLogicDraftDesignDigestService,
-        gameplaySessionAttestationService,
-        meterRegistry);
+    this.pingService = pingService;
+    this.commandService = commandService;
+    this.lookAggregationService = lookAggregationService;
+    this.communicationAggregationService = communicationAggregationService;
+    this.moveAggregationService = moveAggregationService;
+    this.itemRuntimeService = itemRuntimeService;
+    this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
+    this.meterRegistry = meterRegistry;
     this.publicationReadGuard = publicationReadGuard;
   }
 

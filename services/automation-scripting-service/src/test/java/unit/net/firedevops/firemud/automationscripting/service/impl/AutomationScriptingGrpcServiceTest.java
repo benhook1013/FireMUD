@@ -1,11 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -110,11 +108,12 @@ class AutomationScriptingGrpcServiceTest {
     SessionContext.clear();
   }
 
-  private AutomationScriptingGrpcService configuredService(String workloadNamespace) {
+  private AutomationScriptingGrpcService configuredService(
+      String workloadNamespace, ScriptDesignDigestService digestService) {
     return new AutomationScriptingGrpcService(
         Mockito.mock(PingService.class),
         Mockito.mock(ScriptDefinitionService.class),
-        Mockito.mock(ScriptDesignDigestService.class),
+        digestService,
         Mockito.mock(ScriptVersionService.class),
         Mockito.mock(ScriptScheduleInstanceService.class),
         Mockito.mock(ScriptEventIngressService.class),
@@ -125,11 +124,41 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
-  void invalidConfiguredWorkloadNamespaceFailsConstruction() {
-    assertThrows(IllegalArgumentException.class, () -> configuredService(null));
-    assertThrows(IllegalArgumentException.class, () -> configuredService(" "));
-    assertThrows(IllegalArgumentException.class, () -> configuredService("not a namespace"));
-    assertDoesNotThrow(() -> configuredService(TEST_NAMESPACE));
+  void missingOrInvalidConfiguredWorkloadNamespaceDeniesDigestReadBeforeOwnerRead() {
+    for (String workloadNamespace : new String[] {null, "", " ", "not a namespace"}) {
+      ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+      AutomationScriptingGrpcService service = configuredService(workloadNamespace, digestService);
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+      Mockito.verifyNoInteractions(digestService);
+    }
+
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    runAsGameDesign(
+        () ->
+            assertEquals(
+                "PERMISSION_DENIED",
+                invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test

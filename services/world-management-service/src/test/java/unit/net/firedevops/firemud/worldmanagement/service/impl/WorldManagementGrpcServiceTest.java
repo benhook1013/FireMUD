@@ -197,21 +197,7 @@ class WorldManagementGrpcServiceTest {
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
-
-                  @Override
-                  public void onError(Throwable t) {}
-
-                  @Override
-                  public void onCompleted() {}
-                }));
+        () -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
 
     assertEquals("7", ref.get().getVersionId());
     assertEquals("version:7", ref.get().getAppliedCommitId());
@@ -411,21 +397,7 @@ class WorldManagementGrpcServiceTest {
             publicationReadGuard());
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
-
-                  @Override
-                  public void onError(Throwable t) {}
-
-                  @Override
-                  public void onCompleted() {}
-                }));
+        () -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }

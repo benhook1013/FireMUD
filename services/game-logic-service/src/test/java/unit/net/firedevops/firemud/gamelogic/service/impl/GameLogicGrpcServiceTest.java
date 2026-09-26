@@ -257,7 +257,7 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestReturnsVersionScopedDigest() {
+  void getDraftDesignDigestMapsUnavailableManifestToErrorResponse() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
@@ -268,9 +268,9 @@ class GameLogicGrpcServiceTest {
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
-        .thenReturn(
-            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
-                "1", "7", "version:7", "digest-logic", 1));
+        .thenThrow(
+            new UnsupportedOperationException(
+                "Game Logic owner-local manifest and provenance are unavailable"));
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     GameLogicGrpcService service =
@@ -306,8 +306,11 @@ class GameLogicGrpcServiceTest {
                   public void onCompleted() {}
                 }));
 
-    assertEquals("7", ref.get().getVersionId());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    assertTrue(ref.get().hasError());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertEquals("", ref.get().getAppliedCommitId());
+    assertEquals("", ref.get().getContentDigest());
+    assertEquals(0, ref.get().getDigestSchemaVersion());
   }
 
   @Test
@@ -402,9 +405,11 @@ class GameLogicGrpcServiceTest {
     for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
       GameLogicGrpcService service = newDigestService(digestService, workloadNamespace);
 
-      assertEquals(
-          "PERMISSION_DENIED",
-          invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
     }
     Mockito.verifyNoInteractions(digestService);
   }

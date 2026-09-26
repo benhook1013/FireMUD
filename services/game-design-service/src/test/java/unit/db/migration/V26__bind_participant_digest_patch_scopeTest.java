@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class V26__bind_participant_digest_patch_scopeTest {
@@ -22,19 +23,28 @@ class V26__bind_participant_digest_patch_scopeTest {
   }
 
   @Test
-  void scopesRecordedEvidenceOnlyFromOnePublishedScriptPatchBase() throws IOException {
+  void scopesRecordedEvidenceOnlyFromOneRetainedScriptPatchBase() throws IOException {
     String normalized = readMigration().replaceAll("\\s+", " ").trim();
 
     assertThat(normalized)
         .contains(
             "UPDATE publish_recorded_participant_digest AS recorded SET base_version_id = ( SELECT MIN(version_row.base_version_id) FROM version AS version_row")
-        .contains("version_row.tenant_id = recorded.tenant_id")
-        .contains("version_row.script_patch_version = recorded.scope_value")
-        .contains("version_row.is_script_only = TRUE")
-        .contains("version_row.version_state = 'PUBLISHED'")
+        .doesNotContain("version_row.version_state")
         .contains("version_row.base_version_id > 0")
         .contains("HAVING COUNT(DISTINCT version_row.base_version_id) = 1")
+        .contains("V26 unresolved SCRIPT_PATCH recorded participant evidence")
         .doesNotContain("DELETE FROM publish_recorded_participant_digest");
+
+    assertSqlOccurrences(normalized, "version_row.tenant_id = recorded.tenant_id", 2);
+    assertSqlOccurrences(normalized, "version_row.script_patch_version = recorded.scope_value", 2);
+    assertSqlOccurrences(normalized, "version_row.is_script_only = TRUE", 2);
+    assertSqlOccurrences(normalized, "version_row.base_version_id IS NOT NULL", 2);
+    assertSqlOccurrences(normalized, "version_row.base_version_id > 0", 2);
+    assertSqlOccurrences(normalized, "COUNT(DISTINCT version_row.base_version_id)", 2);
+  }
+
+  private void assertSqlOccurrences(String sql, String fragment, int expectedCount) {
+    assertThat(sql.split(Pattern.quote(fragment), -1)).hasSize(expectedCount + 1);
   }
 
   @Test

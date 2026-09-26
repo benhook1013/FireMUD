@@ -94,6 +94,43 @@ class PublishGateServiceImplTest {
   }
 
   @Test
+  void fullVersionGateRejectsUnavailableGameLogicManifest() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", null, null, null, "INTERNAL", "Internal error"),
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.PARTICIPANT_UNAVAILABLE, thrown.failureCode());
+    assertEquals("INTERNAL", thrown.participantFailureCode());
+    assertTrue(thrown.getMessage().contains("GAME_LOGIC"));
+  }
+
+  @Test
   void fullVersionGateFailsClosedForUnsupportedSchema() {
     VersionDto version =
         new VersionDto(

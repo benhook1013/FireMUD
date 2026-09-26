@@ -415,7 +415,19 @@ public class EntityManagementGrpcService
   }
 
   private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    return new PublicationReadGuard(workloadNamespace);
+    if (workloadNamespace == null || workloadNamespace.isBlank()) {
+      logger.warn(
+          "firemud.grpc.workload-namespace is unset or blank; publication digest reads will be denied");
+      return null;
+    }
+    try {
+      return new PublicationReadGuard(workloadNamespace);
+    } catch (IllegalArgumentException ex) {
+      logger.warn(
+          "firemud.grpc.workload-namespace is invalid; publication digest reads will be denied: {}",
+          ex.getMessage());
+      return null;
+    }
   }
 
   @Override

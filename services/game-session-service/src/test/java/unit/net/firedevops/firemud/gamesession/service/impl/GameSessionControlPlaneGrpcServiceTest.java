@@ -108,6 +108,7 @@ import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilit
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -134,20 +135,32 @@ class GameSessionControlPlaneGrpcServiceTest {
             client.getPublishedScriptPatchVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong()))
         .thenAnswer(
-            invocation ->
-                GetPublishedScriptPatchVersionResponse.newBuilder()
-                    .setScriptPatch(
-                        PublishedScriptPatchVersion.newBuilder()
-                            .setTenantId("1")
-                            .setScriptPatchVersion(invocation.getArgument(1, String.class))
-                            .setVersionId(17L)
-                            .setBaseVersionId(7L)
-                            .setPublicationState(
-                                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                            .setLastChangedAtMs(150L)
+            invocation -> {
+              long requestedBaseVersionId = invocation.getArgument(2, Long.class);
+              if (requestedBaseVersionId <= 0L) {
+                return GetPublishedScriptPatchVersionResponse.newBuilder()
+                    .setError(
+                        ErrorDetail.newBuilder()
+                            .setCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
+                            .setMessage(
+                                "base_version_id is required for script patch publication lookup")
                             .build())
-                    .build());
+                    .build();
+              }
+              return GetPublishedScriptPatchVersionResponse.newBuilder()
+                  .setScriptPatch(
+                      PublishedScriptPatchVersion.newBuilder()
+                          .setTenantId("1")
+                          .setScriptPatchVersion(invocation.getArgument(1, String.class))
+                          .setVersionId(17L)
+                          .setBaseVersionId(requestedBaseVersionId)
+                          .setPublicationState(
+                              net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                  .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                          .setLastChangedAtMs(150L)
+                          .build())
+                  .build();
+            });
     Mockito.when(
             client.getPublishedPluginVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
@@ -403,7 +416,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertNotNull(responseRef.get());
     assertEquals("patch-9", responseRef.get().getPinnedScriptPatchVersion());
     assertEquals("req-99", responseRef.get().getControlPlaneRequestId());
-    assertEquals(17L, responseRef.get().getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -1021,7 +1036,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(), responseRef.get().getObservedAtMs());
     assertEquals(true, responseRef.get().getIsStale());
-    assertEquals(17L, responseRef.get().getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -2956,7 +2973,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     PublishedScriptPatchVersion.newBuilder()
                         .setScriptPatchVersion("patch-2")
                         .setVersionId(23L)
-                        .setBaseVersionId(9L)
+                        .setBaseVersionId(7L)
                         .setPublicationState(
                             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                                 .VERSION_LIFECYCLE_STATE_PUBLISHED)
@@ -3303,7 +3320,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     PublishedScriptPatchVersion.newBuilder()
                         .setScriptPatchVersion("patch-2")
                         .setVersionId(23L)
-                        .setBaseVersionId(9L)
+                        .setBaseVersionId(7L)
                         .setPublicationState(
                             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                                 .VERSION_LIFECYCLE_STATE_PUBLISHED)
@@ -4930,7 +4947,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getCoordinator().getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getCoordinator().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCoordinator().getPluginVersionId());
-    assertEquals(17L, responseRef.get().getCoordinator().getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getCoordinator().getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1",
         responseRef.get().getCoordinator().getPluginPublication().getPluginVersionId());
@@ -5085,6 +5104,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-target-current", responseRef.get().getFollowup().getCurrentTargetRuntimeRegionId());
     assertEquals("9", responseRef.get().getFollowup().getCurrentTargetRuntimeGameInstanceId());
     assertTrue(responseRef.get().getFollowup().getIsTargetRoutingBundleStale());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getFollowup().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -5316,6 +5338,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-target-current", responseRef.get().getResult().getCurrentTargetRuntimeRegionId());
     assertEquals("9", responseRef.get().getResult().getCurrentTargetRuntimeGameInstanceId());
     assertTrue(responseRef.get().getResult().getIsTargetRoutingBundleStale());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getResult().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -5664,7 +5689,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.any(org.springframework.data.domain.Pageable.class)))
-        .thenReturn(List.of(coordinator));
+        .thenReturn(List.of(coordinator, coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
         .thenReturn(List.of(followup));
     RemoteFollowupResultRepository resultRepository =
@@ -5694,7 +5719,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     wrongScopeResult.setTargetRegionEpoch(4L);
     wrongScopeResult.setOutcome("WRONG_SCOPE");
     wrongScopeResult.setObservedAt(Instant.parse("2026-05-01T00:00:06Z"));
-    Mockito.when(resultRepository.findForCoordinatorScopes(List.of(coordinator)))
+    Mockito.when(resultRepository.findForCoordinatorScopes(List.of(coordinator, coordinator)))
         .thenReturn(List.of(latestResult, wrongScopeResult));
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
@@ -5711,6 +5736,39 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setRemoteFollowupId("rf-1");
     Mockito.when(gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(1L, List.of("rf-1")))
         .thenReturn(List.of(targetCommand));
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance originInstance = runningGameInstance();
+    originInstance.setId(7L);
+    originInstance.setTenantId(1L);
+    originInstance.setVersionId(99L);
+    GameInstance targetInstance = runningGameInstance();
+    targetInstance.setId(9L);
+    targetInstance.setTenantId(1L);
+    targetInstance.setVersionId(9L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(originInstance));
+    Mockito.when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(targetInstance));
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(
+            authorityService.listByRuntimeTarget(Mockito.eq(1L), Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long gameInstanceId = invocation.getArgument(1, Long.class);
+              return List.of(
+                  new GameplayAdmissionPointerSnapshot(
+                      "world-" + gameInstanceId,
+                      "World " + gameInstanceId,
+                      "realm-" + gameInstanceId,
+                      "Realm " + gameInstanceId,
+                      1L,
+                      gameInstanceId,
+                      gameInstanceId + 100L,
+                      true,
+                      true,
+                      true,
+                      gameInstanceId % 2L == 0L ? "ISOLATED" : "SHARED",
+                      "interactive"));
+            });
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -5720,7 +5778,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             null,
-            gameDesignClient());
+            gameDesignClient(),
+            authorityService,
+            gameInstanceRepository);
 
     AtomicReference<ListRemoteCommandCoordinatorsResponse> responseRef = new AtomicReference<>();
     service.listRemoteCommandCoordinators(
@@ -5784,7 +5844,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals(1, responseRef.get().getCoordinatorsCount());
+    assertEquals(2, responseRef.get().getCoordinatorsCount());
     assertEquals("coord-1", responseRef.get().getCoordinators(0).getCoordinatorId());
     assertEquals("rf-1", responseRef.get().getCoordinators(0).getFollowupId());
     assertEquals(
@@ -5847,7 +5907,11 @@ class GameSessionControlPlaneGrpcServiceTest {
         "entity:entity-9", responseRef.get().getCoordinators(0).getFollowupClaimTargetAggregate());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCoordinators(0).getLatestResultOutcome());
     assertEquals("RATE_LIMIT", responseRef.get().getCoordinators(0).getLatestResultErrorCode());
-    assertEquals(17L, responseRef.get().getCoordinators(0).getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getCoordinators(0).getPublication().getLookupErrorCode());
+    Mockito.verify(gameInstanceRepository).findById(7L);
+    Mockito.verify(gameInstanceRepository).findById(9L);
     Mockito.verify(repository)
         .findForControlPlane(
             1L,
@@ -6359,7 +6423,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getFollowups(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getFollowups(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getFollowups(0).getPluginVersionId());
-    assertEquals(17L, responseRef.get().getFollowups(0).getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getFollowups(0).getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1", responseRef.get().getFollowups(0).getPluginPublication().getPluginVersionId());
     assertEquals(31L, responseRef.get().getFollowups(0).getPluginPublication().getPublicationId());
@@ -7448,7 +7514,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
-    assertEquals(17L, responseRef.get().getResults(0).getPublication().getVersionId());
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        responseRef.get().getResults(0).getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1", responseRef.get().getResults(0).getPluginPublication().getPluginVersionId());
     assertEquals(31L, responseRef.get().getResults(0).getPluginPublication().getPublicationId());
@@ -8811,8 +8879,56 @@ class GameSessionControlPlaneGrpcServiceTest {
               GameInstance instance = runningGameInstance();
               instance.setId(gameInstanceId);
               instance.setTenantId(1L);
+              instance.setVersionId(99L);
               return Optional.of(instance);
             });
+    return remoteControlPlaneService(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRuntimeService,
+        gameDesignClient,
+        gameplayAdmissionPointerAuthorityService,
+        meterRegistry,
+        gameInstanceRepository);
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameInstanceRepository gameInstanceRepository) {
+    return remoteControlPlaneService(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRuntimeService,
+        gameDesignClient,
+        gameplayAdmissionPointerAuthorityService,
+        new SimpleMeterRegistry(),
+        gameInstanceRepository);
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      MeterRegistry meterRegistry,
+      GameInstanceRepository gameInstanceRepository) {
     return controlPlaneService(
         gameInstanceRepository,
         gameplayCommandRepository == null
