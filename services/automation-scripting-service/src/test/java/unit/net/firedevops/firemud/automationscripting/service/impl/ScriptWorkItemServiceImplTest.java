@@ -385,7 +385,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(item.getUpdatedAt()).isNotNull();
     verify(workItemRepository)
         .findByStatusOrderByCreatedAtAscIdAsc(
-            Mockito.eq("PENDING_EVALUATION"), eligibleAtCaptor.capture(),
+            Mockito.eq("PENDING_EVALUATION"),
+            eligibleAtCaptor.capture(),
             Mockito.eq(PageRequest.of(0, 10)));
     assertThat(eligibleAtCaptor.getValue()).isBetween(claimStartedAt, claimFinishedAt);
     verify(workItemRepository).saveAll(List.of(item));

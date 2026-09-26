@@ -86,7 +86,7 @@ class ScriptWorkItemFenceEvaluationSupportTest {
     assertThat(
             ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
                 workItem, "plugin-v2", PluginState.PLUGIN_STATE_ENABLED, 4L, 8L))
-        .isEqualTo("plugin_binding_mismatch");
+        .isEqualTo("plugin_version_mismatch");
   }
 
   @Test
