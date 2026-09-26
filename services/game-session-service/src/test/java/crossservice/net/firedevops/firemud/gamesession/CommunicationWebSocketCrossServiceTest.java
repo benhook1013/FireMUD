@@ -300,6 +300,71 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFriendsMissingPolicyRedactsPresenceWithoutDisconnecting() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    FriendPresenceEntry missingPolicyPresence =
+        FriendPresenceEntry.newBuilder()
+            .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+            .setOnline(true)
+            .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+            .setCharacterName("Sora")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setWorldDisplayName("Demo World")
+            .setRealmSlug("production")
+            .setRealmDisplayName("Live Realm")
+            .setActivityState(FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+            .build();
+    socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
+
+    try (GameplayWebSocketDriver client =
+        openFirstPartyGameplayClient("friends-missing-policy-first-party")) {
+      int baseline = client.responses().size();
+      client.send("FRIENDS");
+      JsonNode friends = awaitStructuredCommand(client, baseline, "FRIENDS");
+      JsonNode friendsPayload = requirePayload(friends, "friends_view");
+      assertThat(friendsPayload.path("friends")).hasSize(1);
+      JsonNode entry = friendsPayload.path("friends").get(0);
+      assertThat(entry.path("friendAccountId").asLong()).isEqualTo(SORA_ACCOUNT_ID);
+      assertThat(entry.path("displayName").asText()).isEqualTo("Friend #" + SORA_ACCOUNT_ID);
+      for (String field :
+          List.of(
+              "online",
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "characterName",
+              "playableStateScope",
+              "pointerVersion",
+              "activityState",
+              "lastSeenAtEpochMs",
+              "recentDisposition",
+              "visibilityPolicy")) {
+        assertThat(entry.has(field)).as("redacted field %s", field).isFalse();
+      }
+    }
+
+    sessionId = prepareGameInstance();
+    socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
+    try (GameplayWebSocketDriver client =
+        openReadySessionClient(sessionId, "friends-missing-policy-detail")) {
+      int baseline = client.responses().size();
+      client.send("FRIENDS SHOW #1");
+      client.awaitContains("Presence: presence unavailable");
+      assertThat(client.responses().subList(baseline, client.responses().size()))
+          .noneMatch(
+              response ->
+                  response.contains("Sora")
+                      || response.contains("Demo World")
+                      || response.contains("Live Realm"));
+    }
+  }
+
+  @Test
   void websocketFriendsMutationFlowUsesCanonicalRosterSurface() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -900,6 +965,9 @@ class CommunicationWebSocketCrossServiceTest {
                               .setPlayableStateScope(
                                   net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                       .PLAYABLE_STATE_SCOPE_SHARED)
+                              .setVisibilityPolicy(
+                                  FriendPresenceVisibilityPolicy
+                                      .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                               .setWorldSlug("demo")
                               .setWorldDisplayName("Demo World")
                               .setRealmSlug("production")
