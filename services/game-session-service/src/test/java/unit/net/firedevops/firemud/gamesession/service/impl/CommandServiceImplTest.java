@@ -1375,6 +1375,8 @@ class CommandServiceImplTest {
     verify(commandRepository).save(Mockito.any(GameplayCommand.class));
     verify(commandRepository)
         .markAcceptedCommandFailed(
+            Mockito.eq(9L),
+            Mockito.eq(99L),
             Mockito.eq(result.commandId()),
             Mockito.eq("INVALID_ARGUMENT"),
             Mockito.eq("bad command"),

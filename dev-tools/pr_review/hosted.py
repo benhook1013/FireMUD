@@ -92,6 +92,16 @@ INCOMPLETE_FILE_COVERAGE = re.compile(
     r"unable\s+to\s+review|moderation|processing\s+errors?)\b",
     re.IGNORECASE | re.DOTALL,
 )
+FILE_PROCESSING_NONCOVERAGE = re.compile(
+    r"\bfiles?\b.{0,100}\b(?:not\s+processed|moderation|processing\s+errors?)\b"
+    r"(?:\s*(?::|=|\()\s*(\d+)\s*\)?)?",
+    re.IGNORECASE | re.DOTALL,
+)
+EXPLICIT_FILE_OMISSION = re.compile(
+    r"\b(?:(\d+)\s+)?files?\b(?:\s*\(\s*(\d+)\s*\))?\s+"
+    r"(?:(?:were|are)\s+)?(?:skipped|omitted)\b(?:\s*[:=]\s*(\d+))?",
+    re.IGNORECASE,
+)
 OPEN_ISSUE_CLAIM = re.compile(
     r"\b(?:\d+\s+)?(?:reported\s+)?issues?\s+(?:remain|remains|are|is|stay|stays|still)\s+open\b",
     re.IGNORECASE,
@@ -831,7 +841,41 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
     if any(reviewed != selected for reviewed, selected in ratios):
         return True
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
-    return INCOMPLETE_FILE_COVERAGE.search(text_without_explicit_zero_omissions) is not None
+    return any(
+        _has_explicit_file_omission(sentence)
+        or _has_explicit_incomplete_file_coverage(sentence)
+        for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
+    )
+
+
+def _has_explicit_incomplete_file_coverage(sentence: str) -> bool:
+    coverage_text = _without_explicit_zero_file_omissions(sentence)
+    return bool(
+        INCOMPLETE_FILE_COVERAGE.search(coverage_text)
+        and (
+            any(
+                match.group(1) is None or int(match.group(1)) > 0
+                for match in FILE_PROCESSING_NONCOVERAGE.finditer(coverage_text)
+            )
+            or re.search(r"\breview(?:ed|ing)?\b", coverage_text, re.IGNORECASE)
+        )
+    )
+
+
+def _has_explicit_file_omission(sentence: str) -> bool:
+    for match in EXPLICIT_FILE_OMISSION.finditer(sentence):
+        counts = [int(count) for count in match.groups() if count is not None]
+        if not counts or any(count > 0 for count in counts):
+            return True
+    return False
+
+
+def _without_explicit_zero_file_omissions(sentence: str) -> str:
+    def keep_nonzero_omission(match: re.Match[str]) -> str:
+        counts = [int(count) for count in match.groups() if count is not None]
+        return " " if counts and all(count == 0 for count in counts) else match.group(0)
+
+    return EXPLICIT_FILE_OMISSION.sub(keep_nonzero_omission, sentence)
 
 
 def _summary_proves_complete_file_coverage(text: str) -> bool:

@@ -16,6 +16,8 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
+bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -840,6 +842,8 @@ if len(deploy_checkouts) != 1:
     raise SystemExit("dev-demo deploy must define exactly one checkout")
 if deploy_checkouts[0].get("with", {}).get("ref") != "${{ needs.dev-demo-plan.outputs.head_sha }}":
     raise SystemExit("dev-demo deploy checkout must pin the planned head SHA")
+if deploy_checkouts[0].get("with", {}).get("fetch-depth") != 0:
+    raise SystemExit("dev-demo deploy must fetch full history for exact migration-range proof")
 if deploy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo deploy checkout must not persist credentials")
 if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-cluster":
@@ -861,6 +865,7 @@ ordered = (
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
+    "Quiesce Account, Game Session, and Automation migration writers",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
     "Wait for dev-demo runtime rollouts",
@@ -1073,6 +1078,7 @@ if "Remove hosted identity requester kubeconfig" in deploy_by_name:
 
 expected_deploy_kubeconfigs = {
     "Verify cluster access": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Classify trusted V2 migration activation": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Reset dev-demo namespace for clean deploy": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Ensure dev-demo namespace exists": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Record exact dev-demo runtime target": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
@@ -1085,6 +1091,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1094,6 +1101,24 @@ expected_deploy_kubeconfigs = {
     "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
 }
+quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
+if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
+    raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
+if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
+    "Reset dev-demo namespace for clean deploy"
+].get("if", ""):
+    raise SystemExit("dev-demo must retain clean namespace reset for non-migration deploys")
+if "steps.v2-migration-mode.outputs.activation == 'true'" not in quiesce.get("if", ""):
+    raise SystemExit("dev-demo must quiesce only the trusted retained-database migration path")
+classifier = deploy_by_name["Classify trusted V2 migration activation"]
+if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") != 1:
+    raise SystemExit("dev-demo must derive migration activation from the trusted event range")
+if deploy_names.index("Classify trusted V2 migration activation") > deploy_names.index(
+    "Reset dev-demo namespace for clean deploy"
+):
+    raise SystemExit("migration status must be proven before any namespace mutation")
+if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
+    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1214,6 +1239,38 @@ expected_success_condition = (
 )
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
+
+quiesce_writers = deploy_by_name[
+    "Quiesce Account, Game Session, and Automation migration writers"
+]
+if quiesce_writers.get("id") != "quiesce-writers":
+    raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
+quiesced_writer_warning = deploy_by_name[
+    "Warn about migration writer recovery after quiesce or deploy failure"
+]
+expected_quiesced_writer_warning_condition = (
+    "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
+    "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.deploy-release.outcome == 'failure') }}"
+)
+if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
+    raise SystemExit(
+        "migration writer recovery warning must require activation and failed quiesce or Helm deploy"
+    )
+quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
+for required_warning in (
+    "Account, Game Session, and Automation writer Deployments may be partially quiesced",
+    "Inspect their current state before retrying",
+    "writer quiescence fails",
+    "Helm deploy fails partway through",
+    "a partial deployment may have re-enabled some writers",
+):
+    if required_warning not in quiesced_writer_warning_run:
+        raise SystemExit(
+            f"quiesced-writer warning must include: {required_warning}"
+        )
+if "all writer Deployments are quiesced" in quiesced_writer_warning_run:
+    raise SystemExit("quiesced-writer warning must allow partial deployment state")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}

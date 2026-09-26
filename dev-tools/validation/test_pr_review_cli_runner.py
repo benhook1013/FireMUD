@@ -842,7 +842,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(len(results), 1)
 
-    def test_posted_active_or_awaiting_hosted_reservation_allows_cli_and_preserves_record(self):
+    def test_active_or_awaiting_hosted_reservation_blocks_cli_and_preserves_record(self):
         for include_response in (True, False):
             with self.subTest(include_response=include_response), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -850,44 +850,34 @@ class CliReviewRunnerTests(unittest.TestCase):
                 common_dir.mkdir()
                 record_path = write_hosted_trigger(common_dir)
                 original_record = json.loads(record_path.read_text())
-                review_started = threading.Event()
-                allow_review_finish = threading.Event()
-                commands = FakeCommands(
-                    root,
-                    review_started=review_started,
-                    allow_review_finish=allow_review_finish,
-                )
-                errors = []
-
-                def run(run_root=root, run_commands=commands, run_errors=errors):
-                    try:
-                        run_cli_review(
-                            target(),
-                            github=FakeGitHub(),
-                            source_root=run_root,
-                            runner=run_commands,
-                        )
-                    except ReviewRunnerError as error:
-                        run_errors.append(error)
-
-                with patch(
-                    "pr_review.cli_runner.github_api.fetch_pull_request",
-                    return_value=hosted_payload(include_response=include_response),
+                commands = FakeCommands(root)
+                response = "Full review triggered" if include_response else None
+                with (
+                    patch(
+                        "pr_review.cli_runner.github_api.fetch_pull_request",
+                        return_value=hosted_payload(response, include_response=include_response),
+                    ),
+                    self.assertRaisesRegex(ReviewRunnerError, "active Hosted review blocks CLI review"),
                 ):
-                    thread = threading.Thread(target=run)
-                    thread.start()
-                    self.assertTrue(review_started.wait(timeout=3))
-                    request_lock = record_path.parent / "request.lock"
-                    with request_lock.open("a+") as lock_handle:
-                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                    allow_review_finish.set()
-                    thread.join(timeout=3)
-
-                self.assertFalse(thread.is_alive())
-                self.assertEqual(errors, [])
-                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+                    run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+                self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
                 self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_terminal_ambiguous_hosted_response_allows_cli_and_preserves_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir)
+            original_record = json.loads(record_path.read_text())
+            commands = FakeCommands(root)
+            with patch(
+                "pr_review.cli_runner.github_api.fetch_pull_request",
+                return_value=hosted_payload("Full review finished."),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
 
     def test_ambiguous_unattributed_and_timed_out_hosted_reservations_block_cli(self):
         cases = ("ambiguous", "unattributed", "timed_out")

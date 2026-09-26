@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
+import static net.firedevops.firemud.gamesession.jooq.tables.TickBatch.TICK_BATCH;
 import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -48,12 +49,6 @@ public class GameplayCommandRepository {
 
   public GameplayCommandRepository(DSLContext dsl) {
     this.dsl = dsl;
-  }
-
-  public Optional<GameplayCommand> findByCommandId(String commandId) {
-    return dsl.selectFrom(GAMEPLAY_COMMAND)
-        .where(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId))
-        .fetchOptional(this::toEntity);
   }
 
   public Optional<GameplayCommand> findByTenantIdAndGameInstanceIdAndCommandId(
@@ -133,19 +128,34 @@ public class GameplayCommandRepository {
         .fetch(this::toEntity);
   }
 
-  public List<GameplayCommand> findByCommandIdIn(Collection<String> commandIds) {
+  public List<GameplayCommand> findByTenantIdAndGameInstanceIdAndCommandIdIn(
+      Long tenantId, Long gameInstanceId, Collection<String> commandIds) {
     if (commandIds == null || commandIds.isEmpty()) {
       return List.of();
     }
     return dsl.selectFrom(GAMEPLAY_COMMAND)
-        .where(GAMEPLAY_COMMAND.COMMAND_ID.in(commandIds))
+        .where(
+            GAMEPLAY_COMMAND
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(GAMEPLAY_COMMAND.COMMAND_ID.in(commandIds)))
         .orderBy(GAMEPLAY_COMMAND.ID.asc())
         .fetch(this::toEntity);
   }
 
-  public boolean hasDurableTickEffect(String commandId) {
+  public boolean hasDurableTickEffect(Long tenantId, Long gameInstanceId, String commandId) {
     return dsl.fetchExists(
-        dsl.selectOne().from(TICK_EFFECT).where(TICK_EFFECT.COMMAND_ID.eq(commandId)));
+        dsl.selectOne()
+            .from(TICK_EFFECT)
+            .join(TICK_BATCH)
+            .on(TICK_EFFECT.TICK_BATCH_ID.eq(TICK_BATCH.TICK_BATCH_ID))
+            .where(
+                TICK_EFFECT
+                    .COMMAND_ID
+                    .eq(commandId)
+                    .and(TICK_BATCH.TENANT_ID.eq(tenantId))
+                    .and(TICK_BATCH.GAME_INSTANCE_ID.eq(gameInstanceId))));
   }
 
   /**
@@ -191,15 +201,18 @@ public class GameplayCommandRepository {
         && command.getCompletedAt() == null;
   }
 
-  public boolean markAcceptedCommandStaged(String commandId, Instant stagedAt) {
+  public boolean markAcceptedCommandStaged(
+      Long tenantId, Long gameInstanceId, String commandId, Instant stagedAt) {
     return dsl.update(GAMEPLAY_COMMAND)
             .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "STAGED")
             .set(GAMEPLAY_COMMAND.STAGED_AT, toLocalDateTime(stagedAt))
             .set(GAMEPLAY_COMMAND.LAST_ATTEMPT_AT, toLocalDateTime(stagedAt))
             .where(
                 GAMEPLAY_COMMAND
-                    .COMMAND_ID
-                    .eq(commandId)
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId))
                     .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
                     .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
                     .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
@@ -208,7 +221,12 @@ public class GameplayCommandRepository {
   }
 
   public boolean markAcceptedCommandFailed(
-      String commandId, String failureCode, String failureMessage, Instant completedAt) {
+      Long tenantId,
+      Long gameInstanceId,
+      String commandId,
+      String failureCode,
+      String failureMessage,
+      Instant completedAt) {
     return dsl.update(GAMEPLAY_COMMAND)
             .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "FAILED")
             .set(GAMEPLAY_COMMAND.GAMEPLAY_RESULT, "NOT_APPLIED")
@@ -218,8 +236,10 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.FAILURE_MESSAGE, truncate(failureMessage, 500))
             .where(
                 GAMEPLAY_COMMAND
-                    .COMMAND_ID
-                    .eq(commandId)
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId))
                     .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
                     .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
             .execute()

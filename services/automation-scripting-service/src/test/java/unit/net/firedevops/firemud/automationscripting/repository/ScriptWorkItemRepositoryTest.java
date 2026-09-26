@@ -61,13 +61,18 @@ class ScriptWorkItemRepositoryTest {
                     2L,
                     "pin-request-1",
                     "event-1",
-                    false))
+                    false,
+                    "game-session-service"))
         .isFalse();
 
     int whereStart = sql.get().indexOf(" where ");
     assertThat(whereStart).isGreaterThanOrEqualTo(0);
     assertThat(sql.get().substring(whereStart))
-        .contains("script_pin_epoch", "script_pin_control_plane_request_id", "script_event_id");
+        .contains(
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "script_event_id",
+            "source_service");
   }
 
   @Test
@@ -143,7 +148,8 @@ class ScriptWorkItemRepositoryTest {
                         "> 0",
                         "plugin_id",
                         "plugin_version_id",
-                        "binding_id")
+                        "binding_id",
+                        "source_service")
                     .doesNotContain("script_pin_control_plane_request_id"));
   }
 

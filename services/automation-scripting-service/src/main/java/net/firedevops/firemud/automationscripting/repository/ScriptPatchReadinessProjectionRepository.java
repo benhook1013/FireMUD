@@ -5,6 +5,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptPatchReadinessPro
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptPatchReadinessProjectionsRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -43,6 +45,32 @@ public class ScriptPatchReadinessProjectionRepository {
         .where(SCRIPT_PATCH_READINESS_PROJECTIONS.TENANT_ID.eq(tenantId))
         .orderBy(SCRIPT_PATCH_READINESS_PROJECTIONS.LAST_CHANGED_AT.desc())
         .fetch(this::toEntity);
+  }
+
+  public long nextReadinessGeneration(String tenantId) {
+    Long nextGeneration =
+        dsl.select(
+                DSL.coalesce(DSL.max(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_GENERATION), 0L)
+                    .add(1L))
+            .from(SCRIPT_PATCH_READINESS_PROJECTIONS)
+            .where(SCRIPT_PATCH_READINESS_PROJECTIONS.TENANT_ID.eq(tenantId))
+            .fetchOne(0, Long.class);
+    if (nextGeneration == null || nextGeneration <= 0) {
+      throw new IllegalStateException("readiness_generation_exhausted");
+    }
+    return nextGeneration;
+  }
+
+  public Optional<ScriptPatchReadinessProjection> findLatestGenerationByTenantId(String tenantId) {
+    return dsl.selectFrom(SCRIPT_PATCH_READINESS_PROJECTIONS)
+        .where(
+            SCRIPT_PATCH_READINESS_PROJECTIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_GENERATION.isNotNull()))
+        .orderBy(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_GENERATION.desc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
   }
 
   public List<ScriptPatchReadinessProjection>
@@ -78,6 +106,17 @@ public class ScriptPatchReadinessProjectionRepository {
             .set(
                 SCRIPT_PATCH_READINESS_PROJECTIONS.SUPERSEDED_BY_SCRIPT_PATCH_VERSION,
                 entity.getSupersededByScriptPatchVersion())
+            .set(
+                SCRIPT_PATCH_READINESS_PROJECTIONS.SCRIPT_SET_MANIFEST,
+                entity.getScriptSetManifest() == null
+                    ? null
+                    : entity.getScriptSetManifest().toArray(String[]::new))
+            .set(
+                SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_GENERATION,
+                entity.getReadinessGeneration())
+            .set(
+                SCRIPT_PATCH_READINESS_PROJECTIONS.DATABASE_DOWNSTREAM_RECONCILED,
+                entity.isDatabaseDownstreamReconciled())
             .set(
                 SCRIPT_PATCH_READINESS_PROJECTIONS.LAST_CHANGED_AT,
                 toOffsetDateTime(entity.getLastChangedAt()))
@@ -117,6 +156,12 @@ public class ScriptPatchReadinessProjectionRepository {
     record.setReadinessStatus(entity.getReadinessStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setSupersededByScriptPatchVersion(entity.getSupersededByScriptPatchVersion());
+    record.setScriptSetManifest(
+        entity.getScriptSetManifest() == null
+            ? null
+            : entity.getScriptSetManifest().toArray(String[]::new));
+    record.setReadinessGeneration(entity.getReadinessGeneration());
+    record.setDatabaseDownstreamReconciled(entity.isDatabaseDownstreamReconciled());
     record.setLastChangedAt(toOffsetDateTime(entity.getLastChangedAt()));
     record.setRowVersion(entity.getRowVersion());
   }
@@ -131,6 +176,14 @@ public class ScriptPatchReadinessProjectionRepository {
     entity.setStatusReason(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.STATUS_REASON));
     entity.setSupersededByScriptPatchVersion(
         record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.SUPERSEDED_BY_SCRIPT_PATCH_VERSION));
+    String[] scriptSetManifest = record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.SCRIPT_SET_MANIFEST);
+    entity.setScriptSetManifest(
+        scriptSetManifest == null ? null : List.copyOf(Arrays.asList(scriptSetManifest)));
+    entity.setReadinessGeneration(
+        record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_GENERATION));
+    Boolean downstreamReconciled =
+        record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.DATABASE_DOWNSTREAM_RECONCILED);
+    entity.setDatabaseDownstreamReconciled(Boolean.TRUE.equals(downstreamReconciled));
     entity.setLastChangedAt(
         toInstant(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.LAST_CHANGED_AT)));
     Integer rowVersion = record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.ROW_VERSION);

@@ -70,6 +70,11 @@ Entry format:
   - Observation: an existing PR branch can retain its old workflow revision after the corrected default-branch workflow merges, and an unrestricted GitHub environment can still release secrets to that old revision.
   - Expected pattern: alongside the code change, restrict privileged GitHub environments to the trusted deployment branch and clear or rotate credentials exposed by old runner state; verify the live environment policies before declaring the trust boundary effective.
 
+- `2026-09-20`: PostgreSQL migration preflights must also pass jOOQ's DDL parser
+  - Context: an Automation Flyway migration used a PostgreSQL `DO` block to report duplicate active-readiness rows before adding a partial unique index.
+  - Observation: the service's jOOQ DDLDatabase generation parses migration SQL without PostgreSQL execution and rejects procedural `IF` in a `DO` block as unsupported in the available jOOQ edition; normal PostgreSQL validity alone did not make the build pass.
+  - Expected pattern: choose a declarative fail-closed constraint/index when it expresses the invariant, run the owning service's `generateJooq` after adding a migration, and retain PostgreSQL migration proof for existing-data failures separately.
+
 - `2026-09-21`: GitHub workflow run `name` can contain the configured run title
   - Context: a static-analysis summary initially compared a `workflow_run` payload's `name` with the bare source workflow name while its source configured `run-name` with PR and SHA identity.
   - Observation: live Actions API runs exposed the complete configured run title in both `name` and `display_title`, so that comparison would silently skip valid source runs.
@@ -89,3 +94,8 @@ Entry format:
   - Context: on PR #2844, a metadata Validation Gate began at 04:06 UTC while the matching substantive gate appeared only at 04:18 UTC after its dependency graph and runner queue; the preservation action reached attempt 47 before it could observe that gate.
   - Observation: the old 23-minute polling budget could fail a metadata gate even while the matching substantive workflow was active. The Actions workflow-run API returned an empty `pull_requests` association for that real run, so active-run diagnostics cannot require a populated association; the canonical run title and non-skipped change-detection job provide the matching evidence.
   - Expected pattern: preserve separate metadata concurrency, extend only a bounded wait for a verified same-PR/base/head substantive run or gate, and never treat absent, pending, failed, or ambiguous gate proof as success.
+
+- `2026-09-26`: Necessary procedural migration preflights may use jOOQ ignore markers
+  - Context: Account V25's duplicate-detection preflight requires a PostgreSQL `DO` block and wraps it in `-- [jooq ignore start]` and `-- [jooq ignore stop]` markers.
+  - Observation: this qualifies the 2026-09-20 expected pattern: declarative constraints remain preferred when sufficient, but a necessary procedural preflight can be excluded from jOOQ parsing while retaining separate PostgreSQL migration proof.
+  - Expected pattern: prefer declarative constraints when sufficient; when procedural preflight is necessary, wrap it in the jOOQ ignore markers, run `generateJooq`, and run separate PostgreSQL migration proof.

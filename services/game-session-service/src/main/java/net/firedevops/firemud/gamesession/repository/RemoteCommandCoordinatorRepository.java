@@ -44,13 +44,14 @@ public class RemoteCommandCoordinatorRepository {
     this.dsl = dsl;
   }
 
-  public Optional<RemoteCommandCoordinator> findByTenantIdAndCommandId(
-      Long tenantId, String commandId) {
+  public Optional<RemoteCommandCoordinator> findByTenantIdAndOriginGameInstanceIdAndCommandId(
+      Long tenantId, Long originGameInstanceId, String commandId) {
     return dsl.selectFrom(REMOTE_COMMAND_COORDINATOR)
         .where(
             REMOTE_COMMAND_COORDINATOR
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_COMMAND_COORDINATOR.ORIGIN_GAME_INSTANCE_ID.eq(originGameInstanceId))
                 .and(REMOTE_COMMAND_COORDINATOR.COMMAND_ID.eq(commandId)))
         .fetchOptional(this::toEntity);
   }

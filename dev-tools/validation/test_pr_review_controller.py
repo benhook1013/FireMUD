@@ -2488,6 +2488,63 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(target.snapshot.number, 1)
         self.assertEqual(options, {"allow_unreconciled": False, "reason": None})
 
+    def test_terminal_hosted_attribution_ambiguity_does_not_hold_cli(self):
+        ambiguous = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "unstable": True,
+            "terminal_ambiguous": True,
+            "terminal": True,
+            "attributable": False,
+            "trigger_id": 123,
+            "response_id": 124,
+            "fingerprint": "f" * 64,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): [ambiguous]})
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "READY")
+        self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+
+    def test_cli_ambiguity_projection_does_not_read_non_mapping_evidence(self):
+        class NonMappingEvidence:
+            @property
+            def terminal_ambiguous(self):
+                raise AssertionError("non-mapping evidence must not be inspected")
+
+        evidence = NonMappingEvidence()
+
+        self.assertEqual(
+            ReviewController._project_cli_hosted_ambiguity(Channel.CLI, [evidence]), [evidence]
+        )
+
+    def test_active_hosted_reservation_holds_cli_status_and_target(self):
+        active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "reason": "Hosted review is active",
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): [active]})
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "HELD"):
+            controller.resolve_cli_target()
+
+    def test_unresolved_accepted_hosted_findings_hold_cli_status_and_target(self):
+        accepted = self.allocation_evidence(checkpoint="hosted-findings", accepted=1, channel="hosted")
+        accepted["held"] = True
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): [accepted]})
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "HELD"):
+            controller.resolve_cli_target()
+
     def test_pull_request_snapshot_number_must_match_requested_pr(self):
         values = {
             1: PullRequestSnapshot(

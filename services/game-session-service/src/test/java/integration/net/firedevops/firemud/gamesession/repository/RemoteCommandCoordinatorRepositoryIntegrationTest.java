@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -60,6 +61,90 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     dsl.execute(
         "TRUNCATE TABLE gameplay_command, runtime_region_status, remote_followup_result,"
             + " remote_followup, remote_command_coordinator RESTART IDENTITY CASCADE");
+  }
+
+  @Test
+  void commandIdentityIsIndependentAcrossOriginInstancesButConflictsWithinOneScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+
+    RemoteCommandCoordinator first = remoteCoordinator(observedAt);
+    first.setCommandId("shared-command");
+    coordinatorRepository.save(first);
+
+    RemoteCommandCoordinator second = remoteCoordinator(observedAt.plusSeconds(1));
+    second.setCoordinatorId("coord-2");
+    second.setCommandId("shared-command");
+    second.setOriginGameInstanceId(8L);
+    coordinatorRepository.save(second);
+
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-1");
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 8L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-2");
+
+    RemoteCommandCoordinator duplicate = remoteCoordinator(observedAt.plusSeconds(2));
+    duplicate.setCoordinatorId("coord-3");
+    duplicate.setCommandId("shared-command");
+    assertThatThrownBy(() -> coordinatorRepository.save(duplicate))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("idx_remote_command_coordinator_tenant_origin_instance_cmd");
+  }
+
+  @Test
+  void reusedCommandIdPersistsAndRetrievesCoordinatorAndFollowupByOriginInstance() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+
+    RemoteCommandCoordinator firstCoordinator = remoteCoordinator(observedAt);
+    firstCoordinator.setCommandId("shared-command");
+    coordinatorRepository.save(firstCoordinator);
+    RemoteFollowup firstFollowup = remoteFollowup(observedAt);
+    firstFollowup.setCommandId("shared-command");
+    followupRepository.save(firstFollowup);
+
+    RemoteCommandCoordinator secondCoordinator = remoteCoordinator(observedAt.plusSeconds(1));
+    secondCoordinator.setCoordinatorId("coord-2");
+    secondCoordinator.setFollowupId("rf-2");
+    secondCoordinator.setCommandId("shared-command");
+    secondCoordinator.setOriginGameInstanceId(8L);
+    secondCoordinator.setTargetGameInstanceId(10L);
+    coordinatorRepository.save(secondCoordinator);
+    RemoteFollowup secondFollowup = remoteFollowup(observedAt.plusSeconds(1));
+    secondFollowup.setFollowupId("rf-2");
+    secondFollowup.setCommandId("shared-command");
+    secondFollowup.setOriginGameInstanceId(8L);
+    secondFollowup.setTargetGameInstanceId(10L);
+    secondFollowup.setEffectKey("effect-2");
+    followupRepository.save(secondFollowup);
+
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-1");
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 8L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-2");
+    assertThat(findFollowupsByOriginAndCommand(7L, "shared-command"))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findFollowupsByOriginAndCommand(8L, "shared-command"))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-2");
+    assertThat(findCoordinatorsByTargetOutcome("", "SCHEDULED"))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactlyInAnyOrder("coord-1", "coord-2");
   }
 
   @Test
@@ -403,6 +488,61 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(
       String targetCommandExecutionOutcome) {
     return findFollowupsByTargetOutcome(targetCommandExecutionOutcome, 0L, 0L, "");
+  }
+
+  private List<RemoteFollowup> findFollowupsByOriginAndCommand(
+      Long originGameInstanceId, String commandId) {
+    return followupRepository.findForControlPlane(
+        1L, // tenantId
+        "", // targetRegionId
+        "", // status
+        originGameInstanceId,
+        "", // originRegionId
+        0L, // originRegionEpoch
+        null, // targetGameInstanceId
+        0L, // targetRegionEpoch
+        "", // currentOriginRuntimeRegionId
+        0L, // currentOriginRuntimeRegionEpoch
+        null, // currentOriginRuntimeGameInstanceId
+        "", // currentTargetRuntimeRegionId
+        0L, // currentTargetRuntimeRegionEpoch
+        null, // currentTargetRuntimeGameInstanceId
+        "", // followupId
+        "", // scriptId
+        "", // pluginId
+        "", // scriptPatchVersion
+        "", // pluginVersionId
+        "", // playableStateScope
+        "", // worldSlug
+        "", // realmSlug
+        null, // pointerVersion
+        "", // payloadKind
+        "", // originSourceKind
+        "", // originSourceState
+        "", // automationWorkItemId
+        "", // targetEntityId
+        "", // claimTargetAggregate
+        "", // effectKey
+        "", // failureCode
+        null, // requiresSoloTick
+        "", // claimedTickBatchId
+        "", // queueSourceKind
+        "", // queueSourceState
+        0L, // queueSourceOrdinal
+        0L, // queueSourceDueTickId
+        0L, // queueSourceDueAtMs
+        "", // requestedCommand
+        "", // eventType
+        "", // scriptEventId
+        0L, // originDeadlineRegionEpoch
+        0L, // originDeadlineTickId
+        "", // lateResultPolicy
+        "", // automationDispatchId
+        commandId,
+        "", // targetCommandId
+        "", // targetCommandExecutionOutcome
+        "", // targetCommandGameplayResult
+        PageRequest.of(0, 20));
   }
 
   private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(

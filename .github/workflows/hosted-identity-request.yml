@@ -34,6 +34,7 @@ jobs:
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
       exposure_mode: ${{ steps.target.outputs.exposure_mode }}
+      v2_schema_migration_change: ${{ steps.target.outputs.v2_schema_migration_change }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
       artifact_name: ${{ steps.target.outputs.artifact_name }}
       retire_identity: ${{ steps.target.outputs.retire_identity }}
@@ -120,6 +121,7 @@ jobs:
           ARTIFACT_MERGE_SHA=""
           ARTIFACT_NAME=""
           ARTIFACT_KIND=""
+          V2_SCHEMA_MIGRATION_CHANGE=false
           RETIRE_IDENTITY=false
           CLEANUP_STATE=none
           if [[ "$EVENT_NAME" == workflow_run ]]; then
@@ -314,6 +316,35 @@ jobs:
           fi
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
             "Ignoring stale lifecycle event for an earlier PR head."
+          if [[ "$ACTION" == deploy ]]; then
+            if ! changed_files_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"; then
+              changed_files_json=''
+            fi
+            expected_changed_file_count="$(jq -r \
+              'if (.changed_files | type) == "number" and .changed_files >= 0 and (.changed_files | floor) == .changed_files
+               then .changed_files else empty end' <<<"$pull_request_json")"
+            if [[ ! "$expected_changed_file_count" =~ ^[0-9]+$ ]]; then
+              V2_SCHEMA_MIGRATION_CHANGE=true
+            else
+              if ! returned_changed_file_count="$(jq -r \
+                'if type == "array" and all(.[]; type == "array")
+                 then ([flatten[]] | length) else error("malformed pull-request file pages") end' \
+                <<<"$changed_files_json")" ||
+                [[ "$returned_changed_file_count" != "$expected_changed_file_count" ]]; then
+                V2_SCHEMA_MIGRATION_CHANGE=true
+              else
+                migration_paths="$(jq -r \
+                  '[flatten[] | [.filename, (.previous_filename // empty)] | .[]
+                    | select(type == "string")
+                    | select(test("^services/[^/]+/src/main/(resources/db/migration/.+\\.sql|java/db/migration/.+\\.java|kotlin/db/migration/.+\\.kt)$"))]
+                  | unique | .[]' <<<"$changed_files_json")"
+                if [[ -n "$migration_paths" ]]; then
+                  V2_SCHEMA_MIGRATION_CHANGE=true
+                fi
+              fi
+            fi
+          fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
             [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
@@ -353,6 +384,7 @@ jobs:
           fi
           {
             echo "action=${ACTION}"
+            echo "v2_schema_migration_change=${V2_SCHEMA_MIGRATION_CHANGE}"
             echo "pr_number=${PR_NUMBER}"
             echo "base_sha=${base_sha}"
             echo "head_sha=${current_head_sha}"
@@ -430,6 +462,12 @@ jobs:
         run: |
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+
+      - name: Block unproven PR schema migration before image preparation
+        if: ${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}
+        run: |
+          echo "::error title=Hosted PR migration activation blocked::A changed Flyway migration cannot run in PR preview because this path has no trusted proof of fresh database provenance or zero old writers. Stop before waiting for or reclaiming preview capacity; run the trusted post-merge quiesce/preflight path instead." >&2
+          exit 1
 
       - name: Wait for tested PR merge runtime images
         if: ${{ needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha }}

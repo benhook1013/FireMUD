@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +16,7 @@ class ScriptVersionServiceImplTest {
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
+    when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(true);
 
     service.notifyUpdate("1", "patch-1", List.of("guard-script"));
 
@@ -23,16 +25,18 @@ class ScriptVersionServiceImplTest {
   }
 
   @Test
-  void notifyUpdateSkipsTemporalTrackingForEmptyPatch() {
+  void notifyUpdateSkipsTemporalTrackingWhenReadinessIsTerminal() {
     ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
     TemporalScriptPatchReadinessOrchestrator orchestrator =
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
 
-    service.notifyUpdate("1", "patch-1", List.of());
+    when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(false);
 
-    verify(commandService).notifyUpdate("1", "patch-1", List.of());
+    service.notifyUpdate("1", "patch-1", List.of("guard-script"));
+
+    verify(commandService).notifyUpdate("1", "patch-1", List.of("guard-script"));
     org.mockito.Mockito.verifyNoInteractions(orchestrator);
   }
 }

@@ -4541,6 +4541,16 @@ def deployment_for(service, deployment_map=deployments):
     return exactly_one(deployment_map.get(service, []), f"Deployment/{service}")
 
 
+for service in (
+    "account-service",
+    "game-session-service",
+    "automation-scripting-service",
+):
+    hosted_strategy = deployment_for(service).get("spec", {}).get("strategy", {})
+    if hosted_strategy.get("type") != "Recreate":
+        fail(f"hosted Deployment/{service} must use non-rolling Recreate strategy")
+
+
 def workload_container(deployment, service):
     pod_spec = deployment.get("spec", {}).get("template", {}).get("spec", {})
     containers = pod_spec.get("containers")
@@ -4701,6 +4711,16 @@ for document in base_documents:
     name = document.get("metadata", {}).get("name")
     if name:
         base_deployments.setdefault(name, []).append(document)
+for service in (
+    "account-service",
+    "game-session-service",
+    "automation-scripting-service",
+):
+    base_strategy = exactly_one(
+        base_deployments.get(service, []), f"Kustomize base Deployment/{service}"
+    ).get("spec", {}).get("strategy", {})
+    if base_strategy.get("type") != "Recreate":
+        fail(f"Kustomize base Deployment/{service} must use non-rolling Recreate strategy")
 for service in publication_services:
     assert_publication_service(service, base_deployments, "Kustomize base")
 PY

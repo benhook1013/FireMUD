@@ -807,7 +807,12 @@ final class AutomationGameplayCommandAdmissionSupport {
       String message,
       GameplayCommandRepository gameplayCommandRepository) {
     gameplayCommandRepository.markAcceptedCommandFailed(
-        command.getCommandId(), code, message, Instant.now());
+        command.getTenantId(),
+        command.getGameInstanceId(),
+        command.getCommandId(),
+        code,
+        message,
+        Instant.now());
   }
 
   private static void triggerImmediateAutomationTick(

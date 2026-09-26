@@ -106,7 +106,9 @@ class TickServiceImplTest {
               }
               return command;
             });
-    when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.markAcceptedCommandStaged(
+            any(Long.class), any(Long.class), any(String.class), any(Instant.class)))
+        .thenReturn(true);
     when(gameplayCommandRepository.lockAcceptedCommandForStaging(
             any(Long.class),
             any(Long.class),
@@ -213,7 +215,9 @@ class TickServiceImplTest {
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
     when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
         .thenReturn(java.util.Optional.of(instance));
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
@@ -570,7 +574,8 @@ class TickServiceImplTest {
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-stale-rollback|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-stale-rollback|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-stale-rollback")));
     org.mockito.Mockito.doReturn(Optional.empty())
         .when(runtimeRegionStatusRepository)
@@ -898,7 +903,8 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
 
     service.processTick(1L, 2L);
@@ -915,7 +921,8 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
 
     List<String> events = new ArrayList<>();
@@ -990,7 +997,9 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.GameplayCommand staleCommand =
         gameplayCommand("cmd-stale");
     staleCommand.setExecutionOutcome("DRAINED");
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(staleCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(staleCommand));
 
     RedisScript<Long> commitMarker = mock(RedisScript.class);
     RedisScript<Long> rollbackMarker = mock(RedisScript.class);
@@ -1027,7 +1036,9 @@ class TickServiceImplTest {
     executable.setExecutionOutcome("STAGED");
     net.firedevops.firemud.gamesession.entity.GameplayCommand stale = gameplayCommand("cmd-stale");
     stale.setExecutionOutcome("DRAINED");
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(executable, stale));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(executable, stale));
 
     RedisScript<Long> commitMarker = mock(RedisScript.class);
     RedisScript<Long> rollbackMarker = mock(RedisScript.class);
@@ -1060,7 +1071,8 @@ class TickServiceImplTest {
     when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-staged|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-staged")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-staged")))
         .thenReturn(List.of(gameplayCommand("cmd-staged")));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)), Optional.empty());
@@ -1097,7 +1109,9 @@ class TickServiceImplTest {
         .thenReturn(List.of("N|cmd-retry|look"), List.of("N|cmd-retry|look"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command =
         gameplayCommand("cmd-retry");
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(command));
     List<String> savedBatchStatuses = new ArrayList<>();
     List<String> savedEffectStatuses = new ArrayList<>();
     List<String> savedCommandOutcomes = new ArrayList<>();
@@ -1181,7 +1195,9 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.GameplayCommand soloCommand =
         gameplayCommand("cmd-1");
     soloCommand.setRequiresSoloTick(true);
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(soloCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(soloCommand));
 
     service.processTick(1L, 2L);
 
@@ -1212,7 +1228,8 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
@@ -1252,7 +1269,9 @@ class TickServiceImplTest {
         .thenReturn(java.util.Optional.of(existingBatch));
     when(tickEffectRepository.findByTickBatchId("tb-existing")).thenReturn(List.of());
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(command));
     existingBatch.setSelectedWorkManifestDigest(
         replayManifestDigest(tickStagingService, replayEntries));
 
@@ -1284,7 +1303,8 @@ class TickServiceImplTest {
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
     when(tickEffectRepository.findByTickBatchId("tb-replay-drain-failure")).thenReturn(List.of());
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     existingBatch.setSelectedWorkManifestDigest(
         replayManifestDigest(tickStagingService, replayEntries));
@@ -1322,7 +1342,8 @@ class TickServiceImplTest {
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
     when(tickEffectRepository.findByTickBatchId("tb-replay-failure")).thenReturn(List.of());
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     existingBatch.setSelectedWorkManifestDigest(
         replayManifestDigest(tickStagingService, replayEntries));
@@ -1375,7 +1396,8 @@ class TickServiceImplTest {
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
     when(tickEffectRepository.findByTickBatchId("tb-replay-commit-failure")).thenReturn(List.of());
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     existingBatch.setSelectedWorkManifestDigest(
         replayManifestDigest(tickStagingService, replayEntries));
@@ -1411,7 +1433,8 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus initialStatus =
         runtimeOwnership(1L, 2L, 1L, "fence-a", false);
@@ -1481,7 +1504,8 @@ class TickServiceImplTest {
         .thenReturn(List.of(drainedBatch));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-drained", "DRAINED"))
         .thenReturn(List.of(drainedEffect));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 2L, "fence-b", false)));
@@ -1515,7 +1539,8 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 1L, "fence-a", false);
@@ -1547,7 +1572,9 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setRegionId("region-alpha");
     command.setRegionEpoch(4L);
-    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            eq(1L), eq(2L), any()))
+        .thenReturn(List.of(command));
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnershipByRegionId(1L, 2L, "region-alpha", 4L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
@@ -1681,7 +1708,8 @@ class TickServiceImplTest {
     command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
     command.setOriginSourceOrdinal(5000L);
     command.setOriginSourceDueAtMs(5000L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.processTick(1L, 2L);
@@ -1780,7 +1808,8 @@ class TickServiceImplTest {
     command.setRealmSlug("production");
     command.setPointerVersion(null);
     command.setEnqueueSeq(77L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.processTick(1L, 2L);
@@ -1831,7 +1860,8 @@ class TickServiceImplTest {
     command.setOriginSourceOrdinal(6000L);
     command.setOriginSourceDueAtMs(6000L);
     command.setExecutionOutcome("RETRY_QUEUED");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.processTick(1L, 2L);
@@ -1895,7 +1925,8 @@ class TickServiceImplTest {
     command.setScriptPinControlPlaneRequestId("req-1");
     command.setCharacterId(44L);
     command.setTargetEntityId("44");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.processTick(1L, 2L);
@@ -1926,7 +1957,8 @@ class TickServiceImplTest {
     existingBatch.setBatchSource("FRESH_STAGE");
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(4L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
     String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
@@ -1976,10 +2008,15 @@ class TickServiceImplTest {
     second.setCommandText("wave");
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(5L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
+        .thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
+        .thenReturn(List.of(second));
     String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
@@ -2047,10 +2084,15 @@ class TickServiceImplTest {
     second.setCommandText("wave");
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(5L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
+        .thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
+        .thenReturn(List.of(second));
     String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
@@ -2138,10 +2180,15 @@ class TickServiceImplTest {
             })
         .when(gameplayCommandRepository)
         .saveAll(any());
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
+        .thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
+        .thenReturn(List.of(second));
     String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
@@ -2361,9 +2408,10 @@ class TickServiceImplTest {
         entries.add(parseMethod.invoke(service, rawEntry.toString()));
       }
       var selectionsMethod =
-          TickStagingService.class.getDeclaredMethod("commandSelections", List.class);
+          TickStagingService.class.getDeclaredMethod(
+              "commandSelections", Long.class, Long.class, List.class);
       selectionsMethod.setAccessible(true);
-      Object selections = selectionsMethod.invoke(service, entries);
+      Object selections = selectionsMethod.invoke(service, 1L, 2L, entries);
       var manifestMethod =
           TickStagingService.class.getDeclaredMethod(
               "selectedWorkManifest", String.class, List.class);

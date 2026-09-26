@@ -23,6 +23,7 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultExecuteListener;
@@ -193,6 +194,19 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void admissionPointerSelectorIdentityIsScopedToTenant() {
+    insertAdmissionPointer(1L, "shared-world", "production", 17L, "SHARED", 7L);
+    insertAdmissionPointer(2L, "shared-world", "production", 23L, "SHARED", 8L);
+
+    assertThat(dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER)).isEqualTo(2);
+    assertThatThrownBy(
+            () -> insertAdmissionPointer(1L, "shared-world", "production", 29L, "SHARED", 9L))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("uq_gameplay_admission_pointer_tenant_world_realm");
+    assertThat(dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER)).isEqualTo(2);
+  }
+
+  @Test
   void saveRoundTripsCompleteScriptPinTuple() {
     GameplayCommand command = repositoryCommand("script-command", "AUTOMATION");
     command.setScriptPatchVersion("patch-1");
@@ -222,7 +236,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly("patch-2", 8L, "pin-request-8");
-    assertThat(repository.findByCommandId("script-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "script-command"))
         .get()
         .extracting(
             GameplayCommand::getScriptPatchVersion,
@@ -243,7 +257,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly(null, null, null);
-    assertThat(repository.findByCommandId("player-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "player-command"))
         .get()
         .extracting(
             GameplayCommand::getScriptPatchVersion,
@@ -267,7 +281,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly("remote-followup-1", "legacy-patch", null, null);
-    assertThat(repository.findByCommandId("remote-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "remote-command"))
         .get()
         .extracting(
             GameplayCommand::getRemoteFollowupId,
@@ -287,7 +301,9 @@ class GameplayCommandRepositoryIntegrationTest {
 
     repository.save(command);
 
-    assertThat(repository.findByCommandId("completed-legacy-command"))
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "completed-legacy-command"))
         .get()
         .extracting(
             GameplayCommand::getExecutionOutcome,
@@ -379,12 +395,22 @@ class GameplayCommandRepositoryIntegrationTest {
       long pointerVersion,
       String stateScope,
       long gameInstanceId) {
+    insertAdmissionPointer(1L, worldSlug, realmSlug, pointerVersion, stateScope, gameInstanceId);
+  }
+
+  private void insertAdmissionPointer(
+      long tenantId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String stateScope,
+      long gameInstanceId) {
     dsl.insertInto(GAMEPLAY_ADMISSION_POINTER)
         .set(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG, worldSlug)
         .set(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME, "Demo")
         .set(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG, realmSlug)
         .set(GAMEPLAY_ADMISSION_POINTER.REALM_DISPLAY_NAME, "Production")
-        .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, 1L)
+        .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, tenantId)
         .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, gameInstanceId)
         .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, pointerVersion)
         .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, true)
@@ -423,7 +449,7 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommand saved = repository.save(command);
 
     assertThat(saved.getExecutionHook()).isEqualTo("runtime.workflow.wave");
-    assertThat(repository.findByCommandId("cmd-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .get()
         .extracting(GameplayCommand::getExecutionHook)
         .isEqualTo("runtime.workflow.wave");
@@ -458,6 +484,34 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void commandIdMayBeReusedAcrossScopesButConflictsWithinOneScope() {
+    GameplayCommand first = repositoryCommand("cmd-reused", "PLAYER");
+    repository.save(first);
+
+    GameplayCommand otherTenant = repositoryCommand("cmd-reused", "PLAYER");
+    otherTenant.setTenantId(2L);
+    repository.save(otherTenant);
+
+    GameplayCommand otherGame = repositoryCommand("cmd-reused", "PLAYER");
+    otherGame.setGameInstanceId(8L);
+    repository.save(otherGame);
+
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-reused"))
+        .get()
+        .extracting(GameplayCommand::getTenantId, GameplayCommand::getGameInstanceId)
+        .containsExactly(1L, 7L);
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(2L, 7L, "cmd-reused"))
+        .isPresent();
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 8L, "cmd-reused"))
+        .isPresent();
+
+    GameplayCommand sameScope = repositoryCommand("cmd-reused", "PLAYER");
+    assertThatThrownBy(() -> repository.save(sameScope))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("idx_gameplay_command_tenant_instance_command_id");
+  }
+
+  @Test
   void updatePreservesAdmittedAuthoredActionSnapshot() {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("cmd-authored-1");
@@ -486,7 +540,7 @@ class GameplayCommandRepositoryIntegrationTest {
     saved.setDeclaredEffectsJson("[]");
     repository.save(saved);
 
-    assertThat(repository.findByCommandId("cmd-authored-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-authored-1"))
         .get()
         .extracting(
             GameplayCommand::getExecutionOutcome,
@@ -517,19 +571,24 @@ class GameplayCommandRepositoryIntegrationTest {
     repository.save(command);
 
     Instant stagedAt = Instant.parse("2026-07-05T06:01:00Z");
-    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt)).isTrue();
-    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt.plusSeconds(1)))
+    assertThat(repository.markAcceptedCommandStaged(1L, 7L, "cmd-stage-1", stagedAt)).isTrue();
+    assertThat(repository.markAcceptedCommandStaged(1L, 7L, "cmd-stage-1", stagedAt.plusSeconds(1)))
         .isFalse();
     assertThat(
             repository.markAcceptedCommandFailed(
-                "cmd-stage-1", "QUEUE_UNAVAILABLE", "must not overwrite", stagedAt.plusSeconds(2)))
+                1L,
+                7L,
+                "cmd-stage-1",
+                "QUEUE_UNAVAILABLE",
+                "must not overwrite",
+                stagedAt.plusSeconds(2)))
         .isFalse();
-    assertThat(repository.findByCommandId("cmd-stage-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-stage-1"))
         .get()
         .extracting(GameplayCommand::getExecutionOutcome, GameplayCommand::getStagedAt)
         .containsExactly("STAGED", stagedAt);
 
-    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isFalse();
+    assertThat(repository.hasDurableTickEffect(1L, 7L, "cmd-stage-1")).isFalse();
     dsl.insertInto(TICK_BATCH)
         .set(TICK_BATCH.TICK_BATCH_ID, "batch-stage-1")
         .set(TICK_BATCH.TENANT_ID, 1L)
@@ -554,7 +613,7 @@ class GameplayCommandRepositoryIntegrationTest {
         .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
         .set(TICK_EFFECT.EFFECT_KEY, "effect-key-stage-1")
         .execute();
-    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isTrue();
+    assertThat(repository.hasDurableTickEffect(1L, 7L, "cmd-stage-1")).isTrue();
   }
 
   @Test

@@ -592,13 +592,39 @@ class ReviewController:
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
         if not selected:
-            return [self._clear_untrusted_non_counting(value) for value in history]
+            projected = [self._clear_untrusted_non_counting(value) for value in history]
+            return self._project_cli_hosted_ambiguity(channel, projected)
         projected: list[Any] = []
         for value in history:
             if observation_fingerprint(value) in selected:
                 projected.append(self._mark_non_counting(value))
             else:
                 projected.append(self._clear_untrusted_non_counting(value))
+        return self._project_cli_hosted_ambiguity(channel, projected)
+
+    @staticmethod
+    def _project_cli_hosted_ambiguity(channel: policy.Channel, history: Sequence[Any]) -> list[Any]:
+        """Keep verified terminal Hosted attribution ambiguity from holding CLI policy."""
+
+        if channel != policy.Channel.CLI:
+            return list(history)
+        projected: list[Any] = []
+        for value in history:
+            if not isinstance(value, Mapping):
+                projected.append(value)
+                continue
+            if (
+                _field(value, "terminal_ambiguous") is True
+                and _field(value, "terminal") is True
+                and _field(value, "attributable") is False
+                and isinstance(_field(value, "response_id"), int)
+                and not isinstance(_field(value, "response_id"), bool)
+                and _field(value, "response_id") > 0
+                and isinstance(_field(value, "fingerprint"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", _field(value, "fingerprint")) is not None
+            ):
+                value = {key: item for key, item in value.items() if key not in {"held", "unstable"}}
+            projected.append(value)
         return projected
 
     def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
