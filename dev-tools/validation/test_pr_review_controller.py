@@ -19,7 +19,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner, hosted
+from pr_review import cli_runner, hosted, stack
 from pr_review.cli import _parser
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
@@ -36,7 +36,7 @@ from pr_review.controller import (
 )
 from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
-from pr_review.policy import Channel, Evidence, taper_satisfied
+from pr_review.policy import Channel, Evidence, completion_status, taper_satisfied
 from pr_review.runtime import LiveEvidence
 from pr_review.state import (
     Judgment,
@@ -4032,6 +4032,141 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["prs"][0]["channels"]["hosted"], "COMPLETE")
         with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
             controller.resolve_cli_target()
+
+    def test_hosted_head_mismatch_yields_to_proven_cli_descendant_in_status_and_selection(self):
+        controller = self.make(
+            {
+                1: pr(1, HEAD_2),
+                2: pr(2, HEAD_3, "feature-1", HEAD_2),
+            },
+            heads={"develop": BASE, "feature-1": HEAD_2, "feature-2": HEAD_3},
+        )
+        controller.set_stack([1, 2])
+        state = controller._state()
+        live, reconciliation = controller._reconciliation(state)
+        # Isolate the cross-channel decision: both review channels are on the
+        # same coherent parent and patch identity, while their reviewed heads differ.
+        reconciliation = dataclasses.replace(
+            reconciliation,
+            statuses={1: stack.ReconciliationStatus.COHERENT, 2: stack.ReconciliationStatus.COHERENT},
+            channel_statuses={},
+        )
+
+        def review(head, checkpoint, *, proven=False, active=False):
+            value = {
+                "pr": 1,
+                "head": head,
+                "checkpoint": checkpoint,
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "raw": 0,
+                "child_head": head,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": "same-patch",
+            }
+            if proven:
+                value["current_candidate_descendant_proven"] = True
+            if active:
+                value["active_review"] = True
+            return value
+
+        hosted_history = [review(HEAD_2, "hosted-current")]
+        cli_history = [
+            review(HEAD_1, "cli-one"),
+            review(HEAD_1, "cli-two"),
+            review(HEAD_1, "cli-three", proven=True),
+        ]
+        histories = {
+            Channel.HOSTED: {1: hosted_history, 2: []},
+            Channel.CLI: {1: cli_history, 2: []},
+        }
+
+        self.assertEqual(
+            completion_status(state, Channel.HOSTED, hosted_history).value,
+            "COMPLETE",
+        )
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.HOSTED,
+                hosted_history,
+                other_channel_head=HEAD_1,
+            ).value,
+            "JUDGMENT_REQUIRED",
+        )
+        with (
+            patch.object(controller, "_reconciliation", return_value=(live, reconciliation)),
+            patch.object(
+                controller,
+                "_policy_history",
+                side_effect=lambda _state, pr_number, channel, *_args, **_kwargs: histories[channel][pr_number],
+            ),
+            patch.object(
+                controller,
+                "_project_cli_hosted_reservations",
+                side_effect=lambda cli_history, *_args, **_kwargs: cli_history,
+            ),
+            patch.object(
+                controller,
+                "_project_cli_streak_lineage",
+                side_effect=lambda cli_history, *_args, **_kwargs: cli_history,
+            ),
+        ):
+            report = controller._status_from_state(
+                state,
+                review_target_prs=state.ordered_prs,
+                review_target_selection_complete=True,
+            )
+        self.assertEqual(report["prs"][0]["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(
+            (report["review_targets"]["hosted"]["pr"], report["review_targets"]["hosted"]["status"]),
+            (2, "MISSING_EVIDENCE"),
+        )
+        decision = ReviewController._select_review_decision(
+            state,
+            Channel.HOSTED,
+            live,
+            reconciliation,
+            histories,
+            {},
+            [1, 2],
+        )
+        self.assertEqual((decision.target, decision.status.value), (2, "MISSING_EVIDENCE"))
+
+        unproven_histories = {
+            Channel.HOSTED: {1: hosted_history, 2: []},
+            Channel.CLI: {1: [review(HEAD_1, "cli-three")], 2: []},
+        }
+        unproven = ReviewController._select_review_decision(
+            state,
+            Channel.HOSTED,
+            live,
+            reconciliation,
+            unproven_histories,
+            {},
+            [1, 2],
+        )
+        self.assertEqual((unproven.target, unproven.status.value), (1, "JUDGMENT_REQUIRED"))
+
+        active_histories = {
+            Channel.HOSTED: {1: hosted_history, 2: []},
+            Channel.CLI: {1: [review(HEAD_1, "cli-three", proven=True, active=True)], 2: []},
+        }
+        active = ReviewController._select_review_decision(
+            state,
+            Channel.HOSTED,
+            live,
+            reconciliation,
+            active_histories,
+            {},
+            [1, 2],
+        )
+        self.assertEqual((active.target, active.status.value), (1, "JUDGMENT_REQUIRED"))
 
     def test_cli_taper_holds_unproven_candidate_and_explicit_reopen(self):
         def make_controller():

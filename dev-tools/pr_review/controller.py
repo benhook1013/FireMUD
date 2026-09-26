@@ -3482,10 +3482,16 @@ class ReviewController:
             values = histories[other].get(pr, ())
             latest = _latest_review(values)
             other_anchor_status = reconciliation.status_for(pr, other.value)
+            proven_cli_descendant = (
+                channel == policy.Channel.HOSTED
+                and ReviewController._hosted_head_mismatch_is_proven_cli_descendant(
+                    pr, histories, reconciliation
+                )
+            )
             if latest is not None and other_anchor_status not in {
                 stack.ReconciliationStatus.PATCH_CHANGED,
                 stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-            }:
+            } and not proven_cli_descendant:
                 value = _field(latest, "head", "reviewed_head")
                 if isinstance(value, str):
                     other_heads[pr] = value
@@ -3546,6 +3552,46 @@ class ReviewController:
         ):
             return dataclasses.replace(decision, reason=HOSTED_CLI_OVERLAP_HOLD_REASON)
         return decision
+
+    @staticmethod
+    def _hosted_head_mismatch_is_proven_cli_descendant(
+        pr: int,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        reconciliation: stack.Reconciliation,
+    ) -> bool:
+        """Allow proven CLI taper to coexist with Hosted's current-head review."""
+
+        cli_history = histories[policy.Channel.CLI].get(pr, ())
+        latest_cli = _latest_review(cli_history)
+        if latest_cli is None or _field(latest_cli, "current_candidate_descendant_proven") is not True:
+            return False
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            for value in histories[channel].get(pr, ()):
+                checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                if (
+                    _field(value, "active_review") is True
+                    or _field(value, "active_reservation") is True
+                    or (
+                        _field(value, "held") is True
+                        and _field(value, "reason") == HOSTED_ACTIVE_RESPONSE_REASON
+                    )
+                    or (
+                        _field(value, "held") is True
+                        and isinstance(checkpoint, str)
+                        and checkpoint.startswith("trigger:")
+                        and _field(value, "rate_limited") is not True
+                        and _field(value, "terminal_ambiguous") is not True
+                    )
+                ):
+                    return False
+        allowed_statuses = {
+            stack.ReconciliationStatus.COHERENT,
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+        }
+        return all(
+            reconciliation.status_for(pr, channel.value) in allowed_statuses
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        )
 
     def _status_review_targets(
         self,
@@ -3822,6 +3868,12 @@ class ReviewController:
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
+                proven_cli_descendant = (
+                    channel == policy.Channel.HOSTED
+                    and self._hosted_head_mismatch_is_proven_cli_descendant(
+                        pr, histories, reconciliation
+                    )
+                )
                 if allocations[channel].get(pr, {}).get("status") == "STOPPED":
                     channel_status[channel.value] = policy.ReviewStatus.HUMAN_STOPPED.value
                 elif channel_reconciliation in {
@@ -3838,6 +3890,7 @@ class ReviewController:
                         other_channel_head=(
                             other_head
                             if isinstance(other_head, str)
+                            and not proven_cli_descendant
                             and reconciliation.status_for(pr, other.value)
                             not in {
                                 stack.ReconciliationStatus.PATCH_CHANGED,
