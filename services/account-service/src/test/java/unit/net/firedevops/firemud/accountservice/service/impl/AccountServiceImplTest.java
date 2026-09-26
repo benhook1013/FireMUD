@@ -1442,6 +1442,62 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void allAccountMintPathsUseCanonicalIssuerAndRetainTheirClaims() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+
+    AuthenticationResult controlUi = service.authenticate("demo", "password");
+    AuthenticationResult gameplayDelegation =
+        service.authenticateForGameplay("demo@example.com", "password");
+    assertCanonicalIssuerAndClaims(controlUi.authToken(), "control-ui", 11L);
+    assertEquals(java.util.List.of(), parseClaims(controlUi.authToken()).get("globalRoles"));
+    assertCanonicalIssuerAndClaims(gameplayDelegation.authToken(), "account-service", 11L);
+    assertEquals(
+        java.util.List.of(), parseClaims(gameplayDelegation.authToken()).get("globalRoles"));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    assertCanonicalIssuerAndClaims(bootstrap.bootstrapToken(), "player-bootstrap", 11L);
+
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var connectScopeClaims = parseClaims(connectScopeId);
+    assertCanonicalIssuerAndClaims(connectScopeId, "bootstrap-connect-scope", 11L);
+    assertEquals("4c4b57d8-e3a2-48fe-9977-e7df0fdce901", connectScopeClaims.get("realmId"));
+    assertEquals(7L, connectScopeClaims.get("tenantId", Long.class));
+
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    ConnectTokenResult connectToken =
+        service.issueConnectToken(
+            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "issuer-proof"));
+    assertCanonicalIssuerAndClaims(connectToken.connectToken(), "gameplay-connect", 11L);
+    assertEquals(7L, parseClaims(connectToken.connectToken()).get("tenantId", Long.class));
+    assertEquals(17L, parseClaims(connectToken.connectToken()).get("pointerVersion", Long.class));
+
+    Account otpAccount = new Account();
+    otpAccount.setId(12L);
+    otpAccount.setEmail("otp@example.com");
+    otpAccount.setLoginAuthModes("EMAIL_OTP");
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setAccountId(12L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountRepository.findByEmail("otp@example.com")).thenReturn(Optional.of(otpAccount));
+    when(accountEmailLoginChallengeRepository.findByAccountId(12L))
+        .thenReturn(Optional.of(challenge));
+    AuthenticationResult otpDelegation = service.verifyEmailLoginOtp("otp@example.com", "123456");
+    assertCanonicalIssuerAndClaims(otpDelegation.authToken(), "account-service", 12L);
+    assertEquals(java.util.List.of(), parseClaims(otpDelegation.authToken()).get("globalRoles"));
+  }
+
+  @Test
   void issuePlayerBootstrapReturnsShortLivedToken() {
     Account account = new Account();
     account.setId(7L);
@@ -4498,6 +4554,19 @@ class AccountServiceImplTest {
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
         exception.getReason());
     org.mockito.Mockito.verifyNoInteractions(accountRepository);
+  }
+
+  private void assertCanonicalIssuerAndClaims(
+      String token, String expectedAudience, long expectedAccountId) {
+    var claims = parseClaims(token);
+    assertEquals("firemud-account-service", claims.getIssuer());
+    assertEquals(expectedAudience, claims.getAudience().iterator().next());
+    assertEquals(expectedAccountId, claims.get("accountId", Long.class));
+    assertNotNull(claims.get("jti"));
+  }
+
+  private io.jsonwebtoken.Claims parseClaims(String token) {
+    return new JwtUtil(JWT_SECRET, 3600000L).parseToken(token).getPayload();
   }
 
   private static String hash(String password) {

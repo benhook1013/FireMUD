@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -117,6 +118,7 @@ public class AccountServiceImpl implements AccountService {
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
   private static final String JOIN_REQUIRED_CHARACTERS_MESSAGE =
       "Join the selected world before discovering characters";
+  private static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
@@ -1760,7 +1762,9 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
-    return jwtUtil.generateToken(subject, expirationMs, claims);
+    Map<String, Object> accountClaims = new HashMap<>(claims);
+    accountClaims.put("iss", ACCOUNT_JWT_ISSUER);
+    return jwtUtil.generateToken(subject, expirationMs, accountClaims);
   }
 
   private Map<String, Object> authenticationTokenClaims(String audience, Account account) {
