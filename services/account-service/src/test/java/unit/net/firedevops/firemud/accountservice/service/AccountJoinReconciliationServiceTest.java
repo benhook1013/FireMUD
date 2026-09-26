@@ -21,12 +21,15 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.ConnectScopeEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
 import org.junit.jupiter.api.Test;
@@ -59,8 +62,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
-    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
-        .thenReturn(Optional.of(activeJoinMembership()));
+    stubActiveMembership(fixture);
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(Optional.of(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, correctPayloadDigest())));
 
@@ -79,7 +81,90 @@ class AccountJoinReconciliationServiceTest {
             MEMBERSHIP_AUTHORITY_GENERATION);
     verify(fixture.joinOperations, never())
         .recordReconciliationAttempt(anyString(), anyInt(), anyInt(), any(), anyString(), any());
+    verify(fixture.transitionReceipts).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
     assertThat(reconciliationCounter(fixture, "committed")).isEqualTo(1);
+  }
+
+  @Test
+  void priorMembershipHistoryCommitsEventFreeAlreadyActiveOutcome() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    stubReceiptFor(fixture, "prior-join-request", MEMBERSHIP_ID);
+    when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
+        .thenReturn(Optional.empty());
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .finish(
+            REQUEST_ID,
+            "COMMITTED",
+            "ALREADY_ACTIVE",
+            MEMBERSHIP_ID,
+            MEMBERSHIP_VERSION,
+            MEMBERSHIP_AUTHORITY_GENERATION);
+    verify(fixture.transitionReceipts).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
+    verify(fixture.auditOutbox, never())
+        .append(any(), anyString(), any(), anyString(), anyString());
+  }
+
+  @Test
+  void mismatchedPriorMembershipReceiptStaysPending() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    stubReceiptFor(fixture, "prior-join-request", MEMBERSHIP_ID + 1L);
+    when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
+        .thenReturn(Optional.empty());
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH", NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH", NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void missingTransitionReceiptDoesNotInferJoinedFromMembershipAndAuditAlone() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.transitionReceipts.findLatestReceipt(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.empty());
+    when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
+        .thenReturn(Optional.of(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, correctPayloadDigest())));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_TRANSITION_RECEIPT_ABSENT", NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_TRANSITION_RECEIPT_ABSENT", NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verifyNoInteractions(fixture.auditOutbox);
   }
 
   @Test
@@ -115,8 +200,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
-    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
-        .thenReturn(Optional.of(activeJoinMembership()));
+    stubActiveMembership(fixture);
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(Optional.empty());
     when(fixture.joinOperations.recordReconciliationAttempt(
@@ -141,8 +225,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
-    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
-        .thenReturn(Optional.of(activeJoinMembership()));
+    stubActiveMembership(fixture);
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(Optional.of(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, sha256("wrong"))));
     when(fixture.joinOperations.recordReconciliationAttempt(
@@ -166,8 +249,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
-    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
-        .thenReturn(Optional.of(activeJoinMembership()));
+    stubActiveMembership(fixture);
     String mismatchedPayload = joinAuditEnvelope("other-world", TENANT_ID, "unused").payload();
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(
@@ -206,7 +288,7 @@ class AccountJoinReconciliationServiceTest {
             REQUEST_ID, 0, 3, NOW, "JOIN_SCOPE_EVIDENCE_MISMATCH", NOW.plusMillis(5_000));
     verify(fixture.joinOperations, never())
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
-    verifyNoInteractions(fixture.memberships, fixture.auditOutbox);
+    verifyNoInteractions(fixture.memberships, fixture.transitionReceipts, fixture.auditOutbox);
   }
 
   @Test
@@ -218,8 +300,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
-    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
-        .thenReturn(Optional.of(activeJoinMembership()));
+    stubActiveMembership(fixture);
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(Optional.of(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, correctPayloadDigest())));
 
@@ -257,13 +338,19 @@ class AccountJoinReconciliationServiceTest {
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
     verify(fixture.joinOperations, never())
         .recordReconciliationAttempt(anyString(), anyInt(), anyInt(), any(), anyString(), any());
-    verifyNoInteractions(fixture.connectScopes, fixture.memberships, fixture.auditOutbox);
+    verifyNoInteractions(
+        fixture.connectScopes,
+        fixture.memberships,
+        fixture.transitionReceipts,
+        fixture.auditOutbox);
   }
 
   private static Fixture fixture(int maxAttempts) {
     AccountJoinOperationRepository joinOperations = mock(AccountJoinOperationRepository.class);
     AccountConnectScopeRepository connectScopes = mock(AccountConnectScopeRepository.class);
     AccountTenantMembershipRepository memberships = mock(AccountTenantMembershipRepository.class);
+    AccountMembershipTransitionReceiptRepository transitionReceipts =
+        mock(AccountMembershipTransitionReceiptRepository.class);
     AccountAuditOutboxRepository auditOutbox = mock(AccountAuditOutboxRepository.class);
     PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
@@ -274,6 +361,7 @@ class AccountJoinReconciliationServiceTest {
             joinOperations,
             connectScopes,
             memberships,
+            transitionReceipts,
             auditOutbox,
             meterRegistry,
             transactionManager,
@@ -281,7 +369,52 @@ class AccountJoinReconciliationServiceTest {
             maxAttempts,
             5_000);
     return new Fixture(
-        service, joinOperations, connectScopes, memberships, auditOutbox, meterRegistry);
+        service,
+        joinOperations,
+        connectScopes,
+        memberships,
+        transitionReceipts,
+        auditOutbox,
+        meterRegistry);
+  }
+
+  private static void stubActiveMembership(Fixture fixture) {
+    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.of(activeJoinMembership()));
+    stubReceiptFor(fixture, REQUEST_ID, MEMBERSHIP_ID);
+  }
+
+  private static void stubReceiptFor(Fixture fixture, String requestId, long membershipId) {
+    String receiptStreamKey =
+        MembershipTransitionReceiptDigest.receiptStreamKey(ACCOUNT_ID, TENANT_ID);
+    UUID receiptId = MembershipTransitionReceiptDigest.receiptIdForRequest(requestId);
+    String receiptDigest =
+        MembershipTransitionReceiptDigest.transitionDigest(
+            receiptStreamKey,
+            1L,
+            receiptId,
+            "MEMBERSHIP_JOINED",
+            requestId,
+            ACCOUNT_ID,
+            TENANT_ID,
+            membershipId,
+            "ACTIVE",
+            true,
+            MEMBERSHIP_VERSION,
+            MEMBERSHIP_AUTHORITY_GENERATION,
+            "EXPLICIT_JOIN");
+    when(fixture.transitionReceipts.findLatestReceipt(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(
+            Optional.of(
+                new MembershipTransitionReceipt(
+                    receiptStreamKey,
+                    1L,
+                    receiptId,
+                    receiptDigest,
+                    MembershipTransitionReceiptDigest.EVIDENCE_STATUS,
+                    "MEMBERSHIP_JOINED",
+                    requestId,
+                    membershipId)));
   }
 
   private static void stubDue(Fixture fixture, JoinOperation operation, int maxAttempts) {
@@ -495,6 +628,7 @@ class AccountJoinReconciliationServiceTest {
       AccountJoinOperationRepository joinOperations,
       AccountConnectScopeRepository connectScopes,
       AccountTenantMembershipRepository memberships,
+      AccountMembershipTransitionReceiptRepository transitionReceipts,
       AccountAuditOutboxRepository auditOutbox,
       SimpleMeterRegistry meterRegistry) {}
 }

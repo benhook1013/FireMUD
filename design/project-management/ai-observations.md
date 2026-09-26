@@ -99,3 +99,8 @@ Entry format:
   - Context: a Game Session correction rejected unowned or ambiguous `PLAY` actors, while a shared Docker-backed WebSocket integration fixture still returned actor rows with protobuf-default playable scope.
   - Observation: local integration tests skipped without Docker, but CI executed them and many otherwise unrelated scenarios failed at the first `PLAY` with `PLAY_IDENTITY_UNAVAILABLE`; the fixture's missing scope and bare selection obscured the intended assertions.
   - Expected pattern: when actor-entry validation changes, update shared fixtures with complete tenant, account, actor, and playable-scope evidence; use explicit selection for success cases and retain a separate ambiguity-denial case. Treat compiled/skipped local tests as unproved until the composed CI cases execute.
+
+- `2026-09-26`: Review status refused a shared private allocation record
+  - Context: during #2873 implementation, `dev-tools/pr-review status --pr 2873` returned `review allocation contains fields outside the private schema` before review intake.
+  - Observation: the controller could not report current review state; no review was requested or allocation edited. The cause and ownership of the private record remain unverified.
+  - Expected pattern: diagnose the record against the controller's current schema with its owning operator before CodeRabbit intake; do not bypass the controller or infer review eligibility from GitHub's visible state alone.

@@ -49,6 +49,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxReposi
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -87,6 +88,7 @@ class AccountServiceImplTest {
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
+  @Mock private AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
   @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -197,6 +199,7 @@ class AccountServiceImplTest {
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
+            membershipTransitionReceiptRepository,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
@@ -1575,6 +1578,7 @@ class AccountServiceImplTest {
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
+            membershipTransitionReceiptRepository,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,

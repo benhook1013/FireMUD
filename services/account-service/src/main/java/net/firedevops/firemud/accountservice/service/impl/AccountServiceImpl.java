@@ -68,6 +68,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -122,6 +123,7 @@ public class AccountServiceImpl implements AccountService {
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
+  private final AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -152,6 +154,7 @@ public class AccountServiceImpl implements AccountService {
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
+      AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository,
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
@@ -177,6 +180,7 @@ public class AccountServiceImpl implements AccountService {
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
+    this.membershipTransitionReceiptRepository = membershipTransitionReceiptRepository;
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
@@ -683,7 +687,10 @@ public class AccountServiceImpl implements AccountService {
             .findByAccountIdAndTenantId(accountId, scope.tenantId())
             .orElse(null);
     boolean transitioned = false;
+    String membershipTransitionType = null;
     if (membership == null) {
+      membershipTransitionReceiptRepository.assertNewMembershipTransitionCanStart(
+          accountId, scope.tenantId());
       membership = new AccountTenantMembership();
       membership.setAccount(requireAccount(accountId));
       membership.setTenantId(scope.tenantId());
@@ -694,7 +701,9 @@ public class AccountServiceImpl implements AccountService {
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
       transitioned = true;
+      membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
+      membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
@@ -704,11 +713,21 @@ public class AccountServiceImpl implements AccountService {
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
       transitioned = true;
-    } else if (!"ACTIVE".equals(membership.getLifecycleState())
-        || !membership.isGameplayAdmissionAllowed()) {
+      membershipTransitionType = "MEMBERSHIP_REACTIVATED";
+    } else if ("ACTIVE".equals(membership.getLifecycleState())
+        && membership.isGameplayAdmissionAllowed()) {
+      membershipTransitionReceiptRepository
+          .findLatestReceipt(accountId, scope.tenantId())
+          .orElseThrow(
+              () ->
+                  new IllegalStateException(
+                      "Active Account membership lacks a provisional transition receipt"));
+    } else {
       return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
     }
     if (transitioned) {
+      membershipTransitionReceiptRepository.appendTransition(
+          membership, membershipTransitionType, requestId);
       String payload =
           AUDIT_JSON.writeValueAsString(
               new JoinAuditPayload(
