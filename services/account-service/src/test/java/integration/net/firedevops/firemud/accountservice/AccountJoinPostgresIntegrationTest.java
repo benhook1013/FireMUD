@@ -986,7 +986,7 @@ class AccountJoinPostgresIntegrationTest {
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash, tenant_id) "
                         + "VALUES (?, ?, ?, ?) RETURNING id",
-                    "join-proof-retained-donor-" + suffix,
+                    "jpd-" + suffix,
                     "join-proof-retained-donor-" + suffix + "@example.com",
                     "test-hash",
                     tenantId)

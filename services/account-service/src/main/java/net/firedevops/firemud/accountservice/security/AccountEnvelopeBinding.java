@@ -7,7 +7,8 @@ import java.util.Objects;
 /**
  * Exact Account operation evidence authenticated as byte-framed AEAD additional data. Evidence
  * digests are Account-computed, versioned fixed-length digests of the exact canonical request,
- * context, authority tuple, issuance fence, and committed postconditions.
+ * context, authority tuple, Account-local issuance CAS fence, and committed postconditions. That
+ * local fence is not the gameplay-connect token's replayAdmissionFence or a JWT authority claim.
  */
 public record AccountEnvelopeBinding(
     OperationKind operationKind,

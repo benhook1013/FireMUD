@@ -707,7 +707,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash, tenant_id) "
                         + "VALUES (?, ?, ?, ?) RETURNING id",
-                    "join-rec-retained-donor-" + suffix,
+                    "jrd-" + suffix,
                     "join-rec-retained-donor-" + suffix + "@example.com",
                     "test-hash",
                     tenantId)
