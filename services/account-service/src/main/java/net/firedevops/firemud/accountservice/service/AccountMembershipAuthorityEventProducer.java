@@ -1125,7 +1125,10 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
-  /** Sequence zero carries no event identity/digest and never grants gameplay admission. */
+  /**
+   * Local V36 absence evidence. Its scalar version is not the canonical durable/wire carrier, and
+   * it carries no event identity/digest or gameplay admission.
+   */
   public record NeverJoinedMembershipSnapshot(
       String accountId,
       String tenantId,
@@ -1182,6 +1185,14 @@ public class AccountMembershipAuthorityEventProducer {
 
     public boolean membershipExists() {
       return false;
+    }
+
+    public String membershipLifecycleState() {
+      return "MISSING";
+    }
+
+    public List<String> roles() {
+      return List.of();
     }
 
     public boolean gameplayAdmissionAllowed() {

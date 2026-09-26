@@ -28,6 +28,8 @@ class NeverJoinedMembershipSnapshotTest {
     var snapshot = snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "9", STREAM_KEY);
 
     assertThat(snapshot.membershipExists()).isFalse();
+    assertThat(snapshot.membershipLifecycleState()).isEqualTo("MISSING");
+    assertThat(snapshot.roles()).isEmpty();
     assertThat(snapshot.gameplayAdmissionAllowed()).isFalse();
     assertThat(snapshot.outboxSequence()).isZero();
     assertThat(snapshot.authorityTuple().membershipAuthorityGeneration())
