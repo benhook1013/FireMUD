@@ -568,6 +568,114 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
             controller.resolve_hosted_target()
 
+    def test_bounded_in_flight_work_keeps_completed_front_selected_ahead_of_next_pr(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        in_flight = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:2827",
+            "trigger_id": 2827,
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+            "anchor": {
+                "pr": 1,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            },
+        }
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="completed-baseline", channel="hosted"),
+                in_flight,
+            ],
+            (2, "hosted"): [
+                self.allocation_evidence(
+                    2,
+                    HEAD_2,
+                    "before-second-pr",
+                    completed=False,
+                    channel="hosted",
+                    parent_identity="1",
+                    parent_head=HEAD_1,
+                )
+            ],
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="completed-baseline",
+            cap=2,
+            evidence=evidence,
+            values=values,
+            heads={"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+
+        target = controller.select_target("hosted")
+        report = controller.status()
+        front = report["review_targets"]["hosted"]
+        allocation = report["prs"][0]["allocations"]["hosted"]
+
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertEqual(allocation["remaining"], 1)
+        self.assertEqual(allocation["selection_control"], "unresolved_work")
+        self.assertEqual((target["pr"], target["status"]), (1, "HELD"))
+        self.assertEqual((front["pr"], front["status"]), (1, "HELD"))
+        with self.assertRaisesRegex(ControllerError, "still in flight"):
+            controller.resolve_hosted_target()
+
+    def test_bounded_hosted_allocation_reopens_completed_front_until_taper_finishes(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        baseline = self.allocation_evidence(
+            checkpoint="completed-baseline", channel="hosted", accepted=0
+        )
+        evidence = {
+            (1, "hosted"): [baseline],
+            (2, "hosted"): [
+                self.allocation_evidence(
+                    2,
+                    HEAD_2,
+                    "before-second-pr",
+                    completed=False,
+                    channel="hosted",
+                    parent_identity="1",
+                    parent_head=HEAD_1,
+                )
+            ],
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="completed-baseline",
+            cap=2,
+            evidence=evidence,
+            values=values,
+            heads={"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+
+        before_taper = controller.status()
+
+        self.assertEqual(before_taper["prs"][0]["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(before_taper["prs"][0]["allocations"]["hosted"]["remaining"], 2)
+        self.assertEqual(before_taper["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="post-baseline-zero-result", channel="hosted", accepted=0
+            )
+        )
+        after_taper = controller.status()
+
+        self.assertEqual(after_taper["prs"][0]["allocations"]["hosted"]["used"], 1)
+        self.assertEqual(after_taper["prs"][0]["allocations"]["hosted"]["remaining"], 1)
+        self.assertEqual(after_taper["review_targets"]["hosted"]["pr"], 2)
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 2)
+
     def test_bounded_cap_counts_across_corrected_heads_and_selects_next_pr_after_audited_stop(self):
         evidence = {
             (1, "hosted"): [
@@ -4623,6 +4731,72 @@ class ControllerTests(unittest.TestCase):
         )
         controller.git.is_ancestor = lambda ancestor, child: ancestor != old_parent
         self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+    def test_legacy_transition_filters_scope_projections_and_keeps_real_guards(self):
+        old_head = "7" * 40
+        timeline = self.scope_timeline_evidence(1, "hosted")
+        legacy = {
+            "pr": 1,
+            "head": old_head,
+            "channel": "hosted",
+            "checkpoint": "legacy-hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): [timeline, legacy]},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="retire only the old Hosted observation",
+        )
+
+        self.assertEqual(
+            result["transition"]["hosted_fingerprints"],
+            (observation_fingerprint(legacy),),
+        )
+        state = controller._state()
+        _, reconciliation = controller._reconciliation(state)
+        projected = controller._policy_history(
+            state, 1, Channel.HOSTED, reconciliation
+        )
+        self.assertTrue(projected[0]["scope_timeline"])
+        self.assertTrue(projected[0]["non_counting"])
+
+        for name, rows, message in (
+            (
+                "incomplete evidence",
+                [timeline, {**legacy, "checkpoint": "still-incomplete", "completed": False}],
+                "incomplete or unattributable",
+            ),
+            (
+                "duplicate checkpoint",
+                [timeline, legacy, dict(legacy)],
+                "ambiguous duplicate checkpoint",
+            ),
+        ):
+            with self.subTest(name=name):
+                guarded = self.make(
+                    {1: pr(1, HEAD_1)},
+                    {(1, "hosted"): rows},
+                    heads={"feature-1": HEAD_1},
+                )
+                guarded.set_stack([1])
+                with self.assertRaisesRegex(ControllerError, message):
+                    guarded.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_1,
+                        reason="scope projections cannot weaken transition guards",
+                    )
 
     def test_legacy_transition_write_fails_closed_when_transition_list_changes_concurrently(self):
         legacy = {
