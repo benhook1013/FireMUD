@@ -142,10 +142,6 @@ public class RecordedParticipantDigestRepository {
         .set(APPLIED_COMMIT_ID, replacement.getAppliedCommitId())
         .set(CONTENT_DIGEST, replacement.getContentDigest())
         .set(DIGEST_SCHEMA_VERSION, replacement.getDigestSchemaVersion())
-        .set(RECORDED_FROM_PUBLISH_WORKFLOW_ID, replacement.getRecordedFromPublishWorkflowId())
-        .set(RECORDED_AT, replacement.getRecordedAt())
-        .set(LAST_VERIFIED_PUBLISH_WORKFLOW_ID, replacement.getLastVerifiedPublishWorkflowId())
-        .set(LAST_VERIFIED_AT, replacement.getLastVerifiedAt())
         .where(
             ID.eq(expectedOld.getId())
                 .and(TENANT_ID.eq(expectedOld.getTenantId()))

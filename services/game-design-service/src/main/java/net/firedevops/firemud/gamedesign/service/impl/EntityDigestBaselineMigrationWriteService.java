@@ -84,10 +84,14 @@ public class EntityDigestBaselineMigrationWriteService {
         || !Integer.valueOf(2).equals(replacement.getDigestSchemaVersion())
         || audit.observedContentDigest() == null
         || audit.observedContentDigest().isBlank()
-        || !Objects.equals(replacement.getRecordedFromPublishWorkflowId(), audit.operationId())
-        || !Objects.equals(replacement.getLastVerifiedPublishWorkflowId(), audit.operationId())
-        || !Objects.equals(replacement.getRecordedAt(), audit.committedAt())
-        || !Objects.equals(replacement.getLastVerifiedAt(), audit.committedAt())
+        || !Objects.equals(
+            replacement.getRecordedFromPublishWorkflowId(),
+            expectedOld.getRecordedFromPublishWorkflowId())
+        || !Objects.equals(replacement.getRecordedAt(), expectedOld.getRecordedAt())
+        || !Objects.equals(
+            replacement.getLastVerifiedPublishWorkflowId(),
+            expectedOld.getLastVerifiedPublishWorkflowId())
+        || !Objects.equals(replacement.getLastVerifiedAt(), expectedOld.getLastVerifiedAt())
         || !EntityDigestBaselineMigrationAudit.COMMITTED_OUTCOME.equals(audit.outcome())) {
       throw new IllegalArgumentException(
           "migration audit and guarded baseline replacement do not describe one operation");
