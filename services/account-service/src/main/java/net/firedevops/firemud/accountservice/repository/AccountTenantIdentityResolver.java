@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.repository;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
@@ -9,11 +8,10 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Resolves retained numeric tenant keys through an approved, provenance-backed UUID association. */
+/**
+ * Resolves retained numeric tenant keys through an approved, provenance-backed UUID association.
+ */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repositories are internal Spring transaction collaborators.")
 public class AccountTenantIdentityResolver {
   private final ApprovedLegacyTenantAssociationRepository associations;
   private final LegacyTenantSourceEvidence sourceEvidence;
@@ -29,10 +27,10 @@ public class AccountTenantIdentityResolver {
   }
 
   /**
-   * Returns the canonical UUID and complete immutable migration provenance for a retained key.
-   * The association and current retained-row evidence are read in the caller's transaction. The
-   * caller must provide the isolation and fence for its complete authority snapshot; this read is
-   * not itself a membership-authority snapshot.
+   * Returns the canonical UUID and complete immutable migration provenance for a retained key. The
+   * association and current retained-row evidence are read in the caller's transaction. The caller
+   * must provide the isolation and fence for its complete authority snapshot; this read is not
+   * itself a membership-authority snapshot.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public ApprovedAssociation resolve(long legacyTenantId) {
@@ -56,7 +54,8 @@ public class AccountTenantIdentityResolver {
 
     String currentEvidenceDigest = sourceEvidence.digest(legacyTenantId);
     if (!Objects.equals(association.accountEvidenceDigest(), currentEvidenceDigest)) {
-      throw new IllegalStateException("approved Account source evidence differs from retained rows");
+      throw new IllegalStateException(
+          "approved Account source evidence differs from retained rows");
     }
     return association;
   }

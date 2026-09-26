@@ -104,8 +104,7 @@ class AccountTenantIdentityResolverTest {
     assertThatThrownBy(() -> resolver.resolve(0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive retained Account tenant key");
-    assertThatThrownBy(() -> resolver.resolve(-1L))
-        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> resolver.resolve(-1L)).isInstanceOf(IllegalArgumentException.class);
     verify(associations, never()).findByLegacyTenantId(0L);
     verify(associations, never()).findByLegacyTenantId(-1L);
   }
