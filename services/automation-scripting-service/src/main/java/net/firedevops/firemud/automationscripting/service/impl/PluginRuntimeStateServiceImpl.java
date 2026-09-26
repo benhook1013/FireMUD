@@ -376,8 +376,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
           disabledCount++;
         }
       } else {
-        state.setLastPolicyCheckedAt(now);
-        repository.save(state);
+        markPolicyCheckedIfCurrent(state, now);
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
@@ -527,6 +526,26 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getActorPrincipal()),
         now);
     reconcileSchedules(saved);
+    return true;
+  }
+
+  private boolean markPolicyCheckedIfCurrent(PluginRuntimeState snapshot, Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
+      return false;
+    }
+    state.setLastPolicyCheckedAt(now);
+    repository.save(state);
     return true;
   }
 

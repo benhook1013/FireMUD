@@ -1626,14 +1626,17 @@ class PluginRuntimeStateServiceImplTest {
 
   @Test
   void reconciliationLeavesAllowedActivePluginEnabled() {
-    PluginRuntimeState active = activePluginState();
+    PluginRuntimeState snapshot = activePluginState();
+    PluginRuntimeState current = activePluginState();
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
         Mockito.mock(GameDesignControlPlaneClient.class);
     when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
-        .thenReturn(List.of(active));
+        .thenReturn(List.of(snapshot));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(current));
     when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
         .thenReturn(
             publishedPluginVersion(
@@ -1651,10 +1654,63 @@ class PluginRuntimeStateServiceImplTest {
 
     assertThat(result.inspectedCount()).isEqualTo(1);
     assertThat(result.disabledCount()).isZero();
-    assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
-    assertThat(active.getLastPolicyCheckedAt()).isAfter(java.time.Instant.EPOCH);
-    assertThat(active.getLastChangedAt()).isEqualTo(java.time.Instant.EPOCH);
-    Mockito.verify(repository).save(active);
+    assertThat(snapshot.getLastPolicyCheckedAt()).isEqualTo(java.time.Instant.EPOCH);
+    assertThat(current.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
+    assertThat(current.getLastPolicyCheckedAt()).isAfter(java.time.Instant.EPOCH);
+    assertThat(current.getLastChangedAt()).isEqualTo(java.time.Instant.EPOCH);
+    Mockito.verify(repository).save(current);
+    Mockito.verifyNoInteractions(eventRepository);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"changed_epoch", "changed_state", "changed_version", "missing_row"})
+  void allowedPolicyCheckSkipsWhenLifecycleNoLongerMatchesBatchSnapshot(String race) {
+    PluginRuntimeState snapshot = activePluginState();
+    snapshot.setPluginActivationEpoch(4L);
+    snapshot.setActivePluginVersionId("plugin-v1");
+    PluginRuntimeState current = activePluginState();
+    current.setPluginActivationEpoch(4L);
+    current.setActivePluginVersionId("plugin-v1");
+    Optional<PluginRuntimeState> currentRow = Optional.of(current);
+    if ("changed_epoch".equals(race)) {
+      current.setPluginActivationEpoch(5L);
+    } else if ("changed_state".equals(race)) {
+      current.setPluginState(PluginState.PLUGIN_STATE_DRAINING.name());
+    } else if ("changed_version".equals(race)) {
+      current.setActivePluginVersionId("plugin-v2");
+    } else {
+      currentRow = Optional.empty();
+    }
+
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
+        .thenReturn(List.of(snapshot));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(currentRow);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    PluginRuntimeStateService.PolicyReconciliationResult result =
+        service.reconcileActivePluginPolicy(10);
+
+    assertThat(result.inspectedCount()).isEqualTo(1);
+    assertThat(result.disabledCount()).isZero();
+    assertThat(snapshot.getLastPolicyCheckedAt()).isEqualTo(java.time.Instant.EPOCH);
+    Mockito.verify(repository).lockLifecycleScope("1", "game-1", "plugin-1");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any(PluginRuntimeState.class));
     Mockito.verifyNoInteractions(eventRepository);
   }
 
@@ -1668,6 +1724,8 @@ class PluginRuntimeStateServiceImplTest {
     when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
         .thenReturn(List.of(active));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(active));
     when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
         .thenReturn(
             publishedPluginVersion(
