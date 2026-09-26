@@ -1,0 +1,304 @@
+{{- $migration := .Values.previewStack.entityDigestBaselineMigration | default (dict) -}}
+{{- $enabled := $migration.enabled | default false -}}
+{{- if $enabled -}}
+{{- if not .Values.previewStack.enabled -}}
+{{- fail "previewStack.entityDigestBaselineMigration.enabled requires previewStack.enabled=true" -}}
+{{- end -}}
+{{- $networkPolicies := .Values.previewStack.networkPolicies | default (dict) -}}
+{{- if not ($networkPolicies.enabled | default false) -}}
+{{- fail "previewStack.entityDigestBaselineMigration.enabled requires previewStack.networkPolicies.enabled=true" -}}
+{{- end -}}
+{{- $targetNamespace := required "previewStack.entityDigestBaselineMigration.targetNamespace is required when enabled" $migration.targetNamespace -}}
+{{- if ne $targetNamespace $.Release.Namespace -}}
+{{- fail "previewStack.entityDigestBaselineMigration.targetNamespace must exactly match the Helm release namespace" -}}
+{{- end -}}
+{{- $mode := required "previewStack.entityDigestBaselineMigration.mode is required when enabled" $migration.mode -}}
+{{- if not (has $mode (list "enumerate" "preflight" "migrate")) -}}
+{{- fail "previewStack.entityDigestBaselineMigration.mode must be enumerate, preflight, or migrate" -}}
+{{- end -}}
+{{- $image := required "previewStack.entityDigestBaselineMigration.image must be an immutable image reference" $migration.image -}}
+{{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" $image) -}}
+{{- fail "previewStack.entityDigestBaselineMigration.image must end in @sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- $tenantId := $migration.tenantId | default "" -}}
+{{- $versionId := $migration.versionId | default "" -}}
+{{- $actorIdentity := required "previewStack.entityDigestBaselineMigration.actorIdentity is required when enabled" $migration.actorIdentity -}}
+{{- if or (eq (trim $actorIdentity) "") (ne $actorIdentity (trim $actorIdentity)) -}}
+{{- fail "previewStack.entityDigestBaselineMigration.actorIdentity must be non-empty and have no surrounding whitespace" -}}
+{{- end -}}
+{{- if gt (len $actorIdentity) 128 -}}
+{{- fail "previewStack.entityDigestBaselineMigration.actorIdentity must be at most 128 characters" -}}
+{{- end -}}
+{{- if eq $mode "enumerate" -}}
+{{- if or (ne $tenantId "") (ne $versionId "") -}}
+{{- fail "enumerate mode must not set tenantId or versionId" -}}
+{{- end -}}
+{{- else -}}
+{{- if or (eq (trim $tenantId) "") (ne $tenantId (trim $tenantId)) -}}
+{{- fail "preflight and migrate modes require a non-empty tenantId without surrounding whitespace" -}}
+{{- end -}}
+{{- if not (regexMatch "^[1-9][0-9]*$" (toString $versionId)) -}}
+{{- fail "preflight and migrate modes require a canonical positive-decimal versionId" -}}
+{{- end -}}
+{{- end -}}
+{{- $operationId := $migration.operationId | default "" -}}
+{{- if and (eq $mode "migrate") (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $operationId)) -}}
+{{- fail "migrate mode requires a DNS-label operationId" -}}
+{{- end -}}
+{{- if gt (len $operationId) 32 -}}
+{{- fail "previewStack.entityDigestBaselineMigration.operationId must be at most 32 characters" -}}
+{{- end -}}
+{{- $afterBaselineId := $migration.afterBaselineId | default "0" | toString -}}
+{{- if not (regexMatch "^(0|[1-9][0-9]*)$" $afterBaselineId) -}}
+{{- fail "afterBaselineId must be a canonical non-negative decimal" -}}
+{{- end -}}
+{{- $limit := $migration.limit | default 100 -}}
+{{- if or (lt (int $limit) 1) (gt (int $limit) 500) -}}
+{{- fail "previewStack.entityDigestBaselineMigration.limit must be between 1 and 500" -}}
+{{- end -}}
+{{- $expectedSource := $migration.expectedSource | default (dict) -}}
+{{- if eq $mode "migrate" -}}
+{{- if not (has $expectedSource.kind (list "ConfigMap" "Secret")) -}}
+{{- fail "migrate mode requires expectedSource.kind to be ConfigMap or Secret" -}}
+{{- end -}}
+{{- $expectedSourceName := required "migrate mode requires expectedSource.name for an immutable operator-applied source tuple" $expectedSource.name -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $expectedSourceName) -}}
+{{- fail "expectedSource.name must be a DNS subdomain" -}}
+{{- end -}}
+{{- $expectedSourceKey := required "migrate mode requires expectedSource.key" $expectedSource.key -}}
+{{- if eq (trim $expectedSourceKey) "" -}}
+{{- fail "expectedSource.key must be non-empty" -}}
+{{- end -}}
+{{- end -}}
+{{- $grpcIdentitySecretName := required "previewStack.entityDigestBaselineMigration.grpcIdentitySecretName must name the dedicated migrator identity Secret" $migration.grpcIdentitySecretName -}}
+{{- if ne $grpcIdentitySecretName "firemud-grpc-game-design-baseline-migrator" -}}
+{{- fail "grpcIdentitySecretName must be firemud-grpc-game-design-baseline-migrator; shared service identities are not accepted" -}}
+{{- end -}}
+{{- $readScopeName := printf "%s:%s:%s:%s:%s:%s" $mode $tenantId (toString $versionId) $afterBaselineId (toString $limit) $targetNamespace | sha256sum | trunc 12 -}}
+{{- $jobSuffix := $operationId -}}
+{{- if ne $mode "migrate" -}}
+{{- $jobSuffix = printf "%s-%s" $mode $readScopeName -}}
+{{- end -}}
+{{- $jobName := printf "game-design-baseline-migrator-%s" $jobSuffix -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: game-design-baseline-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: game-design-baseline-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: game-design-baseline-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: game-design-baseline-migrator
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: game-design-baseline-migrator
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $jobName | quote }}
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+  annotations:
+    firemud.dev/migration-mode: {{ $mode | quote }}
+    firemud.dev/migration-operation-id: {{ $operationId | quote }}
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: game-design-baseline-migrator
+        firemud.dev/workload: game-design-baseline-migrator
+    spec:
+      serviceAccountName: game-design-baseline-migrator
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.previewStack.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $secret := . }}
+        {{- if kindIs "string" $secret }}
+        - name: {{ $secret }}
+        {{- else }}
+{{ toYaml (list $secret) | indent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: migration
+          image: {{ $image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - java
+          args:
+            - -jar
+            - /app/app.jar
+            - --spring.main.web-application-type=none
+            - --spring.grpc.server.enabled=false
+            - --firemud.entity-baseline-migration.enabled=true
+          env:
+            - name: SPRING_FLYWAY_TABLE
+              value: flyway_schema_history_game_design_service
+            - name: SERVICE_SCHEMA
+              value: game_design_service
+            - name: FIREMUD_POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_HOST
+            - name: FIREMUD_POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_PORT
+            - name: FIREMUD_POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_DB
+            - name: FIREMUD_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_USER
+            - name: FIREMUD_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_PASSWORD
+            - name: FIREMUD_REDIS_ENABLED
+              value: "false"
+            - name: FIREMUD_TEMPORAL_ENABLED
+              value: "false"
+            - name: FIREMUD_TEMPORAL_WORKERS_ENABLED
+              value: "false"
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_ENABLED
+              value: "true"
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_MODE
+              value: {{ $mode | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_OPERATION_ID
+              value: {{ $operationId | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_TENANT_ID
+              value: {{ $tenantId | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_VERSION_ID
+              value: {{ toString $versionId | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_ACTOR_IDENTITY
+              value: {{ $actorIdentity | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_EXPECTED_SOURCE_PATH
+              value: /migration/expected-source.json
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_TARGET_NAMESPACE
+              value: {{ $targetNamespace | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_AFTER_BASELINE_ID
+              value: {{ $afterBaselineId | quote }}
+            - name: FIREMUD_ENTITY_BASELINE_MIGRATION_LIMIT
+              value: {{ int $limit | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 768Mi
+          volumeMounts:
+            - name: grpc-identity
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+            - name: migration-tmp
+              mountPath: /tmp
+            {{- if eq $mode "migrate" }}
+            - name: expected-source
+              mountPath: /migration
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: grpc-identity
+          secret:
+            secretName: {{ $grpcIdentitySecretName | quote }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: migration-tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if eq $mode "migrate" }}
+        - name: expected-source
+          {{- if eq $expectedSource.kind "Secret" }}
+          secret:
+            secretName: {{ $expectedSource.name | quote }}
+            items:
+              - key: {{ $expectedSource.key | quote }}
+                path: expected-source.json
+          {{- else }}
+          configMap:
+            name: {{ $expectedSource.name | quote }}
+            items:
+              - key: {{ $expectedSource.key | quote }}
+                path: expected-source.json
+          {{- end }}
+        {{- end }}
+{{- end -}}
