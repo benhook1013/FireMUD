@@ -51,7 +51,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         mock(AutomationScriptingControlPlaneClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -71,6 +71,27 @@ class GameSessionOperatorControlPlaneServiceTest {
     org.mockito.Mockito.verify(repository)
         .applyScriptPin(
             1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null);
+  }
+
+  @Test
+  void runtimeVersionIdOnlyFallsBackWhenVersionIdIsAbsent() {
+    GameInstance instance = new GameInstance();
+    instance.setRuntimeVersion("100");
+
+    instance.setVersionId(7L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isEqualTo(7L);
+
+    instance.setVersionId(0L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+    instance.setVersionId(-1L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+
+    instance.setVersionId(null);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isEqualTo(100L);
+    for (String invalidRuntimeVersion : new String[] {null, "", " ", "malformed", "0", "-1"}) {
+      instance.setRuntimeVersion(invalidRuntimeVersion);
+      assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+    }
   }
 
   @Test
@@ -237,7 +258,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     AutomationScriptingControlPlaneClient automation =
         mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -267,7 +288,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         mock(AutomationScriptingControlPlaneClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -308,7 +329,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     AutomationScriptingControlPlaneClient automation =
         mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(2L, 200L, 100L));
     when(repository.recordScriptPinFailure(
             1L,
@@ -343,7 +364,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     AutomationScriptingControlPlaneClient automation =
         mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 999L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -386,7 +407,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setVersionId(null);
     instance.setRuntimeVersion(null);
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -428,7 +449,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setVersionId(null);
     instance.setRuntimeVersion("runtime-version");
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -467,7 +488,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     AutomationScriptingControlPlaneClient automation =
         mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setError(
@@ -549,7 +570,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                 Long.MAX_VALUE,
                 "request-1",
                 "SCRIPT_PIN_EPOCH_EXHAUSTED"));
-    when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -609,7 +630,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     AutomationScriptingControlPlaneClient automation =
         mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -646,7 +667,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setScriptPinEpoch(3L);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(automation.getScriptPatchStatus(1L, "patch-new"))
         .thenReturn(
@@ -706,7 +727,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameDesignClient gameDesign = mock(GameDesignClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
         .thenReturn(publishedPatch(1L, 200L, 100L));
     when(repository.recordScriptPinFailure(
             1L,
@@ -935,7 +956,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                 publication.getScriptPatch().toBuilder().setScriptPatchVersion(target).build())
             .build();
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, target)).thenReturn(publication);
+    when(gameDesign.getPublishedScriptPatchVersion(1L, target, 100L)).thenReturn(publication);
     when(automation.getScriptPatchStatus(1L, target))
         .thenReturn(
             GetScriptPatchStatusResponse.newBuilder()

@@ -325,6 +325,12 @@ Shared timeout event producer rule: for each valid persisted transition of the p
 
 ### Automation & Scripting: Patch Lifecycle Visibility
 
+#### `NotifyScriptVersionUpdate`
+
+This Automation-owned mutation admits a Game Design-published patch to tenant-readiness processing; it does not pin a running instance. The target request identity is `controlPlaneRequestId` plus the canonical digest of every behavior-affecting request field: normalized `tenantId`, `scriptPatchVersion`, the normalized/canonicalized `affectedScripts` selection, and the required immutable patch-manifest reference/digest for every identifiable notification, including an explicit empty `onLoad` set, together with any future field that changes reload, schedule, or readiness work. Normalization occurs once at the API boundary, and the digest is serialized in a fixed field order. Exact retries reuse the same readiness candidate/result; reusing the request identity with a changed digest is an idempotency conflict before reload or readiness side effects. The immutable manifest is authoritative for the complete expected `onLoad` set, including an explicit empty set, under [ADR 0115](./decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md) and the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix).
+
+The current v1 wire exposes only `tenantId`, `scriptPatchVersion`, and `affectedScripts`; it has no request-identity or immutable-manifest fields, and the live implementation does not persist or compare the complete notification fingerprint. Transport retry safety for this RPC is therefore an implementation and proof gap, not a current guarantee.
+
 #### `GetScriptPatchStatus`
 
 Implementation note: the current Automation & Scripting API exposes these reads from durable `script_work_items` and now enriches them with Game Design publication metadata. The live response includes the current runtime-readiness summary plus the published script patch `baseVersionId`, but it incorrectly labels the Automation participant's aggregate release digest as `abilitySchemaDigest`. The target field is the separately attested Game Logic-owned ability-schema digest for that base version; until the release bundle and response carry it, compatibility proof remains incomplete. `supersededByScriptPatchVersion` also remains target-state follow-through rather than a shipped field.

@@ -127,6 +127,7 @@ message PublishScriptPatchVersionRequest {
   int64 base_version_id = 2;
   string script_patch_version = 3;
   string notes = 4;
+  string publish_request_id = 5;
 }
 
 message PublishScriptPatchVersionResponse {
@@ -137,6 +138,8 @@ message PublishScriptPatchVersionResponse {
 message GetPublishedScriptPatchVersionRequest {
   string tenant_id = 1;
   string script_patch_version = 2;
+  // The immutable publication identity is the complete tenant/base/patch tuple.
+  int64 base_version_id = 3;
 }
 
 message GetPublishedScriptPatchVersionResponse {
@@ -291,6 +294,7 @@ message GetDesignControlPlaneDigestRequest {
     int64 version_id = 2;
     string script_patch_version = 3;
   }
+  int64 base_version_id = 4;
 }
 
 message GetDesignControlPlaneDigestResponse {

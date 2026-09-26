@@ -414,6 +414,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         coordinator.getTenantId(),
+        runtimeVersionId(coordinator.getTenantId(), coordinator.getOriginGameInstanceId()),
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
@@ -498,6 +499,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
+        runtimeVersionId(followup.getTenantId(), followup.getOriginGameInstanceId()),
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
@@ -579,6 +581,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         result.getTenantId(),
+        runtimeVersionId(result.getTenantId(), result.getOriginGameInstanceId()),
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());
@@ -828,12 +831,14 @@ public final class GameSessionCommandControlPlaneService {
   private void applyDirectCommandProvenance(
       RemoteCommandCoordinatorEntry.Builder builder,
       long tenantId,
+      Long baseVersionId,
       String scriptPatchVersion,
       String pluginId,
       String pluginVersionId) {
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       builder.setScriptPatchVersion(scriptPatchVersion);
-      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+      builder.setPublication(
+          scriptPatchPublicationLink(tenantId, scriptPatchVersion, baseVersionId));
     }
     if (pluginId != null) {
       builder.setPluginId(pluginId);
@@ -1030,12 +1035,14 @@ public final class GameSessionCommandControlPlaneService {
   private void applyDirectCommandProvenance(
       RemoteFollowupEntry.Builder builder,
       long tenantId,
+      Long baseVersionId,
       String scriptPatchVersion,
       String pluginId,
       String pluginVersionId) {
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       builder.setScriptPatchVersion(scriptPatchVersion);
-      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+      builder.setPublication(
+          scriptPatchPublicationLink(tenantId, scriptPatchVersion, baseVersionId));
     }
     if (pluginId != null) {
       builder.setPluginId(pluginId);
@@ -1140,12 +1147,14 @@ public final class GameSessionCommandControlPlaneService {
   private void applyDirectCommandProvenance(
       RemoteFollowupResultEntry.Builder builder,
       long tenantId,
+      Long baseVersionId,
       String scriptPatchVersion,
       String pluginId,
       String pluginVersionId) {
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       builder.setScriptPatchVersion(scriptPatchVersion);
-      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+      builder.setPublication(
+          scriptPatchPublicationLink(tenantId, scriptPatchVersion, baseVersionId));
     }
     if (pluginId != null) {
       builder.setPluginId(pluginId);
@@ -1775,7 +1784,10 @@ public final class GameSessionCommandControlPlaneService {
     }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setPublication(
-          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
+          scriptPatchPublicationLink(
+              command.getTenantId(),
+              command.getScriptPatchVersion(),
+              command.getAdmittedVersionId()));
     }
     if (command.getPluginId() != null
         && !command.getPluginId().isBlank()
@@ -2001,14 +2013,25 @@ public final class GameSessionCommandControlPlaneService {
     return instant == null ? 0L : instant.toEpochMilli();
   }
 
+  private Long runtimeVersionId(long tenantId, Long gameInstanceId) {
+    if (gameInstanceId == null || gameInstanceId <= 0L) {
+      return null;
+    }
+    return gameInstanceRepository
+        .findById(gameInstanceId)
+        .filter(instance -> instance.getTenantId() == tenantId)
+        .map(RuntimeVersionIdResolver::resolve)
+        .orElse(null);
+  }
+
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
+                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)

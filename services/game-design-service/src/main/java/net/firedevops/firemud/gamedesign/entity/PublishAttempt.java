@@ -16,6 +16,8 @@ public class PublishAttempt {
   private Long versionId;
   private int versionNumber;
   private String scriptPatchVersion;
+  private Long baseVersionId;
+  private String requestDigest;
   private String failureCode;
   private String failureMessage;
   private LocalDateTime createdAt = LocalDateTime.now();

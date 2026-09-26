@@ -204,7 +204,7 @@ class GameDesignGrpcServiceTest {
 
   @Test
   void getPublishedScriptPatchVersionReturnsPublicationReadModel() {
-    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", "patch-1"))
+    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", 7L, "patch-1"))
         .thenReturn(
             new VersionDto(
                 9L,
@@ -218,10 +218,32 @@ class GameDesignGrpcServiceTest {
                 "notes",
                 LocalDateTime.parse("2026-04-14T11:00:00"),
                 LocalDateTime.parse("2026-04-14T12:00:00")));
-    Mockito.when(versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1"))
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1", 7L))
         .thenReturn(
             new DesignControlPlaneDigestDto(
                 "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
+    AtomicReference<GetPublishedScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedScriptPatchVersion(
+          GetPublishedScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .setBaseVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("patch-1", ref.get().getScriptPatch().getScriptPatchVersion());
+    assertEquals(9L, ref.get().getScriptPatch().getVersionId());
+    assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
+    assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionRejectsMissingBaseScope() {
     AtomicReference<GetPublishedScriptPatchVersionResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -233,11 +255,10 @@ class GameDesignGrpcServiceTest {
           observerFor(ref));
     }
 
-    assertEquals("", ref.get().getError().getCode());
-    assertEquals("patch-1", ref.get().getScriptPatch().getScriptPatchVersion());
-    assertEquals(9L, ref.get().getScriptPatch().getVersionId());
-    assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
-    assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(versionService, Mockito.never())
+        .getPublishedScriptPatchVersion(
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
   }
 
   @Test
@@ -895,6 +916,24 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("digest-1", ref.get().getDigest().getContentDigest());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestRejectsScriptPatchWithoutBaseScope() {
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(versionService, Mockito.never())
+        .getDesignControlPlaneDigestForScriptPatch(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());
   }
 
   @Test

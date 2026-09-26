@@ -15,10 +15,15 @@ public interface VersionService {
       throws Exception;
 
   VersionDto publishScriptPatchVersion(
-      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
+      String tenantId,
+      Long baseVersionId,
+      String scriptPatchVersion,
+      String notes,
+      String publishRequestId)
       throws Exception;
 
-  VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
+  VersionDto getPublishedScriptPatchVersion(
+      String tenantId, Long baseVersionId, String scriptPatchVersion);
 
   PublishedPluginVersionDto uploadPluginBundle(String tenantId, byte[] bundleBytes, String notes);
 
@@ -65,7 +70,7 @@ public interface VersionService {
   DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId);
 
   DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion);
+      String tenantId, String scriptPatchVersion, Long baseVersionId);
 
   PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId);
 

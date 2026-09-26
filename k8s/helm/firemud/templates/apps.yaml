@@ -125,16 +125,18 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
-  {{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") }}
+  {{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") (eq $service.name "game-design-service") }}
   {{- if eq $service.name "tcp-proxy-service" }}
   # A TCP Proxy bridge-identity withdrawal must not leave an old pod serving
   # while a replacement is blocked on a missing/revoked controller projection.
-  {{- else }}
-  # Account, Game Session, and Automation writers use this boundary for migrations.
-  {{- if eq $service.name "automation-scripting-service" }}
+  {{- else if eq $service.name "automation-scripting-service" }}
   # V3 changes the persisted plugin lifecycle fence; executor generations
   # must not overlap across the migration boundary.
-  {{- end }}
+  {{- else if eq $service.name "game-design-service" }}
+  # V26 changes the persisted publication participant scope; old and new
+  # publication writers/readers must not overlap across the migration boundary.
+  {{- else }}
+  # Account and Game Session writers must not overlap across the V2 migration boundary.
   {{- end }}
   strategy:
     type: Recreate

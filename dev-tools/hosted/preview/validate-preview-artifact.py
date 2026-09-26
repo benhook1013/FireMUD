@@ -1619,7 +1619,6 @@ def validate_service_consumers(
                 "/gateway-ws-server-tls",
                 f"{expected_namespace}-gateway-internal-ws",
             )
-        container = containers[0]
         if service == "spring-cloud-gateway":
             _validate_gateway_container_environment(container, expected_namespace)
         raw_mounts = _require_mapping_list(

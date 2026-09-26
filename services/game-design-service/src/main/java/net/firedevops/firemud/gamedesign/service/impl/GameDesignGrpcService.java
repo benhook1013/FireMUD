@@ -241,12 +241,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         PublishScriptPatchVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
+      if (request.getPublishRequestId().isBlank()) {
+        throw new IllegalArgumentException("publish_request_id is required");
+      }
       VersionDto version =
           versionService.publishScriptPatchVersion(
               request.getTenantId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
-              request.getNotes());
+              request.getNotes(),
+              request.getPublishRequestId());
       builder.setVersionId(version.id());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -289,12 +293,18 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         GetPublishedScriptPatchVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
+      if (request.getBaseVersionId() <= 0L) {
+        throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+      }
+      if (request.getScriptPatchVersion().isBlank()) {
+        throw new IllegalArgumentException("INVALID_ARGUMENT: scriptPatchVersion is required");
+      }
       VersionDto version =
           versionService.getPublishedScriptPatchVersion(
-              request.getTenantId(), request.getScriptPatchVersion());
+              request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
       DesignControlPlaneDigestDto digest =
           versionService.getDesignControlPlaneDigestForScriptPatch(
-              request.getTenantId(), request.getScriptPatchVersion());
+              request.getTenantId(), request.getScriptPatchVersion(), version.baseVersionId());
       builder.setScriptPatch(toProtoPublishedScriptPatch(version, digest));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -598,8 +608,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           request.getScopeCase() == GetDesignControlPlaneDigestRequest.ScopeCase.VERSION_ID
               ? versionService.getDesignControlPlaneDigest(
                   request.getTenantId(), request.getVersionId())
-              : versionService.getDesignControlPlaneDigestForScriptPatch(
-                  request.getTenantId(), request.getScriptPatchVersion());
+              : getScriptPatchControlPlaneDigest(request);
       builder.setDigest(
           net.firedevops.firemud.gamedesign.v1.DesignControlPlaneDigest.newBuilder()
               .setTenantId(digest.tenantId())
@@ -630,6 +639,15 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private DesignControlPlaneDigestDto getScriptPatchControlPlaneDigest(
+      GetDesignControlPlaneDigestRequest request) {
+    if (request.getBaseVersionId() <= 0L) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+    }
+    return versionService.getDesignControlPlaneDigestForScriptPatch(
+        request.getTenantId(), request.getScriptPatchVersion(), request.getBaseVersionId());
   }
 
   @Override

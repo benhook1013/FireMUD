@@ -6,6 +6,10 @@ metadata:
   name: game-design-service
 spec:
   replicas: 2
+  # V26 changes the persisted publication participant scope; old and new
+  # publication writers/readers must not overlap across the migration boundary.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: game-design-service

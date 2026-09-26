@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -12,7 +13,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
@@ -51,6 +55,79 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 class WorldManagementGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+
+  private static PublicationReadGuard publicationReadGuard() {
+    return new PublicationReadGuard(TEST_NAMESPACE);
+  }
+
+  private static void runAsGameDesign(Runnable action) {
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/test/sa/game-design-service",
+                TEST_NAMESPACE,
+                "game-design-service"))
+        .run(action);
+  }
+
+  private static GrpcPeerIdentity peer(String service) {
+    return new GrpcPeerIdentity(
+        "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/" + service, TEST_NAMESPACE, service);
+  }
+
+  private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigest(
+      WorldManagementGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    if (error.get() != null) {
+      throw new AssertionError("Digest RPC failed", error.get());
+    }
+    return ref.get();
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigestWithPeer(
+      WorldManagementGrpcService service,
+      GetDraftDesignDigestRequest request,
+      GrpcPeerIdentity peer) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runWithPeer(peer, () -> ref.set(invokeDigest(service, request)));
+    return ref.get();
+  }
+
+  private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(tenantId, versionId, "request-7");
+    return GetDraftDesignDigestRequest.newBuilder()
+        .setTenantId(binding.tenantId())
+        .setVersionId(binding.versionId())
+        .setPublishRequestId(binding.publishRequestId())
+        .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+        .setRequestDigest(binding.requestDigest())
+        .build();
+  }
+
   private WorldManagementGrpcService newService(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
@@ -104,7 +181,7 @@ class WorldManagementGrpcServiceTest {
             new WorldDraftDesignDigestService.WorldDraftDesignDigest(
                 "1", "7", "version:7", "digest-world", 1));
     SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
@@ -115,26 +192,237 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetDraftDesignDigestResponse value) {
-            ref.set(value);
-          }
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                fullDigestRequest("1", "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
-    assertEquals("7", ref.get().getScopeValue());
+    assertEquals("7", ref.get().getVersionId());
     assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    GetDraftDesignDigestResponse response = invokeDigest(service, fullDigestRequest("1", "7"));
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      WorldManagementGrpcService service =
+          new WorldManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              Mockito.mock(WorldInstanceActivationService.class),
+              digestService,
+              Mockito.mock(WorldDesignMutationService.class),
+              Mockito.mock(WorldUpgradeValidationService.class),
+              Mockito.mock(GameplaySessionAttestationService.class),
+              new SimpleMeterRegistry(),
+              new ObjectMapper(),
+              workloadNamespace);
+
+      assertEquals(
+          "PERMISSION_DENIED",
+          invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+    }
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerBeforeReadingDigest() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "forged-but-not-authoritative", "instance-1");
+
+    GetDraftDesignDigestResponse response =
+        invokeDigestWithPeer(
+            service, fullDigestRequest("1", "7"), peer("entity-management-service"));
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsUserOrAdminJwtBeforeReadingDigest() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+
+    runWithPeer(
+        peer("game-design-service"),
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsChangedBindingBeforeOwnerRead() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            ref.set(
+                invokeDigest(
+                    service,
+                    fullDigestRequest("1", "7").toBuilder()
+                        .setRequestDigest("0".repeat(64))
+                        .build())));
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsScriptPatchScope() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("1", "7", "patch-1", "request-7");
+    GetDraftDesignDigestRequest request =
+        GetDraftDesignDigestRequest.newBuilder()
+            .setTenantId(binding.tenantId())
+            .setBaseVersionId(binding.baseVersionId())
+            .setScriptPatchVersion(binding.scriptPatchVersion())
+            .setPublishRequestId(binding.publishRequestId())
+            .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+            .setRequestDigest(binding.requestDigest())
+            .build();
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(() -> ref.set(invokeDigest(service, request)));
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsOwnerTenantMismatch() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
+        .thenReturn(
+            new WorldDraftDesignDigestService.WorldDraftDesignDigest(
+                "other-tenant", "7", "version:7", "digest-world", 1));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            new SimpleMeterRegistry(),
+            new ObjectMapper(),
+            publicationReadGuard());
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                fullDigestRequest("1", "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
+
+                  @Override
+                  public void onError(Throwable t) {}
+
+                  @Override
+                  public void onCompleted() {}
+                }));
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }
 
   @Test
