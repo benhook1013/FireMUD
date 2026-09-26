@@ -2075,6 +2075,8 @@ if not re.search(
     )
 if not re.search(
     r'(?ms)^\s*\{\{- if or \(eq \$service\.name "tcp-proxy-service"\) '
+    r'\(eq \$service\.name "account-service"\) '
+    r'\(eq \$service\.name "game-session-service"\) '
     r'\(eq \$service\.name "automation-scripting-service"\) \}\}.*?'
     r'^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$',
     automation_helm,
@@ -2085,7 +2087,7 @@ if not re.search(
 require_contains(
     "k8s/helm/firemud/templates/apps.yaml",
     [
-        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "automation-scripting-service") }}',
+        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") }}',
         "  strategy:\n    type: Recreate",
         "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
         "# V3 changes the persisted plugin lifecycle fence; executor generations",
