@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchReadinessProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchReadinessProjectionRepository;
@@ -50,16 +51,17 @@ public class ScriptPatchReadinessProjectionServiceImpl
   @Override
   @Transactional
   public boolean beginPatchReadiness(
-      String tenantId, String scriptPatchVersion, int affectedScriptCount) {
+      String tenantId, String scriptPatchVersion, List<String> canonicalScriptNames) {
     requireText(tenantId, "tenant_id");
     requireText(scriptPatchVersion, "script_patch_version");
+    List<String> scriptSet = canonicalScriptNames(canonicalScriptNames);
     lockTenantMutationScope(tenantId);
     Optional<ScriptPatchReadinessProjection> existing =
         repository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion);
     if (existing.isPresent()) {
-      // A readiness identity is immutable once admitted. Retries must not reopen a terminal
-      // projection or reset an in-flight one; the durable ingress identity separately makes the
-      // corresponding onLoad admission idempotent.
+      requireSameScriptSet(existing.get(), scriptSet);
+      // A retry preserves the first admission's script set and generation. Legacy rows without
+      // either value fail closed because their original request cannot be reconstructed.
       return false;
     }
     Instant now = Instant.now();
@@ -67,8 +69,10 @@ public class ScriptPatchReadinessProjectionServiceImpl
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId(tenantId);
     projection.setScriptPatchVersion(scriptPatchVersion);
+    projection.setScriptSetManifest(scriptSet);
+    projection.setReadinessGeneration(repository.nextReadinessGeneration(tenantId));
     projection.setSupersededByScriptPatchVersion("");
-    if (affectedScriptCount <= 0) {
+    if (scriptSet.isEmpty()) {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("no_scripts_in_patch");
     } else {
@@ -77,6 +81,78 @@ public class ScriptPatchReadinessProjectionServiceImpl
     }
     projection.setLastChangedAt(now);
     repository.save(projection);
+    return true;
+  }
+
+  @Override
+  @Transactional
+  public boolean applyIfCurrent(
+      String tenantId,
+      String scriptPatchVersion,
+      List<String> canonicalScriptNames,
+      Consumer<Boolean> downstreamWork) {
+    requireText(tenantId, "tenant_id");
+    requireText(scriptPatchVersion, "script_patch_version");
+    if (downstreamWork == null) {
+      throw new IllegalArgumentException("downstream_work_required");
+    }
+    List<String> scriptSet = canonicalScriptNames(canonicalScriptNames);
+    lockTenantMutationScope(tenantId);
+    Optional<ScriptPatchReadinessProjection> current =
+        findCurrentProjection(tenantId, scriptPatchVersion, scriptSet);
+    if (current.isEmpty()) {
+      return false;
+    }
+    ScriptPatchReadinessProjection projection = current.get();
+    boolean admitOnLoad =
+        switch (projection.getReadinessStatus()) {
+          case "PENDING_VALIDATION", "ONLOAD_RUNNING" -> true;
+          case "READY" -> false;
+          default -> false;
+        };
+    if (!admitOnLoad && !"READY".equals(projection.getReadinessStatus())) {
+      return false;
+    }
+
+    // The callback's schedule and ingress collaborators join this transaction. A newer begin
+    // cannot supersede this generation until these durable effects commit or roll back together.
+    downstreamWork.accept(admitOnLoad);
+    projection.setDatabaseDownstreamReconciled(true);
+    projection.setLastChangedAt(Instant.now());
+    repository.save(projection);
+    return true;
+  }
+
+  @Override
+  @Transactional
+  public boolean rebuildRegistryIfCurrent(
+      String tenantId,
+      String scriptPatchVersion,
+      List<String> canonicalScriptNames,
+      Runnable registryRebuild) {
+    requireText(tenantId, "tenant_id");
+    requireText(scriptPatchVersion, "script_patch_version");
+    if (registryRebuild == null) {
+      throw new IllegalArgumentException("registry_rebuild_required");
+    }
+    List<String> scriptSet = canonicalScriptNames(canonicalScriptNames);
+    lockTenantMutationScope(tenantId);
+    Optional<ScriptPatchReadinessProjection> current =
+        findCurrentProjection(tenantId, scriptPatchVersion, scriptSet);
+    if (current.isEmpty()) {
+      return false;
+    }
+    ScriptPatchReadinessProjection projection = current.get();
+    if (!projection.isDatabaseDownstreamReconciled()
+        || !("PENDING_VALIDATION".equals(projection.getReadinessStatus())
+            || "ONLOAD_RUNNING".equals(projection.getReadinessStatus())
+            || "READY".equals(projection.getReadinessStatus()))) {
+      return false;
+    }
+    // This method runs after applyIfCurrent's transaction committed. Keeping the same tenant lock
+    // through the in-memory mutation prevents an older registry rebuild from overtaking a newer
+    // readiness generation.
+    registryRebuild.run();
     return true;
   }
 
@@ -164,10 +240,63 @@ public class ScriptPatchReadinessProjectionServiceImpl
     }
   }
 
+  private Optional<ScriptPatchReadinessProjection> findCurrentProjection(
+      String tenantId, String scriptPatchVersion, List<String> scriptSet) {
+    Optional<ScriptPatchReadinessProjection> maybeProjection =
+        repository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (maybeProjection.isEmpty()) {
+      return Optional.empty();
+    }
+    ScriptPatchReadinessProjection projection = maybeProjection.get();
+    requireSameScriptSet(projection, scriptSet);
+    Long generation = projection.getReadinessGeneration();
+    if (generation == null) {
+      return Optional.empty();
+    }
+    return repository
+        .findLatestGenerationByTenantId(tenantId)
+        .filter(
+            latest ->
+                generation.equals(latest.getReadinessGeneration())
+                    && projection.getId() != null
+                    && projection.getId().equals(latest.getId()))
+        .map(latest -> projection);
+  }
+
+  private static void requireSameScriptSet(
+      ScriptPatchReadinessProjection projection, List<String> scriptSet) {
+    if (projection.getScriptSetManifest() == null) {
+      throw new IllegalStateException("script_patch_script_manifest_unavailable");
+    }
+    if (!projection.getScriptSetManifest().equals(scriptSet)) {
+      throw new IllegalArgumentException("script_patch_manifest_changed");
+    }
+    if (projection.getReadinessGeneration() == null) {
+      throw new IllegalStateException("script_patch_readiness_generation_unavailable");
+    }
+  }
+
+  private static List<String> canonicalScriptNames(List<String> scriptNames) {
+    if (scriptNames == null) {
+      throw new IllegalArgumentException("script_set_manifest_required");
+    }
+    if (scriptNames.stream().anyMatch(name -> name == null || name.isBlank())) {
+      throw new IllegalArgumentException("script_set_manifest_contains_blank_name");
+    }
+    List<String> canonical = scriptNames.stream().sorted().toList();
+    if (canonical.stream().distinct().count() != canonical.size()) {
+      throw new IllegalArgumentException("script_set_manifest_contains_duplicate_name");
+    }
+    return canonical;
+  }
+
   /** Serializes readiness projection mutations for one tenant in PostgreSQL transactions. */
   private void lockTenantMutationScope(String tenantId) {
-    if (dsl == null || dsl.dialect().family() != SQLDialect.POSTGRES) {
+    if (dsl == null) {
       return;
+    }
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      throw new IllegalStateException("script_patch_readiness_requires_postgres");
     }
     dsl.execute(
         "select pg_advisory_xact_lock(?, ?)", READINESS_SCOPE_LOCK_NAMESPACE, tenantId.hashCode());

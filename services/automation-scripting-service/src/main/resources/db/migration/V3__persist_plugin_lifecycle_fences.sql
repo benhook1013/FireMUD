@@ -4,10 +4,23 @@
 ALTER TABLE script_work_items
     ADD COLUMN plugin_activation_epoch BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 0,
+    -- Authority-unavailable fences have three durable retries at 15, 30, and 60 seconds.
+    ADD COLUMN authority_unavailable_retry_count INT NOT NULL DEFAULT 0,
+    ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP),
     ADD CONSTRAINT ck_script_work_items_plugin_fence CHECK (
         (plugin_activation_epoch = 0 AND lifecycle_revision = 0)
         OR (plugin_activation_epoch > 0 AND lifecycle_revision > 0)
+    ),
+    ADD CONSTRAINT ck_script_work_items_authority_unavailable_retry_count CHECK (
+        authority_unavailable_retry_count BETWEEN 0 AND 3
     );
+
+-- Claim reads filter by status and due time, then retain their repository-owned
+-- created_at/id FIFO order. Put the eligibility range before those ordering
+-- keys so delayed retries can be excluded from the candidate range; the query's
+-- ORDER BY remains authoritative for FIFO claims within that eligible set.
+CREATE INDEX idx_script_work_items_status_eligible_created
+    ON script_work_items(status, next_eligible_at, created_at, id);
 
 ALTER TABLE plugin_runtime_states
     ADD COLUMN plugin_activation_epoch BIGINT NOT NULL DEFAULT 0,
@@ -59,7 +72,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM plugin_runtime_states
-        WHERE plugin_state IN ('ENABLED', 'DRAINING')
+        WHERE plugin_state IN ('PLUGIN_STATE_ENABLED', 'PLUGIN_STATE_DRAINING')
           AND NULLIF(BTRIM(active_plugin_version_id), '') IS NULL
     ) THEN
         RAISE EXCEPTION

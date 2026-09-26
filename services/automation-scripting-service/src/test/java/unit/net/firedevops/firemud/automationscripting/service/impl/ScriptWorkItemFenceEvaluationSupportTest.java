@@ -15,6 +15,16 @@ class ScriptWorkItemFenceEvaluationSupportTest {
   }
 
   @Test
+  void rejectsUnboundWorkItemWithCapturedPluginLifecycleEvidence() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginActivationEpoch(1L);
+    workItem.setLifecycleRevision(1L);
+
+    assertThat(ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem))
+        .isEqualTo("plugin_binding_mismatch");
+  }
+
+  @Test
   void rejectsPartialPluginBindingBeforeCurrentAuthorityLookup() {
     ScriptWorkItem workItem = runtimeWorkItem();
     workItem.setPluginId("plugin-1");
@@ -76,6 +86,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
   }
 
   @Test
+  void rejectsCapturedPluginVersionWhenAnotherVersionIsCurrentlyEnabled() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginId("plugin-1");
+    workItem.setPluginVersionId("plugin-v1");
+    workItem.setPluginActivationEpoch(4L);
+    workItem.setLifecycleRevision(8L);
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+                workItem, "plugin-v2", PluginState.PLUGIN_STATE_ENABLED, 4L, 8L))
+        .isEqualTo("plugin_version_mismatch");
+  }
+
+  @Test
   void rejectsCurrentDisabledPluginFence() {
     ScriptWorkItem workItem = runtimeWorkItem();
     workItem.setPluginId("plugin-1");
@@ -100,6 +124,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
     assertThat(
             ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
                 workItem, "plugin-v1", PluginState.PLUGIN_STATE_DRAINING, 4L, 8L))
+        .isEqualTo("plugin_disabled");
+  }
+
+  @Test
+  void rejectsPredecessorEnabledRevisionWhenCurrentPluginIsDraining() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginId("plugin-1");
+    workItem.setPluginVersionId("plugin-v1");
+    workItem.setPluginActivationEpoch(4L);
+    workItem.setLifecycleRevision(8L);
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+                workItem, "plugin-v1", PluginState.PLUGIN_STATE_DRAINING, 4L, 9L))
         .isEqualTo("plugin_disabled");
   }
 

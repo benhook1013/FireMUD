@@ -16,6 +16,8 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
+bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -99,16 +101,64 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
+# Extract a literal source range only when both delimiters occur exactly once
+# and the ending delimiter follows the start. The start line is included and
+# the ending line is excluded, matching the function bodies exercised below.
+extract_source_range() {
+  local source_path="$1"
+  local start_pattern="$2"
+  local end_pattern="$3"
+  awk -v start_pattern="$start_pattern" -v end_pattern="$end_pattern" '
+    {
+      source_lines[NR] = $0
+      if ($0 ~ start_pattern) {
+        start_count++
+        start_line = NR
+      }
+      if ($0 ~ end_pattern) {
+        end_count++
+        end_line = NR
+      }
+    }
+    END {
+      if (start_count != 1 || end_count != 1 || end_line <= start_line) {
+        printf "invalid source range in %s: start=%d end=%d\n", FILENAME, start_count, end_count > "/dev/stderr"
+        exit 2
+      }
+      for (line = start_line; line < end_line; line++) {
+        print source_lines[line]
+      }
+    }
+  ' "$source_path"
+}
+
+# Keep the extractor's fail-closed delimiter checks explicit: missing either
+# marker and reversed marker order must not produce a partial source snippet.
+range_fixture="$fixture_dir/source-range-fixture.sh"
+printf 'start\nbody\nend\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^missing$' '^end$' \
+  >"$fixture_dir/missing-start.out" 2>"$fixture_dir/missing-start.err"; then
+  echo "source range extraction accepted a missing start marker" >&2
+  exit 1
+fi
+if extract_source_range "$range_fixture" '^start$' '^missing$' \
+  >"$fixture_dir/missing-end.out" 2>"$fixture_dir/missing-end.err"; then
+  echo "source range extraction accepted a missing end marker" >&2
+  exit 1
+fi
+printf 'end\nbody\nstart\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^start$' '^end$' \
+  >"$fixture_dir/reversed-markers.out" 2>"$fixture_dir/reversed-markers.err"; then
+  echo "source range extraction accepted reversed markers" >&2
+  exit 1
+fi
+
 # Exercise the certificate workspace setup and EXIT cleanup directly. A caller
 # supplied root may contain unrelated files, so only the private child created
 # for this invocation may be removed.
 cert_workspace_setup="$fixture_dir/cert-workspace-setup.sh"
 {
-  awk '
-    /^provided_cert_dir=/ { capture = 1 }
-    /^workloads=\(/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^provided_cert_dir=' '^workloads=[(]'
   cat <<'EOF'
 printf 'generated certificate material\n' >"$cert_dir/generated.crt"
 printf '%s\n' "$cert_dir" >"$CERT_DIR_CAPTURE"
@@ -140,11 +190,7 @@ default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
 # caller so it cannot take the bootstrap generation/apply branch.
 secret_lookup_test="$fixture_dir/test-secret-exists.sh"
 {
-  awk '
-    /^secret_exists\(\)/ { capture = 1 }
-    /^read_secret_snapshot\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^secret_exists[(][)]' '^read_secret_snapshot[(][)]'
   cat <<'EOF'
 namespace=contract
 cert_dir="$OUTPUT_DIR"
@@ -217,11 +263,7 @@ done
 # dotted JSONPath keys, one read for all requested fields, and fail-closed errors.
 secret_snapshot_reader="$fixture_dir/read-secret-snapshot.sh"
 {
-  awk '
-    /^read_secret_snapshot\(\)/ { capture = 1 }
-    /^apply_secret\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^read_secret_snapshot[(][)]' '^apply_secret[(][)]'
   cat <<'EOF'
 namespace=contract
 lookup_mode="$1"
@@ -372,30 +414,14 @@ printf 'not a certificate\n' >"$certificate_fixture_dir/unparseable.crt"
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
-  awk '
-    /^assert_key_matches_certificate\(\)/ { capture = 1 }
-    /^ca_bundle_contains\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^assert_certificate_unexpired\(\)/ { capture = 1 }
-    /^validate_workload_certificate\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^validate_workload_certificate\(\)/ { capture = 1 }
-    /^shared_ca=/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^assert_key_matches_certificate[(][)]' '^ca_bundle_contains[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^validate_workload_certificate[(][)]' '^shared_ca='
 } >"$validator_source"
 echo "dev-demo certificate fixture: validator extracted" >&2
 
 expiry_helper_source="$certificate_fixture_dir/validate-certificate-expiry.sh"
-awk '
-  /^assert_certificate_unexpired\(\)/ { capture = 1 }
-  /^validate_workload_certificate\(\)/ { capture = 0 }
-  capture { print }
-' "$standalone_grpc_tls" >"$expiry_helper_source"
+extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]' >"$expiry_helper_source"
 expiry_fixture_dir="$certificate_fixture_dir/expiry"
 mkdir -p "$expiry_fixture_dir/newcerts"
 : >"$expiry_fixture_dir/index.txt"
@@ -443,7 +469,7 @@ openssl ca -batch -config "$expiry_fixture_dir/openssl.cnf" \
 
 expect_expired_certificate() {
   local description="$1"
-  local rotation_secrets="$2"
+  local rotation_resources="$2"
   local expected_message="$3"
   local certificate="$4"
   local output
@@ -451,7 +477,7 @@ expect_expired_certificate() {
     {
       # shellcheck disable=SC1090 # The test extracts the exact expiry helper body.
       source "$expiry_helper_source"
-      assert_certificate_unexpired "$certificate" "$description" "$rotation_secrets"
+      assert_certificate_unexpired "$certificate" "$description" "$rotation_resources"
     } 2>&1
   )"; then
     echo "accepted expired certificate for ${description}" >&2
@@ -466,18 +492,18 @@ expect_expired_certificate() {
 
 expect_expired_certificate \
   'cert-manager CA projection in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-ca.crt"
 expect_expired_certificate \
   'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
-  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  'Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 expect_expired_certificate \
   'cert-manager publication certificate in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 python3 - "$standalone_grpc_tls" <<'PY'
 import sys
@@ -499,7 +525,7 @@ assert ca_expiry < leaf_verification
 assert leaf_expiry < leaf_verification
 assert shared_cert_parse < shared_cert_expiry < shared_key_match
 assert 'shared gRPC TLS client certificate in Secret ' in shared_branch
-assert 'shared_rotation_secrets' in shared_branch
+assert 'shared_rotation_resources' in shared_branch
 assert 'read_secret_file "$ca_secret" ca.key' not in source
 assert '--from-file=ca.key=' not in source
 assert 'openssl genrsa -out "$source_key"' not in source
@@ -816,6 +842,8 @@ if len(deploy_checkouts) != 1:
     raise SystemExit("dev-demo deploy must define exactly one checkout")
 if deploy_checkouts[0].get("with", {}).get("ref") != "${{ needs.dev-demo-plan.outputs.head_sha }}":
     raise SystemExit("dev-demo deploy checkout must pin the planned head SHA")
+if deploy_checkouts[0].get("with", {}).get("fetch-depth") != 0:
+    raise SystemExit("dev-demo deploy must fetch full history for exact migration-range proof")
 if deploy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo deploy checkout must not persist credentials")
 if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-cluster":
@@ -837,6 +865,7 @@ ordered = (
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
+    "Quiesce Account, Game Session, and Automation migration writers",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
     "Wait for dev-demo runtime rollouts",
@@ -849,6 +878,38 @@ ordered = (
 positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
     raise SystemExit(f"dev-demo hosted-controller lifecycle order is invalid: {ordered}")
+
+standalone_grpc_setup = (
+    "Prepare dev-demo shared gRPC TLS secret",
+    "Ensure dev-demo standalone gRPC certificates",
+    "Ensure dev-demo gRPC TLS secret exists",
+)
+standalone_grpc_positions = [deploy_names.index(name) for name in standalone_grpc_setup]
+render_position = deploy_names.index("Validate dev-demo chart render")
+deploy_position = deploy_names.index("Deploy dev-demo release")
+if standalone_grpc_positions != sorted(standalone_grpc_positions) or any(
+    position >= render_position or position >= deploy_position
+    for position in standalone_grpc_positions
+):
+    raise SystemExit(
+        "dev-demo standalone gRPC leaf and trust Secrets must be prepared before rendering and Helm apply"
+    )
+for step_name, helper in (
+    (
+        "Prepare dev-demo shared gRPC TLS secret",
+        "ensure-grpc-tls-secret.sh --shared-only",
+    ),
+    (
+        "Ensure dev-demo standalone gRPC certificates",
+        "ensure-standalone-grpc-certificates.sh",
+    ),
+    (
+        "Ensure dev-demo gRPC TLS secret exists",
+        "ensure-grpc-tls-secret.sh",
+    ),
+):
+    if helper not in deploy_by_name[step_name].get("run", ""):
+        raise SystemExit(f"dev-demo {step_name} must invoke {helper}")
 
 identity_steps = (
     "Apply fixed dev-demo Active request",
@@ -1017,6 +1078,7 @@ if "Remove hosted identity requester kubeconfig" in deploy_by_name:
 
 expected_deploy_kubeconfigs = {
     "Verify cluster access": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Classify trusted V2 migration activation": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Reset dev-demo namespace for clean deploy": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Ensure dev-demo namespace exists": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Record exact dev-demo runtime target": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
@@ -1029,6 +1091,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1038,6 +1101,24 @@ expected_deploy_kubeconfigs = {
     "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
 }
+quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
+if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
+    raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
+if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
+    "Reset dev-demo namespace for clean deploy"
+].get("if", ""):
+    raise SystemExit("dev-demo must retain clean namespace reset for non-migration deploys")
+if "steps.v2-migration-mode.outputs.activation == 'true'" not in quiesce.get("if", ""):
+    raise SystemExit("dev-demo must quiesce only the trusted retained-database migration path")
+classifier = deploy_by_name["Classify trusted V2 migration activation"]
+if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") != 1:
+    raise SystemExit("dev-demo must derive migration activation from the trusted event range")
+if deploy_names.index("Classify trusted V2 migration activation") > deploy_names.index(
+    "Reset dev-demo namespace for clean deploy"
+):
+    raise SystemExit("migration status must be proven before any namespace mutation")
+if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
+    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1158,6 +1239,38 @@ expected_success_condition = (
 )
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
+
+quiesce_writers = deploy_by_name[
+    "Quiesce Account, Game Session, and Automation migration writers"
+]
+if quiesce_writers.get("id") != "quiesce-writers":
+    raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
+quiesced_writer_warning = deploy_by_name[
+    "Warn about migration writer recovery after quiesce or deploy failure"
+]
+expected_quiesced_writer_warning_condition = (
+    "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
+    "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.deploy-release.outcome == 'failure') }}"
+)
+if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
+    raise SystemExit(
+        "migration writer recovery warning must require activation and failed quiesce or Helm deploy"
+    )
+quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
+for required_warning in (
+    "Account, Game Session, and Automation writer Deployments may be partially quiesced",
+    "Inspect their current state before retrying",
+    "writer quiescence fails",
+    "Helm deploy fails partway through",
+    "a partial deployment may have re-enabled some writers",
+):
+    if required_warning not in quiesced_writer_warning_run:
+        raise SystemExit(
+            f"quiesced-writer warning must include: {required_warning}"
+        )
+if "all writer Deployments are quiesced" in quiesced_writer_warning_run:
+    raise SystemExit("quiesced-writer warning must allow partial deployment state")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}

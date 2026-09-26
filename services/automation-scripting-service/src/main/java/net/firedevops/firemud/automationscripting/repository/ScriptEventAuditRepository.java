@@ -614,15 +614,8 @@ public class ScriptEventAuditRepository {
   }
 
   private static void requireCoherentPluginFence(ScriptEventAudit entity) {
-    long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
-    }
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
   }
 
   private static Long normalizedScriptPinEpoch(ScriptEventAudit entity) {

@@ -180,6 +180,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
     requireCommand(command);
     String dispatchId = dispatchId(workItem, command.ordinal());
     lockAdmissionScope(workItem);
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    if (acceptedResult != null) {
+      return acceptedResult;
+    }
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
     String admissionFenceReason =
@@ -311,6 +315,65 @@ public class ScriptGameplayCommandHandoffServiceImpl
     }
     applyOutcome(workItem, command, dispatchId, result, now);
     return result;
+  }
+
+  private HandoffResult acceptedHandoffResult(ScriptWorkItem workItem, EmittedCommand command) {
+    ScriptHandoffEvent existing =
+        handoffEventRepository
+            .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                workItem.getTenantId(), workItem.getId(), command.ordinal())
+            .orElse(null);
+    if (existing == null) {
+      return null;
+    }
+    return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
+      case "enqueued" ->
+          new HandoffResult(
+              true, "ENQUEUED", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "duplicate_noop" ->
+          new HandoffResult(
+              true, "DUPLICATE_NOOP", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "remote_scheduled" ->
+          new HandoffResult(
+              true,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
+              "",
+              normalize(existing.getRemoteCoordinatorId()),
+              normalize(existing.getRemoteFollowupId()),
+              "");
+      default -> null;
+    };
+  }
+
+  @Override
+  @Transactional
+  public void recordUnattempted(
+      ScriptWorkItem workItem, EmittedCommand command, String fenceReason) {
+    requireWorkItem(workItem);
+    requireCommand(command);
+    String reason = normalize(fenceReason).trim();
+    if (reason.isBlank()) {
+      throw new IllegalArgumentException("fenceReason must not be blank");
+    }
+    lockAdmissionScope(workItem);
+    ScriptHandoffEvent existing =
+        handoffEventRepository
+            .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                workItem.getTenantId(), workItem.getId(), command.ordinal())
+            .orElse(null);
+    if (existing != null
+        && !"unattempted".equalsIgnoreCase(normalize(existing.getHandoffOutcome()))) {
+      // A retry can revisit a sibling already attempted by an earlier fan-out. Preserve that
+      // durable attempt result instead of replacing it with later fence evidence.
+      return;
+    }
+    appendHandoffEvent(
+        workItem,
+        command,
+        dispatchId(workItem, command.ordinal()),
+        new HandoffResult(false, "unattempted", "", "", "", ""),
+        reason,
+        Instant.now());
   }
 
   private static ScopeValidationResult validateRemoteHandoffScope(
@@ -806,8 +869,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       HandoffResult result,
       Instant now) {
+    appendHandoffEvent(workItem, command, dispatchId, result, handoffReason(result), now);
+  }
+
+  private void appendHandoffEvent(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffResult result,
+      String reason,
+      Instant now) {
     String outcome = result.outcome().toLowerCase(Locale.ROOT);
-    String reason = handoffReason(result);
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
@@ -822,7 +894,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
-    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
     event.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
     event.setLifecycleRevision(workItem.getLifecycleRevision());
     event.setWorkItemId(workItem.getId());

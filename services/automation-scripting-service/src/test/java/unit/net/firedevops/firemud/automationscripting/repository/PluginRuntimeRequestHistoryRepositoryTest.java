@@ -43,6 +43,16 @@ class PluginRuntimeRequestHistoryRepositoryTest {
   }
 
   @Test
+  void rejectsNullOrBlankRequestFingerprintBeforeInsert() {
+    PluginRuntimeRequestHistoryRepository repository =
+        new PluginRuntimeRequestHistoryRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertRequestFingerprintRejected(repository, null);
+    assertRequestFingerprintRejected(repository, "");
+    assertRequestFingerprintRejected(repository, " \t ");
+  }
+
+  @Test
   void acceptsZeroZeroFenceAtRepositoryBoundary() {
     PluginRuntimeRequestHistory saved = insertWithMockDatabase(history(0L, 0L));
 
@@ -85,6 +95,16 @@ class PluginRuntimeRequestHistoryRepositoryTest {
         new PluginRuntimeRequestHistoryRepository(
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
     return repository.insertOrGet(entity);
+  }
+
+  private static void assertRequestFingerprintRejected(
+      PluginRuntimeRequestHistoryRepository repository, String requestFingerprint) {
+    PluginRuntimeRequestHistory entity = history(0L, 0L);
+    entity.setRequestFingerprint(requestFingerprint);
+
+    assertThatThrownBy(() -> repository.insertOrGet(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("request_fingerprint must not be blank");
   }
 
   private static PluginRuntimeRequestHistory history(long activationEpoch, long lifecycleRevision) {

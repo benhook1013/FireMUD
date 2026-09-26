@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
@@ -39,13 +40,21 @@ public class TemporalScriptPatchReadinessOrchestrator {
       String tenantId, String scriptPatchVersion) {
     return workflowClient.newWorkflowStub(
         TemporalScriptPatchReadinessWorkflow.class,
-        WorkflowOptions.newBuilder()
-            .setTaskQueue(
-                taskQueues.forWorkflowFamily(TemporalScriptPatchReadinessWorkflow.WORKFLOW_FAMILY))
-            .setWorkflowId(
-                TemporalScriptPatchReadinessWorkflowMetadataResolver.workflowId(
-                    tenantId, scriptPatchVersion))
-            .build());
+        newWorkflowOptions(
+            taskQueues.forWorkflowFamily(TemporalScriptPatchReadinessWorkflow.WORKFLOW_FAMILY),
+            tenantId,
+            scriptPatchVersion));
+  }
+
+  static WorkflowOptions newWorkflowOptions(
+      String taskQueue, String tenantId, String scriptPatchVersion) {
+    return WorkflowOptions.newBuilder()
+        .setTaskQueue(taskQueue)
+        .setWorkflowId(
+            TemporalScriptPatchReadinessWorkflowMetadataResolver.workflowId(
+                tenantId, scriptPatchVersion))
+        .setWorkflowIdReusePolicy(WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE)
+        .build();
   }
 
   private void waitForSnapshot(

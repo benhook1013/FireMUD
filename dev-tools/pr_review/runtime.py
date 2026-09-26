@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
 import stat
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
-from .controller import ControllerError, DefaultGitProvider, ReviewController
+from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
 from .state import (
     StateError,
     StateStore,
@@ -42,6 +44,11 @@ class LiveGitHub:
 
     def metadata(self, number: int) -> dict[str, Any]:
         return github.fetch_pr_metadata(self.repo, number)
+
+    def batch_pull_requests(self, numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+        """Fetch the current lightweight identity/activity view for a whole stack."""
+
+        return github.fetch_pr_identity_batch(self.repo, numbers)
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = self.metadata(number)
@@ -110,6 +117,109 @@ class LiveEvidence:
         if pr not in self._payloads:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
         return self._payloads[pr]
+
+    @staticmethod
+    def _request_lock_is_held(path: Path) -> bool:
+        """Check an existing request lock without creating or changing a file."""
+
+        if not path.exists():
+            return False
+        try:
+            with path.open("r") as handle:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            # A lock file that cannot be inspected is not safe to treat as idle.
+            return True
+        return False
+
+    def active_review_targets(
+        self,
+        pr_numbers: Sequence[int],
+        identities: Mapping[int, Mapping[str, Any] | None],
+    ) -> set[int]:
+        """Find PRs with a live request or a possibly active Hosted trigger.
+
+        The batch identity query carries only the most recent few public events.
+        If that bounded sample cannot prove a trigger terminal, the PR is
+        conservatively included for the normal complete evidence reconciliation.
+        A repository-wide CLI lock does not encode its selected PR, so every
+        configured PR becomes a deep candidate while that lock is held.
+        """
+
+        active: set[int] = set()
+        active_trigger_states = {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}
+        terminal_trigger_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
+        if self.state_store is None:
+            active.update(pr_numbers)
+        else:
+            state_path = self.state_store.path
+            if state_path.name != "pr-review-stack.json":
+                active.update(pr_numbers)
+            else:
+                cli_lock_path = state_path.parent.parent / "firemud" / "pr-review" / "cli.lock"
+                if self._request_lock_is_held(cli_lock_path):
+                    active.update(pr_numbers)
+        for pr in pr_numbers:
+            lock_path = hosted.default_trigger_record_path(self.repo, pr).parent / "request.lock"
+            if self._request_lock_is_held(lock_path):
+                active.add(pr)
+            try:
+                identity = identities.get(pr)
+                if not isinstance(identity, Mapping):
+                    active.add(pr)
+                    continue
+                comment_connection = identity.get("comments")
+                comments = comment_connection.get("nodes") if isinstance(comment_connection, Mapping) else None
+                if not isinstance(comments, list):
+                    active.add(pr)
+                    continue
+                manual_trigger_seen = False
+                for comment in comments:
+                    if not isinstance(comment, Mapping):
+                        manual_trigger_seen = True
+                        break
+                    author = comment.get("author")
+                    login = author.get("login") if isinstance(author, Mapping) else None
+                    body = comment.get("body")
+                    if not isinstance(login, str) or not isinstance(body, str):
+                        manual_trigger_seen = True
+                        break
+                    if not github.is_coderabbit_login(login) and hosted.normalize_command(body) == hosted.FULL_COMMAND:
+                        manual_trigger_seen = True
+                        break
+                if manual_trigger_seen:
+                    active.add(pr)
+                    continue
+                paths = hosted.current_trigger_record_paths(self.repo, pr)
+                if len(paths) > 1:
+                    active.add(pr)
+                    continue
+                if not paths:
+                    continue
+                path = paths[0]
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                if record.get("status") in {"posting", "posted_boundary_changed", "posted_boundary_unverified"}:
+                    active.add(pr)
+                    continue
+                if record.get("status") == "retired":
+                    continue
+                pull_request = dict(identity)
+                if not isinstance(pull_request.get("comments"), Mapping) or not isinstance(
+                    pull_request.get("reviews"), Mapping
+                ):
+                    active.add(pr)
+                    continue
+                payload = {"data": {"repository": {"pullRequest": pull_request}}}
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                if state.state in active_trigger_states or state.state not in terminal_trigger_states:
+                    active.add(pr)
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                active.add(pr)
+        return active
 
     @staticmethod
     def _comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -318,13 +428,281 @@ class LiveEvidence:
             "reason": "completed Hosted review has no valid public checkpoint and requires adjudication",
         }
 
+    def _terminal_ambiguous_hosted_observation(
+        self,
+        pr: int,
+        record: Mapping[str, Any],
+        state: hosted.TriggerState,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return immutable identity for one verified terminal ambiguous response."""
+
+        if state.state != "ambiguous" or state.terminal is not True or state.attributed is not False:
+            return None
+        trigger_id = state.trigger_comment_id
+        response_id = state.response_id
+        captured_head = record.get("head_sha")
+        if (
+            isinstance(trigger_id, bool)
+            or not isinstance(trigger_id, int)
+            or trigger_id <= 0
+            or isinstance(response_id, bool)
+            or not isinstance(response_id, int)
+            or response_id <= 0
+            or not isinstance(captured_head, str)
+            or hosted.EXACT_SHA.fullmatch(captured_head) is None
+        ):
+            return None
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            comments = pull["comments"]["nodes"]
+            reviews = pull["reviews"]["nodes"]
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(comments, list) or not isinstance(reviews, list):
+            return None
+        triggers = [item for item in comments if github.immutable_database_id(item) == trigger_id]
+        responses = [
+            (item, "createdAt")
+            for item in comments
+            if github.immutable_database_id(item) == response_id
+        ] + [
+            (item, "submittedAt")
+            for item in reviews
+            if github.immutable_database_id(item) == response_id
+        ]
+        if len(triggers) != 1 or len(responses) != 1:
+            return None
+        trigger = triggers[0]
+        response, response_time_field = responses[0]
+        trigger_at = trigger.get("createdAt")
+        response_at = response.get(response_time_field)
+        response_body = response.get("body")
+        if (
+            not isinstance(trigger_at, str)
+            or hosted.parse_timestamp(trigger_at) is None
+            or trigger_at != state.trigger_created_at
+            or not isinstance(response_at, str)
+            or hosted.parse_timestamp(response_at) is None
+            or response_at != state.response_created_at
+            or not isinstance(response_body, str)
+            or not github.is_coderabbit_login((response.get("author") or {}).get("login"))
+        ):
+            return None
+        observation = {
+            "pr": pr,
+            "trigger_id": trigger_id,
+            "trigger_at": trigger_at,
+            "response_id": response_id,
+            "response_at": response_at,
+            "response_updated_at": response.get("updatedAt"),
+            "response_body_sha256": hashlib.sha256(response_body.encode("utf-8")).hexdigest(),
+            "captured_head": captured_head,
+            "state": state.state,
+        }
+        return {
+            **observation,
+            "reason": state.reason,
+            "fingerprint": observation_fingerprint(observation),
+        }
+
+    def review_stop_audit(
+        self,
+        pr: int,
+        expected_anchor: Mapping[str, Any],
+        retained_ambiguous_fingerprints: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """Refresh complete review evidence for a human-directed channel stop.
+
+        Retained ambiguous responses remain explicitly non-counting. Each pin
+        must name one verified immutable terminal response; only those exact
+        response blockers are removed from the generic audit.
+        """
+
+        required_anchor = ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        if not isinstance(expected_anchor, Mapping) or not self._anchor_complete(expected_anchor):
+            raise ControllerError("review stop requires a complete current stack anchor")
+        if "pr" in expected_anchor and expected_anchor.get("pr") != pr:
+            raise ControllerError("review stop anchor belongs to another pull request")
+        if any(not isinstance(expected_anchor.get(name), str) or not expected_anchor[name] for name in required_anchor):
+            raise ControllerError("review stop requires a complete current stack anchor")
+        pins = tuple(retained_ambiguous_fingerprints)
+        if any(not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{64}", pin) is None for pin in pins):
+            raise ControllerError("retained Hosted ambiguity requires an exact immutable fingerprint")
+        if len(set(pins)) != len(pins):
+            raise ControllerError("retained Hosted ambiguity fingerprints must be unique")
+        # All earlier commands may have populated these caches. A stop decision
+        # is an authorization boundary, so refresh the paginated public snapshot
+        # and both channel histories before inspecting the pin.
+        self._payloads.pop(pr, None)
+        self._histories.pop((pr, "hosted"), None)
+        self._histories.pop((pr, "cli"), None)
+        payload = self._payload(pr)
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            payload_head = pull.get("headRefOid")
+            payload_base_ref = pull.get("baseRefName")
+            payload_base_head = pull.get("baseRefOid")
+            pull_number = pull.get("number")
+        except (KeyError, TypeError) as error:
+            raise ControllerError("complete paginated GitHub review evidence is unavailable") from error
+        current = self.live.pull_request(pr)
+        child_head = expected_anchor["child_head"]
+        parent_head = expected_anchor["parent_head"]
+        parent_identity = expected_anchor["parent_identity"]
+        if (
+            pull_number != pr
+            or current.number != pr
+            or not isinstance(payload_head, str)
+            or not isinstance(payload_base_ref, str)
+            or not isinstance(payload_base_head, str)
+            or current.head_sha.casefold() != child_head.casefold()
+            or payload_head.casefold() != child_head.casefold()
+            or current.base_sha.casefold() != parent_head.casefold()
+            or payload_base_head.casefold() != parent_head.casefold()
+            or current.base_ref_name != payload_base_ref
+            or (not parent_identity.isdecimal() and current.base_ref_name != parent_identity)
+        ):
+            raise ControllerError("pull-request head or parent moved from the review stop anchor")
+
+        # The established audit validates paginated identities, trigger to
+        # response linkage, public checkpoints, pending captures, and unresolved
+        # review findings. Stop mode retains only unmatched records proven to
+        # belong to another head as historical; current-head or unknown results
+        # remain blockers. No transition fingerprints are reauthorized here.
+        audit = self.legacy_transition_reauthorization_audit(
+            pr,
+            (),
+            {
+                "child_head": child_head,
+                "live_base_ref": current.base_ref_name,
+                "live_base_tip": parent_head,
+            },
+            allow_historical_unmatched=True,
+        )
+        payload = self._payload(pr)
+        channel_history = {
+            channel: list(self.history(pr, channel))
+            for channel in ("hosted", "cli")
+        }
+
+        ambiguous_terminal_responses: list[dict[str, Any]] = []
+        terminal_rate_limits: list[dict[str, Any]] = []
+        for path in self._complete_trigger_paths(self.repo, pr):
+            try:
+                record = hosted.load_trigger_record(path, self.repo, pr)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+                raise ControllerError("a Hosted trigger record cannot be completely audited") from error
+            observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
+            if observation is not None:
+                ambiguous_terminal_responses.append(observation)
+            cooldown_value = getattr(state, "cooldown_until", None)
+            cooldown_until = hosted.parse_timestamp(cooldown_value)
+            trigger_id = state.trigger_comment_id
+            response_id = state.response_id
+            captured_head = record.get("head_sha")
+            if (
+                state.state == "rate_limited"
+                and state.terminal is True
+                and state.attributed is True
+                and isinstance(trigger_id, int)
+                and not isinstance(trigger_id, bool)
+                and trigger_id > 0
+                and isinstance(response_id, int)
+                and not isinstance(response_id, bool)
+                and response_id > 0
+                and isinstance(captured_head, str)
+                and hosted.EXACT_SHA.fullmatch(captured_head) is not None
+                and cooldown_until is not None
+                and cooldown_until > datetime.now(timezone.utc)
+            ):
+                terminal_rate_limits.append(
+                    {
+                        "trigger_id": trigger_id,
+                        "response_id": response_id,
+                        "captured_head": captured_head,
+                        "cooldown_until": cooldown_value,
+                        "terminal": True,
+                        "attributable": True,
+                    }
+                )
+        fingerprints = [item["fingerprint"] for item in ambiguous_terminal_responses]
+        if len(set(fingerprints)) != len(fingerprints):
+            raise ControllerError("terminal ambiguous Hosted responses have duplicate immutable fingerprints")
+        retained_by_fingerprint: dict[str, dict[str, Any]] = {}
+        for fingerprint in pins:
+            matching = [item for item in ambiguous_terminal_responses if item["fingerprint"] == fingerprint]
+            if len(matching) != 1:
+                raise ControllerError("retained Hosted ambiguity does not identify one current immutable response")
+            retained_by_fingerprint[fingerprint] = matching[0]
+
+        active_reservations = list(audit["active_reservations"])
+        unmatched_responses = list(audit["unmatched_responses"])
+        ambiguous_responses = list(audit["ambiguous_responses"])
+        if len(terminal_rate_limits) > active_reservations.count("rate_limited"):
+            raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")
+        for _item in terminal_rate_limits:
+            active_reservations.remove("rate_limited")
+        if pins:
+            terminal_count = len(ambiguous_terminal_responses)
+            if (
+                active_reservations.count("ambiguous") != terminal_count
+                or ambiguous_responses.count("unattributed trigger response") != terminal_count
+            ):
+                raise ControllerError("terminal Hosted ambiguity cannot be isolated from other response ambiguity")
+            for _fingerprint in pins:
+                active_reservations.remove("ambiguous")
+                ambiguous_responses.remove("unattributed trigger response")
+
+        unresolved_findings = list(audit["unresolved_findings"])
+        cli_pending = [
+            item
+            for item in channel_history["cli"]
+            if item.get("held") is True or item.get("unstable") is True or item.get("unreconciled") is True
+        ]
+        if cli_pending:
+            unresolved_findings.extend(
+                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence")
+                for item in cli_pending
+            )
+        checkpoints = [
+            {"channel": channel, **item}
+            for channel, values in channel_history.items()
+            for item in values
+            if item.get("completed") is True and item.get("attributable") is True
+        ]
+        blockers = [
+            *(f"active Hosted reservation: {item}" for item in active_reservations),
+            *(f"unmatched Hosted response: {item}" for item in unmatched_responses),
+            *(f"ambiguous Hosted response: {item}" for item in ambiguous_responses),
+            *(f"unresolved finding: {item}" for item in unresolved_findings),
+        ]
+        return {
+            "complete": True,
+            "head": current.head_sha,
+            "anchor": dict(expected_anchor),
+            "blockers": blockers,
+            "active_reservations": active_reservations,
+            "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": list(audit.get("historical_unmatched_responses", ())),
+            "ambiguous_responses": ambiguous_responses,
+            "unresolved_findings": unresolved_findings,
+            "checkpoints": checkpoints,
+            "ambiguous_terminal_responses": ambiguous_terminal_responses,
+            "terminal_rate_limits": terminal_rate_limits,
+            "retained_ambiguous": list(retained_by_fingerprint.values()),
+        }
+
     def legacy_transition_reauthorization_audit(
         self,
         pr: int,
         expected_hosted_fingerprints: tuple[str, ...],
         expected_anchor: dict[str, Any],
+        *,
+        allow_historical_unmatched: bool = False,
     ) -> dict[str, Any]:
-        """Prove completeness and attribution of all currently available Hosted evidence."""
+        """Audit complete Hosted history, optionally preserving older unmatched results for a stop."""
 
         # Retirement is the final authorization boundary. Earlier command checks may
         # have populated these caches, so refresh the complete public snapshot and
@@ -363,6 +741,42 @@ class LiveEvidence:
             or pull["baseRefOid"].casefold() != expected_base_tip.casefold()
         ):
             raise ControllerError("GitHub PR head or base moved during missing Hosted fingerprint retirement")
+
+        historical_unmatched_responses: list[str] = []
+
+        def record_unmatched(message: str, *, historical: bool = False, ambiguous: bool = False) -> None:
+            if allow_historical_unmatched and ambiguous:
+                ambiguous_responses.append(message)
+            elif allow_historical_unmatched and historical:
+                historical_unmatched_responses.append(message)
+            else:
+                unmatched_responses.append(message)
+
+        def response_matches_expected_head(response_id: int, response_item: Mapping[str, Any]) -> bool | None:
+            """Return whether a public result names the stop head, or None if unknown."""
+
+            def checkpoint_names_another_head(reviewed_sha: Any) -> bool | None:
+                if not isinstance(reviewed_sha, str) or re.fullmatch(r"[0-9a-fA-F]{7,40}", reviewed_sha) is None:
+                    return None
+                return not expected_head.casefold().startswith(reviewed_sha.casefold())
+
+            matching = checkpoints_by_response.get(response_id, [])
+            if len(matching) == 1:
+                reviewed_sha = matching[0].reviewed_sha
+                if isinstance(reviewed_sha, str) and reviewed_sha:
+                    names_another_head = checkpoint_names_another_head(reviewed_sha)
+                    if names_another_head is not None:
+                        return not names_another_head
+            commit = (response_item.get("commit") or {}).get("oid")
+            if isinstance(commit, str) and hosted.EXACT_SHA.fullmatch(commit):
+                return commit.casefold() == expected_head.casefold()
+            body = response_item.get("body")
+            if isinstance(body, str):
+                if hosted._matches_head(body, expected_head):
+                    return True
+                if hosted._scope_head(body) is not None:
+                    return False
+            return None
         latest = self.live.pull_request(pr)
         if (
             latest.number != pr
@@ -456,7 +870,13 @@ class LiveEvidence:
         for response_id, response_at in responses:
             previous = [item for item in commands if item[1] < response_at]
             if not previous:
-                unmatched_responses.append("response has no preceding full-review trigger")
+                response_item = response_by_id[response_id][0]
+                response_is_current = response_matches_expected_head(response_id, response_item)
+                record_unmatched(
+                    "response has no preceding full-review trigger",
+                    historical=response_is_current is False,
+                    ambiguous=response_is_current is not False,
+                )
                 continue
             latest_time = previous[-1][1]
             nearest = [item for item in previous if item[1] == latest_time]
@@ -473,7 +893,7 @@ class LiveEvidence:
                 continue
             record, state = matched
             responses_by_trigger.setdefault(trigger_id, set()).add(response_id)
-            if state.state not in {"retired"} and state.state == "completed":
+            if state.state == "completed":
                 response_item = next(
                     (
                         item
@@ -501,7 +921,12 @@ class LiveEvidence:
                 fingerprint = observation_fingerprint(observation)
                 fingerprinted = fingerprint in expected_hosted_fingerprints
                 if not fingerprinted:
-                    unmatched_responses.append("completed Hosted response has no checkpoint or prior audit")
+                    is_current_head = record["head_sha"].casefold() == expected_head.casefold()
+                    record_unmatched(
+                        "completed Hosted response has no checkpoint or prior audit",
+                        historical=not is_current_head,
+                        ambiguous=is_current_head,
+                    )
 
         for trigger_id, _ in commands:
             if trigger_id in records_by_trigger:
@@ -534,8 +959,15 @@ class LiveEvidence:
                 response_id = github.immutable_database_id(response_item)
                 matching_checkpoints = checkpoints_by_response.get(response_id, []) if response_id is not None else []
                 if not matching_checkpoints:
-                    unmatched_responses.append(
-                        "an unrecorded completed Hosted response has no matching public checkpoint"
+                    response_is_current = (
+                        response_matches_expected_head(response_id, response_item)
+                        if response_id is not None
+                        else None
+                    )
+                    record_unmatched(
+                        "an unrecorded completed Hosted response has no matching public checkpoint",
+                        historical=response_is_current is False,
+                        ambiguous=response_is_current is not False,
                     )
                 elif len(matching_checkpoints) != 1:
                     ambiguous_responses.append(
@@ -546,10 +978,6 @@ class LiveEvidence:
         represented_checkpoints = {
             str(item.get("checkpoint")) for item in hosted_history if isinstance(item, dict)
         }
-        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
-        for checkpoint in hosted_checkpoints:
-            if checkpoint.hosted_review_id is not None:
-                checkpoints_by_response.setdefault(checkpoint.hosted_review_id, []).append(checkpoint)
         legacy_represented_checkpoint_ids: set[str] = set()
         states_by_response: dict[int, list[tuple[dict[str, Any], hosted.TriggerState]]] = {}
         for record, state in records_by_trigger.values():
@@ -583,8 +1011,7 @@ class LiveEvidence:
                 else None
             )
             if (
-                not ambiguous_responses
-                and state.state == "completed"
+                state.state == "completed"
                 and state.terminal is True
                 and state.attributed is True
                 and state.response_id == response_id
@@ -606,7 +1033,18 @@ class LiveEvidence:
         represented_checkpoints.update(legacy_represented_checkpoint_ids)
         for checkpoint in hosted_checkpoints:
             if str(checkpoint.comment_id) not in represented_checkpoints:
-                unmatched_responses.append("a public Hosted checkpoint has no unique attributable trigger")
+                reviewed_sha = checkpoint.reviewed_sha
+                names_another_head = (
+                    not expected_head.casefold().startswith(reviewed_sha.casefold())
+                    if isinstance(reviewed_sha, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{7,40}", reviewed_sha) is not None
+                    else None
+                )
+                record_unmatched(
+                    "a public Hosted checkpoint has no unique attributable trigger",
+                    historical=names_another_head is True,
+                    ambiguous=names_another_head is not True,
+                )
         unresolved_findings = [
             str(item.get("checkpoint", "Hosted finding"))
             for item in hosted_history
@@ -619,6 +1057,7 @@ class LiveEvidence:
             "complete": True,
             "active_reservations": active_reservations,
             "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
         }
@@ -735,6 +1174,18 @@ class LiveEvidence:
             )
             if zero_finding or (hosted._substantive(body) and exact_head):
                 summaries.append((updated, github.immutable_database_id(item) or 0, zero_finding))
+        provider_summary = hosted.provider_format_zero_finding_summary(
+            payload,
+            captured_head,
+            trigger_at,
+            response_id,
+            next_trigger,
+        )
+        if provider_summary is not None:
+            provider_updated = hosted.parse_timestamp(provider_summary.get("updatedAt"))
+            provider_id = github.immutable_database_id(provider_summary)
+            if provider_updated is not None and provider_id is not None:
+                summaries.append((provider_updated, provider_id, True))
         if not summaries or not max(summaries)[2]:
             return None
 
@@ -983,7 +1434,9 @@ class LiveEvidence:
         payload = self._payload(pr)
         live = self.live.pull_request(pr)
         head = live.head_sha
-        checkpoints, _ = evidence.parse_checkpoint_comments(self._comments(payload))
+        comments = self._comments(payload)
+        checkpoints, _ = evidence.parse_checkpoint_comments(comments)
+        scope_changes = evidence.parse_scope_changes(comments)
         checkpoints.sort(key=lambda item: (item.created_at, item.comment_id or 0))
         reviews = self._reviews(payload)
         values: list[dict[str, Any]] = []
@@ -1040,6 +1493,9 @@ class LiveEvidence:
                 {
                     "pr": pr,
                     "head": exact_head,
+                    "reviewed_head": exact_head,
+                    "comment_id": checkpoint.comment_id,
+                    "observed_at": checkpoint.created_at,
                     "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
                     "completed": completed,
                     "attributable": attributable,
@@ -1073,6 +1529,8 @@ class LiveEvidence:
                     {
                         "pr": pr,
                         "head": candidate_sha,
+                        "reviewed_head": candidate_sha,
+                        "observed_at": capture.metadata.get("completed_at", ""),
                         "checkpoint": f"pending-capture:{run_id}",
                         "completed": False,
                         "attributable": False,
@@ -1130,6 +1588,10 @@ class LiveEvidence:
                             "head": state.head_sha,
                             "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
                             "rate_limited": True,
+                            "trigger_id": state.trigger_comment_id,
+                            "response_id": state.response_id,
+                            "terminal": state.terminal,
+                            "attributable": state.attributed,
                             "held": reset is None,
                             "unstable": reset is None,
                             "reason": "Hosted cooldown remains active"
@@ -1141,16 +1603,89 @@ class LiveEvidence:
                 elif state.state == "completed" and state.response_id not in emitted_hosted_response_ids:
                     values.append(self._uncheckpointed_hosted_observation(pr, state))
                 elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
-                    values.append(
-                        {
-                            "pr": pr,
-                            "head": state.head_sha,
-                            "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
-                            "held": state.state in {"active", "awaiting_response", "ambiguous", "unattributed"},
-                            "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
-                            "reason": state.reason,
-                        }
-                    )
+                    observation = {
+                        "pr": pr,
+                        "head": state.head_sha,
+                        "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
+                        "held": state.state in {"active", "awaiting_response", "ambiguous", "unattributed"},
+                        "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
+                        "reason": state.reason,
+                    }
+                    if state.state == "active":
+                        anchor = record.get("anchor")
+                        observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                    if state.state == "ambiguous":
+                        terminal_observation = self._terminal_ambiguous_hosted_observation(
+                            pr, record, state, payload
+                        )
+                        if terminal_observation is not None:
+                            observation.update(
+                                {
+                                    "terminal_ambiguous": True,
+                                    **terminal_observation,
+                                }
+                            )
+                    values.append(observation)
+        parsed_scope_changes = {
+            (item.comment_id, item.created_at, item.description, item.updated_at)
+            for item in scope_changes
+        }
+        scope_marker_token = evidence.SCOPE_MARKER.replace("<!--", "").replace("-->", "").strip()
+        for comment in comments:
+            body = comment["body"]
+            lines = body.splitlines()
+            first = next((line for line in lines if line.strip() and not line[0].isspace()), None)
+            scope_heading = evidence.SCOPE_CHANGE.fullmatch(first or "")
+            looks_like_scope_change = bool(
+                re.match(r"^\*{0,2}review\s+scope\s+changed\b", (first or "").strip(), re.IGNORECASE)
+                or scope_marker_token.casefold() in body.casefold()
+            )
+            if not looks_like_scope_change:
+                continue
+            comment_id = comment["id"]
+            created_at = comment["created_at"]
+            updated_at = comment["updated_at"]
+            description = scope_heading.group("description") if scope_heading is not None else None
+            valid = (comment_id, created_at, description, updated_at if updated_at != created_at else None) in parsed_scope_changes
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "channel": channel,
+                    "kind": "scope_change" if valid else "scope_change_malformed",
+                    "scope_changed": True,
+                    "scope_change_malformed": not valid,
+                    "checkpoint": f"scope-change:{comment_id or created_at}",
+                    "comment_id": comment_id,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "observed_at": updated_at or created_at,
+                    "description": description,
+                    "completed": False,
+                    "attributable": False,
+                    "anchored": False,
+                    "accepted": 0,
+                    "raw": 0,
+                    "non_counting": True,
+                }
+            )
+        values.append(
+            {
+                "pr": pr,
+                "head": head,
+                "channel": channel,
+                "kind": "scope_timeline",
+                "scope_timeline": True,
+                "scope_timeline_complete": True,
+                "checkpoint": "scope-timeline:complete",
+                "completed": False,
+                "attributable": False,
+                "anchored": False,
+                "accepted": 0,
+                "raw": 0,
+                "non_counting": True,
+            }
+        )
         values.extend(
             self._global_blockers(
                 pr,
@@ -1186,13 +1721,38 @@ class HostedRunner:
             raise ControllerError("authenticated GitHub user has no trusted login identity")
         return login
 
+    @staticmethod
+    def _base_advanced(target: ReviewTarget, current: PullRequestSnapshot) -> bool:
+        return (
+            target.default_base_front
+            and current.number == target.snapshot.number
+            and current.head_sha.casefold() == target.snapshot.head_sha.casefold()
+            and current.base_ref_name == target.parent.ref_name
+            and current.base_sha.casefold() != target.snapshot.base_sha.casefold()
+            and current.state.upper() == "OPEN"
+            and current.base_exists
+            and target.has_current_default_test_merge_proof()
+        )
+
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
+        if target.default_base_front and not target.has_current_default_test_merge_proof():
+            raise ControllerError("direct default-base target has no verified current base/head test merge")
         pr = target.snapshot.number
         hosted.assert_expected_pr(pr, expect_pr)
         before = self.live.pull_request(pr)
         if before != target.snapshot:
+            if self._base_advanced(target, before):
+                raise StaleReviewTarget("default base advanced after Hosted target selection")
             raise ControllerError("pull request changed after Hosted target selection")
-        if self.live.branch_head(target.parent.ref_name) != target.parent.head_sha:
+        parent_tip = self.live.branch_head(target.parent.ref_name)
+        if parent_tip != target.parent.head_sha:
+            if (
+                target.default_base_front
+                and before.head_sha.casefold() == target.snapshot.head_sha.casefold()
+                and before.base_ref_name == target.parent.ref_name
+                and target.has_current_default_test_merge_proof()
+            ):
+                raise StaleReviewTarget("default base advanced after Hosted target selection")
             raise ControllerError("effective parent changed after Hosted target selection")
         path = hosted.default_trigger_record_path(self.repo, pr)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1263,13 +1823,37 @@ class HostedRunner:
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
                 reservation_head = reservation_pr.get("headRefOid") if isinstance(reservation_pr, dict) else None
+                reservation_base_ref = reservation_pr.get("baseRefName") if isinstance(reservation_pr, dict) else None
+                reservation_base = reservation_pr.get("baseRefOid") if isinstance(reservation_pr, dict) else None
                 if (
                     not isinstance(reservation_pr, dict)
                     or not isinstance(reservation_head, str)
-                    or reservation_head.casefold() != target.snapshot.head_sha.casefold()
                 ):
+                    raise ControllerError("pull request identity is incomplete before the Hosted posting boundary")
+                if (
+                    reservation_head.casefold() != target.snapshot.head_sha.casefold()
+                    or reservation_base_ref != target.snapshot.base_ref_name
+                    or not isinstance(reservation_base, str)
+                    or reservation_base.casefold() != target.snapshot.base_sha.casefold()
+                ):
+                    if (
+                        target.default_base_front
+                        and reservation_head.casefold() == target.snapshot.head_sha.casefold()
+                        and reservation_base_ref == target.parent.ref_name
+                        and isinstance(reservation_base, str)
+                        and reservation_base.casefold() != target.snapshot.base_sha.casefold()
+                        and target.has_current_default_test_merge_proof()
+                    ):
+                        raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("pull request changed before the Hosted posting boundary")
-                if self.live.branch_head(target.parent.ref_name) != target.parent.head_sha:
+                current_parent_tip = self.live.branch_head(target.parent.ref_name)
+                if current_parent_tip != target.parent.head_sha:
+                    if (
+                        target.default_base_front
+                        and reservation_head.casefold() == target.snapshot.head_sha.casefold()
+                        and target.has_current_default_test_merge_proof()
+                    ):
+                        raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("effective parent changed before the Hosted posting boundary")
                 posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -1313,13 +1897,40 @@ class HostedRunner:
                 or hosted.normalize_command(str(normalized.get("body") or "")) != hosted.FULL_COMMAND
             ):
                 raise ControllerError("Hosted request response has no immutable full-review identity")
-            after = self.live.pull_request(pr)
             before_identity = (before.head_sha.casefold(), before.base_ref_name, before.base_sha.casefold())
-            after_identity = (after.head_sha.casefold(), after.base_ref_name, after.base_sha.casefold())
-            status = "posted" if after_identity == before_identity else "posted_boundary_changed"
+            after_identity: tuple[str, str, str] | None = None
+            after_parent_tip: str | None = None
+            boundary_verification_errors: list[str] = []
+            try:
+                after = self.live.pull_request(pr)
+                after_identity = (after.head_sha.casefold(), after.base_ref_name, after.base_sha.casefold())
+            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                boundary_verification_errors.append(f"PR refresh failed: {type(exc).__name__}: {exc}")
+            try:
+                observed_parent_tip = self.live.branch_head(target.parent.ref_name)
+                if not isinstance(observed_parent_tip, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", observed_parent_tip):
+                    raise ValueError("effective parent tip is malformed")
+                after_parent_tip = observed_parent_tip.casefold()
+            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                boundary_verification_errors.append(f"parent-tip refresh failed: {type(exc).__name__}: {exc}")
+            boundary_changed = (
+                (after_identity is not None and after_identity != before_identity)
+                or (after_parent_tip is not None and after_parent_tip != target.parent.head_sha.casefold())
+            )
+            if boundary_changed:
+                status = "posted_boundary_changed"
+            elif boundary_verification_errors:
+                status = "posted_boundary_unverified"
+            else:
+                status = "posted"
             record = {
                 **posting,
                 "status": status,
+                **(
+                    {"posting_boundary_verification_errors": boundary_verification_errors}
+                    if boundary_verification_errors
+                    else {}
+                ),
                 "trigger": {
                     "id": trigger_id,
                     "created_at": normalized["createdAt"],
@@ -1330,8 +1941,10 @@ class HostedRunner:
                 },
             }
             hosted.atomic_write_json(path, record)
-            if status != "posted":
-                raise ControllerError("pull request changed across the Hosted posting boundary")
+            if status == "posted_boundary_changed":
+                raise ControllerError("pull request or effective parent changed across the Hosted posting boundary")
+            if status == "posted_boundary_unverified":
+                raise ControllerError("Hosted posting boundary could not be fully verified after POST")
             return {
                 "channel": "hosted",
                 "pr": pr,

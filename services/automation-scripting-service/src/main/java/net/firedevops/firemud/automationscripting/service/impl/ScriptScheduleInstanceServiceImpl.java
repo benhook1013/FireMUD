@@ -779,10 +779,50 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
     boolean existingRow = instance.getId() != null;
+    long previousPluginActivationEpoch = instance.getPluginActivationEpoch();
+    long previousLifecycleRevision = instance.getLifecycleRevision();
+    Instant previousNextDueAt = instance.getNextDueAt();
+    Long previousNextDueTickId = instance.getNextDueTickId();
+    String pluginId = blankToEmpty(definition.getPluginId());
+    String pluginVersionId = blankToEmpty(definition.getPluginVersionId());
+    long pluginActivationEpoch = 0L;
+    long lifecycleRevision = 0L;
+    if (!pluginId.isBlank()) {
+      PluginRuntimeState pluginState = activePluginStates.get(pluginId);
+      if (pluginState != null
+          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
+          && pluginVersionId.equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
+        pluginActivationEpoch = pluginState.getPluginActivationEpoch();
+        lifecycleRevision = pluginState.getLifecycleRevision();
+      }
+    }
+    boolean pluginLifecycleFenceChanged =
+        existingRow
+            && isPluginOwned(pluginId, pluginVersionId)
+            && (previousPluginActivationEpoch != pluginActivationEpoch
+                || previousLifecycleRevision != lifecycleRevision);
     boolean sameRuntimeGeneration =
         existingRow && sameRuntimeGeneration(instance, definition, runtimeState);
+    boolean compatibleRuntimeGeneration = sameRuntimeGeneration && !pluginLifecycleFenceChanged;
     boolean sameScheduleConfiguration =
         existingRow && sameScheduleConfiguration(instance, definition, binding);
+    boolean settledWallClockLifecycleRefresh =
+        nonPinTransitionSeed == null
+            && existingRow
+            && UNIT_MILLISECONDS.equals(definition.getCadenceUnit())
+            && (STATUS_READY.equals(instance.getMaterializationStatus())
+                || (STATUS_PENDING_RUNTIME_PROGRESS.equals(instance.getMaterializationStatus())
+                    && hasRetainedMaterializationEvidence(instance)))
+            && previousNextDueAt == null
+            && instance.getLastObservedTickId() != null
+            && !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
+            && instance.getRuntimeRegionEpoch() != null
+            && instance.getRuntimeRegionEpoch() > 0
+            && sameRuntimeGeneration
+            && sameScheduleConfiguration
+            && pluginActivationEpoch > 0
+            && previousPluginActivationEpoch == pluginActivationEpoch
+            && previousLifecycleRevision != lifecycleRevision;
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
@@ -797,23 +837,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setBindingId(applicableBindingId(definition, binding));
-    if (!instance.getPluginId().isBlank()) {
-      PluginRuntimeState pluginState = activePluginStates.get(instance.getPluginId());
-      if (pluginState != null
-          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
-          && instance
-              .getPluginVersionId()
-              .equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
-        instance.setPluginActivationEpoch(pluginState.getPluginActivationEpoch());
-        instance.setLifecycleRevision(pluginState.getLifecycleRevision());
-      } else {
-        instance.setPluginActivationEpoch(0L);
-        instance.setLifecycleRevision(0L);
-      }
-    } else {
-      instance.setPluginActivationEpoch(0L);
-      instance.setLifecycleRevision(0L);
-    }
+    instance.setPluginActivationEpoch(pluginActivationEpoch);
+    instance.setLifecycleRevision(lifecycleRevision);
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -838,11 +863,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (UNIT_MILLISECONDS.equals(definition.getCadenceUnit())) {
       instance.setMaterializationStatus(STATUS_READY);
       boolean compatibleExistingRow =
-          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+          (nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration)
+              || settledWallClockLifecycleRefresh;
       if (!compatibleExistingRow) {
         Instant seed = nonPinTransitionSeed != null ? nonPinTransitionSeed : pinObservedAt;
         try {
-          instance.setNextDueAt(seed.plusMillis(definition.getCadenceValue()));
+          Instant nextDueAt = seed.plusMillis(definition.getCadenceValue());
+          if (pluginLifecycleFenceChanged && Objects.equals(nextDueAt, previousNextDueAt)) {
+            // Lifecycle revision is fence evidence but not candidate identity. Do not let a
+            // re-seeded wall-clock schedule recreate the displaced generation's due identity.
+            nextDueAt = nextDueAt.plusMillis(definition.getCadenceValue());
+          }
+          instance.setNextDueAt(nextDueAt);
         } catch (DateTimeException | ArithmeticException ex) {
           throw new IllegalArgumentException(REASON_DUE_TIME_OVERFLOW, ex);
         }
@@ -854,15 +886,32 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       instance.setNextDueTickId(null);
     } else {
       boolean compatibleExistingRow =
-          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+          nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration;
       if (!compatibleExistingRow) {
-        instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
-        instance.setNextDueAt(null);
-        instance.setNextDueTickId(null);
-        instance.setRuntimeRegionId("");
-        instance.setRuntimeRegionEpoch(null);
-        instance.setLastObservedTickId(null);
-        instance.setLastRuntimeProgressObservedAt(null);
+        if (pluginLifecycleFenceChanged
+            && sameRuntimeGeneration
+            && sameScheduleConfiguration
+            && previousNextDueTickId != null) {
+          // Retire the old lifecycle's due tick and begin with its next cadence point. The
+          // row is already eligible for the new fence because this materialization only runs
+          // for an enabled plugin version.
+          try {
+            long nextDueTickId = Math.addExact(previousNextDueTickId, definition.getCadenceValue());
+            instance.setMaterializationStatus(STATUS_READY);
+            instance.setNextDueTickId(nextDueTickId);
+            instance.setNextDueAt(null);
+          } catch (ArithmeticException ex) {
+            fenceMaterialization(instance, now);
+          }
+        } else {
+          instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
+          instance.setNextDueAt(null);
+          instance.setNextDueTickId(null);
+          instance.setRuntimeRegionId("");
+          instance.setRuntimeRegionEpoch(null);
+          instance.setLastObservedTickId(null);
+          instance.setLastRuntimeProgressObservedAt(null);
+        }
       } else if (hasRetainedMaterializationEvidence(instance)) {
         instance.setMaterializationStatus(STATUS_READY);
       }
@@ -1044,6 +1093,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       // materialization evidence arrives.
       return new WallClockAdvanceResult(false, null, null);
     }
+    if (!runtimeScopeChanged
+        && currentDueAt == null
+        && hasRetainedMaterializationEvidence(instance)) {
+      // A null due point with retained runtime progress is a settled occurrence, not an
+      // uninitialized schedule. Preserve it across observations until a new generation is
+      // materialized.
+      return new WallClockAdvanceResult(false, null, null);
+    }
     TimerFiringCandidate suppressedCandidate =
         STATUS_READY.equals(instance.getMaterializationStatus())
                 && runtimeScopeChanged
@@ -1210,14 +1267,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRealmSlug(routingBundle.realmSlug());
     audit.setPointerVersion(routingBundle.pointerVersion());
     audit.setScriptId(instance.getScriptId());
-    audit.setPluginId(blankToEmpty(instance.getPluginId()));
-    audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
-    audit.setBindingId(applicableBindingId(instance));
+    audit.setPluginId(candidate.pluginFence().pluginId());
+    audit.setPluginVersionId(candidate.pluginFence().pluginVersionId());
+    audit.setBindingId(candidate.pluginFence().bindingId());
     audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
-    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
-    audit.setPluginActivationEpoch(instance.getPluginActivationEpoch());
-    audit.setLifecycleRevision(instance.getLifecycleRevision());
+    audit.setPluginActivationEpoch(candidate.pluginFence().pluginActivationEpoch());
+    audit.setLifecycleRevision(candidate.pluginFence().lifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1366,13 +1422,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRealmSlug(routingBundle.realmSlug());
     item.setPointerVersion(routingBundle.pointerVersion());
     item.setScriptId(instance.getScriptId());
-    item.setPluginId(blankToEmpty(instance.getPluginId()));
-    item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
-    item.setBindingId(applicableBindingId(instance));
+    item.setPluginId(candidate.pluginFence().pluginId());
+    item.setPluginVersionId(candidate.pluginFence().pluginVersionId());
+    item.setBindingId(candidate.pluginFence().bindingId());
     item.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     item.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
-    item.setPluginActivationEpoch(instance.getPluginActivationEpoch());
-    item.setLifecycleRevision(instance.getLifecycleRevision());
+    item.setPluginActivationEpoch(candidate.pluginFence().pluginActivationEpoch());
+    item.setLifecycleRevision(candidate.pluginFence().lifecycleRevision());
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
@@ -1504,8 +1560,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         || runtimeState.getRegionEpoch() != candidate.regionEpoch()) {
       return MaterializationEligibility.proven(REASON_RUNTIME_SCOPE_CHANGED);
     }
-    String pluginId = blankToEmpty(instance.getPluginId());
-    String pluginVersionId = blankToEmpty(instance.getPluginVersionId());
+    PluginFenceSnapshot candidatePluginFence = candidate.pluginFence();
+    if (!candidatePluginFence.matches(instance)) {
+      return MaterializationEligibility.proven(REASON_PLUGIN_BINDING_MISMATCH);
+    }
+    String pluginId = candidatePluginFence.pluginId();
+    String pluginVersionId = candidatePluginFence.pluginVersionId();
     if (pluginId.isBlank() && pluginVersionId.isBlank()) {
       return MaterializationEligibility.eligible();
     }
@@ -1526,10 +1586,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
               && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
-              && instance.getPluginActivationEpoch() > 0
-              && instance.getLifecycleRevision() > 0
-              && state.getPluginActivationEpoch() == instance.getPluginActivationEpoch()
-              && state.getLifecycleRevision() == instance.getLifecycleRevision()
+              && candidatePluginFence.pluginActivationEpoch() > 0
+              && candidatePluginFence.lifecycleRevision() > 0
+              && state.getPluginActivationEpoch() == candidatePluginFence.pluginActivationEpoch()
+              && state.getLifecycleRevision() == candidatePluginFence.lifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,
                   new AutomationRuntimeScopeSupport.RuntimeScope(
@@ -1681,7 +1741,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setBindingId(applicableBindingId(workItem));
     audit.setTargetScopeType(blankToEmpty(workItem.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(workItem.getTargetScopeId()));
-    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
     audit.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
     audit.setLifecycleRevision(workItem.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
@@ -2221,6 +2280,30 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private record WallClockAdvanceResult(
       boolean changed, Instant fireDueAt, TimerFiringCandidate suppressedCandidate) {}
 
+  private record PluginFenceSnapshot(
+      String pluginId,
+      String pluginVersionId,
+      long pluginActivationEpoch,
+      long lifecycleRevision,
+      String bindingId) {
+    private static PluginFenceSnapshot capture(ScriptScheduleInstance instance) {
+      return new PluginFenceSnapshot(
+          blankToEmpty(instance.getPluginId()),
+          blankToEmpty(instance.getPluginVersionId()),
+          instance.getPluginActivationEpoch(),
+          instance.getLifecycleRevision(),
+          applicableBindingId(instance));
+    }
+
+    private boolean matches(ScriptScheduleInstance instance) {
+      return Objects.equals(pluginId, blankToEmpty(instance.getPluginId()))
+          && Objects.equals(pluginVersionId, blankToEmpty(instance.getPluginVersionId()))
+          && pluginActivationEpoch == instance.getPluginActivationEpoch()
+          && lifecycleRevision == instance.getLifecycleRevision()
+          && Objects.equals(bindingId, applicableBindingId(instance));
+    }
+  }
+
   private record TimerFiringCandidate(
       ScriptScheduleInstance instance,
       String regionId,
@@ -2229,7 +2312,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String scriptPinControlPlaneRequestId,
       Long dueTickId,
       Instant dueAt,
-      boolean wallClock) {
+      boolean wallClock,
+      PluginFenceSnapshot pluginFence) {
+    private TimerFiringCandidate(
+        ScriptScheduleInstance instance,
+        String regionId,
+        Long regionEpoch,
+        long scriptPinEpoch,
+        String scriptPinControlPlaneRequestId,
+        Long dueTickId,
+        Instant dueAt,
+        boolean wallClock) {
+      this(
+          instance,
+          regionId,
+          regionEpoch,
+          scriptPinEpoch,
+          scriptPinControlPlaneRequestId,
+          dueTickId,
+          dueAt,
+          wallClock,
+          PluginFenceSnapshot.capture(instance));
+    }
+
     private static TimerFiringCandidate tick(ScriptScheduleInstance instance, long dueTickId) {
       return new TimerFiringCandidate(
           instance,
@@ -2313,17 +2418,17 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       values.add(blankToEmpty(instance.getTargetScopeId()));
       values.add(targetEntityId(instance));
       values.add(blankToEmpty(instance.getScriptId()));
-      values.add(blankToEmpty(instance.getPluginId()));
-      values.add(blankToEmpty(instance.getPluginVersionId()));
-      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
-        values.add("pluginActivationEpoch:" + instance.getPluginActivationEpoch());
+      values.add(pluginFence.pluginId());
+      values.add(pluginFence.pluginVersionId());
+      if (isPluginOwned(pluginFence.pluginId(), pluginFence.pluginVersionId())) {
+        values.add("pluginActivationEpoch:" + pluginFence.pluginActivationEpoch());
       }
       values.add(blankToEmpty(instance.getEventType()));
       values.add(DEFAULT_SCHEMA_VERSION);
       values.add(blankToEmpty(instance.getScriptPatchVersion()));
       values.add(Long.toString(scriptPinEpoch));
-      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
-        values.add(applicableBindingId(instance));
+      if (isPluginOwned(pluginFence.pluginId(), pluginFence.pluginVersionId())) {
+        values.add(pluginFence.bindingId());
       }
       values.add(blankToEmpty(instance.getScheduleDefinitionId()));
       values.add(wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);

@@ -111,6 +111,12 @@ local docs and treat it as part of their migration review process.
 
 Once a service has no active compatibility obligation, it may converge directly only when the objective evidence and atomic-convergence conditions above are recorded; project phase labels do not substitute for that evidence.
 
+Direct replacements that take blocking DDL or change writer uniqueness require a quiesced deployment boundary when rolling old/new overlap is unsafe. The boundary must come from trusted deployment control, not a PR-controlled Helm value or a static `Recreate` strategy alone: first close the canonical writer Services and prove their EndpointSlices have no endpoints, then scale their owners to zero and prove that no old writer Pods remain before a new binary can start. Restore Service selectors only after the writers are stopped and verified; a failed closure or drain blocks activation and requires operator verification before retry. The migration itself must inspect its known schema prerequisites and reject unresolved active claims or retained-data conflicts before destructive DDL; an unknown environment state blocks activation. Recovery is roll-forward only: resolve the reported preflight conflict under its data owner and retry the same release or a corrected forward migration; do not restart old binaries against the changed uniqueness contract.
+
+The trusted dev-demo workflow preserves its existing clean namespace reset for ordinary pushes. A push that first adds the Game Session or Automation V2 Flyway migration, or Account V25 profile-identity migration, in the trusted deployed-to-target range instead preserves the runtime database and uses the quiesced activation path. That path first proves the reserved nonmatching selector does not match a Pod, replaces each canonical Account, Game Session, and Automation Service selector, verifies each readback, and waits until all matching EndpointSlices contain no endpoints. It then scales all three writers to zero and proves their Deployments and writer Pods are quiescent before restoring the canonical Service selectors. If selector mutation, endpoint observation, scaling, or drain proof fails, the helper aborts before migration activation and attempts to leave the canonical Services closed. If closure cannot be verified or reapplied, an operator must verify and repair admission before retrying. This includes Account because its V25 tenant-scoped uniqueness constraint must not overlap an old Account writer. Edits or deletions of an existing supported migration fail before namespace mutation because retained-database and Flyway checksum state are uncertain. Other Flyway migrations in the exact deployed-to-target Git range fail detection before namespace mutation until explicit trusted support exists; non-migration pushes retain the clean reset. Both pushes and redispatches use only the exact deployed-head annotation from the owned `dev` namespace as the classification base and require valid Git ancestry to the target. A supplied push before-SHA can add an ancestry check but never replaces that deployed-head base. Missing or ambiguous namespace evidence stops the workflow before namespace mutation. This narrow exception avoids using namespace deletion as a substitute for proving the retained V1 data prerequisites.
+
+Hosted candidate previews may activate a migration only when the trusted path independently proves both an isolated fresh database and absence of old writers. A newly recreated namespace or a manifest value is not database provenance when backing storage may be retained. If the preview credential cannot verify that proof, skip or fail the candidate activation before modifying its namespace; use the trusted post-merge quiesce path instead.
+
 Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with execution results recorded in PR/CI evidence and, when applicable, synchronized into the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.
 
 ### Cross-Service Identifier Migration
@@ -165,8 +171,7 @@ The following examples illustrate how to apply the version-aware guidelines to c
 
 ## CI/CD Execution
 
-- Flyway runs automatically when a service container starts.
-  If any migration fails, the application startup aborts so issues are caught early.
+- Flyway runs automatically when a migration-bearing service container starts only after the deployment path has established its compatibility, data-preflight, and writer-quiescence gates. If any migration fails, application startup aborts so issues are caught early; this is not an unconditional or PR-controlled activation.
 - In development you can run `./gradlew flywayMigrate` for a single service.
 - Execute this task from the service directory or prefix the project name (e.g.,
   `./gradlew :account-service:flywayMigrate`).
@@ -181,13 +186,13 @@ The following examples illustrate how to apply the version-aware guidelines to c
   and rerun the migration. A concurrently created or invalid index may be retried only after the
   same preflight passes; an invalid index is not evidence that the uniqueness contract is safe.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
-- During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. This step is fully automated.
-- On startup the container executes Flyway against its database schema before the Spring application fully starts.
+- During deployment GitHub Actions builds and pushes the Docker image and Kubernetes restarts the service after the required gates are established; the execution is automated, but activation remains gated.
+- On startup the container executes Flyway against its database schema before the Spring application fully starts, within that gated deployment path.
 - The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
 - Diagrams are written to `design/erd/` and the CI workflow collects this
    directory as an artifact.
 
-Migrations are therefore applied consistently in every environment without manual steps.
+Migrations run automatically at service startup only after the deployment path's compatibility, data-preflight, and writer-quiescence gates pass. Trusted dev-demo candidate activation retains the runtime database, closes writer admission, and proves old writers are quiescent before migration activation; retained-data conflicts require recovery by the owning data team, followed by a forward retry. The current hosted PR candidate-preview path blocks changed SQL migrations because it cannot prove an isolated fresh database or absence of old writers; it does not claim fresh-database proof or silently fall back to trusted dev-demo activation. A failed or uncertain proof is not an automatic migration. Other environments must establish the equivalent owner-specific gates before activating a migration.
 
 ---
 

@@ -303,10 +303,14 @@ assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"
 assert setup_smoke_python_step["with"] == {"requirements": "smoke"}
 assert run_smoke_step["if"] == smoke_gate
 assert dump_logs_step["if"] == (
-    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
+    "&& steps.minio-source.outputs.server_image_id != '' "
+    "&& steps.minio-source.outputs.client_image_id != '' }}"
 )
 assert stop_smoke_step["if"] == (
-    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
+    "&& steps.minio-source.outputs.server_image_id != '' "
+    "&& steps.minio-source.outputs.client_image_id != '' }}"
 )
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
@@ -916,6 +920,11 @@ target_step = next(step for step in validate_job["steps"] if step.get("id") == "
 assert "Unsupported lifecycle event" in target_step["run"]
 assert "RETIRE_IDENTITY=true" in target_step["run"]
 assert "RETIRE_IDENTITY=false" in target_step["run"]
+assert "pulls/${PR_NUMBER}/files?per_page=100" in target_step["run"]
+assert "v2_schema_migration_change=${V2_SCHEMA_MIGRATION_CHANGE}" in target_step["run"]
+assert validate_job["outputs"]["v2_schema_migration_change"] == (
+    "${{ steps.target.outputs.v2_schema_migration_change }}"
+)
 for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime"):
     assert "needs.validate-target.outputs.action == 'deploy'" in jobs[job_name]["if"], job_name
 assert "needs.deploy-runtime.outputs.allocation_status == 'allocated'" in jobs["verify-runtime"]["if"]
@@ -1638,6 +1647,10 @@ for source_field, expected in (
     assert f"require_source_field {source_field} {expected}" in source_script
 assert "Expected %q; actual %q." in source_script
 
+assert "resources/db/migration/.+\\\\.sql" in target_step["run"]
+assert "java/db/migration/.+\\\\.java" in target_step["run"]
+assert "kotlin/db/migration/.+\\\\.kt" in target_step["run"]
+
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
@@ -1791,20 +1804,41 @@ assert manager_kubeconfig_jobs == {
     "deploy-runtime", "publish-preview-proof", "destroy-runtime"
 }
 assert "Set up Helm" not in deploy_by_name
-requested_step_index = next(
-    index
-    for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Create and annotate exact preview runtime namespace"
+assert not any(
+    "migration" in step.get("name", "").lower() for step in deploy_steps
 )
-clean_revalidate_step_index = next(
+assert jobs["deploy-runtime"]["needs"] == ["validate-target", "prepare-runtime"]
+assert "needs.prepare-runtime.result == 'success'" in jobs["deploy-runtime"]["if"]
+prune_stale_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
+    if step.get("name") == "Prune stale runtime namespaces"
+)
+capacity_reclaim_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Enforce priority-aware preview capacity"
 )
 clean_delete_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Delete exact preview runtime namespace before recreate"
+)
+requested_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+assert (
+    prune_stale_step_index
+    < capacity_reclaim_step_index
+    < clean_delete_step_index
+    < requested_step_index
+)
+clean_revalidate_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
 )
 capture_retry_step_index = next(
     index
@@ -2215,6 +2249,29 @@ prepare_by_name = {
     for step in jobs["prepare-runtime"]["steps"]
     if isinstance(step, dict)
 }
+prepare_steps = jobs["prepare-runtime"]["steps"]
+prepare_migration_gate = prepare_by_name[
+    "Block unproven PR schema migration before image preparation"
+]
+assert prepare_migration_gate["if"] == (
+    "${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}"
+)
+assert "Stop before waiting for or reclaiming preview capacity" in prepare_migration_gate[
+    "run"
+]
+prepare_migration_gate_index = prepare_steps.index(prepare_migration_gate)
+image_wait_index = next(
+    index
+    for index, step in enumerate(prepare_steps)
+    if step.get("name") == "Wait for tested PR merge runtime images"
+)
+base_image_wait_index = next(
+    index
+    for index, step in enumerate(prepare_steps)
+    if step.get("name") == "Wait for immutable base runtime images"
+)
+assert prepare_migration_gate_index < image_wait_index
+assert prepare_migration_gate_index < base_image_wait_index
 assert "Wait for tested PR merge runtime images" in prepare_by_name
 assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
@@ -6278,6 +6335,19 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900)
+    pr_call_count=0
+    if [[ -n "${FAKE_PR_JSON_CALL_COUNT:-}" && -f "$FAKE_PR_JSON_CALL_COUNT" ]]; then
+      pr_call_count="$(<"$FAKE_PR_JSON_CALL_COUNT")"
+    fi
+    pr_call_count=$((pr_call_count + 1))
+    if [[ -n "${FAKE_PR_JSON_CALL_COUNT:-}" ]]; then
+      printf '%s\n' "$pr_call_count" >"$FAKE_PR_JSON_CALL_COUNT"
+    fi
+    changed_file_count="${TEST_PR_CHANGED_FILES_JSON:-1}"
+    if [[ -n "${TEST_PR_CHANGED_FILES_SEQUENCE:-}" ]]; then
+      IFS=, read -r -a changed_file_counts <<<"$TEST_PR_CHANGED_FILES_SEQUENCE"
+      changed_file_count="${changed_file_counts[$((pr_call_count - 1))]:-${changed_file_counts[-1]}}"
+    fi
     mergeable_state_json="$(jq -cn --arg value "${TEST_PR_MERGEABLE_STATE:-clean}" '$value')"
     case "${TEST_PR_MERGEABLE_STATE:-clean}" in
       true|false|null)
@@ -6292,7 +6362,8 @@ case "$resource" in
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      --argjson changed_files "$changed_file_count" \
+      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6312,7 +6383,24 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
-    printf '%s' '[[{"filename":"docs/readme.md"}]]'
+    if [[ "${FAKE_PR_FILES_FAILURE:-false}" == true ]]; then
+      files_call_count=0
+      if [[ -n "${FAKE_PR_FILES_CALL_COUNT:-}" && -f "$FAKE_PR_FILES_CALL_COUNT" ]]; then
+        files_call_count="$(<"$FAKE_PR_FILES_CALL_COUNT")"
+      fi
+      files_call_count=$((files_call_count + 1))
+      if [[ -n "${FAKE_PR_FILES_CALL_COUNT:-}" ]]; then
+        printf '%s\n' "$files_call_count" >"$FAKE_PR_FILES_CALL_COUNT"
+      fi
+      if ((files_call_count == 2)); then
+        exit 1
+      fi
+    fi
+    if [[ -n "${FAKE_PR_FILES_JSON:-}" ]]; then
+      printf '%s' "$FAKE_PR_FILES_JSON"
+    else
+      printf '%s' '[[{"filename":"docs/readme.md"}]]'
+    fi
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -6383,6 +6471,7 @@ run_deploy_target_fixture() {
   local status
 
   : >"$output"
+  : >"$TEMP_DIR/deploy-target-${scenario}.pr-json-call-count"
   set +e
   (
     cd "$ROOT_DIR"
@@ -6407,8 +6496,14 @@ run_deploy_target_fixture() {
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
       TEST_PR_MERGEABLE="${FAKE_FIXTURE_MERGEABLE:-${TEST_PR_MERGEABLE:-true}}" \
       TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
+      TEST_PR_CHANGED_FILES_JSON="${FAKE_FIXTURE_CHANGED_FILES_JSON:-1}" \
+      TEST_PR_CHANGED_FILES_SEQUENCE="${FAKE_FIXTURE_CHANGED_FILES_SEQUENCE:-}" \
+      FAKE_PR_FILES_FAILURE="${FAKE_FIXTURE_PR_FILES_FAILURE:-false}" \
+      FAKE_PR_FILES_CALL_COUNT="$TEMP_DIR/deploy-target-${scenario}.pr-files-call-count" \
+      FAKE_PR_JSON_CALL_COUNT="$TEMP_DIR/deploy-target-${scenario}.pr-json-call-count" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
+      FAKE_PR_FILES_JSON="${FAKE_FIXTURE_PR_FILES_JSON:-}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
       bash "$TEMP_DIR/target.sh"
   ) >"$stdout" 2>"$stderr"
@@ -6430,6 +6525,38 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
+  run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/R__refresh_runtime_views.sql"}]]' \
+  run_deploy_target_fixture repeatable-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/afterMigrate__validate_runtime_state.sql"}]]' \
+  run_deploy_target_fixture callback-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/nested/V3__nested_schema_change.sql"}]]' \
+  run_deploy_target_fixture nested-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/common-saga/src/main/resources/db/migration/saga/V1__saga_baseline.sql"}]]' \
+  run_deploy_target_fixture common-saga-schema-migration 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/main/java/db/migration/nested/UnsafeMigration.java"}]]' \
+  run_deploy_target_fixture java-flyway-migration-class 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/main/kotlin/db/migration/nested/UnsafeMigration.kt"}]]' \
+  run_deploy_target_fixture kotlin-flyway-migration-class 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_CHANGED_FILES_JSON=2 \
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/example/src/test/java/db/migration/ExampleTest.java"},{"filename":"services/example/src/test/kotlin/db/migration/ExampleTest.kt"}]]' \
+  run_deploy_target_fixture migration-test-sources 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-migration-test-sources.output"
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/README.md"}]]' \
+  run_deploy_target_fixture ordinary-migration-directory-file 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-ordinary-migration-directory-file.output"
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+FAKE_FIXTURE_CHANGED_FILES_SEQUENCE='2,1' \
+  run_deploy_target_fixture truncated-pr-file-list 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+FAKE_FIXTURE_CHANGED_FILES_SEQUENCE='"invalid",1' \
+  run_deploy_target_fixture malformed-pr-file-count 0 'v2_schema_migration_change=true'
+FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
+  run_deploy_target_fixture complete-ordinary-file-list 0 'action=deploy'
+grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-complete-ordinary-file-list.output"
+FAKE_FIXTURE_PR_FILES_FAILURE=true \
+  run_deploy_target_fixture failed-pr-file-list 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
   run_deploy_target_fixture standalone-private 1 \
     'Private bridge proof requires hosted-controller identity.'
@@ -6640,6 +6767,7 @@ run_closed_target_fixture accepted closed example/FireMUD develop \
 test ! -s "$target_python_log"
 test "$(cat "$TEMP_DIR/closed-target-accepted.output")" = "$(cat <<EOF
 action=destroy
+v2_schema_migration_change=false
 pr_number=900
 base_sha=
 head_sha=${closed_head}

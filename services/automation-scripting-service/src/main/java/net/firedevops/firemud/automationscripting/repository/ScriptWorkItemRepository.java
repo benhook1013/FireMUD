@@ -266,21 +266,28 @@ public class ScriptWorkItemRepository {
   }
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
-      String status, Pageable pageable) {
+      String status, Instant eligibleAt, Pageable pageable) {
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.STATUS.eq(status),
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
   public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-      Collection<Long> ids, String status, Pageable pageable) {
+      Collection<Long> ids, String status, Instant eligibleAt, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)),
+        SCRIPT_WORK_ITEMS
+            .ID
+            .in(ids)
+            .and(SCRIPT_WORK_ITEMS.STATUS.eq(status))
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -439,6 +446,10 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH, entity.getAdmissionEpoch())
             .set(SCRIPT_WORK_ITEMS.STATUS, entity.getStatus())
             .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, entity.getCancelReason())
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT,
+                entity.getAuthorityUnavailableRetryCount())
+            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
             .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
@@ -781,6 +792,8 @@ public class ScriptWorkItemRepository {
     record.setAdmissionEpoch(entity.getAdmissionEpoch());
     record.setStatus(entity.getStatus());
     record.setCancelReason(entity.getCancelReason());
+    record.setAuthorityUnavailableRetryCount(entity.getAuthorityUnavailableRetryCount());
+    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
@@ -813,14 +826,16 @@ public class ScriptWorkItemRepository {
   }
 
   private static void requireCoherentPluginFence(ScriptWorkItem entity) {
-    long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+    boolean hasPluginId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginId()).isBlank();
+    boolean hasPluginVersionId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginVersionId()).isBlank();
+    if (!hasPluginId && !hasPluginVersionId) {
+      if (entity.getPluginActivationEpoch() != 0L || entity.getLifecycleRevision() != 0L) {
+        throw new IllegalArgumentException("plugin lifecycle evidence requires plugin identity");
+      }
     }
   }
 
@@ -880,6 +895,11 @@ public class ScriptWorkItemRepository {
     entity.setAdmissionEpoch(admissionEpoch == null ? 0L : admissionEpoch);
     entity.setStatus(record.get(SCRIPT_WORK_ITEMS.STATUS));
     entity.setCancelReason(record.get(SCRIPT_WORK_ITEMS.CANCEL_REASON));
+    Integer authorityUnavailableRetryCount =
+        record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT);
+    entity.setAuthorityUnavailableRetryCount(
+        authorityUnavailableRetryCount == null ? 0 : authorityUnavailableRetryCount);
+    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
     entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
     Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);

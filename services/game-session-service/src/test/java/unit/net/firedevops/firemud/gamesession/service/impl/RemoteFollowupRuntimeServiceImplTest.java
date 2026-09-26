@@ -1123,24 +1123,69 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupUsesOriginInstanceWhenCommandIdIsReused() {
+    RemoteCommandCoordinator existing = coordinator();
+    existing.setCoordinatorId("coord-origin-7");
+    RemoteFollowup existingFollowup = followup();
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(existing));
     when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                1L, 8L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(existingFollowup));
+    when(followupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                1L, 8L, "region-b", 8L, "effect-origin-8"))
         .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
-        service.scheduleFollowup(scheduleRequestForOrigin(8L));
+        service.scheduleFollowup(
+            scheduleRequestForOrigin(8L, "followup-origin-8", "effect-origin-8"));
 
     assertTrue(outcome.coordinatorCreated());
     assertTrue(outcome.followupCreated());
+    assertEquals("coord-1", outcome.coordinatorId());
+    assertEquals("followup-origin-8", outcome.followupId());
     verify(coordinatorRepository)
         .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1");
     verify(coordinatorRepository)
         .save(
-            argThat(coordinator -> Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())));
+            argThat(
+                coordinator ->
+                    Long.valueOf(1L).equals(coordinator.getTenantId())
+                        && Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())
+                        && "cmd-1".equals(coordinator.getCommandId())
+                        && "followup-origin-8".equals(coordinator.getFollowupId())));
+    verify(followupRepository)
+        .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, 8L, "region-b", 8L, "effect-origin-8");
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    Long.valueOf(1L).equals(followup.getTenantId())
+                        && Long.valueOf(8L).equals(followup.getOriginGameInstanceId())
+                        && "cmd-1".equals(followup.getCommandId())
+                        && "followup-origin-8".equals(followup.getFollowupId())
+                        && "effect-origin-8".equals(followup.getEffectKey())));
+    verify(coordinatorRepository, never()).save(argThat(saved -> saved == existing));
+    verify(followupRepository, never()).save(argThat(saved -> saved == existingFollowup));
+    assertEquals(1L, existing.getTenantId());
+    assertEquals(7L, existing.getOriginGameInstanceId());
+    assertEquals("cmd-1", existing.getCommandId());
+    assertEquals("coord-origin-7", existing.getCoordinatorId());
+    assertEquals("followup-1", existing.getFollowupId());
+    assertEquals("followup-1", existingFollowup.getFollowupId());
+    assertEquals("effect-1", existingFollowup.getEffectKey());
+    assertEquals(1L, existingFollowup.getTenantId());
+    assertEquals(7L, existingFollowup.getOriginGameInstanceId());
+    assertEquals("cmd-1", existingFollowup.getCommandId());
   }
 
   @Test
   void scheduleFollowupRejectsConflictingFollowupScopeReuse() {
-    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 99L, "cmd-1"))
         .thenReturn(Optional.empty());
     RemoteFollowup existing = followup();
     when(followupRepository
@@ -1149,7 +1194,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(Optional.of(existing));
     GameplayCommand command = gameplayCommand();
     command.setGameInstanceId(99L);
-    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 99L, "cmd-1"))
         .thenReturn(Optional.of(command));
 
     IllegalArgumentException ex =
@@ -2948,8 +2993,8 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestForOrigin(
-      long originGameInstanceId) {
-    return scheduleRequest(originGameInstanceId, 8L, 4L, 25L);
+      long originGameInstanceId, String followupId, String effectKey) {
+    return scheduleRequest(originGameInstanceId, 8L, 4L, 25L, followupId, effectKey);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithOriginDeadline(
@@ -2968,6 +3013,22 @@ class RemoteFollowupRuntimeServiceImplTest {
       long targetGameInstanceId,
       long originDeadlineRegionEpoch,
       long originDeadlineTickId) {
+    return scheduleRequest(
+        originGameInstanceId,
+        targetGameInstanceId,
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
+        "followup-1",
+        "effect-1");
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
+      long originGameInstanceId,
+      long targetGameInstanceId,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId,
+      String followupId,
+      String effectKey) {
     return new RemoteFollowupRuntimeService.ScheduleRequest(
         1L,
         "cmd-1",
@@ -2982,8 +3043,8 @@ class RemoteFollowupRuntimeServiceImplTest {
         originDeadlineRegionEpoch,
         originDeadlineTickId,
         "late_result_safe_to_ignore",
-        "followup-1",
-        "effect-1",
+        followupId,
+        effectKey,
         "entity-9",
         "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
         "enqueue_automation_command",

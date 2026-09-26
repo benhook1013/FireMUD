@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -104,6 +105,18 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<PluginRuntimeStatus> getLocalLifecycleStatus(
+      String tenantId, String gameInstanceId, String pluginId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    requireText(pluginId, "plugin_id");
+    return repository
+        .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
+        .map(state -> toStatus(state, Map.of()));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Map<String, String> getActivePluginVersions(
       String tenantId, String gameInstanceId, String runtimeRegionId, long runtimeRegionEpoch) {
     requireText(tenantId, "tenant_id");
@@ -194,11 +207,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     String previous = normalize(state.getActivePluginVersionId());
     String actorPrincipal = normalize(command.actorPrincipal());
     if (controlPlaneRequestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different activation request");
-      }
-      return new ActivationResult(previous, previous, controlPlaneRequestId);
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable activation request history");
     }
     GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
     if (matches(state, command.targetPluginVersionId(), PluginState.PLUGIN_STATE_ENABLED)) {
@@ -353,24 +363,61 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     List<PluginRuntimeState> activeStates =
         repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit));
+    List<PolicyDecision> policyDecisions =
+        activeStates.stream()
+            .map(
+                state ->
+                    new PolicyDecision(
+                        state,
+                        disableReasonForCurrentPolicy(
+                            gameDesignControlPlaneClient.getPublishedPluginVersion(
+                                state.getTenantId(),
+                                state.getPluginId(),
+                                normalize(state.getActivePluginVersionId())))))
+            .toList();
+    List<PolicyDecision> decisions =
+        policyDecisions.stream()
+            .map(
+                decision -> {
+                  GetGameInstanceRuntimeStateResponse runtime =
+                      decision.disableReason().isEmpty()
+                          ? null
+                          : gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                              decision.snapshot().getTenantId(),
+                              decision.snapshot().getGameInstanceId(),
+                              normalize(decision.snapshot().getRuntimeRegionId()));
+                  return new PolicyDecision(decision.snapshot(), decision.disableReason(), runtime);
+                })
+            .toList();
     Instant now = Instant.now();
     int disabledCount = 0;
-    for (PluginRuntimeState state : activeStates) {
-      Optional<String> disableReason =
-          disableReasonForCurrentPolicy(
-              gameDesignControlPlaneClient.getPublishedPluginVersion(
-                  state.getTenantId(),
-                  state.getPluginId(),
-                  normalize(state.getActivePluginVersionId())));
-      if (disableReason.isPresent()) {
-        disableForPolicy(state, disableReason.get(), now);
-        disabledCount++;
+    for (PolicyDecision decision :
+        decisions.stream()
+            .sorted(
+                Comparator.comparing((PolicyDecision decision) -> decision.snapshot().getTenantId())
+                    .thenComparing(decision -> decision.snapshot().getGameInstanceId())
+                    .thenComparing(decision -> decision.snapshot().getPluginId()))
+            .toList()) {
+      PluginRuntimeState state = decision.snapshot();
+      if (decision.disableReason().isPresent()) {
+        if (disableForPolicy(
+            state, decision.disableReason().orElseThrow(), decision.runtimeState(), now)) {
+          disabledCount++;
+        }
       } else {
-        state.setLastPolicyCheckedAt(now);
-        repository.save(state);
+        markPolicyCheckedIfCurrent(state, now);
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
+  }
+
+  private record PolicyDecision(
+      PluginRuntimeState snapshot,
+      Optional<String> disableReason,
+      GetGameInstanceRuntimeStateResponse runtimeState) {
+    private PolicyDecision(PluginRuntimeState snapshot, Optional<String> disableReason) {
+      this(snapshot, disableReason, null);
+    }
   }
 
   @Override
@@ -457,7 +504,25 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     };
   }
 
-  private void disableForPolicy(PluginRuntimeState state, String reason, Instant now) {
+  private boolean disableForPolicy(
+      PluginRuntimeState snapshot,
+      String reason,
+      GetGameInstanceRuntimeStateResponse runtime,
+      Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
+      return false;
+    }
     String previous = normalize(state.getActivePluginVersionId());
     String previousState = normalize(state.getPluginState());
     long previousPluginActivationEpoch = state.getPluginActivationEpoch();
@@ -504,7 +569,28 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestId()),
         normalize(saved.getActorPrincipal()),
         now);
-    reconcileSchedules(saved);
+    reconcileSchedules(saved, runtime);
+    return true;
+  }
+
+  private boolean markPolicyCheckedIfCurrent(PluginRuntimeState snapshot, Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
+      return false;
+    }
+    state.setLastPolicyCheckedAt(now);
+    repository.save(state);
+    return true;
   }
 
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> activeStates) {
@@ -546,11 +632,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                         command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
     String previous = normalize(state.getActivePluginVersionId());
     if (requestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different plugin state request");
-      }
-      return true;
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable plugin state request history");
     }
     if (targetState.name().equals(state.getPluginState())) {
       recordRequest(
@@ -624,6 +707,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
             state.getTenantId(), state.getGameInstanceId(), normalize(state.getRuntimeRegionId()));
+    reconcileSchedules(state, runtime);
+  }
+
+  private void reconcileSchedules(
+      PluginRuntimeState state, GetGameInstanceRuntimeStateResponse runtime) {
     if (runtime == null) {
       logger.warn(
           "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state client returned null",

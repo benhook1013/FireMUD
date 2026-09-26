@@ -1850,7 +1850,10 @@ require_contains(
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces now provide durable exact-scope request-result acknowledgement and matching readback",
+        "`SetAutomationAdmissionMode` persists the successful exact-scope request result and resulting admission epoch",
+        "`GetAutomationDrainStatus` returns the request ID, target mode, immutable fingerprint, outcome, and acknowledgement timestamp",
+        "the response does not expose the acknowledged resulting epoch separately",
+        "The acknowledged epoch therefore cannot be matched in current readback, and recovery must fail closed",
         "Matching Set/Get evidence is required but is not complete recovery authorization",
         "exact pin-epoch, process-cessation, and safe-rebuild proof remain unavailable",
         "deployment-wide Automation containment only with explicit impact approval",
@@ -1860,7 +1863,8 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "durable exact-scope successful acknowledgement/readback",
+        "the read does not expose the acknowledgement's resulting epoch as a separate field",
+        "keep the fence in place and fail closed",
         "do not treat a successful RPC response, admission mode/epoch, fresh `observedAt`, or zero drain counts alone as proof of recovery containment",
         "overall queue recovery/resume path still lacks exact pin-epoch, process-cessation, and rebuild proof",
         "deployment-wide Automation containment only with explicit impact approval",
@@ -2086,22 +2090,25 @@ if not re.search(
     )
 if not re.search(
     r'(?ms)^\s*\{\{- if or \(eq \$service\.name "tcp-proxy-service"\) '
+    r'\(eq \$service\.name "account-service"\) '
+    r'\(eq \$service\.name "game-session-service"\) '
     r'\(eq \$service\.name "automation-scripting-service"\) '
     r'\(eq \$service\.name "game-design-service"\) \}\}.*?'
     r'^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$',
     automation_helm,
 ):
     raise SystemExit(
-        "k8s/helm/firemud/templates/apps.yaml: Automation, Game Design, and TCP Proxy Recreate gate drifted"
+        "k8s/helm/firemud/templates/apps.yaml: TCP Proxy, Account, Game Session, Automation, and Game Design Recreate gate drifted"
     )
 require_contains(
     "k8s/helm/firemud/templates/apps.yaml",
     [
-        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "automation-scripting-service") (eq $service.name "game-design-service") }}',
+        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") (eq $service.name "game-design-service") }}',
         "  strategy:\n    type: Recreate",
         "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
         "# V3 changes the persisted plugin lifecycle fence; executor generations",
         "# V26 changes the persisted publication participant scope; old and new",
+        "# Account and Game Session writers must not overlap across the V2 migration boundary.",
     ],
 )
 for path, text in (

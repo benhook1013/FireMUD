@@ -21,7 +21,7 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class PluginRuntimeStateRepository {
-  private static final int LIFECYCLE_LOCK_NAMESPACE = 0x504c5547;
+  private static final long LIFECYCLE_LOCK_NAMESPACE = 0x504c5547L;
   private final DSLContext dsl;
 
   public PluginRuntimeStateRepository(DSLContext dsl) {
@@ -30,8 +30,20 @@ public class PluginRuntimeStateRepository {
 
   /** Serializes activation and lifecycle commands even before a state row exists. */
   public void lockLifecycleScope(String tenantId, String gameInstanceId, String pluginId) {
-    String scope = tenantId + "\u0000" + gameInstanceId + "\u0000" + pluginId;
-    dsl.fetch("select pg_advisory_xact_lock(?, ?)", LIFECYCLE_LOCK_NAMESPACE, scope.hashCode());
+    String scope =
+        tenantId.length()
+            + ":"
+            + tenantId
+            + gameInstanceId.length()
+            + ":"
+            + gameInstanceId
+            + pluginId.length()
+            + ":"
+            + pluginId;
+    dsl.fetch(
+        "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, ?))",
+        scope,
+        LIFECYCLE_LOCK_NAMESPACE);
   }
 
   public Optional<PluginRuntimeState> findByTenantIdAndGameInstanceIdAndPluginId(
@@ -129,14 +141,8 @@ public class PluginRuntimeStateRepository {
 
   private static void requireCoherentPluginFence(PluginRuntimeState entity) {
     long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
-    }
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        activationEpoch, entity.getLifecycleRevision());
     if (activationEpoch == 0L
         && entity.getActivePluginVersionId() != null
         && !entity.getActivePluginVersionId().isBlank()) {

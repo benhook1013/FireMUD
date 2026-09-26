@@ -1,10 +1,13 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.Optional;
@@ -26,6 +29,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -35,6 +39,47 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 @ExtendWith(OutputCaptureExtension.class)
 class AutomationScriptEventPublisherTest {
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.Code.class,
+      names = {"INVALID_ARGUMENT", "PERMISSION_DENIED"})
+  void logsTerminalTriggerRejectionsSeparatelyAndKeepsPublisherBestEffort(
+      Status.Code code, CapturedOutput output) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenThrow(new StatusRuntimeException(Status.fromCode(code).withDescription("rejected")));
+    ScriptEventPublisher publisher = publisherForTriggerTest(client);
+
+    assertThatCode(
+            () ->
+                publisher.publishCommandEvent(
+                    sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
+        .doesNotThrowAnyException();
+
+    String capturedOutput = output.getOut() + output.getErr();
+    assertThat(capturedOutput).contains("Script event publish terminally rejected status=" + code);
+    assertThat(capturedOutput).doesNotContain("Script event publish task failed");
+  }
+
+  @Test
+  void logsTransientTriggerFailureAsTaskFailureAndKeepsPublisherBestEffort(CapturedOutput output) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenThrow(
+            new StatusRuntimeException(Status.UNAVAILABLE.withDescription("temporarily down")));
+    ScriptEventPublisher publisher = publisherForTriggerTest(client);
+
+    assertThatCode(
+            () ->
+                publisher.publishCommandEvent(
+                    sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
+        .doesNotThrowAnyException();
+
+    String capturedOutput = output.getOut() + output.getErr();
+    assertThat(capturedOutput).contains("Script event publish task failed");
+    assertThat(capturedOutput).doesNotContain("Script event publish terminally rejected");
+  }
+
   @Test
   void publishesCommandEventWithValidOwnerAndPositiveEpoch() {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
@@ -610,6 +655,28 @@ class AutomationScriptEventPublisherTest {
     command.setCommandName(commandName);
     command.setAcceptedAt(Instant.now());
     return command;
+  }
+
+  private static ScriptEventPublisher publisherForTriggerTest(AutomationScriptingClient client) {
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    return new AutomationScriptEventPublisher(
+        client,
+        statusRepository,
+        gameInstanceRepository,
+        commandToken -> Optional.empty(),
+        builtInAliasResolver(),
+        Runnable::run);
   }
 
   @Test

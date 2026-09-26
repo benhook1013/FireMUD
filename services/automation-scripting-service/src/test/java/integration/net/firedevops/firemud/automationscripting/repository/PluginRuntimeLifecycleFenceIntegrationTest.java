@@ -92,6 +92,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
 
     CountDownLatch firstHasLock = new CountDownLatch(1);
     CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch secondReachedLockCall = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> firstTransaction =
@@ -110,9 +111,11 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               () ->
                   dsl.transaction(
                       configuration -> {
+                        secondReachedLockCall.countDown();
                         new PluginRuntimeStateRepository(DSL.using(configuration))
                             .lockLifecycleScope("1", "game-1", "plugin-1");
                       }));
+      assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
       Thread.sleep(100);
       assertThat(secondTransaction.isDone()).isFalse();
       releaseFirst.countDown();
@@ -125,6 +128,77 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   }
 
   @Test
+  void lifecycleAdvisoryLockDoesNotSerializeJavaHashCollidingScopes() throws Exception {
+    String firstPluginId = "Aa";
+    String secondPluginId = "BB";
+    assertThat(("tenant-1\u0000game-1\u0000" + firstPluginId).hashCode())
+        .isEqualTo(("tenant-1\u0000game-1\u0000" + secondPluginId).hashCode());
+
+    CountDownLatch firstHasLock = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch secondReachedLockCall = new CountDownLatch(1);
+    CountDownLatch secondHasLock = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> firstTransaction = null;
+    Future<?> secondTransaction = null;
+    try {
+      firstTransaction =
+          executor.submit(
+              () ->
+                  dsl.transaction(
+                      configuration -> {
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
+                            .lockLifecycleScope("tenant-1", "game-1", firstPluginId);
+                        firstHasLock.countDown();
+                        await(releaseFirst);
+                      }));
+      assertThat(firstHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+      secondTransaction =
+          executor.submit(
+              () ->
+                  dsl.transaction(
+                      configuration -> {
+                        secondReachedLockCall.countDown();
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
+                            .lockLifecycleScope("tenant-1", "game-1", secondPluginId);
+                        secondHasLock.countDown();
+                      }));
+      assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+      releaseFirst.countDown();
+      firstTransaction.get(5, TimeUnit.SECONDS);
+      secondTransaction.get(5, TimeUnit.SECONDS);
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void nextEligibleDefaultUsesUtcWhenSessionTimezoneIsNonUtc() {
+    dsl.transaction(
+        configuration -> {
+          DSLContext transactionDsl = DSL.using(configuration);
+          transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+          transactionDsl.execute(
+              "insert into script_work_items "
+                  + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+                  + "plugin_id, plugin_version_id, event_type, event_schema_version, "
+                  + "script_patch_version, script_event_id, source_service, trigger_mode) "
+                  + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
+                  + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
+                  + "'event-utc-default', 'test', 'MANUAL')");
+
+          assertThat(
+                  transactionDsl.fetchValue(
+                      "select next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+                          + "from script_work_items where script_event_id = 'event-utc-default'",
+                      Boolean.class))
+              .isEqualTo(Boolean.TRUE);
+        });
+  }
+
+  @Test
   void migrationFoundsRetainedRuntimeFenceAndOnlyMatchesCompleteScheduleProvenance() {
     String retainedSchema = newSchemaName();
     try {
@@ -134,7 +208,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               + "(tenant_id, game_instance_id, runtime_region_id, runtime_region_epoch, plugin_id, "
               + "active_plugin_version_id, plugin_state, status_reason) "
               + "values ('tenant-retained', 'instance-retained', 'region-1', 7, 'plugin-retained', "
-              + "'version-1', 'ENABLED', 'retained'), "
+              + "'version-1', 'PLUGIN_STATE_ENABLED', 'retained'), "
               + "('tenant-empty', 'instance-empty', null, null, 'plugin-empty', '', 'DISABLED', 'retained')");
       insertSchedule(
           retainedDsl,
@@ -233,7 +307,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       retainedDsl.execute(
           "insert into plugin_runtime_states "
               + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, plugin_state, status_reason) "
-              + "values ('tenant-contradictory', 'instance-contradictory', 'plugin-contradictory', '', 'ENABLED', 'retained')");
+              + "values ('tenant-contradictory', 'instance-contradictory', 'plugin-contradictory', '', 'PLUGIN_STATE_ENABLED', 'retained')");
 
       assertThatThrownBy(() -> migrateExistingSchemaToLatest(contradictorySchema))
           .isInstanceOf(FlywayException.class)
@@ -253,7 +327,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                         + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
                         + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
                         + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
-                        + "'version-active', 'ENABLED', 'invalid', 0, 0)"))
+                        + "'version-active', 'PLUGIN_STATE_ENABLED', 'invalid', 0, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
     assertThatThrownBy(

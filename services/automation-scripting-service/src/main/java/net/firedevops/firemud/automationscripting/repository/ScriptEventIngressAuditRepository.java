@@ -34,6 +34,9 @@ public class ScriptEventIngressAuditRepository {
       "script_pin_control_plane_request_id conflicts with existing identity";
   private static final String IMMUTABLE_IDENTITY_CONFLICT_PREFIX =
       "immutable script identity conflicts with persisted row: ";
+  private static final String IN_PROGRESS_SOURCE_STATE = "IN_PROGRESS";
+  private static final String TRIGGER_ADMITTED_SOURCE_STATE = "TRIGGER_ADMITTED";
+  private static final String TRIGGER_REJECTED_SOURCE_STATE = "TRIGGER_REJECTED";
   private static final int MAX_EVENT_INGRESS_INSERT_ATTEMPTS = 2;
   private static final Pattern CANONICAL_REQUEST_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
   private static final Field<Boolean> INSERTED_ROW =
@@ -87,6 +90,7 @@ public class ScriptEventIngressAuditRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /** Saves an ingress audit, permitting only claim-owned 0/0-to-positive fence finalization. */
   public ScriptEventIngressAudit save(ScriptEventIngressAudit entity) {
     if (entity.getId() == null) {
       return insertIfAbsentByIdentity(entity).audit();
@@ -94,9 +98,27 @@ public class ScriptEventIngressAuditRepository {
     requireCoherentPinTuple(entity);
     requireCoherentPluginFence(entity);
     requireCanonicalRequestDigest(entity.getRequestDigest());
-    findById(entity.getId())
-        .ifPresent(persisted -> requireMatchingImmutableIdentity(entity, persisted));
+    ScriptEventIngressAudit persisted = findById(entity.getId()).orElse(null);
+    boolean finalizePluginFence = isPluginFenceFinalization(entity, persisted);
+    if (persisted != null) {
+      requireMatchingImmutableIdentity(entity, persisted, finalizePluginFence);
+    }
     int nextRowVersion = entity.getRowVersion() + 1;
+    Condition updateCondition =
+        SCRIPT_EVENT_INGRESS_AUDIT
+            .ID
+            .eq(entity.getId())
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion()));
+    if (finalizePluginFence) {
+      // The first mutable plugin-state read happens after the unique event claim. Permit only
+      // that claim owner to seal its initially unknown 0/0 fence, in the same CAS that finalizes
+      // admission. Reclaim advances row_version, and the old owner therefore cannot promote it.
+      updateCondition =
+          updateCondition
+              .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE.eq(IN_PROGRESS_SOURCE_STATE))
+              .and(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ACTIVATION_EPOCH.eq(0L))
+              .and(SCRIPT_EVENT_INGRESS_AUDIT.LIFECYCLE_REVISION.eq(0L));
+    }
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
             .set(SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID, entity.getTenantId())
@@ -139,11 +161,7 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT.RESOLVED_HANDLER_COUNT, entity.getResolvedHandlerCount())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION, nextRowVersion)
-            .where(
-                SCRIPT_EVENT_INGRESS_AUDIT
-                    .ID
-                    .eq(entity.getId())
-                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
+            .where(updateCondition)
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -236,7 +254,7 @@ public class ScriptEventIngressAuditRepository {
         ScriptEventIngressAudit existingAudit = existing.orElseThrow();
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existingAudit.getScriptPinControlPlaneRequestId());
-        requireMatchingPluginFence(entity, existingAudit);
+        requireMatchingClaimPluginFence(entity, existingAudit);
         return new IdempotentInsertResult(existingAudit, false);
       }
     }
@@ -280,7 +298,7 @@ public class ScriptEventIngressAuditRepository {
           if (!inserted) {
             requireMatchingPinOwnerEvidence(
                 normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
-            requireMatchingPluginFence(entity, audit);
+            requireMatchingClaimPluginFence(entity, audit);
           }
           return new IdempotentInsertResult(audit, inserted);
         });
@@ -329,7 +347,9 @@ public class ScriptEventIngressAuditRepository {
   }
 
   private static void requireMatchingImmutableIdentity(
-      ScriptEventIngressAudit submitted, ScriptEventIngressAudit persisted) {
+      ScriptEventIngressAudit submitted,
+      ScriptEventIngressAudit persisted,
+      boolean allowPluginFenceFinalization) {
     if (!Objects.equals(submitted.getScriptPatchVersion(), persisted.getScriptPatchVersion())) {
       throw new IllegalArgumentException(
           IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_patch_version");
@@ -346,29 +366,49 @@ public class ScriptEventIngressAuditRepository {
     if (!Objects.equals(submitted.getRequestDigest(), persisted.getRequestDigest())) {
       throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "request_digest");
     }
-    if (submitted.getPluginActivationEpoch() != persisted.getPluginActivationEpoch()) {
+    if (!allowPluginFenceFinalization
+        && submitted.getPluginActivationEpoch() != persisted.getPluginActivationEpoch()) {
       throw new IllegalArgumentException(
           IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "plugin_activation_epoch");
     }
-    if (submitted.getLifecycleRevision() != persisted.getLifecycleRevision()) {
+    if (!allowPluginFenceFinalization
+        && submitted.getLifecycleRevision() != persisted.getLifecycleRevision()) {
       throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "lifecycle_revision");
     }
   }
 
-  private static void requireCoherentPluginFence(ScriptEventIngressAudit entity) {
-    long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
+  private static boolean isPluginFenceFinalization(
+      ScriptEventIngressAudit submitted, ScriptEventIngressAudit persisted) {
+    if (persisted == null
+        || !IN_PROGRESS_SOURCE_STATE.equals(persisted.getSourceState())
+        || persisted.getClaimStartedAt() == null
+        || (!TRIGGER_ADMITTED_SOURCE_STATE.equals(submitted.getSourceState())
+            && !TRIGGER_REJECTED_SOURCE_STATE.equals(submitted.getSourceState()))) {
+      return false;
     }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
-    }
+    return persisted.getPluginActivationEpoch() == 0L
+        && persisted.getLifecycleRevision() == 0L
+        && submitted.getPluginActivationEpoch() > 0L
+        && submitted.getLifecycleRevision() > 0L;
   }
 
-  private static void requireMatchingPluginFence(
+  private static void requireCoherentPluginFence(ScriptEventIngressAudit entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+  }
+
+  private static void requireMatchingClaimPluginFence(
       ScriptEventIngressAudit requested, ScriptEventIngressAudit existing) {
+    boolean retryingFinalizedPlaceholderClaim =
+        requested.getPluginActivationEpoch() == 0L
+            && requested.getLifecycleRevision() == 0L
+            && existing.getPluginActivationEpoch() > 0L
+            && existing.getLifecycleRevision() > 0L
+            && (TRIGGER_ADMITTED_SOURCE_STATE.equals(existing.getSourceState())
+                || TRIGGER_REJECTED_SOURCE_STATE.equals(existing.getSourceState()));
+    if (retryingFinalizedPlaceholderClaim) {
+      return;
+    }
     if (requested.getPluginActivationEpoch() != existing.getPluginActivationEpoch()) {
       throw new IllegalStateException("plugin_activation_epoch conflicts with existing identity");
     }

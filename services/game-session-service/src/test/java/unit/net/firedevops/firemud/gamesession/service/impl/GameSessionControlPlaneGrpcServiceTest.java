@@ -8383,7 +8383,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
-                1L, targetCommand.getGameInstanceId(), "target-command"))
+                result.getTenantId(), result.getTargetGameInstanceId(), "target-command"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =

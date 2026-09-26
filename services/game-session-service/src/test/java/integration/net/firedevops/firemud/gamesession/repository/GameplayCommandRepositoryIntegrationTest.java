@@ -23,6 +23,7 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultExecuteListener;
@@ -506,7 +507,8 @@ class GameplayCommandRepositoryIntegrationTest {
 
     GameplayCommand sameScope = repositoryCommand("cmd-reused", "PLAYER");
     assertThatThrownBy(() -> repository.save(sameScope))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("idx_gameplay_command_tenant_instance_command_id");
   }
 
   @Test

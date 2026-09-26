@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from . import github as github_api
 from . import hosted
+from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
 
 
@@ -35,8 +36,18 @@ class ReviewRunnerError(RuntimeError):
     """A preflight or execution failure that is safe to show to an operator."""
 
 
+HOSTED_ACTIVE_RESPONSE_REASON = "CodeRabbit acknowledged that the full review is active"
+HOSTED_CLI_OVERLAP_HOLD_REASON = (
+    "CLI can overlap Hosted only when the active Hosted request is attributable to the exact published head"
+)
+
+
 class WrongTargetError(ReviewRunnerError):
     """The requested target does not equal the target selected by stack policy."""
+
+
+class StaleReviewTargetError(ReviewRunnerError):
+    """A direct-to-default target became stale before review work began."""
 
 
 class UnreconciledReviewError(ReviewRunnerError):
@@ -105,6 +116,28 @@ class ReviewTarget:
     patch_identity: str = ""
     merge_base: str = ""
     repository: str = ""
+    default_base_front: bool = False
+    default_test_merge_base_sha: str = ""
+    default_test_merge_head_sha: str = ""
+    default_test_merge_tree_sha: str = ""
+
+    def has_current_default_test_merge_proof(self) -> bool:
+        """Whether the controller supplied a tree proof for this exact PR tuple."""
+
+        def is_sha(value: str) -> bool:
+            return len(value) == 40 and all(character in "0123456789abcdefABCDEF" for character in value)
+
+        return (
+            self.default_base_front
+            and self.parent.pr_number is None
+            and self.parent.ref_name == self.snapshot.base_ref_name
+            and self.parent.head_sha.casefold() == self.snapshot.base_sha.casefold()
+            and self.default_test_merge_base_sha.casefold() == self.snapshot.base_sha.casefold()
+            and self.default_test_merge_head_sha.casefold() == self.snapshot.head_sha.casefold()
+            and is_sha(self.default_test_merge_base_sha)
+            and is_sha(self.default_test_merge_head_sha)
+            and is_sha(self.default_test_merge_tree_sha)
+        )
 
 
 class ReviewTargetResolver(Protocol):
@@ -304,6 +337,96 @@ def _patch_identity(
     return patch_identity(run_diff, merge_base, head)
 
 
+def _test_merge_commit(
+    runner: CommandRunner,
+    source_root: Path,
+    base: str,
+    head: str,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> str:
+    """Create an isolated local merge commit for one exact base/head pair."""
+
+    def run_git(args, *, check, text, timeout):
+        return runner.run(
+            args,
+            capture_output=True,
+            check=check,
+            text=text,
+            timeout=timeout,
+        )
+
+    try:
+        tree = test_merge_tree(
+            source_root,
+            base,
+            head,
+            run=run_git,
+            timeout_seconds=timeout,
+        )
+    except TestMergeError as error:
+        raise ReviewRunnerError(str(error)) from error
+    merge = _sha(
+        _git_output(
+            runner,
+            source_root,
+            "-c",
+            "user.name=FireMUD review runner",
+            "-c",
+            "user.email=firemud-review-runner@invalid",
+            "commit-tree",
+            tree,
+            "-p",
+            base,
+            "-p",
+            head,
+            "-m",
+            "FireMUD current-base review context",
+            timeout=timeout,
+        ),
+        "test-merge commit",
+    )
+    parents = _git_output(runner, source_root, "show", "-s", "--format=%P", merge, timeout=timeout).split()
+    if parents != [base, head]:
+        raise ReviewRunnerError("current test-merge commit does not preserve the exact base/head parents")
+    return merge
+
+
+def _verify_target_still_current(target: ReviewTarget, github: GitHubReader) -> None:
+    """Recheck the selected tuple at the provider boundary, after context setup."""
+
+    current = github.pull_request(target.snapshot.number)
+    parent_tip = _sha(github.branch_head(target.parent.ref_name), "effective parent tip")
+    selected_head = _sha(target.snapshot.head_sha, "selected head")
+    selected_base = _sha(target.snapshot.base_sha, "selected base")
+    if (
+        current.number == target.snapshot.number
+        and current.state.upper() == "OPEN"
+        and current.mergeable.upper() == "MERGEABLE"
+        and current.base_exists
+        and _sha(current.head_sha, "pull request head") == selected_head
+        and current.base_ref_name == target.parent.ref_name
+        and _sha(current.base_sha, "pull request base") == selected_base
+        and parent_tip == _sha(target.parent.head_sha, "selected parent")
+    ):
+        return
+    if (
+        target.default_base_front
+        and current.number == target.snapshot.number
+        and current.state.upper() == "OPEN"
+        and current.head_sha.casefold() == selected_head
+        and current.base_ref_name == target.parent.ref_name
+        and current.mergeable.upper() == "MERGEABLE"
+        and current.base_exists
+        and (
+            current.base_sha.casefold() != selected_base
+            or parent_tip != _sha(target.parent.head_sha, "selected parent")
+        )
+    ):
+        raise StaleReviewTargetError("default base advanced during CLI preflight")
+    raise ReviewRunnerError("pull request changed during CLI preflight")
+
+
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -324,37 +447,106 @@ def _common_dir(
     return path
 
 
-def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path) -> None:
-    """Refuse CLI work only when Hosted attribution is unsafe or unresolved."""
+def _assert_no_active_hosted_review(
+    repo: str,
+    pr_number: int,
+    common_dir: Path,
+    *,
+    published_head_sha: str,
+    candidate_sha: str,
+    expected_anchor: Mapping[str, Any] | None,
+) -> None:
+    """Allow overlap only for an active Hosted request on the exact same anchor."""
+
+    def same_sha(value: Any, expected: str) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 40
+            and all(character in "0123456789abcdefABCDEF" for character in value)
+            and value.casefold() == expected.casefold()
+        )
+
+    def same_anchor(value: Any) -> bool:
+        if not isinstance(value, Mapping) or expected_anchor is None:
+            return False
+        if type(value.get("pr")) is not int or value["pr"] != pr_number:
+            return False
+        for name in ("child_head", "parent_head", "merge_base"):
+            expected = expected_anchor.get(name)
+            if not isinstance(expected, str) or not same_sha(value.get(name), expected):
+                return False
+        parent_identity = expected_anchor.get("parent_identity")
+        patch_id = expected_anchor.get("patch_id")
+        return (
+            isinstance(parent_identity, str)
+            and bool(parent_identity)
+            and value.get("parent_identity") == parent_identity
+            and isinstance(patch_id, str)
+            and bool(patch_id)
+            and value.get("patch_id") == patch_id
+        )
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
     if not records:
         return
     if len(records) > 1:
-        raise ReviewRunnerError("multiple current Hosted reservations require operator resolution")
+        raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
 
     try:
         payload = github_api.fetch_pull_request(repo, pr_number)
         for record_path in records:
             record = hosted.load_trigger_reservation(record_path, repo, pr_number)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
-            # An already-posted Hosted request can run alongside the independent
-            # CLI process. The caller holds request.lock through CLI preflight and
-            # capture initialization, so trigger classification and candidate
-            # snapshotting remain serialized with Hosted posting. An ambiguous,
-            # unattributed, or timed-out response still fails closed.
-            if state.state in {"ambiguous", "unattributed", "timed_out"}:
-                raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
+            # A terminal ambiguous response with exact immutable identities is
+            # historical non-counting context, even after the PR advances. An
+            # active response overlaps only when both immutable identities and
+            # the exact published head are proven.
+            terminal_attribution_ambiguity = (
+                state.state == "ambiguous"
+                and state.terminal is True
+                and state.attributed is False
+                and isinstance(state.trigger_comment_id, int)
+                and not isinstance(state.trigger_comment_id, bool)
+                and state.trigger_comment_id > 0
+                and isinstance(state.response_id, int)
+                and not isinstance(state.response_id, bool)
+                and state.response_id > 0
+            )
+            if state.state == "active":
+                immutable_active_identity = (
+                    state.terminal is False
+                    and state.attributed is True
+                    and isinstance(state.repository, str)
+                    and state.repository.casefold() == repo.casefold()
+                    and state.pr_number == pr_number
+                    and isinstance(state.trigger_comment_id, int)
+                    and not isinstance(state.trigger_comment_id, bool)
+                    and state.trigger_comment_id > 0
+                    and isinstance(state.response_id, int)
+                    and not isinstance(state.response_id, bool)
+                    and state.response_id > 0
+                    and same_sha(state.head_sha, published_head_sha)
+                    and same_sha(state.current_head_sha, published_head_sha)
+                    and same_sha(candidate_sha, published_head_sha)
+                    and same_anchor(record.get("anchor"))
+                )
+                if immutable_active_identity:
+                    continue
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+            if state.state == "awaiting_response":
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+            if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+            if terminal_attribution_ambiguity:
+                continue
             if state.state not in {
-                "active",
-                "awaiting_response",
                 "completed",
                 "noop",
                 "failed",
                 "retired",
                 "rate_limited",
             }:
-                raise ReviewRunnerError(f"Hosted review has an unsupported state before CLI review: {state.state}")
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -396,8 +588,10 @@ def _validate_target(
     *,
     allow_unreconciled: bool,
     git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
-) -> tuple[str, int, int, str]:
+) -> tuple[str, int, int, str, str]:
     expected = target.snapshot
+    if target.default_base_front and not target.has_current_default_test_merge_proof():
+        raise ReviewRunnerError("direct default-base target has no verified current base/head test merge")
     if live.number != expected.number:
         raise ReviewRunnerError("live pull request identity differs from selected target")
     if live.state.upper() != "OPEN":
@@ -410,14 +604,22 @@ def _validate_target(
         raise ReviewRunnerError(
             f"pull request base {live.base_ref_name!r} does not match effective parent {target.parent.ref_name!r}"
         )
-    if _sha(live.base_sha, "pull request base") != _sha(expected.base_sha, "selected base"):
-        raise ReviewRunnerError("pull request base moved since target selection")
     child_head = _sha(live.head_sha, "pull request head")
     if child_head != _sha(expected.head_sha, "selected head"):
         raise ReviewRunnerError("pull request head moved since target selection")
-    if _sha(parent_tip, "effective parent tip") != _sha(target.parent.head_sha, "selected parent"):
+    live_base = _sha(live.base_sha, "pull request base")
+    expected_base = _sha(expected.base_sha, "selected base")
+    live_parent_tip = _sha(parent_tip, "effective parent tip")
+    selected_parent_tip = _sha(target.parent.head_sha, "selected parent")
+    if target.default_base_front and live_base != expected_base and live_base == live_parent_tip:
+        raise StaleReviewTargetError("default base advanced after CLI target selection")
+    if live_base != expected_base:
+        raise ReviewRunnerError("pull request base moved since target selection")
+    if live_parent_tip != selected_parent_tip:
+        if target.default_base_front:
+            raise StaleReviewTargetError("default base advanced after CLI target selection")
         raise ReviewRunnerError("effective parent moved since target selection")
-    if _sha(live.base_sha, "pull request base") != _sha(parent_tip, "effective parent tip"):
+    if live_base != live_parent_tip:
         raise ReviewRunnerError("pull request base SHA does not equal the effective parent tip")
     if not allow_unreconciled and (not target.reconciled or not target.ancestor_links_valid):
         raise UnreconciledReviewError("stack is unreconciled; reconcile it before running a normal CLI review")
@@ -427,14 +629,6 @@ def _validate_target(
         )
     if not live_files:
         raise ReviewRunnerError("pull request has zero changed files; refusing to spend review quota")
-    published = _nul_paths(
-        runner,
-        source_root,
-        *_name_only_diff_args(live.base_sha, child_head),
-        timeout=git_timeout_seconds,
-    )
-    if published != sorted(live_files):
-        raise ReviewRunnerError("published pull request file paths do not match GitHub's file list")
     _ancestor(
         runner,
         source_root,
@@ -447,12 +641,12 @@ def _validate_target(
         runner,
         source_root,
         target.parent.head_sha,
-        candidate_sha,
+        child_head if target.default_base_front else candidate_sha,
         timeout=git_timeout_seconds,
     )
     # Provisional discovery can use the unique merge base above even when the exact
     # parent tip is outside candidate history; normal reviews still require ancestry.
-    if not allow_unreconciled:
+    if not allow_unreconciled and not target.default_base_front:
         _ancestor(
             runner,
             source_root,
@@ -461,17 +655,94 @@ def _validate_target(
             "committed HEAD does not contain the exact effective parent tip",
             timeout=git_timeout_seconds,
         )
-    candidate_count = len(
-        _nul_paths(
+    if target.default_base_front:
+        published_context = _test_merge_commit(
             runner,
             source_root,
-            *_name_only_diff_args(merge_base, candidate_sha),
+            live_base,
+            child_head,
             timeout=git_timeout_seconds,
         )
-    )
+        published_tree = _sha(
+            _git_output(
+                runner,
+                source_root,
+                "rev-parse",
+                f"{published_context}^{{tree}}",
+                timeout=git_timeout_seconds,
+            ),
+            "published test-merge tree",
+        )
+        if published_tree != _sha(target.default_test_merge_tree_sha, "selected test-merge tree"):
+            raise ReviewRunnerError("current test-merge tree differs from the selected base/head proof")
+        review_context = (
+            published_context
+            if candidate_sha == child_head
+            else _test_merge_commit(
+                runner,
+                source_root,
+                live_base,
+                candidate_sha,
+                timeout=git_timeout_seconds,
+            )
+        )
+        published = _nul_paths(
+            runner,
+            source_root,
+            *_name_only_diff_args(live_base, published_context),
+            timeout=git_timeout_seconds,
+        )
+        if published != sorted(live_files):
+            raise ReviewRunnerError("current test-merge file paths do not match GitHub's live file list")
+        candidate_merge_base = _unique_merge_base(
+            runner,
+            source_root,
+            target.parent.head_sha,
+            candidate_sha,
+            timeout=git_timeout_seconds,
+        )
+        candidate_patch = _patch_identity(
+            runner,
+            source_root,
+            candidate_merge_base,
+            candidate_sha,
+            timeout=git_timeout_seconds,
+        )
+        if (
+            candidate_sha == child_head
+            and target.patch_identity
+            and candidate_patch != target.patch_identity
+        ):
+            raise ReviewRunnerError("published owned-patch identity changed since target selection")
+        candidate_count = len(
+            _nul_paths(
+                runner,
+                source_root,
+                *_name_only_diff_args(live_base, review_context),
+                timeout=git_timeout_seconds,
+            )
+        )
+    else:
+        published = _nul_paths(
+            runner,
+            source_root,
+            *_name_only_diff_args(live.base_sha, child_head),
+            timeout=git_timeout_seconds,
+        )
+        if published != sorted(live_files):
+            raise ReviewRunnerError("published pull request file paths do not match GitHub's file list")
+        review_context = candidate_sha
+        candidate_count = len(
+            _nul_paths(
+                runner,
+                source_root,
+                *_name_only_diff_args(merge_base, candidate_sha),
+                timeout=git_timeout_seconds,
+            )
+        )
     if candidate_count == 0:
         raise ReviewRunnerError("candidate has zero changed files; refusing to spend review quota")
-    return merge_base, len(published), candidate_count, child_head
+    return merge_base, len(published), candidate_count, child_head, review_context
 
 
 def run_cli_review(
@@ -555,7 +826,6 @@ def run_cli_review(
                     f"another review request is active for PR #{target.snapshot.number} (lock: {hosted_lock_path})"
                 ) from error
             hosted_lock_acquired = True
-            _assert_no_active_hosted_review(repository, target.snapshot.number, common_dir)
             capture_dir.mkdir(mode=0o700)
             live = github.pull_request(target.snapshot.number)
             live_files = github.pull_request_files(target.snapshot.number)
@@ -567,7 +837,7 @@ def run_cli_review(
                 _git_output(runner, source_root, "rev-parse", "HEAD^{commit}", timeout=git_timeout_seconds),
                 "candidate HEAD",
             )
-            merge_base, published_files, candidate_files, child_head = _validate_target(
+            merge_base, published_files, candidate_files, child_head, review_context_sha = _validate_target(
                 target,
                 live,
                 live_files,
@@ -581,12 +851,46 @@ def run_cli_review(
             candidate_patch_identity = _patch_identity(
                 runner,
                 source_root,
-                merge_base,
+                _unique_merge_base(
+                    runner,
+                    source_root,
+                    target.parent.head_sha,
+                    candidate_sha,
+                    timeout=git_timeout_seconds,
+                )
+                if target.default_base_front and candidate_sha != child_head
+                else merge_base,
                 candidate_sha,
                 timeout=git_timeout_seconds,
             )
             if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
+            selected_patch_matches = (
+                target.patch_identity == candidate_patch_identity
+                and bool(target.patch_identity)
+            )
+            selected_merge_base_matches = (
+                bool(target.merge_base)
+                and _sha(target.merge_base, "selected merge base") == merge_base
+            )
+            expected_anchor = None
+            if selected_patch_matches and selected_merge_base_matches:
+                expected_anchor = {
+                    "pr": target.snapshot.number,
+                    "child_head": child_head,
+                    "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
+                    "parent_head": target.parent.head_sha,
+                    "merge_base": merge_base,
+                    "patch_id": candidate_patch_identity,
+                }
+            _assert_no_active_hosted_review(
+                repository,
+                target.snapshot.number,
+                common_dir,
+                published_head_sha=child_head,
+                candidate_sha=candidate_sha,
+                expected_anchor=expected_anchor,
+            )
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:
@@ -605,7 +909,8 @@ def run_cli_review(
             # cleanup boundary: either setup step can fail, but a successful pin
             # must never outlive a failed temporary-root allocation.
             try:
-                _git(runner, source_root, "update-ref", pinned_ref, merge_base, timeout=git_timeout_seconds)
+                review_base_sha = target.parent.head_sha if target.default_base_front else merge_base
+                _git(runner, source_root, "update-ref", pinned_ref, review_base_sha, timeout=git_timeout_seconds)
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
             except Exception:
                 _git(
@@ -629,7 +934,7 @@ def run_cli_review(
                     "add",
                     "--detach",
                     str(candidate_worktree),
-                    candidate_sha,
+                    review_context_sha,
                     timeout=git_timeout_seconds,
                 )
                 metadata: dict[str, Any] = {
@@ -639,6 +944,8 @@ def run_cli_review(
                     "candidate_sha": candidate_sha,
                     "child_head_sha": candidate_sha,
                     "published_head_sha": child_head,
+                    "review_context_sha": review_context_sha,
+                    "review_base_sha": review_base_sha,
                     "parent_pr": target.parent.pr_number,
                     "parent_ref": target.parent.ref_name,
                     "parent_sha": target.parent.head_sha,
@@ -687,6 +994,7 @@ def run_cli_review(
                         hosted_lock_acquired = False
                     hosted_lock_handle.close()
                     hosted_lock_handle = None
+                _verify_target_still_current(target, github)
                 started = monotonic_ns()
                 try:
                     process = runner.run(

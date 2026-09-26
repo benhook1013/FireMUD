@@ -20,8 +20,31 @@ class V2__scope_gameplay_command_identityTest {
     }
 
     String normalized = migration.replaceAll("\\s+", " ").trim();
+    assertThat(
+            normalized.indexOf(
+                "CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id"))
+        .isLessThan(normalized.indexOf("DROP INDEX IF EXISTS idx_gameplay_command_command_id"));
+    assertThat(
+            normalized.indexOf(
+                "CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id"))
+        .isLessThan(
+            normalized.indexOf("DROP CONSTRAINT IF EXISTS gameplay_command_command_id_key"));
+    assertThat(
+            normalized.indexOf(
+                "CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_cmd"))
+        .isLessThan(
+            normalized.indexOf("DROP INDEX IF EXISTS idx_remote_command_coordinator_command_id"));
+    assertThat(
+            normalized.indexOf(
+                "CREATE UNIQUE INDEX uq_gameplay_admission_pointer_tenant_world_realm"))
+        .isLessThan(
+            normalized.indexOf("DROP INDEX IF EXISTS uq_gameplay_admission_pointer_world_realm"));
     assertThat(normalized)
         .contains(
+            "DO $v2_preflight$",
+            "Game Session V2 requires the three exact V1 pre-migration unique indexes",
+            "Game Session V2 requires the gameplay_command_command_id_key unique constraint",
+            "Game Session V2 requires claimed remote follow-ups to drain before migration",
             "DROP INDEX IF EXISTS idx_gameplay_command_command_id",
             "DROP CONSTRAINT IF EXISTS gameplay_command_command_id_key",
             "CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id ON gameplay_command USING btree (tenant_id, game_instance_id, command_id)",
