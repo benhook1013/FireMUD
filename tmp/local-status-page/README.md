@@ -16,7 +16,7 @@ The publisher creates `output/public-index.html` without a refresh endpoint, the
 
 `register-autostart.ps1` installs or updates that task. It requires elevation because Windows portproxy and firewall configuration is privileged. `configure-portproxy.ps1 -WhatIf -ConnectAddress <current-wsl-ip>` and `allow-lan-firewall.ps1 -WhatIf` preview their narrow changes without changing Windows settings. Run `test-portproxy.ps1` to check repeat-start idempotence, WSL address updates, and fail-closed ownership checks. The task refreshes the target address at each Windows user logon; it does not launch WSL for page refreshes. `start-lan-server.ps1` remains available only as the rollback server during the cutover.
 
-Source and tests are tracked on the local Overseer branch. `status.json`, generated HTML, PID, and logs remain private runtime files under ignored `tmp/local-status-page`.
+Source and tests are tracked on the local Overseer branch and backed up to the private `benhook1013/FireMUD-status-page` repository. `status.json`, generated HTML, PID, and logs remain private runtime files outside that backup.
 
 To back up source changes from the FireMUD worktree, commit the tracked files under `tmp/local-status-page`, then run this from the repository root. The subtree split includes only that folder's tracked history; it excludes the ignored runtime files and other Overseer notes.
 
