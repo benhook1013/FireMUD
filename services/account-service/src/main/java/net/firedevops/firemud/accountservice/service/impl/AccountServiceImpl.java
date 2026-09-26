@@ -1049,6 +1049,20 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
     }
+    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
+      if (!isPublicProductionRealm(realm)) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
     if (!membership.membershipExists() || !membership.gameplayAdmissionAllowed()) {
       if (!isPublicProductionRealm(realm)) {
         if (membership.membershipExists()) {
@@ -1066,6 +1080,17 @@ public class AccountServiceImpl implements AccountService {
       }
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+
+    if (!isPublicProductionRealm(realm)
+        && !hasRealmAccessGrant(
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug())) {
+      throw new AuthenticationException(
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
     }
 
     String jti =

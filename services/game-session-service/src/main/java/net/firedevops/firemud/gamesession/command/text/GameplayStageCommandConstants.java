@@ -27,6 +27,10 @@ public final class GameplayStageCommandConstants {
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE =
+      "PUBLIC_PRODUCTION_ADMISSION_DENIED";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_MESSAGE =
+      "Public entry to that world is currently unavailable.";
   public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
       "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
