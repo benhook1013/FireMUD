@@ -1062,7 +1062,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             pluginState,
             state.getPluginActivationEpoch(),
             state.getLifecycleRevision());
-    return failure == null ? null : new PluginFenceValidation(failure, false);
+    if (failure != null) {
+      return new PluginFenceValidation(failure, false);
+    }
+    workItem.setAuthorityUnavailableRetryCount(0);
+    return null;
   }
 
   private record PluginFenceValidation(String reason, boolean retryable) {}

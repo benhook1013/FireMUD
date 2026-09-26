@@ -92,6 +92,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
 
     CountDownLatch firstHasLock = new CountDownLatch(1);
     CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch secondReachedLockCall = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> firstTransaction =
@@ -110,9 +111,11 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               () ->
                   dsl.transaction(
                       configuration -> {
+                        secondReachedLockCall.countDown();
                         new PluginRuntimeStateRepository(DSL.using(configuration))
                             .lockLifecycleScope("1", "game-1", "plugin-1");
                       }));
+      assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
       Thread.sleep(100);
       assertThat(secondTransaction.isDone()).isFalse();
       releaseFirst.countDown();
@@ -122,6 +125,30 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       releaseFirst.countDown();
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  void nextEligibleDefaultUsesUtcWhenSessionTimezoneIsNonUtc() {
+    dsl.transaction(
+        configuration -> {
+          DSLContext transactionDsl = DSL.using(configuration);
+          transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+          transactionDsl.execute(
+              "insert into script_work_items "
+                  + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+                  + "plugin_id, plugin_version_id, event_type, event_schema_version, "
+                  + "script_patch_version, script_event_id, source_service, trigger_mode) "
+                  + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
+                  + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
+                  + "'event-utc-default', 'test', 'MANUAL')");
+
+          assertThat(
+                  transactionDsl.fetchValue(
+                      "select next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+                          + "from script_work_items where script_event_id = 'event-utc-default'",
+                      Boolean.class))
+              .isTrue();
+        });
   }
 
   @Test

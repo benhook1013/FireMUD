@@ -3121,6 +3121,7 @@ class ReviewController:
                 first_four.append(pr)
                 if len(first_four) == 4:
                     break
+        candidate_prs = [pr for pr in state.ordered_prs if not batch_live[pr].merged]
         target_prs = set(first_four) | active_targets
         target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
         deep_prs = target_prs.intersection(state.ordered_prs)
@@ -3166,17 +3167,12 @@ class ReviewController:
                 for value in review_targets.values()
             ):
                 break
-            next_pr = next(
-                (
-                    pr
-                    for pr in state.ordered_prs
-                    if not batch_live[pr].merged and pr not in deep_prs
-                ),
-                None,
-            )
-            if next_pr is None:
+            scanned_count = len(target_scan_prs)
+            growth_count = max(4, scanned_count)
+            next_target_prs = candidate_prs[scanned_count : scanned_count + growth_count]
+            if not next_target_prs:
                 break
-            deep_prs.add(next_pr)
+            deep_prs.update(next_target_prs)
 
         scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
         if not scoped_prs and deep_error is None:

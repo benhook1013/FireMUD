@@ -352,7 +352,9 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
-            "PENDING_EVALUATION", Mockito.any(Instant.class), PageRequest.of(0, 10)))
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.eq(PageRequest.of(0, 10))))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
@@ -403,10 +405,10 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-            List.of(99L, 100L),
-            "PENDING_EVALUATION",
+            Mockito.eq(List.of(99L, 100L)),
+            Mockito.eq("PENDING_EVALUATION"),
             Mockito.any(Instant.class),
-            PageRequest.of(0, 10)))
+            Mockito.eq(PageRequest.of(0, 10))))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =

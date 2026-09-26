@@ -822,7 +822,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
-    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
     event.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
     event.setLifecycleRevision(workItem.getLifecycleRevision());
     event.setWorkItemId(workItem.getId());

@@ -276,7 +276,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       }
     }
     ScriptEventIngressAudit audit = claimRequest;
-    setPluginFence(audit, request, authority);
+    setPluginFence(audit, request, null, authority);
     audit.setAdmitted(admission.admitted());
     audit.setAdmissionOutcome(admission.outcome());
     audit.setAdmissionReason(admission.reason());
@@ -616,7 +616,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0),
           0L);
     }
-    authority.runtimeState = runtime;
     if (runtimeState.getScriptPinEpoch() <= 0) {
       return new PinValidation(
           new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0),
@@ -1234,20 +1233,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private void setPluginFence(
-      ScriptEventIngressAudit audit,
-      TriggerScriptEventRequest request,
-      AdmissionAuthority authority) {
-    setPluginFence(audit, request, null, authority);
-  }
-
-  private void setPluginFence(
       ScriptEventAudit audit,
       TriggerScriptEventRequest request,
       PluginOwner pluginOwner,
       AdmissionAuthority authority) {
-    String pluginId = resolveHandlerPluginId(request, pluginOwner);
-    String pluginVersionId = resolveHandlerPluginVersionId(request, pluginOwner);
-    PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
+    PluginFence fence = resolveHandlerPluginFence(request, pluginOwner, authority);
     audit.setPluginActivationEpoch(fence.pluginActivationEpoch());
     audit.setLifecycleRevision(fence.lifecycleRevision());
   }
@@ -1257,11 +1247,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerScriptEventRequest request,
       PluginOwner owner,
       AdmissionAuthority authority) {
-    String pluginId = resolveHandlerPluginId(request, owner);
-    String pluginVersionId = resolveHandlerPluginVersionId(request, owner);
-    PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
+    PluginFence fence = resolveHandlerPluginFence(request, owner, authority);
     audit.setPluginActivationEpoch(fence.pluginActivationEpoch());
     audit.setLifecycleRevision(fence.lifecycleRevision());
+  }
+
+  private PluginFence resolveHandlerPluginFence(
+      TriggerScriptEventRequest request, PluginOwner owner, AdmissionAuthority authority) {
+    return resolvePluginFence(
+        request,
+        resolveHandlerPluginId(request, owner),
+        resolveHandlerPluginVersionId(request, owner),
+        authority);
   }
 
   private PluginFence resolvePluginFence(
@@ -1292,7 +1289,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static final class AdmissionAuthority {
-    private GetGameInstanceRuntimeStateResponse runtimeState;
     private final Map<String, Optional<PluginRuntimeStateService.PluginRuntimeStatus>>
         pluginStatuses = new HashMap<>();
   }

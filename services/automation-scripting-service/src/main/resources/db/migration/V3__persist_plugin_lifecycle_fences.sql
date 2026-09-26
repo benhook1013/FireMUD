@@ -6,7 +6,7 @@ ALTER TABLE script_work_items
     ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 0,
     -- Authority-unavailable fences have three durable retries at 15, 30, and 60 seconds.
     ADD COLUMN authority_unavailable_retry_count INT NOT NULL DEFAULT 0,
-    ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP),
     ADD CONSTRAINT ck_script_work_items_plugin_fence CHECK (
         (plugin_activation_epoch = 0 AND lifecycle_revision = 0)
         OR (plugin_activation_epoch > 0 AND lifecycle_revision > 0)

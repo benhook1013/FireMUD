@@ -70,7 +70,8 @@ class V3__persist_plugin_lifecycle_fencesTest {
 
     assertThat(normalized)
         .contains("ADD COLUMN authority_unavailable_retry_count INT NOT NULL DEFAULT 0")
-        .contains("ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        .contains(
+            "ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP)")
         .contains(
             "CONSTRAINT ck_script_work_items_authority_unavailable_retry_count CHECK ( authority_unavailable_retry_count BETWEEN 0 AND 3 )");
   }

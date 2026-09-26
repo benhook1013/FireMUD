@@ -2017,7 +2017,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(batch_calls, [tuple(values)])
 
     def test_status_overview_expands_only_until_both_channel_targets_are_selected(self):
-        values, heads = _stacked_prs(6)
+        values, heads = _stacked_prs(12)
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads)
         controller.set_stack(list(values))
@@ -2043,16 +2043,91 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(report["review_targets"]["hosted"]["pr"], 5)
         self.assertEqual(report["review_targets"]["cli"]["pr"], 5)
-        self.assertEqual(report["detail_window"]["deep_prs"], [1, 2, 3, 4, 5])
-        self.assertEqual(report["prs"][5]["evidence_status"], "unknown")
+        self.assertEqual(report["detail_window"]["deep_prs"], list(range(1, 9)))
+        self.assertEqual(report["prs"][8]["evidence_status"], "unknown")
         self.assertEqual(batch_calls, [tuple(values)])
-        self.assertEqual(pull_calls, [1, 2, 3, 4, 5])
+        self.assertEqual(pull_calls, list(range(1, 9)))
         self.assertEqual(set(evidence.history_reads), {
             (pr_number, channel)
-            for pr_number in range(1, 6)
+            for pr_number in range(1, 9)
             for channel in ("hosted", "cli")
         })
-        self.assertEqual(len(evidence.history_reads), 10)
+        self.assertEqual(len(evidence.history_reads), 16)
+
+    def test_status_overview_grows_long_tail_target_window_in_batches(self):
+        values, heads = _stacked_prs(80)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for pr_number in range(1, 49):
+            hosted = self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            evidence[(pr_number, "hosted")] = [hosted]
+            evidence[(pr_number, "cli")] = [
+                {**hosted, "channel": "cli", "checkpoint": f"cli-{pr_number}-{round_number}"}
+                for round_number in range(1, 4)
+            ]
+        self._enable_batch_status(controller, values)
+        target_windows = []
+        original_status_from_state = controller._status_from_state
+
+        def track_target_window(*args, **kwargs):
+            target_windows.append(tuple(kwargs.get("review_target_prs", ())))
+            return original_status_from_state(*args, **kwargs)
+
+        controller._status_from_state = track_target_window
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 49)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 49)
+        self.assertEqual(
+            [len(window) for window in target_windows],
+            [4, 8, 16, 32, 64],
+        )
+        self.assertEqual(report["detail_window"]["deep_prs"], list(range(1, 65)))
+        self.assertEqual(report["ordered_prs"], list(range(1, 81)))
+
+    def test_status_overview_bounds_provider_reads_while_growing_window(self):
+        values, heads = _stacked_prs(20)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for pr_number in range(1, 9):
+            hosted = self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            evidence[(pr_number, "hosted")] = [hosted]
+            evidence[(pr_number, "cli")] = [
+                {**hosted, "channel": "cli", "checkpoint": f"cli-{pr_number}-{round_number}"}
+                for round_number in range(1, 4)
+            ]
+        batch_calls = self._enable_batch_status(controller, values)
+        pull_calls = []
+        original_pull = controller.github.pull_request
+
+        def pull(number):
+            pull_calls.append(number)
+            return original_pull(number)
+
+        controller.github.pull_request = pull
+
+        report = controller.status_overview()
+
+        deeply_checked_prs = set(range(1, 17))
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 9)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 9)
+        self.assertEqual(batch_calls, [tuple(values)])
+        self.assertEqual(evidence.active_target_reads, 1)
+        self.assertEqual(len(pull_calls), len(deeply_checked_prs))
+        self.assertEqual(set(pull_calls), deeply_checked_prs)
+        self.assertTrue(all(pull_calls.count(pr_number) == 1 for pr_number in deeply_checked_prs))
+        self.assertEqual(len(evidence.history_reads), 2 * len(deeply_checked_prs))
+        self.assertEqual(
+            set(evidence.history_reads),
+            {
+                (pr_number, channel)
+                for pr_number in deeply_checked_prs
+                for channel in ("hosted", "cli")
+            },
+        )
 
     def test_status_overview_skips_merged_and_human_stopped_targets(self):
         values, heads = _stacked_prs(4, merged=(1,))

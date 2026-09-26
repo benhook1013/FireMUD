@@ -376,7 +376,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setAuthorityUnavailableRetryCount(priorRetryCount);
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
-        .thenReturn(Optional.of(pluginState(1L, 1L)), Optional.empty());
+        .thenReturn(Optional.empty());
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -401,6 +401,50 @@ class ScriptWorkItemExecutionServiceImplTest {
         .isBetween(
             startedAt.plusSeconds(expectedDelaySeconds),
             completedAt.plusSeconds(expectedDelaySeconds));
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2})
+  void successfulPluginFenceValidationResetsBudgetBeforeLaterAuthorityGap(int priorRetryCount) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    item.setAuthorityUnavailableRetryCount(priorRetryCount);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(1L, 1L)), Optional.empty());
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    Instant startedAt = Instant.now();
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+    Instant completedAt = Instant.now();
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    assertThat(item.getNextEligibleAt())
+        .isBetween(startedAt.plusSeconds(15), completedAt.plusSeconds(15));
     verify(workItemRepository).save(item);
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
     Mockito.verifyNoInteractions(definitionRepository, handoffService);
