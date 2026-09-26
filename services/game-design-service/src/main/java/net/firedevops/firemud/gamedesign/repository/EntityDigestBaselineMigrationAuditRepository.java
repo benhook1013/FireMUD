@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.entity.EntityDigestBaselineMigrationAudit;
@@ -110,9 +111,19 @@ public class EntityDigestBaselineMigrationAuditRepository {
             .set(WORKLOAD_IDENTITY, audit.workloadIdentity())
             .set(OUTCOME, audit.outcome())
             .set(COMMITTED_AT, audit.committedAt())
-            .returning()
+            .returning(ID)
             .fetchOne();
-    return toEntity(record);
+    Long id = record == null ? null : record.get(ID);
+    if (id == null || id < 1) {
+      throw new IllegalStateException("Entity baseline migration audit insert returned no row ID");
+    }
+    EntityDigestBaselineMigrationAudit persisted =
+        findByOperationId(audit.operationId())
+            .orElseThrow(() -> new IllegalStateException("inserted migration audit is missing"));
+    if (!id.equals(persisted.id())) {
+      throw new IllegalStateException("inserted migration audit ID does not match readback");
+    }
+    return persisted;
   }
 
   /** Resolves a prior operation by its stable id for exact retry and readback. */
@@ -184,9 +195,9 @@ public class EntityDigestBaselineMigrationAuditRepository {
         record.get(SOURCE_CONTENT_DIGEST),
         record.get(SOURCE_DIGEST_SCHEMA_VERSION),
         record.get(SOURCE_RECORDED_FROM_WORKFLOW_ID),
-        record.get(SOURCE_RECORDED_AT),
+        toLocalDateTime(record, SOURCE_RECORDED_AT),
         record.get(SOURCE_LAST_VERIFIED_WORKFLOW_ID),
-        record.get(SOURCE_LAST_VERIFIED_AT),
+        toLocalDateTime(record, SOURCE_LAST_VERIFIED_AT),
         record.get(OBSERVED_TENANT_ID),
         PublishType.valueOf(record.get(OBSERVED_PUBLISH_TYPE)),
         PublishParticipantKey.valueOf(record.get(OBSERVED_PARTICIPANT_KEY)),
@@ -198,6 +209,20 @@ public class EntityDigestBaselineMigrationAuditRepository {
         record.get(ACTOR_IDENTITY),
         record.get(WORKLOAD_IDENTITY),
         record.get(OUTCOME),
-        record.get(COMMITTED_AT));
+        toLocalDateTime(record, COMMITTED_AT));
+  }
+
+  private LocalDateTime toLocalDateTime(Record record, Field<LocalDateTime> field) {
+    Object value = record.get(field);
+    if (value == null) {
+      return null;
+    }
+    if (value instanceof LocalDateTime localDateTime) {
+      return localDateTime;
+    }
+    if (value instanceof Timestamp timestamp) {
+      return timestamp.toLocalDateTime();
+    }
+    throw new IllegalStateException("unexpected timestamp type for " + field.getName());
   }
 }
