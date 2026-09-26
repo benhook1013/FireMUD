@@ -4,11 +4,16 @@ import net.firedevops.firemud.accountservice.client.GameDesignTenantIdentityClie
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Operator-invoked import; neither lookup nor evidence enumeration grants membership admission. */
 @Service
+@ConditionalOnProperty(
+    prefix = "firemud.account-tenant-migration",
+    name = "enabled",
+    havingValue = "true")
 public class LegacyTenantAssociationImportService {
   private final GameDesignTenantIdentityClient ownerClient;
   private final ApprovedLegacyTenantAssociationRepository repository;

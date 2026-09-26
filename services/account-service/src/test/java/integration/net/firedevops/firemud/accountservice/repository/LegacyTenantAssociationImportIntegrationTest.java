@@ -33,7 +33,8 @@ class LegacyTenantAssociationImportIntegrationTest {
   @Test
   void exactRetainedSourceAndApprovedOwnerReadAreRequiredForImmutableImport() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + SCHEMA);
+    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
+    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + SCHEMA);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     Flyway.configure()

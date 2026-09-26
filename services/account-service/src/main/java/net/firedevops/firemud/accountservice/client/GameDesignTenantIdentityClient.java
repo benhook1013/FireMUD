@@ -12,10 +12,15 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** Account-only authenticated read of a Game Design owner-approved legacy association. */
 @Component
+@ConditionalOnProperty(
+    prefix = "firemud.account-tenant-migration",
+    name = "enabled",
+    havingValue = "true")
 public class GameDesignTenantIdentityClient
     extends AbstractReloadingBlockingGrpcClient<
         TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub> {
