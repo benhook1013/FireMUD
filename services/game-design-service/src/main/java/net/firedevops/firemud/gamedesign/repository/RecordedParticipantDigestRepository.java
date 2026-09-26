@@ -236,9 +236,15 @@ public class RecordedParticipantDigestRepository {
               .set(RECORDED_AT, recordedAt)
               .set(LAST_VERIFIED_PUBLISH_WORKFLOW_ID, digest.getLastVerifiedPublishWorkflowId())
               .set(LAST_VERIFIED_AT, lastVerifiedAt)
-              .returning()
+              .returning(ID)
               .fetchOne();
-      return toEntity(record);
+      Long id = record == null ? null : record.get(ID);
+      if (id == null || id < 1) {
+        throw new IllegalStateException("recorded participant digest insert returned no row ID");
+      }
+      return findById(id)
+          .orElseThrow(
+              () -> new IllegalStateException("inserted recorded participant digest is missing"));
     }
     dsl.update(TABLE_REF)
         .set(TENANT_ID, digest.getTenantId())

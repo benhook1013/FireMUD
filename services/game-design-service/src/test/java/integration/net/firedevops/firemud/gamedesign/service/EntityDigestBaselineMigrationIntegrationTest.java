@@ -106,6 +106,23 @@ class EntityDigestBaselineMigrationIntegrationTest {
   }
 
   @Test
+  void insertedBaselineReturnsGeneratedIdAndExactDatabaseRow() {
+    createGame("9601");
+    Version version = createVersion("9601", 1);
+
+    RecordedParticipantDigest inserted = seedEntityBaseline("9601", version, 1);
+
+    assertThat(inserted.getId()).isPositive();
+    assertThat(baselineRepository.findById(inserted.getId()).orElseThrow())
+        .usingRecursiveComparison()
+        .isEqualTo(inserted);
+    assertThat(inserted.getTenantId()).isEqualTo("9601");
+    assertThat(inserted.getScopeValue()).isEqualTo(Long.toString(version.getId()));
+    assertThat(inserted.getContentDigest()).isEqualTo("entity-v1-" + version.getId());
+    assertThat(inserted.getDigestSchemaVersion()).isEqualTo(1);
+  }
+
+  @Test
   void enumeratesMixedRowsMigratesOnlyExactTenantVersionAndReadsBackAuditAndBaseline() {
     createGame("9201");
     createGame("9202");
