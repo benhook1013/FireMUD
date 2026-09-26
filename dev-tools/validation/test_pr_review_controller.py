@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli_runner, hosted
 from pr_review.cli import _parser
 from pr_review.controller import (
+    HOSTED_ACTIVE_RESPONSE_REASON,
+    HOSTED_CLI_OVERLAP_HOLD_REASON,
     ControllerError,
     DefaultGitProvider,
     LivePullRequest,
@@ -2470,25 +2472,56 @@ class ControllerTests(unittest.TestCase):
 
     def test_status_exposes_recent_completed_review_counts_without_changing_policy(self):
         hosted = [
-            Evidence(1, PARENT, f"h{index}", raw=index, accepted=1, completed=True, attributable=True,
-                     non_counting=index == 2)
+            {
+                **dataclasses.asdict(Evidence(
+                    1,
+                    PARENT,
+                    f"h{index}",
+                    raw=index,
+                    accepted=1,
+                    completed=True,
+                    attributable=True,
+                    non_counting=index == 2,
+                )),
+                "observed_at": f"2026-09-{index:02d}T12:00:00Z",
+            }
             for index in range(1, 6)
         ] + [
             Evidence(1, HEAD_1, "h6", raw=0, accepted=0, completed=True, attributable=True),
-            Evidence(1, HEAD_1, "unlinked", raw=2, accepted=0, completed=True, attributable=False),
+            {
+                **dataclasses.asdict(Evidence(
+                    1, HEAD_1, "unlinked", raw=2, accepted=0, completed=True, attributable=False
+                )),
+                "observed_at": "invalid",
+            },
             Evidence(1, HEAD_1, "pending", raw=0, accepted=0, provisional=True),
             Evidence(1, HEAD_1, "quota", raw=0, accepted=0, rate_limited=True),
         ]
-        cli = [Evidence(1, HEAD_1, "c1", raw=2, accepted=0, completed=True, attributable=True)]
+        cli = [{
+            **dataclasses.asdict(Evidence(
+                1, HEAD_1, "c1", raw=2, accepted=0, completed=True, attributable=True
+            )),
+            "observed_at": "2026-09-07T14:30:00+12:00",
+        }]
         controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): hosted, (1, "cli"): cli})
         controller.set_stack([1])
 
         result = controller.status()["prs"][0]
         self.assertEqual(result["review_activity"]["hosted"]["total"], 7)
         self.assertEqual([item["raw"] for item in result["review_activity"]["hosted"]["recent"]], [3, 4, 5, 0, 2])
+        self.assertEqual(
+            [item["completed_at"] for item in result["review_activity"]["hosted"]["recent"]],
+            ["2026-09-03T12:00:00Z", "2026-09-04T12:00:00Z", "2026-09-05T12:00:00Z", None, None],
+        )
+        self.assertEqual(
+            set(result["review_activity"]["hosted"]["recent"][0]),
+            {"raw", "accepted", "completed_at", "attributable", "current_head", "non_counting"},
+        )
+        self.assertFalse(result["review_activity"]["hosted"]["recent"][0]["current_head"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
         self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])
         self.assertEqual(result["review_activity"]["cli"]["total"], 1)
+        self.assertEqual(result["review_activity"]["cli"]["recent"][0]["completed_at"], "2026-09-07T02:30:00Z")
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
 
     def test_status_exposes_current_head_over_ceiling_reason_and_checkpoint_source(self):
@@ -2774,6 +2807,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "READY")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
 
+    def test_historical_terminal_hosted_ambiguity_does_not_hold_cli_on_later_head(self):
+        ambiguous = {
+            "pr": 1,
+            "head": HEAD_2,
+            "captured_head": HEAD_2,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "unstable": True,
+            "terminal_ambiguous": True,
+            "terminal": True,
+            "state": "ambiguous",
+            "attributable": False,
+            "trigger_id": 123,
+            "response_id": 124,
+            "fingerprint": "f" * 64,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [ambiguous]})
+        controller.set_stack([1])
+
+        report = controller.status()
+
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "MISSING_EVIDENCE")
+        self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
+        self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+
     def test_cli_ambiguity_projection_does_not_read_non_mapping_evidence(self):
         class NonMappingEvidence:
             @property
@@ -2792,14 +2850,67 @@ class ControllerTests(unittest.TestCase):
             "head": HEAD_1,
             "checkpoint": "trigger:123",
             "held": True,
-            "reason": "Hosted review is active",
+            "reason": "no attributable terminal response",
         }
-        controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): [active]})
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
         controller.set_stack([1])
 
         self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "HELD")
-        with self.assertRaisesRegex(ControllerError, "HELD"):
+        with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
             controller.resolve_cli_target()
+
+    def test_same_head_attributable_active_hosted_review_allows_cli_status_and_target(self):
+        active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
+        controller.set_stack([1])
+
+        report = controller.status()
+
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "MISSING_EVIDENCE")
+        self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
+        self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+
+    def test_active_hosted_review_on_another_head_holds_cli(self):
+        active = {
+            "pr": 1,
+            "head": HEAD_2,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
+        controller.set_stack([1])
+
+        report = controller.status()
+
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "HELD")
+        self.assertEqual(report["review_targets"]["cli"]["status"], "HELD")
+        self.assertEqual(report["review_targets"]["cli"]["reason"], HOSTED_CLI_OVERLAP_HOLD_REASON)
+        with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+            controller.resolve_cli_target()
+
+    def test_active_hosted_review_without_trigger_identity_holds_cli(self):
+        active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:pending",
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
+        controller.set_stack([1])
+
+        report = controller.status()
+
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "HELD")
+        self.assertEqual(report["review_targets"]["cli"]["status"], "HELD")
+        self.assertEqual(report["review_targets"]["cli"]["reason"], HOSTED_CLI_OVERLAP_HOLD_REASON)
 
     def test_unresolved_accepted_hosted_findings_hold_cli_status_and_target(self):
         accepted = self.allocation_evidence(checkpoint="hosted-findings", accepted=1, channel="hosted")
@@ -2808,7 +2919,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "HELD")
-        with self.assertRaisesRegex(ControllerError, "HELD"):
+        with self.assertRaisesRegex(ControllerError, "held"):
             controller.resolve_cli_target()
 
     def test_pull_request_snapshot_number_must_match_requested_pr(self):

@@ -36,6 +36,12 @@ class ReviewRunnerError(RuntimeError):
     """A preflight or execution failure that is safe to show to an operator."""
 
 
+HOSTED_ACTIVE_RESPONSE_REASON = "CodeRabbit acknowledged that the full review is active"
+HOSTED_CLI_OVERLAP_HOLD_REASON = (
+    "CLI can overlap Hosted only when the active Hosted request is attributable to the exact published head"
+)
+
+
 class WrongTargetError(ReviewRunnerError):
     """The requested target does not equal the target selected by stack policy."""
 
@@ -441,36 +447,74 @@ def _common_dir(
     return path
 
 
-def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path) -> None:
-    """Refuse CLI work only when Hosted attribution is unsafe or unresolved."""
+def _assert_no_active_hosted_review(
+    repo: str,
+    pr_number: int,
+    common_dir: Path,
+    *,
+    published_head_sha: str,
+    candidate_sha: str,
+) -> None:
+    """Allow only a safely attributed Hosted review of the same published head."""
+
+    def same_sha(value: Any, expected: str) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 40
+            and all(character in "0123456789abcdefABCDEF" for character in value)
+            and value.casefold() == expected.casefold()
+        )
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
     if not records:
         return
     if len(records) > 1:
-        raise ReviewRunnerError("multiple current Hosted reservations require operator resolution")
+        raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
 
     try:
         payload = github_api.fetch_pull_request(repo, pr_number)
         for record_path in records:
             record = hosted.load_trigger_reservation(record_path, repo, pr_number)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
-            # A terminal response whose immutable identity is known but whose
-            # attribution is ambiguous is historical context for CLI analysis.
-            # It provides no Hosted credit. Active requests, missing trigger or
-            # response identity, and timed-out requests remain blocking.
+            # A terminal ambiguous response with exact immutable identities is
+            # historical non-counting context, even after the PR advances. An
+            # active response overlaps only when both immutable identities and
+            # the exact published head are proven.
             terminal_attribution_ambiguity = (
                 state.state == "ambiguous"
                 and state.terminal is True
                 and state.attributed is False
+                and isinstance(state.trigger_comment_id, int)
+                and not isinstance(state.trigger_comment_id, bool)
+                and state.trigger_comment_id > 0
                 and isinstance(state.response_id, int)
                 and not isinstance(state.response_id, bool)
                 and state.response_id > 0
             )
-            if state.state in {"active", "awaiting_response"}:
-                raise ReviewRunnerError(f"an active Hosted review blocks CLI review: {state.state}")
+            if state.state == "active":
+                immutable_active_identity = (
+                    state.terminal is False
+                    and state.attributed is True
+                    and isinstance(state.repository, str)
+                    and state.repository.casefold() == repo.casefold()
+                    and state.pr_number == pr_number
+                    and isinstance(state.trigger_comment_id, int)
+                    and not isinstance(state.trigger_comment_id, bool)
+                    and state.trigger_comment_id > 0
+                    and isinstance(state.response_id, int)
+                    and not isinstance(state.response_id, bool)
+                    and state.response_id > 0
+                    and same_sha(state.head_sha, published_head_sha)
+                    and same_sha(state.current_head_sha, published_head_sha)
+                    and same_sha(candidate_sha, published_head_sha)
+                )
+                if immutable_active_identity:
+                    continue
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+            if state.state == "awaiting_response":
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
             if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
-                raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
             if terminal_attribution_ambiguity:
                 continue
             if state.state not in {
@@ -480,7 +524,7 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
                 "retired",
                 "rate_limited",
             }:
-                raise ReviewRunnerError(f"Hosted review has an unsupported state before CLI review: {state.state}")
+                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -760,7 +804,6 @@ def run_cli_review(
                     f"another review request is active for PR #{target.snapshot.number} (lock: {hosted_lock_path})"
                 ) from error
             hosted_lock_acquired = True
-            _assert_no_active_hosted_review(repository, target.snapshot.number, common_dir)
             capture_dir.mkdir(mode=0o700)
             live = github.pull_request(target.snapshot.number)
             live_files = github.pull_request_files(target.snapshot.number)
@@ -782,6 +825,13 @@ def run_cli_review(
                 source_root,
                 allow_unreconciled=allow_unreconciled,
                 git_timeout_seconds=git_timeout_seconds,
+            )
+            _assert_no_active_hosted_review(
+                repository,
+                target.snapshot.number,
+                common_dir,
+                published_head_sha=child_head,
+                candidate_sha=candidate_sha,
             )
             candidate_patch_identity = _patch_identity(
                 runner,

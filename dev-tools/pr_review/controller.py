@@ -25,6 +25,8 @@ from typing import Any, Protocol
 
 from . import policy, stack
 from .cli_runner import (
+    HOSTED_ACTIVE_RESPONSE_REASON,
+    HOSTED_CLI_OVERLAP_HOLD_REASON,
     EffectiveParent,
     PullRequestSnapshot,
     ReviewTarget,
@@ -438,10 +440,12 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
         if type(raw) is not int or type(accepted) is not int or raw < 0 or not 0 <= accepted <= raw:
             continue
         reviewed_head = _field(item, "head", "reviewed_head")
+        observed_at = parse_timestamp(_field(item, "observed_at"))
         results.append(
             {
                 "raw": raw,
                 "accepted": accepted,
+                "completed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
                 "attributable": _field(item, "attributable") is True,
                 "current_head": isinstance(reviewed_head, str) and reviewed_head == current_head,
                 "non_counting": _field(item, "non_counting") is True,
@@ -648,6 +652,86 @@ class ReviewController:
             ):
                 value = {key: item for key, item in value.items() if key not in {"held", "unstable"}}
             projected.append(value)
+        return projected
+
+    @staticmethod
+    def _project_cli_hosted_reservations(
+        cli_history: Sequence[Any],
+        hosted_history: Sequence[Any],
+        expected_pr: int,
+        current_head: str,
+    ) -> list[Any]:
+        """Apply the runner's same-head Hosted overlap fence to CLI policy."""
+
+        projected = list(cli_history)
+        for value in hosted_history:
+            if not isinstance(value, Mapping):
+                continue
+            checkpoint = _field(value, "checkpoint", "checkpoint_id")
+            if not isinstance(checkpoint, str) or not checkpoint.startswith("trigger:"):
+                continue
+            if _field(value, "rate_limited") is True:
+                continue
+
+            observed_head = _field(value, "head", "reviewed_head")
+            current_observation = (
+                isinstance(observed_head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
+                and observed_head.casefold() == current_head.casefold()
+            )
+            trigger_match = re.fullmatch(r"trigger:([1-9][0-9]*)", checkpoint)
+            trigger_id = _field(value, "trigger_id")
+            exact_trigger = trigger_match is not None and (
+                trigger_id is None
+                or (
+                    type(trigger_id) is int
+                    and trigger_id == int(trigger_match.group(1))
+                )
+            )
+            terminal_ambiguity = (
+                _field(value, "terminal_ambiguous") is True
+                and _field(value, "state") == "ambiguous"
+                and _field(value, "pr") == expected_pr
+                and exact_trigger
+                and type(_field(value, "response_id")) is int
+                and _field(value, "response_id") > 0
+                and type(_field(value, "trigger_id")) is int
+                and _field(value, "trigger_id") > 0
+                and isinstance(_field(value, "fingerprint"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", _field(value, "fingerprint")) is not None
+                and isinstance(_field(value, "captured_head"), str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", _field(value, "captured_head")) is not None
+            )
+            if terminal_ambiguity:
+                # Exact terminal ambiguity is historical, non-counting context
+                # and remains independent of CLI after the PR head advances.
+                continue
+
+            active_response = (
+                _field(value, "reason") == HOSTED_ACTIVE_RESPONSE_REASON
+                and _field(value, "held") is True
+                and _field(value, "unstable") is not True
+                and _field(value, "pr") == expected_pr
+                and current_observation
+                and exact_trigger
+            )
+            if active_response:
+                # LiveEvidence emits this exact reason only after trigger_state
+                # verifies an active response and its immutable numeric ID.
+                # The runner repeats the full identity check under request.lock.
+                continue
+            if _field(value, "held") is not True and _field(value, "unstable") is not True:
+                continue
+            projected.append(
+                {
+                    "pr": expected_pr,
+                    "head": observed_head if isinstance(observed_head, str) else current_head,
+                    "checkpoint": checkpoint,
+                    "held": True,
+                    "unstable": _field(value, "unstable") is True,
+                    "reason": HOSTED_CLI_OVERLAP_HOLD_REASON,
+                }
+            )
         return projected
 
     def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
@@ -2631,7 +2715,7 @@ class ReviewController:
                 if isinstance(value, str):
                     other_heads[pr] = value
         channel_allocations = allocations
-        return policy.select_review_target(
+        decision = policy.select_review_target(
             state,
             channel,
             tuple(pr for pr in candidate_prs if not live[pr].merged),
@@ -2655,6 +2739,18 @@ class ReviewController:
                 if view["status"] == "INVALID"
             },
         )
+        if (
+            channel == policy.Channel.CLI
+            and decision.target is not None
+            and decision.status == policy.ReviewStatus.HELD
+            and any(
+                _field(value, "reason") == HOSTED_CLI_OVERLAP_HOLD_REASON
+                and _field(value, "held") is True
+                for value in histories[channel].get(decision.target, ())
+            )
+        ):
+            return dataclasses.replace(decision, reason=HOSTED_CLI_OVERLAP_HOLD_REASON)
+        return decision
 
     def _status_review_targets(
         self,
@@ -2712,6 +2808,13 @@ class ReviewController:
             pr: self._policy_history(state, pr, other, reconciliation)
             for pr in state.ordered_prs
         }
+        if selected == policy.Channel.CLI:
+            history = {
+                pr: self._project_cli_hosted_reservations(
+                    history[pr], other_history[pr], pr, live[pr].head
+                )
+                for pr in state.ordered_prs
+            }
         decision = self._select_review_decision(
             state,
             selected,
@@ -2782,6 +2885,8 @@ class ReviewController:
             policy.ReviewStatus.ALLOCATION_EXHAUSTED,
         }
         if selected.status in blocked and not provisional:
+            if selected.status == policy.ReviewStatus.HELD:
+                raise ControllerError(f"{selected.channel.value} review cannot run: {selected.reason}")
             raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}")
 
     def status(self) -> dict[str, Any]:
@@ -2844,6 +2949,15 @@ class ReviewController:
                 for pr in state.ordered_prs
             }
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+        histories[policy.Channel.CLI] = {
+            pr: self._project_cli_hosted_reservations(
+                histories[policy.Channel.CLI][pr],
+                histories[policy.Channel.HOSTED][pr],
+                pr,
+                live[pr].head,
+            )
+            for pr in state.ordered_prs
         }
         if stop_audit_cache is None:
             stop_audit_cache = {}
