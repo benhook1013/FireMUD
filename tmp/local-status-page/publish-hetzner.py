@@ -36,14 +36,10 @@ def local_wifi_url() -> str:
 
 
 def public_html(source: str, local_url: str) -> str:
-    def keep_timestamp(match: re.Match[str]) -> str:
-        label = REFRESH_TIME.search(match.group(0))
-        if label is None:
-            raise ValueError("the published page needs its read-only refresh timestamp")
-        return f'<div class="refresh-form">{label.group(0)}</div>'
-
     result = BRIEF_LINK.sub(r"\1 (local brief)", source)
-    result = REFRESH_FORM.sub(keep_timestamp, result)
+    if REFRESH_TIME.search(result) is None:
+        raise ValueError("the published page needs its read-only refresh timestamp")
+    result = REFRESH_FORM.sub("", result)
     result = REFRESH_SCRIPT.sub("", result)
     age_script = AGE_SCRIPT.search(result)
     if age_script is None:
@@ -59,7 +55,6 @@ def public_html(source: str, local_url: str) -> str:
     )
     if policy_count != 1:
         raise ValueError("the published page needs a matching script policy")
-    result = result.replace("Private local snapshot", "Published delivery snapshot")
     result = re.sub(
         r"<footer>.*?</footer>",
         f'<footer>Manual snapshot. At home, <a href="{local_url}">open the local Wi-Fi page</a> to refresh review data.</footer>',

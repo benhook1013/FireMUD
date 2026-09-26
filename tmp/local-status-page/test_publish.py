@@ -29,11 +29,10 @@ class PublishedPageTest(unittest.TestCase):
         age_script = "read-only relative age behavior"
         snapshot_script = "read-only snapshot polling behavior"
         source = (
-            '<span>Private local snapshot</span>'
             '<meta name="status-snapshot" content="2026-09-24T12:00:00+00:00">'
             '<meta http-equiv="Content-Security-Policy" content="script-src \'sha256-abc\' \'sha256-def\'; connect-src \'self\'; form-action \'self\'">'
-            '<form class="refresh-form" action="/refresh" method="post"><button>Refresh</button>'
-            '<span class="refresh-time">Refreshed <time datetime="2026-09-24T12:00:00Z">just now</time></span></form>'
+            '<form class="refresh-form" action="/refresh" method="post"><button>Refresh</button></form>'
+            '<span class="refresh-time">Refreshed <time datetime="2026-09-24T12:00:00Z">just now</time></span>'
             '<script id="local-refresh-progress">fetch("/refresh-status")</script>'
             '<span class="round-pill" aria-label="2/2, Completed 24 Sep 2026 23:46 NZST" '
             'title="Completed 24 Sep 2026 23:46 NZST"><span>2/2</span>'
@@ -49,8 +48,8 @@ class PublishedPageTest(unittest.TestCase):
         self.assertIn('href="http://192.168.50.100:8877/"', result)
         self.assertNotIn('action="/refresh"', result)
         self.assertNotIn('<form class="refresh-form"', result)
-        self.assertIn('<div class="refresh-form"><span class="refresh-time">Refreshed '
-                      '<time datetime="2026-09-24T12:00:00Z">just now</time></span></div>', result)
+        self.assertIn('<span class="refresh-time">Refreshed '
+                      '<time datetime="2026-09-24T12:00:00Z">just now</time></span>', result)
         self.assertIn("form-action 'none'", result)
         self.assertIn("connect-src 'self'", result)
         self.assertIn(f"script-src 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result)
@@ -62,15 +61,17 @@ class PublishedPageTest(unittest.TestCase):
         self.assertIn('<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time>', result)
         self.assertIn('aria-label="2/2, Completed 24 Sep 2026 23:46 NZST"', result)
         self.assertNotIn("Local refresh instructions", result)
-        self.assertIn("Published delivery snapshot", result)
+        self.assertNotIn("Private local snapshot", result)
 
     def test_public_copy_rejects_missing_relative_age_script(self):
         with self.assertRaisesRegex(ValueError, "read-only relative-time script"):
-            publisher.public_html('<h2>Worker lanes</h2><h2>Configured review queue</h2>', "http://192.168.50.100:8877/")
+            publisher.public_html('<span class="refresh-time">Refreshed now</span>'
+                                  '<h2>Worker lanes</h2><h2>Configured review queue</h2>', "http://192.168.50.100:8877/")
 
     def test_public_copy_rejects_missing_snapshot_script(self):
         with self.assertRaisesRegex(ValueError, "read-only snapshot script"):
-            publisher.public_html('<script id="relative-age-updates">age</script>', "http://192.168.50.100:8877/")
+            publisher.public_html('<span class="refresh-time">Refreshed now</span>'
+                                  '<script id="relative-age-updates">age</script>', "http://192.168.50.100:8877/")
 
     def test_public_copy_rejects_refresh_form_without_timestamp(self):
         source = '<form class="refresh-form" action="/refresh" method="post"><button>Refresh</button></form>'

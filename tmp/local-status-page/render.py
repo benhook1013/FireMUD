@@ -630,10 +630,10 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }} heade
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ display: grid; grid-template-columns: 12.5rem minmax(0,1fr); gap: .65rem; align-items: center; height: 2.6rem; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
-.refresh-slot {{ display: flex; align-items: center; width: 12.5rem; height: 100%; }}
+.refresh-form {{ width: 8.5rem; height: 2.6rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+.refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
 .refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
-.refresh-time {{ line-height: 1.2; }}
+.refresh-time {{ display: block; margin-top: .55rem; color: #f0e0e6; font-size: .78rem; line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
 .refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
@@ -676,10 +676,12 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 :root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
 body {{ background: var(--ash); color: var(--ink); }}
 header.mast {{ background: var(--smoke); padding: 1rem clamp(1rem,4vw,3.5rem) .8rem; }}
-.mast-inner {{ max-width: 1440px; margin: auto; }}
-.mast-top {{ display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; }}
-.brand {{ display: inline-block; align-self: flex-start; margin: 0; color: #fff; text-decoration: none; font-size: 1.25rem; font-weight: 850; letter-spacing: -.04em; }}
-.snapshot {{ color: #eadfe2; font-size: .75rem; text-align: right; }} .snapshot a {{ color: #fff; }}
+.mast-inner {{ display: grid; grid-template-columns: 8.5rem minmax(0,1fr); column-gap: .75rem; max-width: 1440px; margin: auto; }}
+.mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
+.refresh-space {{ display: flex; align-items: center; }}
+.mast-top {{ display: flex; width: 100%; min-height: 2.6rem; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; }}
+.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+.mast-top > .repo-link {{ flex: 0 0 auto; color: #fff; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
@@ -707,7 +709,7 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .legend strong {{ color: #89182c; }} .legend-dash {{ display: inline-block; width: 1.2rem; margin-right: .3rem; border-top: 2px dashed #9b5760; vertical-align: middle; }}
 .review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
 .queue-stage {{ display: grid; grid-template-columns: minmax(150px,.4fr) minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem; border-top: 1px solid var(--line); }}
-.queue-stage:first-child {{ border-top: 0; }} .queue-stage > h3 {{ margin: .3rem 1rem 0 0; color: #723341; font-size: 1.05rem; font-weight: 850; line-height: 1.2; }}
+.queue-stage:first-child {{ border-top: 0; }} .queue-stage > h3 {{ margin: .3rem 1rem 0 0; color: #37414a; font-size: 1.05rem; font-weight: 850; line-height: 1.2; }}
 .queue-stage > .stack {{ border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }}
 .queue-stage > .stack li {{ position: relative; padding: 0; }} .queue-stage > .stack li:last-child {{ border: 0; }}
 .queue-stage > .stack .pr-main {{ padding: .55rem .7rem .55rem 0; }} .queue-stage > .stack .order {{ padding-top: .55rem; }}
@@ -731,10 +733,9 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
 a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .snapshot {{ align-self: flex-start; text-align: left; }} .refresh-form {{ gap: .65rem; margin-left: 0; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="mast-top"><a class="brand" href="{REPO_HOME}">FireMUD</a><span class="snapshot">Private local snapshot · <a href="/icon-options.html">Icon options</a></span></div>
-<form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{header_time}</span></form></div></header>
+<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><div class="mast-top"><h1 class="brand">FireMUD delivery status</h1><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><span class="refresh-time">{header_time}</span></div></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
