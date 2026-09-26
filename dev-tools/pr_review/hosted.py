@@ -93,8 +93,8 @@ INCOMPLETE_FILE_COVERAGE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 EXPLICIT_FILE_OMISSION = re.compile(
-    r"\b(?:\d+\s+)?files?\b(?:\s*\(\s*\d+\s*\))?\s+"
-    r"(?:(?:were|are)\s+)?(?:skipped|omitted)\b(?:\s*[:=]\s*\d+)?",
+    r"\b(?:(\d+)\s+)?files?\b(?:\s*\(\s*(\d+)\s*\))?\s+"
+    r"(?:(?:were|are)\s+)?(?:skipped|omitted)\b(?:\s*[:=]\s*(\d+))?",
     re.IGNORECASE,
 )
 OPEN_ISSUE_CLAIM = re.compile(
@@ -837,13 +837,33 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
         return True
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
     return any(
-        EXPLICIT_FILE_OMISSION.search(sentence)
+        _has_explicit_file_omission(sentence)
         or (
-            INCOMPLETE_FILE_COVERAGE.search(sentence)
-            and re.search(r"\breview(?:ed|ing)?\b", sentence, re.IGNORECASE)
+            INCOMPLETE_FILE_COVERAGE.search(_without_explicit_zero_file_omissions(sentence))
+            and re.search(
+                r"\breview(?:ed|ing)?\b",
+                _without_explicit_zero_file_omissions(sentence),
+                re.IGNORECASE,
+            )
         )
         for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
     )
+
+
+def _has_explicit_file_omission(sentence: str) -> bool:
+    for match in EXPLICIT_FILE_OMISSION.finditer(sentence):
+        counts = [int(count) for count in match.groups() if count is not None]
+        if not counts or any(count > 0 for count in counts):
+            return True
+    return False
+
+
+def _without_explicit_zero_file_omissions(sentence: str) -> str:
+    def keep_nonzero_omission(match: re.Match[str]) -> str:
+        counts = [int(count) for count in match.groups() if count is not None]
+        return " " if counts and all(count == 0 for count in counts) else match.group(0)
+
+    return EXPLICIT_FILE_OMISSION.sub(keep_nonzero_omission, sentence)
 
 
 def _summary_proves_complete_file_coverage(text: str) -> bool:

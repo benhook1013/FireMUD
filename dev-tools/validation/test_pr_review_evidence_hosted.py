@@ -740,9 +740,27 @@ class HostedEvidenceTests(unittest.TestCase):
             "Files are omitted during processing.",
             "2 files skipped during processing.",
             "Files (31) omitted due to moderation.",
+            "Files skipped: 2.",
+            "2 files omitted.",
+            "Files (2) skipped during processing.",
         ):
             with self.subTest(summary=summary):
                 self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_zero_skipped_or_omitted_files_are_not_explicit_incomplete_coverage(self):
+        for summary in (
+            "Files skipped: 0.",
+            "0 files omitted.",
+            "Files (0) skipped during processing.",
+            "Review files skipped: 0.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertTrue(
+            hosted._summary_has_explicit_incompleteness(
+                "Review files skipped: 0, but other files could not be reviewed."
+            )
+        )
 
     def test_docstring_skipped_files_are_not_incomplete_review_coverage(self):
         summary = (
