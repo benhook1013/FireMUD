@@ -550,7 +550,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-merged">MERGED</span>'
                       '<span class="sub"><time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time></span>', merged_row)
-        self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-front">REVIEW FRONT</span>'
+        self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-draft">DRAFT</span>'
                       '<span class="sub">Hosted new request blocked · CLI request status unknown</span>', front_row)
         self.assertNotIn('Hosted parent changed', merged_row)
         self.assertNotIn('CLI parent changed', merged_row)

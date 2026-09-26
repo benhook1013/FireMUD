@@ -444,6 +444,9 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 f'{controller_status_html}'
             )
             queue_badge_html = '<span class="queue-status queue-status-closed">CLOSED</span>'
+        elif lifecycle == "OPEN" and github.get("states", {}).get(number) is True:
+            status_html = controller_status_html
+            queue_badge_html = '<span class="queue-status queue-status-draft">DRAFT</span>'
         elif queue_item:
             status_html = controller_status_html
             if number == data["review_front"]:
@@ -726,6 +729,7 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .queue-status-merged {{ background: var(--plum); color: #fff; }}
 .queue-status-reviewing {{ background: #d9edf4; border-color: #8bb8c8; color: #17495a; }}
 .queue-status-review-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
+.queue-status-draft {{ background: #e9eaf0; border-color: #b8bdcc; color: #444b5b; }}
 .queue-status-up-next {{ background: #fff3db; border-color: #d0a95c; color: #6a4d17; }}
 .queue-status-queued, .queue-status-pending {{ background: #fff; border-color: #c7ccd4; color: #58616d; }}
 .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
