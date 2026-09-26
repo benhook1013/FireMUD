@@ -250,16 +250,17 @@ public class AccountConnectTokenIssuanceRepository {
             "UPDATE "
                 + OPERATION_TABLE
                 + " SET reconciliation_attempt_count = reconciliation_attempt_count + 1, "
-                + "last_reconciliation_attempt_at = ?, last_reconciliation_attempt_reason = ?, "
-                + "next_reconciliation_attempt_at = ? "
+                + "last_reconciliation_attempt_at = CAST(? AS TIMESTAMPTZ), "
+                + "last_reconciliation_attempt_reason = ?, "
+                + "next_reconciliation_attempt_at = CAST(? AS TIMESTAMPTZ) "
                 + "WHERE account_id = ? AND tenant_id = ? AND connect_scope_hash = ? "
                 + "AND request_id = ? AND request_digest_version = ? AND request_digest = ? "
                 + "AND status IN ('PENDING', 'ABORTED') "
                 + "AND reconciliation_attempt_count = ? "
                 + "AND reconciliation_attempt_count < ? RETURNING operation_id",
-            persistedAttemptAt.atOffset(ZoneOffset.UTC),
+            persistedAttemptAt.atOffset(ZoneOffset.UTC).toString(),
             reason.trim(),
-            persistedNextAttemptAt.atOffset(ZoneOffset.UTC),
+            persistedNextAttemptAt.atOffset(ZoneOffset.UTC).toString(),
             identity.accountId(),
             identity.tenantId(),
             identity.connectScopeHash(),

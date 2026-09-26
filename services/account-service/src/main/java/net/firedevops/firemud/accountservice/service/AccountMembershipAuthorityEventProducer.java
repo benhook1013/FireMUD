@@ -455,8 +455,14 @@ public class AccountMembershipAuthorityEventProducer {
         snapshot);
   }
 
-  /** Requires the latest checkpoint event to prove the exact current retained membership state. */
-  @Transactional(propagation = Propagation.MANDATORY)
+  /**
+   * Requires the latest checkpoint event to prove the exact current retained membership state.
+   * This read may fail closed during JOIN/reconciliation without undoing a caller's retry receipt.
+   */
+  @Transactional(
+      propagation = Propagation.MANDATORY,
+      readOnly = true,
+      noRollbackFor = IllegalStateException.class)
   public Checkpoint requireCurrentMembershipEvent(
       long accountId,
       long legacyTenantId,
@@ -487,8 +493,11 @@ public class AccountMembershipAuthorityEventProducer {
         snapshot);
   }
 
-  /** Reconciliation proof variant for the locked membership and role readback records. */
-  @Transactional(propagation = Propagation.MANDATORY)
+  /** Reconciliation proof variant for locked membership and role readback records. */
+  @Transactional(
+      propagation = Propagation.MANDATORY,
+      readOnly = true,
+      noRollbackFor = IllegalStateException.class)
   public Checkpoint requireCurrentMembershipEvent(
       JoinMembershipProof membership,
       RoleSnapshot roleSnapshot,
