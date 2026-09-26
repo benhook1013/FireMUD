@@ -2508,6 +2508,18 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "READY")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
 
+    def test_cli_ambiguity_projection_does_not_read_non_mapping_evidence(self):
+        class NonMappingEvidence:
+            @property
+            def terminal_ambiguous(self):
+                raise AssertionError("non-mapping evidence must not be inspected")
+
+        evidence = NonMappingEvidence()
+
+        self.assertEqual(
+            ReviewController._project_cli_hosted_ambiguity(Channel.CLI, [evidence]), [evidence]
+        )
+
     def test_active_hosted_reservation_holds_cli_status_and_target(self):
         active = {
             "pr": 1,

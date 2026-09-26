@@ -6394,6 +6394,19 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
+    if [[ "${FAKE_PR_FILES_FAILURE:-false}" == true ]]; then
+      files_call_count=0
+      if [[ -n "${FAKE_PR_FILES_CALL_COUNT:-}" && -f "$FAKE_PR_FILES_CALL_COUNT" ]]; then
+        files_call_count="$(<"$FAKE_PR_FILES_CALL_COUNT")"
+      fi
+      files_call_count=$((files_call_count + 1))
+      if [[ -n "${FAKE_PR_FILES_CALL_COUNT:-}" ]]; then
+        printf '%s\n' "$files_call_count" >"$FAKE_PR_FILES_CALL_COUNT"
+      fi
+      if ((files_call_count == 2)); then
+        exit 1
+      fi
+    fi
     if [[ -n "${FAKE_PR_FILES_JSON:-}" ]]; then
       printf '%s' "$FAKE_PR_FILES_JSON"
     else
@@ -6496,6 +6509,8 @@ run_deploy_target_fixture() {
       TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
       TEST_PR_CHANGED_FILES_JSON="${FAKE_FIXTURE_CHANGED_FILES_JSON:-1}" \
       TEST_PR_CHANGED_FILES_SEQUENCE="${FAKE_FIXTURE_CHANGED_FILES_SEQUENCE:-}" \
+      FAKE_PR_FILES_FAILURE="${FAKE_FIXTURE_PR_FILES_FAILURE:-false}" \
+      FAKE_PR_FILES_CALL_COUNT="$TEMP_DIR/deploy-target-${scenario}.pr-files-call-count" \
       FAKE_PR_JSON_CALL_COUNT="$TEMP_DIR/deploy-target-${scenario}.pr-json-call-count" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
@@ -6551,6 +6566,8 @@ FAKE_FIXTURE_CHANGED_FILES_SEQUENCE='"invalid",1' \
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"docs/readme.md"}]]' \
   run_deploy_target_fixture complete-ordinary-file-list 0 'action=deploy'
 grep -Fxq 'v2_schema_migration_change=false' "$TEMP_DIR/deploy-target-complete-ordinary-file-list.output"
+FAKE_FIXTURE_PR_FILES_FAILURE=true \
+  run_deploy_target_fixture failed-pr-file-list 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
   run_deploy_target_fixture standalone-private 1 \
     'Private bridge proof requires hosted-controller identity.'

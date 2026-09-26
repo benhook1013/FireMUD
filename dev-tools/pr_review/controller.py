@@ -610,6 +610,9 @@ class ReviewController:
             return list(history)
         projected: list[Any] = []
         for value in history:
+            if not isinstance(value, Mapping):
+                projected.append(value)
+                continue
             if (
                 _field(value, "terminal_ambiguous") is True
                 and _field(value, "terminal") is True
@@ -619,7 +622,6 @@ class ReviewController:
                 and _field(value, "response_id") > 0
                 and isinstance(_field(value, "fingerprint"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", _field(value, "fingerprint")) is not None
-                and isinstance(value, Mapping)
             ):
                 value = {key: item for key, item in value.items() if key not in {"held", "unstable"}}
             projected.append(value)
