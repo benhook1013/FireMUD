@@ -141,7 +141,7 @@ final class GameSessionRuntimeControlPlaneReadService {
             scriptPatchPublicationLink(
                 instance.getTenantId(),
                 instance.getScriptPatchVersion(),
-                runtimeVersionId(instance)))
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -409,21 +409,6 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setPublicationState(response.getScriptPatch().getPublicationState())
         .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
         .build();
-  }
-
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null && instance.getVersionId() > 0L) {
-      return instance.getVersionId();
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
   }
 
   private static long parseGameInstanceId(String gameInstanceId) {

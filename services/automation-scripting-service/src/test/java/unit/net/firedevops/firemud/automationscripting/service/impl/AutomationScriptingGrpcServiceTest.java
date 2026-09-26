@@ -1,9 +1,11 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -106,6 +108,27 @@ class AutomationScriptingGrpcServiceTest {
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
+  }
+
+  private AutomationScriptingGrpcService configuredService(String workloadNamespace) {
+    return new AutomationScriptingGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(ScriptDefinitionService.class),
+        Mockito.mock(ScriptDesignDigestService.class),
+        Mockito.mock(ScriptVersionService.class),
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        Mockito.mock(ScriptEventIngressService.class),
+        Mockito.mock(ScriptWorkItemRepository.class),
+        Mockito.mock(NpcFormationService.class),
+        new SimpleMeterRegistry(),
+        workloadNamespace);
+  }
+
+  @Test
+  void invalidConfiguredWorkloadNamespaceFailsConstruction() {
+    assertDoesNotThrow(() -> configuredService(null));
+    assertDoesNotThrow(() -> configuredService(" "));
+    assertThrows(IllegalArgumentException.class, () -> configuredService("not a namespace"));
   }
 
   @Test

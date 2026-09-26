@@ -74,6 +74,27 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void runtimeVersionIdOnlyFallsBackWhenVersionIdIsAbsent() {
+    GameInstance instance = new GameInstance();
+    instance.setRuntimeVersion("100");
+
+    instance.setVersionId(7L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isEqualTo(7L);
+
+    instance.setVersionId(0L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+    instance.setVersionId(-1L);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+
+    instance.setVersionId(null);
+    assertThat(RuntimeVersionIdResolver.resolve(instance)).isEqualTo(100L);
+    for (String invalidRuntimeVersion : new String[] {null, "", " ", "malformed", "0", "-1"}) {
+      instance.setRuntimeVersion(invalidRuntimeVersion);
+      assertThat(RuntimeVersionIdResolver.resolve(instance)).isNull();
+    }
+  }
+
+  @Test
   void rejectsEpochValueOnExpectUnpinnedBeforeOwnerReads() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);

@@ -16,6 +16,7 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
@@ -405,6 +406,51 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void ambiguousFinalizationDoesNotNotifyScriptVersionUpdate() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(publishGateService.collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(List.of());
+
+    AtomicInteger transactionCalls = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              Object result = ((Supplier<?>) invocation.getArgument(0)).get();
+              if (transactionCalls.incrementAndGet() == 2) {
+                throw new IllegalStateException("transaction completion outcome is ambiguous");
+              }
+              return result;
+            })
+        .when(publishAttemptService)
+        .executeScriptPatchTransaction(any());
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertEquals("transaction completion outcome is ambiguous", thrown.getMessage());
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(scriptingClient, org.mockito.Mockito.never())
+        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+  }
+
+  @Test
   void nestedFinalizationFailureRollsBackPublishAndExactRetryReadsFailedReceipt() {
     Game game = new Game();
     game.setId(1L);
@@ -447,6 +493,8 @@ class VersionServiceImplTest {
     assertEquals("recorded digest write failed", firstFailure.getMessage());
     String workflowId = binding.derivedWorkflowIdentity();
     verify(versionRepository).delete(draftAfterRollback);
+    verify(scriptingClient, org.mockito.Mockito.never())
+        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
     verify(publishAttemptService)
         .markScriptPatchFailed(
             org.mockito.ArgumentMatchers.eq(workflowId),

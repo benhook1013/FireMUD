@@ -84,6 +84,7 @@ class WorldManagementGrpcServiceTest {
   private static GetDraftDesignDigestResponse invokeDigest(
       WorldManagementGrpcService service, GetDraftDesignDigestRequest request) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
     service.getDraftDesignDigest(
         request,
         new StreamObserver<>() {
@@ -93,11 +94,16 @@ class WorldManagementGrpcServiceTest {
           }
 
           @Override
-          public void onError(Throwable t) {}
+          public void onError(Throwable t) {
+            error.set(t);
+          }
 
           @Override
           public void onCompleted() {}
         });
+    if (error.get() != null) {
+      throw new AssertionError("Digest RPC failed", error.get());
+    }
     return ref.get();
   }
 
@@ -228,22 +234,32 @@ class WorldManagementGrpcServiceTest {
             publicationReadGuard());
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    service.getDraftDesignDigest(
-        fullDigestRequest("1", "7"),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetDraftDesignDigestResponse value) {
-            ref.set(value);
-          }
+    GetDraftDesignDigestResponse response = invokeDigest(service, fullDigestRequest("1", "7"));
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
 
-          @Override
-          public void onError(Throwable t) {}
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      WorldManagementGrpcService service =
+          new WorldManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              Mockito.mock(WorldInstanceActivationService.class),
+              digestService,
+              Mockito.mock(WorldDesignMutationService.class),
+              Mockito.mock(WorldUpgradeValidationService.class),
+              Mockito.mock(GameplaySessionAttestationService.class),
+              new SimpleMeterRegistry(),
+              new ObjectMapper(),
+              workloadNamespace);
 
-          @Override
-          public void onCompleted() {}
-        });
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+      assertEquals(
+          "PERMISSION_DENIED",
+          invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+    }
     Mockito.verifyNoInteractions(digestService);
   }
 

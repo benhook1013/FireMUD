@@ -69,7 +69,7 @@ The Temporal owner-authorization seam is implemented at the receiver boundary: e
 ## gRPC APIs
 
 - `SaveRevision` – currently persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path, including scoped multi-row `WORLD_GENERATION_SUBTREE` payloads for generated room, exit, generation-rule, and spawn-binding changes. It is an implementation seam, not proof that a multi-owner commit is synchronized.
-- `PublishVersion` – freezes a set of revisions and attempts durable full-version publish / release-attestation orchestration through the Game Design Temporal `publish` workflow family when Temporal is enabled; the current owner-authorization gap blocks that path until converged, as recorded above.
+- `PublishVersion` – freezes a set of revisions and attempts durable full-version publish / release-attestation orchestration through the Game Design Temporal `publish` workflow family when Temporal is enabled; owner authorization is implemented, while end-to-end publication still lacks content-scope and live proof, as recorded above.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `GetPublishedScriptPatchVersion` – target-authoritative design-time read API for script-patch publication lifecycle and digest identity; current reads reject non-script-only or non-`PUBLISHED` rows, while the remaining publication and readiness gaps are recorded in Implementation Status.
 - `UploadPluginBundle` – signed bundle ingestion, archive verification, object-store persistence, and indexed manifest extraction flow.

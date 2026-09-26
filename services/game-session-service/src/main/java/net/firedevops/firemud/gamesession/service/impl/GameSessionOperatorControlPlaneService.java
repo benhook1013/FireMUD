@@ -96,7 +96,7 @@ final class GameSessionOperatorControlPlaneService {
             scriptPatchPublicationLink(
                 instance.getTenantId(),
                 instance.getScriptPatchVersion(),
-                runtimeVersionId(instance)))
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -121,7 +121,7 @@ final class GameSessionOperatorControlPlaneService {
             scriptPatchPublicationLink(
                 instance.getTenantId(),
                 instance.getScriptPatchVersion(),
-                runtimeVersionId(instance)))
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -444,7 +444,7 @@ final class GameSessionOperatorControlPlaneService {
           gameDesignClient == null
               ? null
               : gameDesignClient.getPublishedScriptPatchVersion(
-                  tenantId, targetScriptPatchVersion, runtimeVersionId(instance));
+                  tenantId, targetScriptPatchVersion, RuntimeVersionIdResolver.resolve(instance));
     } catch (RuntimeException ex) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
@@ -503,7 +503,7 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
-    Long runtimeVersionId = runtimeVersionId(instance);
+    Long runtimeVersionId = RuntimeVersionIdResolver.resolve(instance);
     if (runtimeVersionId == null) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
@@ -511,21 +511,6 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
     }
     return null;
-  }
-
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null) {
-      return instance.getVersionId() > 0L ? instance.getVersionId() : null;
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
   }
 
   private String normalizePatch(String value) {

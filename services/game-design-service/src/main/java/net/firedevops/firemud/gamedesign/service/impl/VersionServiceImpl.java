@@ -178,15 +178,15 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
-      runSafely(
-          "notify script patch version update",
-          () -> scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
-
       finalizationStarted = true;
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
+        runSafely(
+            "notify script patch version update",
+            () ->
+                scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {

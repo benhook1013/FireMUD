@@ -3748,6 +3748,7 @@ class ScriptScheduleInstanceServiceImplTest {
   @Test
   void listInstancesLogsAndContainsPublicationLookupFailures() {
     ScriptScheduleInstance instance = wallClockTimerInstance();
+    instance.setObservedRuntimeVersionId("7");
     instance.setPluginId("plugin-1");
     instance.setPluginVersionId("plugin-v1");
     setPluginFence(instance);
@@ -3768,7 +3769,8 @@ class ScriptScheduleInstanceServiceImplTest {
         .singleElement()
         .satisfies(
             summary -> {
-              assertThat(summary.publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("GAME_DESIGN_UNAVAILABLE");
               assertThat(summary.pluginPublication().lookupErrorCode())
                   .isEqualTo("GAME_DESIGN_UNAVAILABLE");
             });

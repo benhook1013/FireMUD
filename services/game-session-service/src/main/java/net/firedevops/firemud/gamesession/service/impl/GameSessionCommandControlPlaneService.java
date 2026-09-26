@@ -2020,23 +2020,8 @@ public final class GameSessionCommandControlPlaneService {
     return gameInstanceRepository
         .findById(gameInstanceId)
         .filter(instance -> instance.getTenantId() == tenantId)
-        .map(this::runtimeVersionId)
+        .map(RuntimeVersionIdResolver::resolve)
         .orElse(null);
-  }
-
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null && instance.getVersionId() > 0L) {
-      return instance.getVersionId();
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(

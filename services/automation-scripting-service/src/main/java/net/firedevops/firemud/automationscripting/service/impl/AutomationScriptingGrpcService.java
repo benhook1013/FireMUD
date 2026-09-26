@@ -515,11 +515,7 @@ public class AutomationScriptingGrpcService
     if (workloadNamespace == null || workloadNamespace.isBlank()) {
       return null;
     }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+    return new PublicationReadGuard(workloadNamespace);
   }
 
   private static PublicationDigestRequestBinding fullPublicationBinding(

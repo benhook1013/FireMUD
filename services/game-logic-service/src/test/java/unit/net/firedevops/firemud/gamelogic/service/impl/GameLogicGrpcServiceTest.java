@@ -376,6 +376,11 @@ class GameLogicGrpcServiceTest {
   }
 
   private GameLogicGrpcService newDigestService(GameLogicDraftDesignDigestService digestService) {
+    return newDigestService(digestService, TEST_NAMESPACE);
+  }
+
+  private GameLogicGrpcService newDigestService(
+      GameLogicDraftDesignDigestService digestService, String workloadNamespace) {
     return new GameLogicGrpcService(
         new PingServiceImpl(),
         new CommandServiceImpl(
@@ -388,7 +393,20 @@ class GameLogicGrpcServiceTest {
         digestService,
         mockAttestationService(),
         new SimpleMeterRegistry(),
-        publicationReadGuard());
+        workloadNamespace);
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      GameLogicGrpcService service = newDigestService(digestService, workloadNamespace);
+
+      assertEquals(
+          "PERMISSION_DENIED",
+          invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+    }
+    Mockito.verifyNoInteractions(digestService);
   }
 
   private GetDraftDesignDigestResponse invokeDigest(
