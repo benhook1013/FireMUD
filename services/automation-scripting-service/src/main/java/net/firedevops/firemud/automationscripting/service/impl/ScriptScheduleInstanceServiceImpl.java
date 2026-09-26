@@ -861,16 +861,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (UNIT_MILLISECONDS.equals(definition.getCadenceUnit())) {
       instance.setMaterializationStatus(STATUS_READY);
       boolean compatibleExistingRow =
-          (nonPinTransitionSeed == null
-                  && compatibleRuntimeGeneration
-                  && sameScheduleConfiguration)
+          (nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration)
               || settledWallClockLifecycleRefresh;
       if (!compatibleExistingRow) {
         Instant seed = nonPinTransitionSeed != null ? nonPinTransitionSeed : pinObservedAt;
         try {
           Instant nextDueAt = seed.plusMillis(definition.getCadenceValue());
-          if (pluginLifecycleFenceChanged
-              && Objects.equals(nextDueAt, previousNextDueAt)) {
+          if (pluginLifecycleFenceChanged && Objects.equals(nextDueAt, previousNextDueAt)) {
             // Lifecycle revision is fence evidence but not candidate identity. Do not let a
             // re-seeded wall-clock schedule recreate the displaced generation's due identity.
             nextDueAt = nextDueAt.plusMillis(definition.getCadenceValue());
@@ -1589,8 +1586,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
               && candidatePluginFence.pluginActivationEpoch() > 0
               && candidatePluginFence.lifecycleRevision() > 0
-              && state.getPluginActivationEpoch()
-                  == candidatePluginFence.pluginActivationEpoch()
+              && state.getPluginActivationEpoch() == candidatePluginFence.pluginActivationEpoch()
               && state.getLifecycleRevision() == candidatePluginFence.lifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,

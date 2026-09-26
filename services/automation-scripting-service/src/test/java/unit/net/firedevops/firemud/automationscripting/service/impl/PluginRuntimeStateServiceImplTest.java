@@ -898,8 +898,7 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
-    PluginRuntimeStateService service =
-        service(repository, eventRepository, historyRepository);
+    PluginRuntimeStateService service = service(repository, eventRepository, historyRepository);
 
     assertThatThrownBy(
             () ->
@@ -930,8 +929,7 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
-    PluginRuntimeStateService service =
-        service(repository, eventRepository, historyRepository);
+    PluginRuntimeStateService service = service(repository, eventRepository, historyRepository);
 
     assertThatThrownBy(
             () ->
