@@ -733,6 +733,25 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
         self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
 
+    def test_skipped_or_omitted_files_are_explicit_incomplete_coverage(self):
+        for summary in (
+            "Files skipped due to moderation.",
+            "Files were skipped due to moderation.",
+            "Files are omitted during processing.",
+            "2 files skipped during processing.",
+            "Files (31) omitted due to moderation.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_docstring_skipped_files_are_not_incomplete_review_coverage(self):
+        summary = (
+            "Docstring Coverage: Analyzed 255 functions across 50 files "
+            "(31 skipped: 24 unsupported, 7 over the file limit.)"
+        )
+
+        self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+
     def test_reviewed_count_still_proves_complete_coverage_and_conflicts_fail_closed(self):
         complete = "Files selected: 89. Files not reviewed: 0. Files reviewed: 89."
         inconsistent = (

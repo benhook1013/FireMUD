@@ -92,6 +92,11 @@ INCOMPLETE_FILE_COVERAGE = re.compile(
     r"unable\s+to\s+review|moderation|processing\s+errors?)\b",
     re.IGNORECASE | re.DOTALL,
 )
+EXPLICIT_FILE_OMISSION = re.compile(
+    r"\b(?:\d+\s+)?files?\b(?:\s*\(\s*\d+\s*\))?\s+"
+    r"(?:(?:were|are)\s+)?(?:skipped|omitted)\b(?:\s*[:=]\s*\d+)?",
+    re.IGNORECASE,
+)
 OPEN_ISSUE_CLAIM = re.compile(
     r"\b(?:\d+\s+)?(?:reported\s+)?issues?\s+(?:remain|remains|are|is|stay|stays|still)\s+open\b",
     re.IGNORECASE,
@@ -832,8 +837,11 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
         return True
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
     return any(
-        INCOMPLETE_FILE_COVERAGE.search(sentence)
-        and re.search(r"\breview(?:ed|ing)?\b", sentence, re.IGNORECASE)
+        EXPLICIT_FILE_OMISSION.search(sentence)
+        or (
+            INCOMPLETE_FILE_COVERAGE.search(sentence)
+            and re.search(r"\breview(?:ed|ing)?\b", sentence, re.IGNORECASE)
+        )
         for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
     )
 
