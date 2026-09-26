@@ -266,6 +266,17 @@ def pr(
     )
 
 
+def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BASE, patch_id=None):
+    return {
+        "pr": 1,
+        "child_head": HEAD_1,
+        "parent_identity": parent_identity,
+        "parent_head": parent_head,
+        "merge_base": merge_base,
+        "patch_id": patch_id or f"patch-{HEAD_1[:4]}",
+    }
+
+
 class ControllerTests(unittest.TestCase):
     def make(self, values, evidence=None, *, heads=None):
         directory = tempfile.TemporaryDirectory()
@@ -2866,6 +2877,7 @@ class ControllerTests(unittest.TestCase):
             "checkpoint": "trigger:123",
             "held": True,
             "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+            "anchor": hosted_anchor(),
         }
         controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
         controller.set_stack([1])
@@ -2875,6 +2887,34 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["prs"][0]["channels"]["cli"], "MISSING_EVIDENCE")
         self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+
+    def test_same_head_active_hosted_review_with_changed_anchor_holds_cli(self):
+        cases = {
+            "missing anchor": None,
+            "parent identity": hosted_anchor(parent_identity="17"),
+            "parent head": hosted_anchor(parent_head=HEAD_2),
+            "merge base": hosted_anchor(merge_base=HEAD_2),
+            "patch identity": hosted_anchor(patch_id="different-patch"),
+        }
+        for label, anchor in cases.items():
+            with self.subTest(anchor=label):
+                active = {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:123",
+                    "held": True,
+                    "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+                    **({"anchor": anchor} if anchor is not None else {}),
+                }
+                controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [active]})
+                controller.set_stack([1])
+
+                report = controller.status()
+
+                self.assertEqual(report["prs"][0]["channels"]["cli"], "HELD")
+                self.assertEqual(report["review_targets"]["cli"]["status"], "HELD")
+                with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+                    controller.resolve_cli_target()
 
     def test_active_hosted_review_on_another_head_holds_cli(self):
         active = {

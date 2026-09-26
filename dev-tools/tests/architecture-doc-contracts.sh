@@ -1860,7 +1860,8 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "durable exact-scope successful acknowledgement/readback",
+        "the read does not expose the acknowledgement's resulting epoch as a separate field",
+        "keep the fence in place and fail closed",
         "do not treat a successful RPC response, admission mode/epoch, fresh `observedAt`, or zero drain counts alone as proof of recovery containment",
         "overall queue recovery/resume path still lacks exact pin-epoch, process-cessation, and rebuild proof",
         "deployment-wide Automation containment only with explicit impact approval",

@@ -104,6 +104,18 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<PluginRuntimeStatus> getLocalLifecycleStatus(
+      String tenantId, String gameInstanceId, String pluginId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    requireText(pluginId, "plugin_id");
+    return repository
+        .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
+        .map(state -> toStatus(state, Map.of()));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Map<String, String> getActivePluginVersions(
       String tenantId, String gameInstanceId, String runtimeRegionId, long runtimeRegionEpoch) {
     requireText(tenantId, "tenant_id");

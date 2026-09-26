@@ -454,8 +454,9 @@ def _assert_no_active_hosted_review(
     *,
     published_head_sha: str,
     candidate_sha: str,
+    expected_anchor: Mapping[str, Any] | None,
 ) -> None:
-    """Allow only a safely attributed Hosted review of the same published head."""
+    """Allow overlap only for an active Hosted request on the exact same anchor."""
 
     def same_sha(value: Any, expected: str) -> bool:
         return (
@@ -463,6 +464,26 @@ def _assert_no_active_hosted_review(
             and len(value) == 40
             and all(character in "0123456789abcdefABCDEF" for character in value)
             and value.casefold() == expected.casefold()
+        )
+
+    def same_anchor(value: Any) -> bool:
+        if not isinstance(value, Mapping) or expected_anchor is None:
+            return False
+        if type(value.get("pr")) is not int or value["pr"] != pr_number:
+            return False
+        for name in ("child_head", "parent_head", "merge_base"):
+            expected = expected_anchor.get(name)
+            if not isinstance(expected, str) or not same_sha(value.get(name), expected):
+                return False
+        parent_identity = expected_anchor.get("parent_identity")
+        patch_id = expected_anchor.get("patch_id")
+        return (
+            isinstance(parent_identity, str)
+            and bool(parent_identity)
+            and value.get("parent_identity") == parent_identity
+            and isinstance(patch_id, str)
+            and bool(patch_id)
+            and value.get("patch_id") == patch_id
         )
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
@@ -507,6 +528,7 @@ def _assert_no_active_hosted_review(
                     and same_sha(state.head_sha, published_head_sha)
                     and same_sha(state.current_head_sha, published_head_sha)
                     and same_sha(candidate_sha, published_head_sha)
+                    and same_anchor(record.get("anchor"))
                 )
                 if immutable_active_identity:
                     continue
@@ -826,13 +848,6 @@ def run_cli_review(
                 allow_unreconciled=allow_unreconciled,
                 git_timeout_seconds=git_timeout_seconds,
             )
-            _assert_no_active_hosted_review(
-                repository,
-                target.snapshot.number,
-                common_dir,
-                published_head_sha=child_head,
-                candidate_sha=candidate_sha,
-            )
             candidate_patch_identity = _patch_identity(
                 runner,
                 source_root,
@@ -850,6 +865,32 @@ def run_cli_review(
             )
             if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
+            selected_patch_matches = (
+                target.patch_identity == candidate_patch_identity
+                and bool(target.patch_identity)
+            )
+            selected_merge_base_matches = (
+                bool(target.merge_base)
+                and _sha(target.merge_base, "selected merge base") == merge_base
+            )
+            expected_anchor = None
+            if selected_patch_matches and selected_merge_base_matches:
+                expected_anchor = {
+                    "pr": target.snapshot.number,
+                    "child_head": child_head,
+                    "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
+                    "parent_head": target.parent.head_sha,
+                    "merge_base": merge_base,
+                    "patch_id": candidate_patch_identity,
+                }
+            _assert_no_active_hosted_review(
+                repository,
+                target.snapshot.number,
+                common_dir,
+                published_head_sha=child_head,
+                candidate_sha=candidate_sha,
+                expected_anchor=expected_anchor,
+            )
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:

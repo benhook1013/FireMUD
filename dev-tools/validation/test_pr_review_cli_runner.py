@@ -219,6 +219,7 @@ def target(
     reconciled=True,
     ancestor_links_valid=True,
     merge_base="",
+    patch_identity="",
     default_base_front=False,
 ):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
@@ -228,6 +229,7 @@ def target(
         reconciled=reconciled,
         ancestor_links_valid=ancestor_links_valid,
         merge_base=merge_base,
+        patch_identity=patch_identity,
         repository="owner/repo",
         default_base_front=default_base_front,
         default_test_merge_base_sha=BASE if default_base_front else "",
@@ -271,7 +273,7 @@ def hosted_payload(body="Full review triggered", *, include_response=True):
     }
 
 
-def write_hosted_trigger(common_dir, *, legacy=False, status="posted", head_sha=HEAD):
+def write_hosted_trigger(common_dir, *, legacy=False, status="posted", head_sha=HEAD, anchor=None):
     namespace = "coderabbit-review-logs" if legacy else "firemud"
     directory = common_dir / namespace / "hosted" / "owner_repo" / "pr-42"
     directory.mkdir(parents=True)
@@ -284,6 +286,7 @@ def write_hosted_trigger(common_dir, *, legacy=False, status="posted", head_sha=
                 "repository": "owner/repo",
                 "pr_number": 42,
                 "head_sha": head_sha,
+                **({"anchor": anchor} if anchor is not None else {}),
                 **(
                     {
                         "trigger": {
@@ -301,6 +304,17 @@ def write_hosted_trigger(common_dir, *, legacy=False, status="posted", head_sha=
         )
     )
     return record_path
+
+
+def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARENT, patch_id=None):
+    return {
+        "pr": 42,
+        "child_head": HEAD,
+        "parent_identity": parent_identity,
+        "parent_head": parent_head,
+        "merge_base": merge_base,
+        "patch_id": patch_id or hashlib.sha256(f"candidate patch {HEAD}\n".encode()).hexdigest(),
+    }
 
 
 class CliReviewRunnerTests(unittest.TestCase):
@@ -848,14 +862,15 @@ class CliReviewRunnerTests(unittest.TestCase):
             root = Path(directory)
             common_dir = root / ".git"
             common_dir.mkdir()
-            record_path = write_hosted_trigger(common_dir)
+            selected = target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"])
+            record_path = write_hosted_trigger(common_dir, anchor=cli_anchor())
             original_record = json.loads(record_path.read_text())
             commands = FakeCommands(root)
             with patch(
                 "pr_review.cli_runner.github_api.fetch_pull_request",
                 return_value=hosted_payload("Full review triggered"),
             ):
-                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+                run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
             self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
             self.assertEqual(json.loads(record_path.read_text()), original_record)
 
@@ -864,7 +879,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             root = Path(directory)
             common_dir = root / ".git"
             common_dir.mkdir()
-            write_hosted_trigger(common_dir)
+            write_hosted_trigger(common_dir, anchor=cli_anchor())
             commands = FakeCommands(root, candidate=CANDIDATE)
             with (
                 patch(
@@ -873,8 +888,40 @@ class CliReviewRunnerTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
             ):
-                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+                run_cli_review(
+                    target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_active_hosted_review_same_head_with_changed_anchor_holds_cli(self):
+        target_anchor = cli_anchor()
+        selected = target(merge_base=PARENT, patch_identity=target_anchor["patch_id"])
+        cases = {
+            "missing anchor": None,
+            "parent identity": cli_anchor(parent_identity="17"),
+            "parent head": cli_anchor(parent_head=OLDER_BASE),
+            "merge base": cli_anchor(merge_base=OLDER_BASE),
+            "patch identity": cli_anchor(patch_id="0" * 64),
+        }
+        for label, hosted_anchor in cases.items():
+            with self.subTest(anchor=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                common_dir = root / ".git"
+                common_dir.mkdir()
+                write_hosted_trigger(common_dir, anchor=hosted_anchor)
+                commands = FakeCommands(root)
+                with (
+                    patch(
+                        "pr_review.cli_runner.github_api.fetch_pull_request",
+                        return_value=hosted_payload("Full review triggered"),
+                    ),
+                    self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
+                ):
+                    run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
+                self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_awaiting_hosted_reservation_blocks_cli_and_preserves_record(self):
         with tempfile.TemporaryDirectory() as directory:

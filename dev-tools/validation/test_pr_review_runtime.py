@@ -1531,6 +1531,40 @@ class RuntimeTest(unittest.TestCase):
                 unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
         self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
 
+    def test_active_hosted_observation_exposes_its_durable_anchor(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=11,
+            state="active",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="CodeRabbit acknowledged that the full review is active",
+        )
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertEqual(observation["anchor"], record["anchor"])
+
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         response_at = "2026-09-23T00:03:00Z"

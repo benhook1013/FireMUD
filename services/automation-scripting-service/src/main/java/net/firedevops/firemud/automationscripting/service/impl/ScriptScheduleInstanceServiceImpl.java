@@ -1241,13 +1241,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRealmSlug(routingBundle.realmSlug());
     audit.setPointerVersion(routingBundle.pointerVersion());
     audit.setScriptId(instance.getScriptId());
-    audit.setPluginId(blankToEmpty(instance.getPluginId()));
-    audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
-    audit.setBindingId(applicableBindingId(instance));
+    audit.setPluginId(candidate.pluginFence().pluginId());
+    audit.setPluginVersionId(candidate.pluginFence().pluginVersionId());
+    audit.setBindingId(candidate.pluginFence().bindingId());
     audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
-    audit.setPluginActivationEpoch(instance.getPluginActivationEpoch());
-    audit.setLifecycleRevision(instance.getLifecycleRevision());
+    audit.setPluginActivationEpoch(candidate.pluginFence().pluginActivationEpoch());
+    audit.setLifecycleRevision(candidate.pluginFence().lifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1396,13 +1396,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRealmSlug(routingBundle.realmSlug());
     item.setPointerVersion(routingBundle.pointerVersion());
     item.setScriptId(instance.getScriptId());
-    item.setPluginId(blankToEmpty(instance.getPluginId()));
-    item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
-    item.setBindingId(applicableBindingId(instance));
+    item.setPluginId(candidate.pluginFence().pluginId());
+    item.setPluginVersionId(candidate.pluginFence().pluginVersionId());
+    item.setBindingId(candidate.pluginFence().bindingId());
     item.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     item.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
-    item.setPluginActivationEpoch(instance.getPluginActivationEpoch());
-    item.setLifecycleRevision(instance.getLifecycleRevision());
+    item.setPluginActivationEpoch(candidate.pluginFence().pluginActivationEpoch());
+    item.setLifecycleRevision(candidate.pluginFence().lifecycleRevision());
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
@@ -1534,8 +1534,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         || runtimeState.getRegionEpoch() != candidate.regionEpoch()) {
       return MaterializationEligibility.proven(REASON_RUNTIME_SCOPE_CHANGED);
     }
-    String pluginId = blankToEmpty(instance.getPluginId());
-    String pluginVersionId = blankToEmpty(instance.getPluginVersionId());
+    PluginFenceSnapshot candidatePluginFence = candidate.pluginFence();
+    if (!candidatePluginFence.matches(instance)) {
+      return MaterializationEligibility.proven(REASON_PLUGIN_BINDING_MISMATCH);
+    }
+    String pluginId = candidatePluginFence.pluginId();
+    String pluginVersionId = candidatePluginFence.pluginVersionId();
     if (pluginId.isBlank() && pluginVersionId.isBlank()) {
       return MaterializationEligibility.eligible();
     }
@@ -1556,10 +1560,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
               && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
-              && instance.getPluginActivationEpoch() > 0
-              && instance.getLifecycleRevision() > 0
-              && state.getPluginActivationEpoch() == instance.getPluginActivationEpoch()
-              && state.getLifecycleRevision() == instance.getLifecycleRevision()
+              && candidatePluginFence.pluginActivationEpoch() > 0
+              && candidatePluginFence.lifecycleRevision() > 0
+              && state.getPluginActivationEpoch()
+                  == candidatePluginFence.pluginActivationEpoch()
+              && state.getLifecycleRevision() == candidatePluginFence.lifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,
                   new AutomationRuntimeScopeSupport.RuntimeScope(
@@ -2222,6 +2227,30 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private record WallClockAdvanceResult(
       boolean changed, Instant fireDueAt, TimerFiringCandidate suppressedCandidate) {}
 
+  private record PluginFenceSnapshot(
+      String pluginId,
+      String pluginVersionId,
+      long pluginActivationEpoch,
+      long lifecycleRevision,
+      String bindingId) {
+    private static PluginFenceSnapshot capture(ScriptScheduleInstance instance) {
+      return new PluginFenceSnapshot(
+          blankToEmpty(instance.getPluginId()),
+          blankToEmpty(instance.getPluginVersionId()),
+          instance.getPluginActivationEpoch(),
+          instance.getLifecycleRevision(),
+          applicableBindingId(instance));
+    }
+
+    private boolean matches(ScriptScheduleInstance instance) {
+      return Objects.equals(pluginId, blankToEmpty(instance.getPluginId()))
+          && Objects.equals(pluginVersionId, blankToEmpty(instance.getPluginVersionId()))
+          && pluginActivationEpoch == instance.getPluginActivationEpoch()
+          && lifecycleRevision == instance.getLifecycleRevision()
+          && Objects.equals(bindingId, applicableBindingId(instance));
+    }
+  }
+
   private record TimerFiringCandidate(
       ScriptScheduleInstance instance,
       String regionId,
@@ -2230,7 +2259,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String scriptPinControlPlaneRequestId,
       Long dueTickId,
       Instant dueAt,
-      boolean wallClock) {
+      boolean wallClock,
+      PluginFenceSnapshot pluginFence) {
+    private TimerFiringCandidate(
+        ScriptScheduleInstance instance,
+        String regionId,
+        Long regionEpoch,
+        long scriptPinEpoch,
+        String scriptPinControlPlaneRequestId,
+        Long dueTickId,
+        Instant dueAt,
+        boolean wallClock) {
+      this(
+          instance,
+          regionId,
+          regionEpoch,
+          scriptPinEpoch,
+          scriptPinControlPlaneRequestId,
+          dueTickId,
+          dueAt,
+          wallClock,
+          PluginFenceSnapshot.capture(instance));
+    }
+
     private static TimerFiringCandidate tick(ScriptScheduleInstance instance, long dueTickId) {
       return new TimerFiringCandidate(
           instance,
@@ -2314,17 +2365,17 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       values.add(blankToEmpty(instance.getTargetScopeId()));
       values.add(targetEntityId(instance));
       values.add(blankToEmpty(instance.getScriptId()));
-      values.add(blankToEmpty(instance.getPluginId()));
-      values.add(blankToEmpty(instance.getPluginVersionId()));
-      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
-        values.add("pluginActivationEpoch:" + instance.getPluginActivationEpoch());
+      values.add(pluginFence.pluginId());
+      values.add(pluginFence.pluginVersionId());
+      if (isPluginOwned(pluginFence.pluginId(), pluginFence.pluginVersionId())) {
+        values.add("pluginActivationEpoch:" + pluginFence.pluginActivationEpoch());
       }
       values.add(blankToEmpty(instance.getEventType()));
       values.add(DEFAULT_SCHEMA_VERSION);
       values.add(blankToEmpty(instance.getScriptPatchVersion()));
       values.add(Long.toString(scriptPinEpoch));
-      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
-        values.add(applicableBindingId(instance));
+      if (isPluginOwned(pluginFence.pluginId(), pluginFence.pluginVersionId())) {
+        values.add(pluginFence.bindingId());
       }
       values.add(blankToEmpty(instance.getScheduleDefinitionId()));
       values.add(wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);

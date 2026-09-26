@@ -252,7 +252,7 @@ class ScriptEventIngressServiceImplTest {
 
   private static PluginRuntimeStateService enabledPluginRuntimeStateService() {
     PluginRuntimeStateService service = Mockito.mock(PluginRuntimeStateService.class);
-    when(service.getStatus("1", "game-1", "plugin-1"))
+    when(service.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -847,7 +847,7 @@ class ScriptEventIngressServiceImplTest {
                 scriptDefinition("script-stale-plugin", "plugin-2", "plugin-v2")));
     when(pluginRuntimeStateService.getActivePluginVersions("1", "game-1", "region-1", 7L))
         .thenReturn(Map.of("plugin-1", "plugin-v1"));
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -977,7 +977,7 @@ class ScriptEventIngressServiceImplTest {
     // state. Ingress must reject before persisting a work item or event audit.
     when(pluginRuntimeStateService.getActivePluginVersions("1", "game-1", "region-1", 7L))
         .thenReturn(Map.of("plugin-1", "plugin-v1"));
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -1436,7 +1436,7 @@ class ScriptEventIngressServiceImplTest {
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-2"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-2"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -2569,7 +2569,7 @@ class ScriptEventIngressServiceImplTest {
                 .build());
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -2677,7 +2677,8 @@ class ScriptEventIngressServiceImplTest {
                     null,
                     1L,
                     1L));
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1")).thenReturn(status);
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
+        .thenReturn(status);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -2753,7 +2754,7 @@ class ScriptEventIngressServiceImplTest {
                 .build());
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -2837,7 +2838,7 @@ class ScriptEventIngressServiceImplTest {
                 .build());
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
-    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+    when(pluginRuntimeStateService.getLocalLifecycleStatus("1", "game-1", "plugin-1"))
         .thenReturn(
             Optional.of(
                 new PluginRuntimeStateService.PluginRuntimeStatus(
@@ -4586,7 +4587,9 @@ class ScriptEventIngressServiceImplTest {
     assertThat(finalizedCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_ADMITTED");
     InOrder order = Mockito.inOrder(repository, pluginRuntimeStateService);
     order.verify(repository).insertIfAbsentByIdentity(Mockito.any());
-    order.verify(pluginRuntimeStateService).getStatus("1", "game-1", "plugin-1");
+    order.verify(pluginRuntimeStateService)
+        .getLocalLifecycleStatus("1", "game-1", "plugin-1");
+    verify(pluginRuntimeStateService, never()).getStatus("1", "game-1", "plugin-1");
   }
 
   @Test

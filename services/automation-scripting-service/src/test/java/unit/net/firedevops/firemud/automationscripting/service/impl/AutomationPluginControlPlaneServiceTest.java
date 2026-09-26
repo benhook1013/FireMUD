@@ -138,11 +138,6 @@ class AutomationPluginControlPlaneServiceTest {
         .drain(
             new net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService
                 .PluginStateCommand(
-                "tenant-1",
-                "game-1",
-                "plugin-1",
-                "drain-1",
-                "operator-1",
-                "operator_drain"));
+                "tenant-1", "game-1", "plugin-1", "drain-1", "operator-1", "operator_drain"));
   }
 }

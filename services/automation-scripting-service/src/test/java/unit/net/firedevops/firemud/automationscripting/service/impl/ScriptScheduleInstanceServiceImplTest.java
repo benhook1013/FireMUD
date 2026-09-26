@@ -2650,6 +2650,75 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void timerCandidateDoesNotEmitUnderPluginFenceDisplacedAfterSelection() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    timerInstance.setPluginId("plugin-1");
+    timerInstance.setPluginVersionId("plugin-v1");
+    timerInstance.setBindingId("binding-timer");
+    setPluginFence(timerInstance);
+    stubScheduleObservation(timerInstance);
+    PluginRuntimeState displacedOwner = enabledPluginRuntimeState("plugin-2", "plugin-v2");
+    displacedOwner.setPluginActivationEpoch(2L);
+    displacedOwner.setLifecycleRevision(2L);
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "game-1", "plugin-2"))
+        .thenReturn(Optional.of(displacedOwner));
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenAnswer(
+            invocation -> {
+              timerInstance.setPluginId("plugin-2");
+              timerInstance.setPluginVersionId("plugin-v2");
+              timerInstance.setPluginActivationEpoch(2L);
+              timerInstance.setLifecycleRevision(2L);
+              return runtimeStateResponse("patch-1");
+            });
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(automationQueueService, never()).enqueueWorkItem(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("plugin_binding_mismatch");
+    assertThat(auditCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
+    assertThat(auditCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(auditCaptor.getValue().getPluginActivationEpoch()).isEqualTo(1L);
+    assertThat(auditCaptor.getValue().getLifecycleRevision()).isEqualTo(1L);
+  }
+
+  @Test
+  void timerCandidateDoesNotRebindWhenBindingChangesAfterSelection() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    timerInstance.setPluginId("plugin-1");
+    timerInstance.setPluginVersionId("plugin-v1");
+    timerInstance.setBindingId("binding-before");
+    setPluginFence(timerInstance);
+    stubScheduleObservation(timerInstance);
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1")));
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenAnswer(
+            invocation -> {
+              timerInstance.setBindingId("binding-after");
+              return runtimeStateResponse("patch-1");
+            });
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(automationQueueService, never()).enqueueWorkItem(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("plugin_binding_mismatch");
+    assertThat(auditCaptor.getValue().getBindingId()).isEqualTo("binding-before");
+  }
+
+  @Test
   void explicitPatchMismatchPersistsBoundedSkipAuditBeforeFencing() {
     ScriptScheduleInstance timerInstance = wallClockTimerInstance();
     stubScheduleObservation(timerInstance);

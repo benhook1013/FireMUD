@@ -660,8 +660,9 @@ class ReviewController:
         hosted_history: Sequence[Any],
         expected_pr: int,
         current_head: str,
+        current_anchor: AnchorFacts | None,
     ) -> list[Any]:
-        """Apply the runner's same-head Hosted overlap fence to CLI policy."""
+        """Apply the runner's exact-anchor Hosted overlap fence to CLI policy."""
 
         projected = list(cli_history)
         for value in hosted_history:
@@ -714,6 +715,7 @@ class ReviewController:
                 and _field(value, "pr") == expected_pr
                 and current_observation
                 and exact_trigger
+                and ReviewController._hosted_anchor_matches(value, expected_pr, current_anchor)
             )
             if active_response:
                 # LiveEvidence emits this exact reason only after trigger_state
@@ -733,6 +735,56 @@ class ReviewController:
                 }
             )
         return projected
+
+    @staticmethod
+    def _hosted_anchor_matches(
+        observation: Any,
+        expected_pr: int,
+        current_anchor: AnchorFacts | None,
+    ) -> bool:
+        if current_anchor is None or current_anchor.pr != expected_pr:
+            return False
+        anchor = _field(observation, "anchor")
+        if not isinstance(anchor, Mapping) or type(anchor.get("pr")) is not int:
+            return False
+        if anchor.get("pr") != expected_pr:
+            return False
+        expected = current_anchor.as_dict()
+        for name in ("child_head", "parent_head", "merge_base"):
+            value = anchor.get(name)
+            target = expected[name]
+            if (
+                not isinstance(value, str)
+                or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
+                or value.casefold() != target.casefold()
+            ):
+                return False
+        return (
+            isinstance(anchor.get("parent_identity"), str)
+            and anchor.get("parent_identity") == expected["parent_identity"]
+            and isinstance(anchor.get("patch_id"), str)
+            and bool(anchor.get("patch_id"))
+            and anchor.get("patch_id") == expected["patch_id"]
+        )
+
+    @staticmethod
+    def _reconciled_anchor(
+        pr: int,
+        live: LivePullRequest,
+        reconciliation: stack.Reconciliation,
+    ) -> AnchorFacts | None:
+        link = reconciliation.links.get(pr)
+        merge_base = reconciliation.merge_bases.get(pr)
+        patch_id = reconciliation.patch_ids.get(pr)
+        if (
+            link is None
+            or not isinstance(merge_base, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", merge_base) is None
+            or not isinstance(patch_id, str)
+            or not patch_id
+        ):
+            return None
+        return AnchorFacts(pr, live.head, link.identity, link.parent_head, merge_base, patch_id)
 
     def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
         numbers = tuple(pr_numbers)
@@ -1179,6 +1231,16 @@ class ReviewController:
             overall = result.status
         else:
             overall = stack.ReconciliationStatus.COHERENT
+        current_anchors = {
+            pr: anchor
+            for pr, anchor in anchors.items()
+            if (
+                (link := result.links.get(pr)) is not None
+                and link.identity == anchor.parent_identity
+                and link.parent_head.casefold() == anchor.parent_head.casefold()
+                and anchor.child_head.casefold() == live[pr].head.casefold()
+            )
+        }
         return live, dataclasses.replace(
             result,
             status=overall,
@@ -1186,6 +1248,8 @@ class ReviewController:
             reasons=reasons,
             statuses=statuses,
             channel_statuses=channel_statuses,
+            merge_bases={pr: anchor.merge_base for pr, anchor in current_anchors.items()},
+            patch_ids={pr: anchor.patch_id for pr, anchor in current_anchors.items()},
             legacy_transition_prs=tuple(pr for pr in state.ordered_prs if pr in legacy_transition_prs),
             legacy_transition_fingerprints=legacy_transition_fingerprints,
         )
@@ -2811,7 +2875,11 @@ class ReviewController:
         if selected == policy.Channel.CLI:
             history = {
                 pr: self._project_cli_hosted_reservations(
-                    history[pr], other_history[pr], pr, live[pr].head
+                    history[pr],
+                    other_history[pr],
+                    pr,
+                    live[pr].head,
+                    self._reconciled_anchor(pr, live[pr], reconciliation),
                 )
                 for pr in state.ordered_prs
             }
@@ -2956,6 +3024,7 @@ class ReviewController:
                 histories[policy.Channel.HOSTED][pr],
                 pr,
                 live[pr].head,
+                self._reconciled_anchor(pr, live[pr], reconciliation),
             )
             for pr in state.ordered_prs
         }

@@ -1608,6 +1608,9 @@ class LiveEvidence:
                         "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
                         "reason": state.reason,
                     }
+                    if state.state == "active":
+                        anchor = record.get("anchor")
+                        observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
                     if state.state == "ambiguous":
                         terminal_observation = self._terminal_ambiguous_hosted_observation(
                             pr, record, state, payload

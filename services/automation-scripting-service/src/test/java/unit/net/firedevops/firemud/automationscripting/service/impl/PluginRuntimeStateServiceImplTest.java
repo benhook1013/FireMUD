@@ -362,6 +362,58 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void readsLocalLifecycleStatusWithoutPublicationLookups() {
+    PluginRuntimeState existing = new PluginRuntimeState();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setPluginId("plugin-1");
+    existing.setActivePluginVersionId("plugin-v1");
+    existing.setPendingPluginVersionId("plugin-v2");
+    existing.setPluginState(PluginState.PLUGIN_STATE_DRAINING.name());
+    existing.setStatusReason("drain_started");
+    existing.setLastChangedAt(Instant.ofEpochMilli(123L));
+    existing.setControlPlaneRequestId("req-7");
+    existing.setActorPrincipal("operator-1");
+    existing.setLastPolicyCheckedAt(Instant.ofEpochMilli(456L));
+    existing.setRuntimeRegionId("region-9");
+    existing.setRuntimeRegionEpoch(33L);
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(9L);
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            gameDesignClient,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
+        service.getLocalLifecycleStatus("1", "game-1", "plugin-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().activePluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(status.get().pendingPluginVersionId()).isEqualTo("plugin-v2");
+    assertThat(status.get().runtimeRegionId()).isEqualTo("region-9");
+    assertThat(status.get().runtimeRegionEpoch()).isEqualTo(33L);
+    assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_DRAINING);
+    assertThat(status.get().statusReason()).isEqualTo("drain_started");
+    assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
+    assertThat(status.get().controlPlaneRequestId()).isEqualTo("req-7");
+    assertThat(status.get().actorPrincipal()).isEqualTo("operator-1");
+    assertThat(status.get().lastPolicyCheckedAtMs()).isEqualTo(456L);
+    assertThat(status.get().pluginActivationEpoch()).isEqualTo(4L);
+    assertThat(status.get().lifecycleRevision()).isEqualTo(9L);
+    assertThat(status.get().activePublication()).isNull();
+    assertThat(status.get().pendingPublication()).isNull();
+    Mockito.verifyNoInteractions(gameDesignClient);
+  }
+
+  @Test
   void alreadyDisabledReasonOnlyCommandIsMutationFree() {
     PluginRuntimeState existing = new PluginRuntimeState();
     existing.setTenantId("1");

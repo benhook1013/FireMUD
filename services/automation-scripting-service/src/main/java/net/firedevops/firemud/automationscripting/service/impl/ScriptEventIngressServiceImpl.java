@@ -1284,7 +1284,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return authority.pluginStatuses.computeIfAbsent(
         pluginId,
         ignored ->
-            pluginRuntimeStateService.getStatus(
+            pluginRuntimeStateService.getLocalLifecycleStatus(
                 request.getTenantId(), request.getGameInstanceId(), pluginId));
   }
 
