@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Owner-local legacy source read. This does not attest an Account numeric tenant key.
+service TenantIdentityService {
+  rpc ResolveLegacyGameTenantIdentity(ResolveLegacyGameTenantIdentityRequest)
+      returns (ResolveLegacyGameTenantIdentityResponse);
+}
+
+message ResolveLegacyGameTenantIdentityRequest {
+  string legacy_game_tenant_id = 1;
+}
+
+message ResolveLegacyGameTenantIdentityResponse {
+  string canonical_tenant_id = 1;
+  string source_legacy_game_tenant_id = 2;
+  int64 source_game_row_id = 3;
+  string provenance_kind = 4;
+}

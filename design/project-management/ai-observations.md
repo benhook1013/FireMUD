@@ -109,3 +109,8 @@ Entry format:
   - Context: the Entity baseline migrator needs a short-lived dedicated client identity without giving its certificate writer general Secret-read or deletion privileges.
   - Observation: a leaf verifying against the CA bundled in the same Secret is only self-consistent; it does not show that the namespace trusts that CA, and static issuance tests do not show the live Entity server accepts the identity.
   - Expected pattern: keep issuance opt-in and narrowly admitted, verify the projected leaf and chain against the namespace's independent trust projection under a separately authorized reader, then report live served-mTLS acceptance and later identity retirement as distinct proof.
+
+- `2026-09-26`: PostgreSQL identity migrations need separate jOOQ and runtime proof
+  - Context: Account and Game Design added UUID identity-source migrations while preserving numeric retained rows. The configured community jOOQ DDL parser rejected `GENERATED ALWAYS AS` and some grouped `ALTER COLUMN`/PostgreSQL function syntax, even though those are database constructs.
+  - Observation: replacing Account's generated source column with a trigger-bound immutable column and isolating Game Design's PostgreSQL-only DDL behind the existing jOOQ-ignore markers let schema generation proceed. Local Testcontainers cases compiled but skipped without Docker, so parser success is not PostgreSQL migration execution.
+  - Expected pattern: run jOOQ generation, Flyway numbering, and focused Java tests locally; keep a separate exact-head PostgreSQL migration/readback gate on a runner with Docker, and report any skipped integration case as unproved rather than green runtime evidence.

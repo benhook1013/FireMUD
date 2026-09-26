@@ -10,6 +10,7 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import org.flywaydb.core.Flyway;
@@ -49,6 +50,7 @@ class AccountRepositoryIntegrationTest {
       "account_profile_identity_migration_proof";
   private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
       "account_global_registration_migration_proof";
+  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA = "account_uuid_migration_proof";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -405,6 +407,55 @@ class AccountRepositoryIntegrationTest {
     assertThat(repository.findByEmail("  PLAYER@EXAMPLE.COM ")).isPresent();
   }
 
+  @Test
+  void repositoryPersistsAndReadsBackUniqueAccountUuidAndProvenance() {
+    Account saved =
+        repository.save(
+            account("uuid-account", "uuid-account@example.com", AccountLifecycleState.ACTIVE));
+    UUID accountUuid = saved.getAccountUuid();
+
+    assertThat(accountUuid).isNotNull();
+    assertThat(saved.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    assertThat(saved.getAccountUuidSourceNumericId()).isEqualTo(saved.getId());
+
+    Account foundByNumericId = repository.findById(saved.getId()).orElseThrow();
+    Account foundByUuid = repository.findByAccountUuid(accountUuid).orElseThrow();
+    assertThat(foundByNumericId.getAccountUuid()).isEqualTo(accountUuid);
+    assertThat(foundByUuid.getId()).isEqualTo(saved.getId());
+    assertThat(foundByUuid.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    assertThat(foundByUuid.getAccountUuidSourceNumericId()).isEqualTo(saved.getId());
+
+    saved.setUsername("uuid-account-updated");
+    Account updated = repository.save(saved);
+    assertThat(updated.getAccountUuid()).isEqualTo(accountUuid);
+    assertThat(updated.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    assertThat(updated.getAccountUuidSourceNumericId()).isEqualTo(updated.getId());
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO accounts "
+                        + "(username, email, password_hash, account_uuid, account_uuid_provenance) "
+                        + "VALUES (?, ?, ?, ?, ?)",
+                    "duplicate-uuid-account",
+                    "duplicate-uuid-account@example.com",
+                    "hash",
+                    accountUuid,
+                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name()))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("accounts_account_uuid_unique");
+
+    saved.setAccountUuid(UUID.randomUUID());
+    assertThatThrownBy(() -> repository.save(saved))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("Failed to update accounts id=");
+    assertThat(repository.findById(saved.getId()).orElseThrow().getAccountUuid())
+        .isEqualTo(accountUuid);
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = {"", "   "})
@@ -698,6 +749,313 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(0L);
   }
 
+  @Test
+  void accountUuidMigrationPreservesRetainedRowsAndRecordsExactSourceIdentity() {
+    String schema = ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA;
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .target("28")
+        .load()
+        .migrate();
+
+    long firstAccountId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "INSERT INTO "
+                            + schema
+                            + ".accounts (username, email, password_hash, tenant_id) "
+                            + "VALUES ('uuid-retained-one', 'uuid-retained-one@example.com', 'hash-one', 41) "
+                            + "RETURNING id"))
+            .longValue();
+    long secondAccountId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "INSERT INTO "
+                            + schema
+                            + ".accounts (username, email, password_hash, tenant_id) "
+                            + "VALUES ('uuid-retained-two', 'uuid-retained-two@example.com', 'hash-two', 42) "
+                            + "RETURNING id"))
+            .longValue();
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".profiles (account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
+        firstAccountId,
+        41L,
+        "Retained profile",
+        "retained bio");
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, FALSE, 'LEGACY_UNVERIFIED', 1, 1, 'LEGACY_UNVERIFIED')",
+        firstAccountId,
+        41L);
+    dsl.execute(
+        "UPDATE "
+            + schema
+            + ".account_tenant_membership SET gameplay_admission_allowed = TRUE, "
+            + "lifecycle_state = 'ACTIVE', membership_version = 2, "
+            + "membership_authority_generation = 3, authority_provenance = 'EXPLICIT_JOIN' "
+            + "WHERE account_id = ? AND tenant_id = 42",
+        secondAccountId);
+    long secondMembershipId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "SELECT id FROM "
+                            + schema
+                            + ".account_tenant_membership WHERE account_id = ? AND tenant_id = 42",
+                        secondAccountId))
+            .longValue();
+
+    UUID joinRealmId = UUID.fromString("61d40f5d-2d59-4cc5-8774-54f7445d144b");
+    String pendingJoinRequestId = "retained-v28-pending-join";
+    String scopeDigest = AccountJoinDigest.tokenHash("retained-connect-scope");
+    String intentDigest = AccountJoinDigest.tokenHash(pendingJoinRequestId + ":intent");
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_join_operations "
+            + "(request_id, account_id, tenant_id, verified_caller_binding, scope_token_hash, "
+            + "connect_scope_digest, world_slug, realm_slug, realm_id, playable_state_namespace_id, "
+            + "playable_state_scope, game_instance_id, catalog_revision, pointer_version, "
+            + "intent_digest_version, intent_digest, caller_bound_authority_invalidated, status) "
+            + "VALUES (?, ?, 42, 'retained-caller', ?, ?, 'retained-world', 'retained-realm', ?, "
+            + "'retained-namespace', 'REALM', 7, 11, 13, 1, ?, FALSE, 'PENDING')",
+        pendingJoinRequestId,
+        secondAccountId,
+        AccountJoinDigest.tokenHash("retained-scope-token"),
+        scopeDigest,
+        joinRealmId,
+        intentDigest);
+
+    String receiptStreamKey =
+        "account:membership-transition-receipt:v1:membership/" + secondAccountId + "/42";
+    String receiptRequestId = "retained-v28-membership-transition";
+    UUID receiptId = UUID.fromString("92b9c1a4-2840-4c48-9622-782b9aa83a07");
+    String receiptPayload = "retained membership transition receipt";
+    String receiptDigest = AccountAuditDigest.ofPayload(receiptPayload);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_membership_transition_receipt_stream_heads "
+            + "(account_id, tenant_id, receipt_stream_key, last_receipt_sequence) "
+            + "VALUES (?, 42, ?, 1)",
+        secondAccountId,
+        receiptStreamKey);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_membership_transition_receipts "
+            + "(receipt_stream_key, receipt_sequence, account_id, tenant_id, evidence_status, "
+            + "transition_type, request_id, membership_id, membership_lifecycle_state, "
+            + "gameplay_admission_allowed, membership_version, membership_authority_generation, "
+            + "authority_provenance, receipt_id, receipt_digest) "
+            + "VALUES (?, 1, ?, 42, 'PROVISIONAL_TRANSITION_RECEIPT', 'MEMBERSHIP_JOINED', ?, ?, "
+            + "'ACTIVE', TRUE, 2, 3, 'EXPLICIT_JOIN', ?, ?)",
+        receiptStreamKey,
+        secondAccountId,
+        receiptRequestId,
+        secondMembershipId,
+        receiptId,
+        receiptDigest);
+
+    UUID auditEventId = UUID.fromString("1596dcce-a52c-4c39-86bf-138a06069012");
+    String payload = "{\"accountId\":" + firstAccountId + ",\"event\":\"retained\"}";
+    String payloadDigest = AccountAuditDigest.ofPayload(payload);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_audit_outbox "
+            + "(audit_event_id, scope, producer_service, event_type, occurred_at, schema_version, "
+            + "payload_digest_version, payload_digest, payload) "
+            + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', "
+            + "TIMESTAMP '2026-09-01 12:00:00', 1, 1, ?, ?)",
+        auditEventId,
+        payloadDigest,
+        payload);
+
+    String firstAccountBefore =
+        jsonRow(
+            "SELECT to_jsonb(a)::text FROM " + schema + ".accounts a WHERE id = ?", firstAccountId);
+    String secondAccountBefore =
+        jsonRow(
+            "SELECT to_jsonb(a)::text FROM " + schema + ".accounts a WHERE id = ?",
+            secondAccountId);
+    String profileBefore =
+        jsonRow(
+            "SELECT to_jsonb(p)::text FROM " + schema + ".profiles p WHERE account_id = ?",
+            firstAccountId);
+    String membershipBefore =
+        jsonRow(
+            "SELECT to_jsonb(m)::text FROM "
+                + schema
+                + ".account_tenant_membership m WHERE account_id = ?",
+            firstAccountId);
+    String explicitMembershipBefore =
+        jsonRow(
+            "SELECT to_jsonb(m)::text FROM "
+                + schema
+                + ".account_tenant_membership m WHERE account_id = ?",
+            secondAccountId);
+    String pendingJoinBefore =
+        jsonRow(
+            "SELECT to_jsonb(j)::text FROM "
+                + schema
+                + ".account_join_operations j WHERE request_id = ?",
+            pendingJoinRequestId);
+    String receiptStreamHeadBefore =
+        jsonRow(
+            "SELECT to_jsonb(h)::text FROM "
+                + schema
+                + ".account_membership_transition_receipt_stream_heads h "
+                + "WHERE account_id = ? AND tenant_id = 42",
+            secondAccountId);
+    String membershipTransitionReceiptBefore =
+        jsonRow(
+            "SELECT to_jsonb(r)::text FROM "
+                + schema
+                + ".account_membership_transition_receipts r WHERE receipt_id = ?",
+            receiptId);
+    String outboxBefore =
+        jsonRow(
+            "SELECT to_jsonb(o)::text FROM "
+                + schema
+                + ".account_audit_outbox o WHERE audit_event_id = ?",
+            auditEventId);
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .load()
+        .migrate();
+
+    String accountProjection =
+        "(to_jsonb(a) - 'account_uuid' - 'account_uuid_provenance' "
+            + "- 'account_uuid_source_numeric_id')::text";
+    assertThat(
+            jsonRow(
+                "SELECT " + accountProjection + " FROM " + schema + ".accounts a WHERE id = ?",
+                firstAccountId))
+        .isEqualTo(firstAccountBefore);
+    assertThat(
+            jsonRow(
+                "SELECT " + accountProjection + " FROM " + schema + ".accounts a WHERE id = ?",
+                secondAccountId))
+        .isEqualTo(secondAccountBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(p)::text FROM " + schema + ".profiles p WHERE account_id = ?",
+                firstAccountId))
+        .isEqualTo(profileBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(m)::text FROM "
+                    + schema
+                    + ".account_tenant_membership m WHERE account_id = ?",
+                firstAccountId))
+        .isEqualTo(membershipBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(m)::text FROM "
+                    + schema
+                    + ".account_tenant_membership m WHERE account_id = ?",
+                secondAccountId))
+        .isEqualTo(explicitMembershipBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(j)::text FROM "
+                    + schema
+                    + ".account_join_operations j WHERE request_id = ?",
+                pendingJoinRequestId))
+        .isEqualTo(pendingJoinBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(h)::text FROM "
+                    + schema
+                    + ".account_membership_transition_receipt_stream_heads h "
+                    + "WHERE account_id = ? AND tenant_id = 42",
+                secondAccountId))
+        .isEqualTo(receiptStreamHeadBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(r)::text FROM "
+                    + schema
+                    + ".account_membership_transition_receipts r WHERE receipt_id = ?",
+                receiptId))
+        .isEqualTo(membershipTransitionReceiptBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(o)::text FROM "
+                    + schema
+                    + ".account_audit_outbox o WHERE audit_event_id = ?",
+                auditEventId))
+        .isEqualTo(outboxBefore);
+
+    UUID firstUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?", firstAccountId)
+                .fetchOne(0, UUID.class));
+    UUID secondUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?",
+                    secondAccountId)
+                .fetchOne(0, UUID.class));
+    assertThat(firstUuid).isNotEqualTo(secondUuid);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_provenance FROM " + schema + ".accounts WHERE id = ?",
+                    firstAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_V29_MIGRATION.name());
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM "
+                        + schema
+                        + ".accounts WHERE id = ?",
+                    firstAccountId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(firstAccountId);
+    assertThat(
+            dsl.resultQuery("SELECT COUNT(DISTINCT account_uuid) FROM " + schema + ".accounts")
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM "
+                        + schema
+                        + ".account_audit_outbox WHERE payload_digest = ?",
+                    payloadDigest)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE " + schema + ".accounts SET account_uuid = ? WHERE id = ?",
+                    UUID.randomUUID(),
+                    firstAccountId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("accounts_identity_immutable");
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?", firstAccountId)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(firstUuid);
+  }
+
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {
     Account account = new Account();
     account.setUsername(username);
@@ -707,5 +1065,9 @@ class AccountRepositoryIntegrationTest {
     account.setLoginAuthModes("PASSWORD");
     account.setLifecycleState(lifecycleState);
     return account;
+  }
+
+  private String jsonRow(String query, Object... bindings) {
+    return Objects.requireNonNull(dsl.fetchOne(query, bindings)).get(0, String.class);
   }
 }
