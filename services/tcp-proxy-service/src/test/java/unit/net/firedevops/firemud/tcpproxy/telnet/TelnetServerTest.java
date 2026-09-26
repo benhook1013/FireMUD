@@ -1,17 +1,22 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -22,6 +27,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -33,6 +39,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.Status;
 
 class TelnetServerTest {
   private static final int TLS_CONNECT_TIMEOUT_MILLIS = 5_000;
@@ -297,6 +305,81 @@ class TelnetServerTest {
     }
   }
 
+  @Test
+  void projectedTlsRotationIsAtomicAndLeavesExistingConnectionsOpen(@TempDir Path tempDir)
+      throws Exception {
+    Path mount = Files.createDirectory(tempDir.resolve("telnet-tls"));
+    createProjectedGeneration(
+        mount, "..2026_09_24_00_00_00", "/certs/dev-cert.pem", "/certs/dev-key.pem");
+    Files.createSymbolicLink(mount.resolve("..data"), Path.of("..2026_09_24_00_00_00"));
+    Files.createSymbolicLink(mount.resolve("tls.crt"), Path.of("..data/tls.crt"));
+    Files.createSymbolicLink(mount.resolve("tls.key"), Path.of("..data/tls.key"));
+
+    var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+    int activeWatchersBefore = activeWatcherCount(TlsCertificateWatcher.health());
+    server =
+        new TelnetServer(
+            0,
+            true,
+            mount.resolve("tls.crt").toString(),
+            mount.resolve("tls.key").toString(),
+            false,
+            0,
+            0,
+            4096,
+            registry,
+            Mockito.mock(TcpProxyEventService.class),
+            readyProbe(),
+            gatewayClient());
+    server.start();
+
+    SSLContext clientContext = tlsClientContext();
+    try (SSLSocket existingConnection = connectTls(server, clientContext)) {
+      X509Certificate initialCertificate = peerCertificate(existingConnection);
+
+      switchProjectedGeneration(
+          mount,
+          "..2026_09_24_00_00_01",
+          "/certs/rotated-gateway-client.crt",
+          "/certs/rotated-gateway-client.key");
+      assertEquals("SUCCEEDED", invokeWatcherReload(server));
+
+      java.math.BigInteger rotatedSerial;
+      try (SSLSocket rotatedConnection = connectTls(server, clientContext)) {
+        X509Certificate rotatedCertificate = peerCertificate(rotatedConnection);
+        assertFalse(
+            initialCertificate.getSerialNumber().equals(rotatedCertificate.getSerialNumber()));
+        rotatedSerial = rotatedCertificate.getSerialNumber();
+      }
+      assertExistingTlsSession(existingConnection, initialCertificate);
+
+      switchProjectedGeneration(mount, "..2026_09_24_00_00_02", "/certs/dev-cert.pem", null);
+      assertEquals("FAILED", invokeWatcherReload(server));
+      assertEquals(Status.OUT_OF_SERVICE, TlsCertificateWatcher.health().getStatus());
+      assertTrue(registry.counter("tcpproxy.tls.misconfig").count() >= 1.0);
+
+      try (SSLSocket connectionAfterPartialUpdate = connectTls(server, clientContext)) {
+        assertEquals(
+            rotatedSerial, peerCertificate(connectionAfterPartialUpdate).getSerialNumber());
+      }
+      assertExistingTlsSession(existingConnection, initialCertificate);
+
+      switchProjectedGeneration(
+          mount, "..2026_09_24_00_00_03", "/certs/dev-cert.pem", "/certs/dev-key.pem");
+      assertEquals("SUCCEEDED", invokeWatcherReload(server));
+      assertEquals(Status.UP, TlsCertificateWatcher.health().getStatus());
+      try (SSLSocket recoveredConnection = connectTls(server, clientContext)) {
+        assertEquals(
+            initialCertificate.getSerialNumber(),
+            peerCertificate(recoveredConnection).getSerialNumber());
+      }
+      assertExistingTlsSession(existingConnection, initialCertificate);
+    }
+
+    server.stop();
+    assertEquals(activeWatchersBefore, activeWatcherCount(TlsCertificateWatcher.health()));
+  }
+
   private GatewayGameplayReadinessProbe readyProbe() {
     GatewayGameplayReadinessProbe probe = Mockito.mock(GatewayGameplayReadinessProbe.class);
     Mockito.when(probe.isReady()).thenReturn(true);
@@ -336,5 +419,106 @@ class TelnetServerTest {
         gatewayClient(),
         new RuntimeIdentity(
             "tcp-proxy-service", "tcp-proxy-test", null, Instant.EPOCH, null, null, null));
+  }
+
+  private static void createProjectedGeneration(
+      Path mount, String generation, String certificateResource, String keyResource)
+      throws IOException {
+    Path generationDirectory = Files.createDirectory(mount.resolve(generation));
+    copyResource(certificateResource, generationDirectory.resolve("tls.crt"));
+    if (keyResource == null) {
+      Files.writeString(generationDirectory.resolve("tls.key"), "partial projected private key");
+    } else {
+      copyResource(keyResource, generationDirectory.resolve("tls.key"));
+    }
+  }
+
+  private static void copyResource(String resource, Path target) throws IOException {
+    try (InputStream input = TelnetServerTest.class.getResourceAsStream(resource)) {
+      assertNotNull(input, "Missing TLS test fixture " + resource);
+      Files.copy(input, target);
+    }
+  }
+
+  private static void switchProjectedGeneration(
+      Path mount, String generation, String certificateResource, String keyResource)
+      throws IOException {
+    createProjectedGeneration(mount, generation, certificateResource, keyResource);
+    Path nextPointer = mount.resolve("..data-next");
+    Files.createSymbolicLink(nextPointer, Path.of(generation));
+    Files.move(
+        nextPointer,
+        mount.resolve("..data"),
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING);
+  }
+
+  private static String invokeWatcherReload(TelnetServer server) throws Exception {
+    Field watcherField = TelnetServer.class.getDeclaredField("tlsCertificateWatcher");
+    watcherField.setAccessible(true);
+    TlsCertificateWatcher watcher = (TlsCertificateWatcher) watcherField.get(server);
+    assertNotNull(watcher);
+    Method invokeReload =
+        TlsCertificateWatcher.class.getDeclaredMethod("invokeReloadCallback", boolean.class);
+    invokeReload.setAccessible(true);
+    return invokeReload.invoke(watcher, false).toString();
+  }
+
+  private static SSLContext tlsClientContext() throws Exception {
+    KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    trustStore.load(null, null);
+    for (String fixture :
+        new String[] {"/certs/dev-cert.pem", "/certs/rotated-gateway-client.crt"}) {
+      try (InputStream certificate = TelnetServerTest.class.getResourceAsStream(fixture)) {
+        assertNotNull(certificate);
+        X509Certificate x509Certificate =
+            (X509Certificate)
+                CertificateFactory.getInstance("X.509").generateCertificate(certificate);
+        trustStore.setCertificateEntry(fixture, x509Certificate);
+      }
+    }
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(trustStore);
+    SSLContext context = SSLContext.getInstance("TLS");
+    context.init(null, trustManagers.getTrustManagers(), null);
+    return context;
+  }
+
+  private static SSLSocket connectTls(TelnetServer server, SSLContext clientContext)
+      throws IOException {
+    Socket plainSocket = new Socket();
+    plainSocket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
+    plainSocket.connect(
+        new InetSocketAddress("localhost", server.getPort()), TLS_CONNECT_TIMEOUT_MILLIS);
+    SSLSocket tlsSocket =
+        (SSLSocket)
+            clientContext
+                .getSocketFactory()
+                .createSocket(plainSocket, "localhost", server.getPort(), true);
+    try {
+      tlsSocket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
+      tlsSocket.startHandshake();
+      return tlsSocket;
+    } catch (IOException e) {
+      tlsSocket.close();
+      throw e;
+    }
+  }
+
+  private static X509Certificate peerCertificate(SSLSocket socket) throws Exception {
+    return (X509Certificate) socket.getSession().getPeerCertificates()[0];
+  }
+
+  private static void assertExistingTlsSession(SSLSocket socket, X509Certificate initialCertificate)
+      throws Exception {
+    assertTrue(socket.isConnected());
+    assertFalse(socket.isClosed());
+    assertTrue(socket.getSession().isValid());
+    assertEquals(initialCertificate.getSerialNumber(), peerCertificate(socket).getSerialNumber());
+  }
+
+  private static int activeWatcherCount(Health health) {
+    return ((Number) health.getDetails().get("activeWatchers")).intValue();
   }
 }

@@ -85,14 +85,7 @@ class RedisGameplayPresenceServiceTest {
   void listConnectedByGameInstanceSortsGodsFirstAndPrunesMissingSessions() {
     String godJwt =
         jwtUtil.generateToken(
-            "1",
-            Map.of(
-                "accountId",
-                "1",
-                "globalRoles",
-                List.of("platformAdmin"),
-                "scopedRoles",
-                Map.of()));
+            "1", Map.of("accountId", "1", "scopedRoles", Map.of("22", List.of("god"))));
     SessionContext godContext =
         new SessionContext(1L, 22L, 1L, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt);
     service.registerConnected(godContext);

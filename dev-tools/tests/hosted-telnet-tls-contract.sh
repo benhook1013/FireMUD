@@ -16,6 +16,9 @@ assert 'ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None' in script, (
 )
 assert "tls_server_hostname=host" in script, "hosted Telnet smoke must set SNI/hostname"
 assert "tls_ca_file=ca_file" in script, "hosted Telnet smoke must use the CA override"
+assert "realm=realm" in script and "character=character" in script, (
+    "hosted Telnet smoke must use the trusted WSS realm and character scope"
+)
 assert "_create_unverified_context" not in script, (
     "hosted Telnet smoke must not disable certificate verification"
 )
@@ -74,6 +77,21 @@ from pathlib import Path
 import yaml
 
 documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")))
+proxy_deployment = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+proxy_container = next(
+    container
+    for container in proxy_deployment["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+proxy_env = {item["name"]: item.get("value") for item in proxy_container.get("env", [])}
+assert proxy_env.get("FIREMUD_TLS_READINESS_GATE_ENABLED") == "true", (
+    "hosted Telnet TLS must gate new TCP Proxy admission on TLS reload health"
+)
 service = next(
     document
     for document in documents

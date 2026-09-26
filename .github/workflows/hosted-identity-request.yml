@@ -1149,6 +1149,13 @@ jobs:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.
       issues: write # GitHub's issue-comment API owns pull-request comments.
+    env:
+      # One trusted demo identity/scope feeds both transports; ambient smoke overrides cannot split parity.
+      HOSTED_PLAYABLE_EMAIL: demo@example.com
+      HOSTED_PLAYABLE_PASSWORD: swordfish
+      HOSTED_PLAYABLE_WORLD: demo
+      HOSTED_PLAYABLE_REALM: production
+      HOSTED_PLAYABLE_CHARACTER: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1160,6 +1167,8 @@ jobs:
 
       - name: Set up canonical Python dependencies
         uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
 
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
@@ -1169,6 +1178,22 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write requester kubeconfig
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Revalidate open PR before runtime verification
         env:
@@ -1182,6 +1207,7 @@ jobs:
       - name: Capture exact runtime Namespace UID before verification
         id: capture-runtime-namespace
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
@@ -1255,6 +1281,10 @@ jobs:
 
       - name: Wait for exact controller identity projection
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          IDENTITY_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             "pr-${{ needs.validate-target.outputs.pr_number }}" \
@@ -1267,6 +1297,7 @@ jobs:
 
       - name: Wait for runtime rollouts
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1277,6 +1308,7 @@ jobs:
         id: runtime-port
         if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1340,9 +1372,177 @@ jobs:
           PREVIEW_BASE_URL: https://${{ needs.validate-target.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.validate-target.outputs.hostname }}
           TCP_PORT: ${{ steps.runtime-port.outputs.port }}
+          CERTIFICATE_IDENTITY_MODE: ${{ needs.validate-target.outputs.certificate_identity_mode }}
         run: |
+          set -euo pipefail
+          umask 077
           : "${TCP_PORT:?runtime-port step must provide the allocated NodePort}"
+          if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then
+            export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"
+          fi
+          export SMOKE_LOGIN_EMAIL="$HOSTED_PLAYABLE_EMAIL"
+          export SMOKE_PASSWORD="$HOSTED_PLAYABLE_PASSWORD"
+          export SMOKE_WORLD="$HOSTED_PLAYABLE_WORLD"
+          export SMOKE_REALM="$HOSTED_PLAYABLE_REALM"
+          export SMOKE_CHARACTER="$HOSTED_PLAYABLE_CHARACTER"
           bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh
+
+      - name: Smoke first-party hosted WSS and compare Telnet LOOK
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          TELNET_SEMANTIC_OUT: ${{ runner.temp }}/preview-telnet-semantics.json
+          WSS_SEMANTIC_OUT: ${{ runner.temp }}/preview-wss-semantics.json
+        run: |
+          set -euo pipefail
+          umask 077
+          room_id="$(jq -er '.lookRoomId | select(type == "string" and length > 0)' "$TELNET_SEMANTIC_OUT")"
+          python3 ./dev-tools/hosted/shared/hosted-websocket-playable-smoke.py \
+            --gateway-base "https://${PREVIEW_HOSTNAME}" \
+            --websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game" \
+            --origin "https://${PREVIEW_HOSTNAME}" \
+            --username "$HOSTED_PLAYABLE_EMAIL" \
+            --password "$HOSTED_PLAYABLE_PASSWORD" \
+            --world "$HOSTED_PLAYABLE_WORLD" \
+            --realm "$HOSTED_PLAYABLE_REALM" \
+            --character "$HOSTED_PLAYABLE_CHARACTER" \
+            --expected-room-id "$room_id" \
+            --reconnect > "$WSS_SEMANTIC_OUT"
+          jq -e --arg expected "$room_id" \
+            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .lookRoomId == $expected and .sessions == 2 and .logout == true and .reconnect == true' \
+            "$WSS_SEMANTIC_OUT" >/dev/null
+
+      - name: Revalidate exact source binding and runtime Namespace UID before diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          CAPTURED_RUNTIME_NAMESPACE_UID: ${{ steps.capture-runtime-namespace.outputs.uid }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before diagnostics"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID." >&2
+            exit 1
+          }
+          [[ "$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID handoff changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; captured ${CAPTURED_RUNTIME_NAMESPACE_UID:-empty}." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent." >&2
+            exit 1
+          }
+          if ! observed_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent or no longer has canonical ownership and head annotations." >&2
+            exit 1
+          fi
+          [[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime namespace UID changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
+            exit 1
+          }
+
+      - name: Write bounded hosted playable diagnostic evidence
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          IDENTITY_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          RUNTIME_KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_dir="$(mktemp -d "$RUNNER_TEMP/preview-playable-evidence.XXXXXX")"
+          trap 'rm -f -- "$evidence_dir/namespace.json" "$evidence_dir/identity.json" "$evidence_dir/pods.json"; rmdir -- "$evidence_dir"' EXIT
+          kubectl --kubeconfig "$NAMESPACE_KUBECONFIG" get namespace "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/namespace.json"
+          kubectl --kubeconfig "$IDENTITY_KUBECONFIG" -n firemud-system get hostedenvironmentidentity "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/identity.json"
+          kubectl --kubeconfig "$RUNTIME_KUBECONFIG" -n "$RUNTIME_NAMESPACE" get pods -o json > "$evidence_dir/pods.json"
+          python3 ./dev-tools/hosted/preview/write-playable-proof.py \
+            --pr-number "$PR_NUMBER" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+            --merge-sha "$MERGE_SHA" --image-tag "$IMAGE_TAG" \
+            --namespace-json "$evidence_dir/namespace.json" \
+            --identity-json "$evidence_dir/identity.json" \
+            --pods-json "$evidence_dir/pods.json" \
+            --telnet-outcome passed --wss-outcome passed \
+            > "$RUNNER_TEMP/preview-playable-proof.json"
+
+      - name: Revalidate exact source binding and runtime Namespace UID after diagnostic evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "after diagnostics"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || exit 1
+          observed_uid="$(kubectl get namespace "$RUNTIME_NAMESPACE" -o json \
+            | jq -er --arg pr "$PR_NUMBER" --arg base "$EXPECTED_BASE_SHA" \
+                --arg head "$EXPECTED_HEAD_SHA" --arg merge "$EXPECTED_MERGE_SHA" \
+                --arg image "$IMAGE_TAG" \
+              '.metadata as $m | select($m.labels["firemud.dev/preview"] == "true")
+              | select($m.labels["firemud.dev/pr-number"] == $pr)
+              | select($m.annotations["firemud.dev/requested-preview-base-sha"] == $base)
+              | select($m.annotations["firemud.dev/requested-preview-head-sha"] == $head)
+              | select($m.annotations["firemud.dev/requested-preview-merge-sha"] == $merge)
+              | select($m.annotations["firemud.dev/requested-preview-image-tag"] == $image)
+              | select($m.annotations["firemud.dev/last-preview-base-sha"] == $base)
+              | select($m.annotations["firemud.dev/last-preview-head-sha"] == $head)
+              | select($m.annotations["firemud.dev/last-preview-merge-sha"] == $merge)
+              | select($m.annotations["firemud.dev/last-preview-image-tag"] == $image)
+              | $m.uid | select(type == "string" and length > 0)')"
+          [[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID changed after diagnostics::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
+            exit 1
+          }
+
+      - name: Upload bounded hosted playable diagnostic evidence
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: hosted-playable-diagnostic-pr-${{ needs.validate-target.outputs.pr_number }}-${{ needs.validate-target.outputs.merge_sha }}
+          path: ${{ runner.temp }}/preview-playable-proof.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish trusted preview verification failure
         if: ${{ !cancelled() && failure() }}
@@ -1357,6 +1557,7 @@ jobs:
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         with:
           script: |
             const { execFileSync } = require("node:child_process");
@@ -1424,7 +1625,13 @@ jobs:
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
         run: |
-          rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+          rm -f -- \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
+            "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/hosted-identity-requester.kubeconfig" \
+            "$RUNNER_TEMP/preview-telnet-semantics.json" \
+            "$RUNNER_TEMP/preview-wss-semantics.json" \
+            "$RUNNER_TEMP/preview-playable-proof.json"
 
   publish-preview-proof:
     name: Publish Verified Hosted Preview Proof

@@ -26,6 +26,13 @@ from unittest.mock import patch
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
+hosted_telnet_smoke = (
+    root / "dev-tools" / "hosted" / "shared" / "hosted-login-look-smoke.sh"
+).read_text(encoding="utf-8")
+assert "step_results=step_results" in hosted_telnet_smoke
+assert 'step["response"] for step in step_results if step["label"] == "LOOK"' in hosted_telnet_smoke
+assert "telnet_look_room_id(responses[-1])" not in hosted_telnet_smoke
+
 import smoke_common
 from smoke_common import (
     open_telnet_socket,
@@ -33,6 +40,17 @@ from smoke_common import (
     run_transport_session,
     run_websocket_smoke_session,
 )
+
+shared_scope_steps = smoke_common.login_play_look_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    realm="production", character="Ada",
+)
+assert shared_scope_steps[2][0] == "PLAY demo production Ada"
+default_character_steps = smoke_common.login_play_look_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    realm="production", character=None,
+)
+assert default_character_steps[2][0] == "PLAY demo production"
 
 
 for local_host in (
@@ -59,6 +77,54 @@ for remote_host in (
     "::ffff:192.168.1.10",
 ):
     assert not smoke_common.is_localhost_equivalent(remote_host), remote_host
+
+
+class FakeReadinessResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
+
+
+for status, body, expected in (
+    (200, b'{"status":"UP"}', True),
+    (204, b'{"status":"UP"}', True),
+    (302, b'{"status":"UP"}', False),
+    (404, b'{"status":"UP"}', False),
+    (200, b'{"detail":"\\"status\\":\\"UP\\"","status":"DOWN"}', False),
+    (200, b'{"components":{"status":"UP"}}', False),
+    (200, b'{"status":"up"}', False),
+    (200, b'not-json', False),
+    (200, b'\xff', False),
+):
+    with patch.object(
+        smoke_common.urllib.request,
+        "urlopen",
+        return_value=FakeReadinessResponse(status, body),
+    ):
+        assert smoke_common.http_readiness_up("https://example.test/readiness", 1) is expected
+
+assert smoke_common.telnet_look_room_id(
+    "OK LOOK\n\x1b[32mRoom: \x1b[0mStart (ID: room-123)\nShort: A room\n"
+) == "room-123"
+assert smoke_common.telnet_look_room_id(
+    "OK LOOK\r\nRoom: Start (ID: room-123)\r\nShort: A room\r\n"
+) == "room-123"
+for malformed_look in ("OK LOOK", "Room: Start (ID: )", "Room: Start (ID: x y)"):
+    try:
+        smoke_common.telnet_look_room_id(malformed_look)
+    except smoke_common.ProbeOperationalFailure:
+        pass
+    else:
+        raise AssertionError("malformed Telnet LOOK view accepted")
 
 
 class FakeSession:
@@ -786,6 +852,42 @@ assert [result["response"] for result in command_plan_results] == [
     "OK SAY hello",
 ]
 assert command_plan_session.closed is True
+
+
+class SplitLookSession(CommandResponseSession):
+    def sendall(self, payload):
+        super().sendall(payload)
+        if payload.startswith(b"LOOK"):
+            self.chunks = [
+                "OK LOOK\nRoom: Start (ID: room-",
+                "123)\nShort: A room\n",
+            ]
+
+
+split_look_results = []
+split_look_chunks = run_telnet_smoke_session(
+    "example.test",
+    2323,
+    [
+        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ("PLAY demo", ["OK PLAY"], "PLAY"),
+        ("LOOK", ["OK LOOK"], "LOOK"),
+    ],
+    1,
+    open_session=lambda: SplitLookSession(["OK LOGIN\n", "OK PLAY\n", "OK LOOK\n"]),
+    step_results=split_look_results,
+    tls_enabled=False,
+)
+assert smoke_common.telnet_look_room_id(split_look_results[-1]["response"]) == "room-123"
+assert "Room: Start (ID: room-" in split_look_chunks[-2]
+assert split_look_chunks[-1] == "123)\nShort: A room\n"
+try:
+    smoke_common.telnet_look_room_id(split_look_chunks[-1])
+except smoke_common.ProbeOperationalFailure:
+    pass
+else:
+    raise AssertionError("split LOOK fixture did not reproduce the last-chunk defect")
+
 class SessionFakeTlsContext:
     def __init__(self, wrapped_session):
         self.wrapped_session = wrapped_session

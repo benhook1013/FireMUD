@@ -51,7 +51,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleReturnsGodForTenantScopedGodRole() {
+  void classifyRoleReturnsPlayerForGlobalRolesWithoutTenantGrant() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
@@ -59,8 +59,8 @@ class GameplayPresenceRoleClassifierTest {
             java.util.Map.of(
                 "accountId",
                 "202",
-                "scopedRoles",
-                java.util.Map.of("22", java.util.List.of("god"))));
+                "globalRoles",
+                java.util.List.of("platformAdmin", "support", "billingAdmin", "god", "moderator")));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
@@ -68,7 +68,7 @@ class GameplayPresenceRoleClassifierTest {
             JWT_UTIL,
             logger);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
@@ -125,7 +125,7 @@ class GameplayPresenceRoleClassifierTest {
                 "accountId",
                 "202",
                 "scopedRoles",
-                java.util.Map.of("22", java.util.List.of("tenantAdmin", "moderator", "god"))));
+                java.util.Map.of("22", java.util.List.of("moderator", "tenantAdmin", "god"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
@@ -149,5 +149,26 @@ class GameplayPresenceRoleClassifierTest {
             logger);
 
     assertEquals(GameplayPresenceRole.PLAYER, role);
+  }
+
+  @Test
+  void classifyRoleReturnsGodForTenantScopedGodRole() {
+    Logger logger = mock(Logger.class);
+    String jwt =
+        JWT_UTIL.generateToken(
+            "202",
+            java.util.Map.of(
+                "accountId",
+                "202",
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("god"))));
+
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            logger);
+
+    assertEquals(GameplayPresenceRole.GOD, role);
   }
 }

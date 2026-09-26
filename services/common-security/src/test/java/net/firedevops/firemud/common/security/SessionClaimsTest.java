@@ -10,13 +10,19 @@ import org.junit.jupiter.api.Test;
 class SessionClaimsTest {
 
   @Test
-  void hasGameplayElevatedRoleRecognizesOnlyRequestedTenantScopedRoles() {
-    SessionClaims globalGod =
-        new SessionClaims("11", List.of("god"), Map.of("7", List.of("player")), false, null, null);
+  void hasGameplayElevatedRoleIgnoresGlobalRolesAndRecognizesScopedModerator() {
+    SessionClaims globalRoles =
+        new SessionClaims(
+            "11",
+            List.of("platformAdmin", "support", "billingAdmin", "god", "moderator"),
+            Map.of("7", List.of("player")),
+            false,
+            null,
+            null);
     SessionClaims scopedModerator =
         new SessionClaims("11", List.of(), Map.of("7", List.of("moderator")), false, null, null);
 
-    assertFalse(globalGod.hasGameplayElevatedRole("7"));
+    assertFalse(globalRoles.hasGameplayElevatedRole("7"));
     assertTrue(scopedModerator.hasGameplayElevatedRole("7"));
   }
 
@@ -45,7 +51,7 @@ class SessionClaimsTest {
   }
 
   @Test
-  void controlPlanePrivilegedRoleCheckStillRecognizesGlobalRoles() {
+  void hasPrivilegedRoleRetainsControlPlaneGlobalRoleBehavior() {
     SessionClaims claims =
         new SessionClaims("11", List.of("platformAdmin"), Map.of(), false, null, null);
 

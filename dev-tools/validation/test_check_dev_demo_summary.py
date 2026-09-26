@@ -69,9 +69,26 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         self,
         root: Path,
         bootstrap_manifest: str,
-        summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        summary_run: str | None = None,
         smoke_condition: str = "${{ success() }}",
     ) -> None:
+        helper_path = root / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+        helper_path.parent.mkdir(parents=True)
+        helper_path.write_text(
+            (
+                ROOT / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+            ).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        if summary_run is None:
+            summary_run = (
+                'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \\\n'
+                "  success \\\n"
+                '  "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
+                '  "${{ needs.dev-demo-plan.outputs.image_tag }}" \\\n'
+                '  "${{ needs.dev-demo-plan.outputs.hostname }}" \\\n'
+                '  "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"'
+            )
         workflow = {
             "jobs": {
                 "dev-demo-deploy": {
@@ -116,8 +133,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 AssertionError,
-                "dev-demo summaries must not reference bootstrap credential material; "
-                "offending summary writers: dev-demo-deploy/Summarize dev-demo access",
+                "unsupported or indirect summary syntax",
             ):
                 self.validator.validate_workflow(root)
 
@@ -220,9 +236,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "      },"
         )
         self.assertIn(canonical_payload, bootstrap_manifest)
+        canonical_request = (
+            "status, bootstrap_body = post_json(\n"
+            "      "
+            + canonical_payload
+            + "\n    )"
+        )
+        self.assertIn(canonical_request, bootstrap_manifest)
+        duplicate_request = canonical_request.replace(
+            "status, bootstrap_body", "duplicate_status, duplicate_body", 1
+        )
         invalid_manifest = bootstrap_manifest.replace(
-            canonical_payload,
-            f"{canonical_payload}\n{canonical_payload}",
+            canonical_request,
+            f"{canonical_request}\n    {duplicate_request}",
             1,
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -233,6 +259,37 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 r"dev-demo bootstrap must contain exactly one /auth/player-bootstrap request \(found 2\)",
             ):
                 self.validator.validate_workflow(root)
+
+    def test_validate_workflow_does_not_count_fake_bootstrap_call_comment_or_string(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        fake_source = (
+            '# public_account_url("/auth/player-bootstrap")\n'
+            'fake = "public_account_url(\\"/auth/player-bootstrap\\")"'
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(canonical_payload, fake_source, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                r"dev-demo bootstrap must contain exactly one /auth/player-bootstrap request \(found 0\)",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_bootstrap_python_heredoc_uses_exact_shell_terminator(self):
+        source = (
+            self.validator.BOOTSTRAP_PYTHON_HEREDOC_OPENER
+            + "\nprint('before')\n  PY\nprint('after')\nPY\n"
+        )
+        self.assertIn("print('after')", self.validator._bootstrap_python_source(source))
 
     def test_validate_workflow_accepts_reformatted_player_bootstrap_payload(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -729,20 +786,6 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "HTTP 400 must not be retried",
         )
 
-    def test_shell_group_tokens_ignore_comments_quotes_and_expansions(self):
-        fixtures = (
-            ("{ echo safe # comment with } and )", ["{"]),
-            ("{ echo safe#not-a-comment }", ["{", "}"]),
-            ('{ echo "# not a comment }" }', ["{", "}"]),
-            (r"{ echo \#not-a-comment }", ["{", "}"]),
-            ("{ echo '\\' }", ["{", "}"]),
-            ("{ echo ${value#pattern} }", ["{", "}"]),
-            ('{ echo $(printf "# not a comment }") }', ["{", "}"]),
-        )
-        for fixture, expected in fixtures:
-            with self.subTest(fixture=fixture):
-                self.assertEqual(self.validator.shell_group_tokens(fixture), expected)
-
     def test_cleanup_parsers_handle_nested_groups_and_reject_unsupported_if_forms(self):
         validator = self.validator
         nested_if = [
@@ -783,141 +826,114 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             )
         )
 
-    def test_summary_helper_paths_allow_only_workspace_root_variables(self):
+    def test_summary_write_regions_accept_only_canonical_direct_forms(self):
+        validator = self.validator
+        direct = (
+            'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \\\n'
+            "  success \\\n"
+            '  "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
+            '  "${{ needs.dev-demo-plan.outputs.image_tag }}" \\\n'
+            '  "${{ needs.dev-demo-plan.outputs.hostname }}" \\\n'
+            '  "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"'
+        )
+        metadata = "\n".join(validator.SUMMARY_METADATA_LINES)
+        self.assertEqual(len(validator.summary_write_regions(direct)), 1)
+        self.assertEqual(len(validator.summary_write_regions(metadata)), 1)
+        self.assertEqual(
+            validator.summary_write_regions('echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'),
+            [],
+        )
+
+    def test_discovery_rejects_indirect_summary_sink(self):
         validator = self.validator
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            expected = root / "dev-tools/tests/smoke-transport-contract.sh"
-            fixtures = (
-                "dev-tools/tests/smoke-transport-contract.sh",
-                "./dev-tools/tests/smoke-transport-contract.sh",
-                "bash dev-tools/tests/smoke-transport-contract.sh",
-                "bash ./dev-tools/tests/smoke-transport-contract.sh",
-                f"bash {root}/dev-tools/tests/smoke-transport-contract.sh",
-                "$FIREMUD_REPO_ROOT/dev-tools/tests/smoke-transport-contract.sh",
-                "$GITHUB_WORKSPACE/dev-tools/tests/smoke-transport-contract.sh",
-                "${ROOT_DIR}/dev-tools/tests/smoke-transport-contract.sh",
-            )
-            for fixture in fixtures:
-                with self.subTest(fixture=fixture):
-                    matches = list(validator._helper_matches(fixture))
-                    self.assertEqual(len(matches), 1)
-                    self.assertEqual(
-                        validator.normalize_summary_helper_path(
-                            matches[0].group("invocation"), root
-                        ),
-                        expected.resolve(),
-                    )
-            unsupported = "$HOME/dev-tools/tests/smoke-transport-contract.sh"
-            match = next(validator._helper_matches(unsupported))
-            with self.assertRaisesRegex(ValueError, "unsupported variable-prefixed"):
-                validator.normalize_summary_helper_path(match.group("invocation"), root)
-
-            outside = root.parent / "dev-tools/tests/smoke-transport-contract.sh"
-            with self.assertRaisesRegex(
-                ValueError, "summary helper path escapes repository root"
-            ):
-                validator.discover_summary_writers(
-                    [
-                        validator.WorkflowRunSource(
-                            "job",
-                            "step",
-                            f'bash {outside} >> "$GITHUB_STEP_SUMMARY"',
-                        )
-                    ],
-                    root,
+            source = [
+                validator.WorkflowRunSource(
+                    "job",
+                    "step",
+                    'summary_file="$GITHUB_STEP_SUMMARY"\necho safe >> "$summary_file"',
                 )
+            ]
+            with self.assertRaisesRegex(AssertionError, "unsupported or indirect summary syntax"):
+                validator.discover_summary_writers(source, root)
 
-    def test_summary_write_regions_preserve_group_and_heredoc_boundaries(self):
+    def test_discovery_rejects_unsupported_helper_indirection(self):
         validator = self.validator
-        fixtures = (
-            ('echo "safe summary" > "$GITHUB_STEP_SUMMARY"', False),
-            ('echo "safe summary" | tee "$GITHUB_STEP_SUMMARY"', False),
-            ('echo "safe summary" | tee -a "$GITHUB_STEP_SUMMARY"', False),
-            (
-                'echo "safe summary" | tee --append "$GITHUB_STEP_SUMMARY"',
-                False,
-            ),
-            (
-                (
-                    'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
-                    'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'
-                ),
-                False,
-            ),
-            (
-                '{\n  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n} >> "$GITHUB_STEP_SUMMARY"',
-                True,
-            ),
-            (
-                (
-                    "cat <<'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
-                True,
-            ),
-            (
-                (
-                    "cat <<-'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
-                    "\tunsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
-                True,
-            ),
-            (
-                (
-                    "cat >> \"$GITHUB_STEP_SUMMARY\" <<'SUMMARY_EOF'\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
-                True,
-            ),
-            (
-                (
-                    "cat <<'SUMMARY_EOF' | tee \"$GITHUB_STEP_SUMMARY\"\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
-                True,
-            ),
-            (
-                '{ echo "unsafe: $DEMO_SMOKE_PASSWORD"; } >> "$GITHUB_STEP_SUMMARY"',
-                True,
-            ),
-            (
-                '( echo "unsafe: $DEMO_SMOKE_PASSWORD" ) >> "$GITHUB_STEP_SUMMARY"',
-                True,
-            ),
-            (
-                (
-                    "cat <<'UNRELATED'\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "UNRELATED\n"
-                    'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'
-                ),
-                False,
-            ),
-            (
-                (
-                    "unrelated() {\n"
-                    '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
-                    "}\n"
-                    'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'
-                ),
-                False,
-            ),
-        )
-        for fixture, unsafe in fixtures:
-            with self.subTest(fixture=fixture):
-                regions = validator.summary_write_regions(fixture)
-                self.assertEqual(
-                    any(
-                        validator.has_forbidden_summary_reference(region)
-                        for region in regions
-                    ),
-                    unsafe,
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = [
+                validator.WorkflowRunSource(
+                    "job",
+                    "step",
+                    'summary_helper="./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"\n'
+                    'bash "$summary_helper" success >> "$GITHUB_STEP_SUMMARY"',
                 )
+            ]
+            with self.assertRaisesRegex(AssertionError, "unsupported or indirect summary syntax"):
+                validator.discover_summary_writers(source, root)
+
+    def test_discovery_rejects_workflow_helper_summary_credential_sink(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                'bash ./dev-tools/other-summary.sh',
+            )
+            helper = root / "dev-tools/other-summary.sh"
+            helper.write_text(
+                'echo "${DEMO_SMOKE_PASSWORD}" >> "$GITHUB_STEP_SUMMARY"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "repository shell helper must not write"
+            ):
+                validator.validate_workflow(root)
+
+    def test_discovery_rejects_nested_workflow_helper_summary_credential_sink(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                'bash ./dev-tools/outer-summary.sh',
+            )
+            (root / "dev-tools/outer-summary.sh").write_text(
+                "bash ./dev-tools/inner-summary.sh\n", encoding="utf-8"
+            )
+            (root / "dev-tools/inner-summary.sh").write_text(
+                'echo "${DEMO_SMOKE_PASSWORD}" >> "$GITHUB_STEP_SUMMARY"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "repository shell helper must not write"
+            ):
+                validator.validate_workflow(root)
+
+    def test_discovery_checks_variable_rooted_nested_helper(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                'bash ./dev-tools/outer-summary.sh',
+            )
+            (root / "dev-tools/outer-summary.sh").write_text(
+                'source "$FIREMUD_REPO_ROOT/dev-tools/inner-summary.sh"\n',
+                encoding="utf-8",
+            )
+            (root / "dev-tools/inner-summary.sh").write_text(
+                'echo "${DEMO_SMOKE_PASSWORD}" >> "$GITHUB_STEP_SUMMARY"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "repository shell helper must not write"
+            ):
+                validator.validate_workflow(root)
 
     def test_forbidden_summary_reference_detects_secret_pipelines_without_crossing_commands(
         self,
@@ -954,143 +970,29 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 self.assertFalse(validator.has_forbidden_summary_reference(fixture))
 
-    def test_summary_reachability_propagates_through_redirected_helpers(self):
+    def test_canonical_helper_is_checked_for_forbidden_references(self):
         validator = self.validator
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            helper_one = root / "dev-tools/summary-one.sh"
-            helper_two = root / "dev-tools/summary-two.sh"
-            helper_one.parent.mkdir(parents=True)
-            helper_one.write_text(
-                "#!/usr/bin/env bash\nbash dev-tools/summary-two.sh\n",
-                encoding="utf-8",
+            helper_path = root / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+            helper_path.parent.mkdir(parents=True)
+            helper_path.write_text(
+                'echo "${DEMO_SMOKE_PASSWORD}"\n', encoding="utf-8"
             )
-            helper_two.write_text(
-                '#!/usr/bin/env bash\necho "unsafe: $DEMO_SMOKE_PASSWORD"\n',
-                encoding="utf-8",
-            )
-            sources = [
-                validator.WorkflowRunSource(
-                    "job",
-                    "step",
-                    'bash dev-tools/summary-one.sh >> "$GITHUB_STEP_SUMMARY"',
-                )
-            ]
-            writers = validator.discover_summary_writers(sources, root)
-            self.assertEqual(len(writers), 3)
-            reachable_helpers = [
-                writer
-                for writer in writers
-                if writer.resolved_helper_path
-                in {helper_one.resolve(), helper_two.resolve()}
-            ]
-            self.assertEqual(len(reachable_helpers), 2)
-            self.assertTrue(all(writer.summary_reachable for writer in reachable_helpers))
-            self.assertTrue(
-                any(
-                    validator.has_forbidden_summary_reference(writer.source)
-                    for writer in reachable_helpers
-                    if writer.summary_reachable
-                )
-            )
-
-    def test_helper_cycles_terminate_without_repeating_resolved_paths(self):
-        validator = self.validator
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            helper_one = root / "dev-tools/summary-one.sh"
-            helper_two = root / "dev-tools/summary-two.sh"
-            helper_one.parent.mkdir(parents=True)
-            helper_one.write_text(
-                "#!/usr/bin/env bash\nbash dev-tools/summary-two.sh\n",
-                encoding="utf-8",
-            )
-            helper_two.write_text(
-                "#!/usr/bin/env bash\nbash dev-tools/summary-one.sh\n",
-                encoding="utf-8",
-            )
-            sources = [
-                validator.WorkflowRunSource(
-                    "job",
-                    "step",
-                    'bash dev-tools/summary-one.sh >> "$GITHUB_STEP_SUMMARY"',
-                )
-            ]
-            writers = validator.discover_summary_writers(sources, root)
-            self.assertEqual(len(writers), 3)
-            resolved_helper_paths = [
-                writer.resolved_helper_path
-                for writer in writers
-                if writer.resolved_helper_path is not None
-            ]
-            self.assertCountEqual(
-                resolved_helper_paths, [helper_one.resolve(), helper_two.resolve()]
-            )
-            self.assertTrue(
-                all(
-                    writer.summary_reachable
-                    for writer in writers
-                    if writer.resolved_helper_path is not None
-                )
-            )
-
-    def test_helper_reprocesses_when_reachability_is_upgraded(self):
-        validator = self.validator
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            helper = root / "dev-tools/summary.sh"
-            helper.parent.mkdir(parents=True)
-            helper.write_text(
-                '#!/usr/bin/env bash\necho "unsafe: $DEMO_SMOKE_PASSWORD"\n',
-                encoding="utf-8",
-            )
-            sources = [
-                validator.WorkflowRunSource(
-                    "job",
-                    "summary-step",
-                    'bash dev-tools/summary.sh >> "$GITHUB_STEP_SUMMARY"',
-                ),
-                validator.WorkflowRunSource(
-                    "job", "non-summary-step", "bash dev-tools/summary.sh"
-                ),
-            ]
-            writers = validator.discover_summary_writers(sources, root)
-            reachable_helpers = [
-                writer
-                for writer in writers
-                if writer.resolved_helper_path == helper.resolve()
-            ]
-            self.assertEqual(len(reachable_helpers), 1)
-            self.assertTrue(reachable_helpers[0].summary_reachable)
-
-    def test_missing_helper_fails_closed_with_clear_assertion(self):
-        validator = self.validator
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
             source = [
                 validator.WorkflowRunSource(
                     "job",
                     "step",
-                    'bash dev-tools/missing-summary.sh >> "$GITHUB_STEP_SUMMARY"',
+                    'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \\\n'
+                    '  success "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
+                    '  "${{ needs.dev-demo-plan.outputs.image_tag }}" \\\n'
+                    '  "${{ needs.dev-demo-plan.outputs.hostname }}" \\\n'
+                    '  "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"',
                 )
             ]
             with self.assertRaisesRegex(
-                AssertionError, "summary helper file is missing"
+                AssertionError, "canonical dev-demo summary helper must not reference"
             ):
-                validator.discover_summary_writers(source, root)
-
-    def test_discovery_fails_closed_for_unsupported_variable_helper(self):
-        validator = self.validator
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = [
-                validator.WorkflowRunSource(
-                    "job",
-                    "step",
-                    'bash "$UNTRUSTED_ROOT/dev-tools/summary.sh" >> "$GITHUB_STEP_SUMMARY"',
-                )
-            ]
-            with self.assertRaisesRegex(ValueError, "unsupported variable-prefixed"):
                 validator.discover_summary_writers(source, root)
 
 

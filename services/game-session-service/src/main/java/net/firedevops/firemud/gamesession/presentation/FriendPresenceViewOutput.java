@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.presentation;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 public record FriendPresenceViewOutput(
@@ -9,6 +10,7 @@ public record FriendPresenceViewOutput(
     friends = List.copyOf(friends);
   }
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Entry(
       int ordinal,
       Long friendLinkId,
@@ -16,7 +18,7 @@ public record FriendPresenceViewOutput(
       String status,
       Long linkedAtEpochMs,
       String displayName,
-      boolean online,
+      Boolean online,
       String worldSlug,
       String worldDisplayName,
       String realmSlug,

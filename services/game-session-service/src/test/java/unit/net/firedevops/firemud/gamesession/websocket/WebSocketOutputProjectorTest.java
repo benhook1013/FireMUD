@@ -621,6 +621,56 @@ class WebSocketOutputProjectorTest {
   }
 
   @Test
+  void firstPartyWebOmitsRedactedFriendPresenceFields() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    FriendPresenceViewOutput.Entry redactedEntry =
+        new FriendPresenceViewOutput.Entry(
+            4,
+            12L,
+            77L,
+            "active",
+            1_744_336_000_000L,
+            "Friend #77",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+    String payload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(new FriendDetailViewOutput(redactedEntry)),
+            "en-NZ",
+            presentation);
+
+    JsonNode friend =
+        objectMapper.readTree(payload).path("outputs").get(0).path("payload").path("friend");
+    assertThat(friend.path("friendAccountId").asLong()).isEqualTo(77L);
+    assertThat(friend.path("friendLinkId").asLong()).isEqualTo(12L);
+    assertThat(friend.path("status").asText()).isEqualTo("active");
+    assertThat(friend.path("displayName").asText()).isEqualTo("Friend #77");
+    assertThat(friend.has("online")).isFalse();
+    assertThat(friend.has("worldSlug")).isFalse();
+    assertThat(friend.has("characterName")).isFalse();
+    assertThat(friend.has("activityState")).isFalse();
+    assertThat(friend.has("lastSeenAtEpochMs")).isFalse();
+    assertThat(friend.has("recentDisposition")).isFalse();
+    assertThat(friend.has("visibilityPolicy")).isFalse();
+  }
+
+  @Test
   void firstPartyWebProjectsFriendRosterSummaryViewPayloads() throws Exception {
     WebSocketSession session = mock(WebSocketSession.class);
     when(session.getAttributes())
@@ -636,10 +686,9 @@ class WebSocketOutputProjectorTest {
                 CommandEnqueueResult.success(),
                 List.of(
                     PlayerOutput.view(
-                        new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1)))),
+                        new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 2, 1, 1)))),
             List.of(
-                PlayerOutput.view(
-                    new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1))),
+                PlayerOutput.view(new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 2, 1, 1))),
             "en-NZ",
             presentation);
 
@@ -654,6 +703,9 @@ class WebSocketOutputProjectorTest {
         .isEqualTo(2);
     assertThat(json.path("outputs").get(0).path("payload").path("privateCount").asInt())
         .isEqualTo(1);
+    assertThat(json.path("outputs").get(0).path("payload").has("hiddenStaffCount")).isFalse();
+    assertThat(json.path("outputs").get(0).path("payload").has("unspecifiedVisibilityCount"))
+        .isFalse();
     assertThat(json.path("outputs").get(0).path("payload").path("sharedCount").asInt())
         .isEqualTo(2);
     assertThat(json.path("outputs").get(0).path("payload").path("isolatedCount").asInt())
@@ -676,9 +728,7 @@ class WebSocketOutputProjectorTest {
                     "PUBLIC", "Normal bounded payload.", false, true),
                 new FriendPresencePolicyViewOutput.Option(
                     "FRIENDS_ONLY", "Approved friends only.", true, true),
-                new FriendPresencePolicyViewOutput.Option("PRIVATE", "Coarse only.", false, true),
-                new FriendPresencePolicyViewOutput.Option(
-                    "HIDDEN_STAFF", "Reserved.", false, false)));
+                new FriendPresencePolicyViewOutput.Option("PRIVATE", "Coarse only.", false, true)));
 
     String payload =
         projector.projectCommandResponse(
@@ -696,6 +746,8 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("friend_presence_policy_view");
     assertThat(json.path("outputs").get(0).path("payload").path("currentPolicy").asText())
         .isEqualTo("FRIENDS_ONLY");
+    assertThat(json.path("outputs").get(0).path("payload").path("options"))
+        .allMatch(option -> !option.path("policy").asText().equals("HIDDEN_STAFF"));
   }
 
   @Test

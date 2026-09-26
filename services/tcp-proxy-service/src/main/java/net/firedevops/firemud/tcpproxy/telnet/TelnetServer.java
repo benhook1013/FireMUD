@@ -20,14 +20,19 @@ import io.netty.handler.codec.string.StringEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -79,7 +84,9 @@ public final class TelnetServer {
   private EventLoopGroup workerGroup;
   private volatile Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
-  private SslContext sslContext;
+  private final Object tlsReloadMonitor = new Object();
+  private volatile SslContext sslContext;
+  private volatile TlsCertificateWatcher tlsCertificateWatcher;
 
   @Autowired
   public TelnetServer(
@@ -302,7 +309,90 @@ public final class TelnetServer {
   }
 
   private SslContext buildServerSslContext() throws SSLException {
-    return SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+    Path certificatePath = Path.of(certPath).toAbsolutePath().normalize();
+    Path privateKeyPath = Path.of(keyPath).toAbsolutePath().normalize();
+    boolean certificateProjected = isProjectedSecretFile(certificatePath);
+    boolean privateKeyProjected = isProjectedSecretFile(privateKeyPath);
+    Path certificateParent = certificatePath.getParent();
+    Path privateKeyParent = privateKeyPath.getParent();
+
+    if (certificateProjected || privateKeyProjected) {
+      if (!certificateProjected
+          || !privateKeyProjected
+          || certificateParent == null
+          || !certificateParent.equals(privateKeyParent)) {
+        throw new SSLException(
+            "TCP proxy Telnet TLS certificate and key must share one projected Secret");
+      }
+    }
+
+    try {
+      Path certificateSnapshot = certificatePath.toRealPath();
+      Path privateKeySnapshot = privateKeyPath.toRealPath();
+      Path certificateGeneration = certificateSnapshot.getParent();
+      if (certificateProjected
+          && (certificateGeneration == null
+              || !certificateGeneration.equals(privateKeySnapshot.getParent()))) {
+        throw new SSLException(
+            "TCP proxy Telnet TLS certificate and key resolve to different Secret generations");
+      }
+
+      SslContext candidate =
+          SslContextBuilder.forServer(certificateSnapshot.toFile(), privateKeySnapshot.toFile())
+              .build();
+
+      if (!certificateSnapshot.equals(certificatePath.toRealPath())
+          || !privateKeySnapshot.equals(privateKeyPath.toRealPath())) {
+        throw new SSLException(
+            "TCP proxy Telnet TLS projection changed while the certificate and key were loading");
+      }
+      return candidate;
+    } catch (IOException e) {
+      SSLException failure = new SSLException("TCP proxy Telnet TLS files could not be loaded");
+      failure.initCause(e);
+      throw failure;
+    }
+  }
+
+  private boolean isProjectedSecretFile(Path path) {
+    Path directory = path.getParent();
+    return directory != null && Files.isSymbolicLink(directory.resolve("..data"));
+  }
+
+  private void reloadServerSslContext() {
+    if (!tlsEnabled) {
+      return;
+    }
+    synchronized (tlsReloadMonitor) {
+      try {
+        SslContext replacement = buildServerSslContext();
+        sslContext = replacement;
+        logger.info("TCP proxy Telnet TLS certificate and key reloaded");
+      } catch (SSLException | RuntimeException e) {
+        tlsMisconfigCounter.increment();
+        logger.error(
+            "TCP proxy Telnet TLS reload failed; retaining the last valid certificate and key", e);
+        throw new IllegalStateException("TCP proxy Telnet TLS reload failed", e);
+      }
+    }
+  }
+
+  private void reloadServerSslContextFromWatcher() {
+    reloadServerSslContext();
+  }
+
+  private IOException closeTlsCertificateWatcher() {
+    TlsCertificateWatcher watcherToClose = tlsCertificateWatcher;
+    tlsCertificateWatcher = null;
+    if (watcherToClose == null) {
+      return null;
+    }
+    try {
+      watcherToClose.close();
+      return null;
+    } catch (IOException e) {
+      return e;
+    }
   }
 
   private void validateTlsConfiguration() {
@@ -337,6 +427,15 @@ public final class TelnetServer {
     EventLoopGroup allocatedBossGroup = null;
     EventLoopGroup allocatedWorkerGroup = null;
     try {
+      if (tlsEnabled) {
+        TlsCertificateWatcher watcher =
+            new TlsCertificateWatcher(
+                List.of(Path.of(certPath), Path.of(keyPath)),
+                this::reloadServerSslContextFromWatcher);
+        tlsCertificateWatcher = watcher;
+        watcher.start();
+        reloadServerSslContext();
+      }
       allocatedBossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
       allocatedWorkerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
       bossGroup = allocatedBossGroup;
@@ -358,8 +457,9 @@ public final class TelnetServer {
                     return;
                   }
                   var pipeline = ch.pipeline();
-                  if (tlsEnabled && sslContext != null) {
-                    pipeline.addLast(sslContext.newHandler(ch.alloc()));
+                  SslContext activeSslContext = sslContext;
+                  if (tlsEnabled && activeSslContext != null) {
+                    pipeline.addLast(activeSslContext.newHandler(ch.alloc()));
                   }
                   pipeline
                       .addLast(
@@ -401,12 +501,21 @@ public final class TelnetServer {
       logger.info("Telnet server started on port {}", boundPort);
     } catch (InterruptedException e) {
       running.set(false);
+      IOException watcherCloseFailure = closeTlsCertificateWatcher();
+      if (watcherCloseFailure != null) {
+        e.addSuppressed(watcherCloseFailure);
+      }
+      closeServerChannelAfterStartFailure(e);
       shutdownEventLoopGroups(allocatedBossGroup, allocatedWorkerGroup);
       Thread.currentThread().interrupt();
       throw e;
     } catch (Exception e) {
       running.set(false);
-      serverChannel = null;
+      IOException watcherCloseFailure = closeTlsCertificateWatcher();
+      if (watcherCloseFailure != null) {
+        e.addSuppressed(watcherCloseFailure);
+      }
+      closeServerChannelAfterStartFailure(e);
       shutdownEventLoopGroups(allocatedBossGroup, allocatedWorkerGroup);
       String message = "Telnet server failed to start";
       logger.error(message, e);
@@ -417,7 +526,15 @@ public final class TelnetServer {
   @Timed(value = "tcpproxy.stop")
   public synchronized void stop() {
     if (!running.compareAndSet(true, false)) {
+      IOException watcherCloseFailure = closeTlsCertificateWatcher();
+      if (watcherCloseFailure != null) {
+        logger.error("Failed to close Telnet TLS certificate watcher", watcherCloseFailure);
+      }
       return;
+    }
+    IOException watcherCloseFailure = closeTlsCertificateWatcher();
+    if (watcherCloseFailure != null) {
+      logger.error("Failed to close Telnet TLS certificate watcher", watcherCloseFailure);
     }
     try {
       if (serverChannel != null) {
@@ -432,6 +549,19 @@ public final class TelnetServer {
     bossGroup = null;
     workerGroup = null;
     logger.info("Telnet server stopped");
+  }
+
+  private void closeServerChannelAfterStartFailure(Exception failure) {
+    Channel channelToClose = serverChannel;
+    serverChannel = null;
+    if (channelToClose != null) {
+      try {
+        channelToClose.close().sync();
+      } catch (InterruptedException closeFailure) {
+        failure.addSuppressed(closeFailure);
+        Thread.currentThread().interrupt();
+      }
+    }
   }
 
   private void shutdownEventLoopGroups(

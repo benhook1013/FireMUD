@@ -200,6 +200,11 @@ gateway_deployment = named("Deployment", "spring-cloud-gateway")
 proxy_deployment = named("Deployment", "tcp-proxy-service")
 gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
+shared_config = named("ConfigMap", "firemud-config").get("data") or {}
+if shared_config.get("FIREMUD_GRPC_TLS_RELOAD_ENABLED") != "true":
+    raise SystemExit(
+        "hosted shared configuration must enable gRPC TLS reload watchers for managed renewal"
+    )
 if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres_deployment = named("Deployment", "postgres")
@@ -281,11 +286,16 @@ expected_gateway = {
 for key, value in expected_gateway.items():
     if gateway_env.get(key) != value:
         raise SystemExit(f"Gateway env {key} did not render as {value!r}: {gateway_env.get(key)!r}")
+if "FIREMUD_TLS_READINESS_GATE_ENABLED" in gateway_env:
+    raise SystemExit(
+        "hosted Gateway must not inherit the TCP Proxy TLS readiness gate through its explicit env"
+    )
 expected_proxy = {
     "GATEWAY_WS_URL": "wss://spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443/ws/game",
     "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/gateway-ws-client-tls/tls.crt",
     "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/gateway-ws-client-tls/tls.key",
     "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/gateway-ws-client-tls/ca.crt",
+    "FIREMUD_TLS_READINESS_GATE_ENABLED": "true",
 }
 for key, value in expected_proxy.items():
     if proxy_env.get(key) != value:
