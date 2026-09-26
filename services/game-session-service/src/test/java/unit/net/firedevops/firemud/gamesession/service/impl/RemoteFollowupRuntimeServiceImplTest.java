@@ -2993,11 +2993,6 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestForOrigin(
-      long originGameInstanceId) {
-    return scheduleRequest(originGameInstanceId, 8L, 4L, 25L);
-  }
-
-  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestForOrigin(
       long originGameInstanceId, String followupId, String effectKey) {
     return scheduleRequest(originGameInstanceId, 8L, 4L, 25L, followupId, effectKey);
   }
