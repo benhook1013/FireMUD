@@ -185,6 +185,45 @@ def safe(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def channel_label(channel: str, state: str, pr: int, targets: dict) -> str:
+    """Describe review-request availability without implying merge readiness."""
+    name = "Hosted" if channel == "hosted" else "CLI"
+    if state == "READY":
+        target = targets.get(channel, {}) if isinstance(targets, dict) else {}
+        if not isinstance(target, dict):
+            target = {}
+        if target.get("pr") == pr and target.get("status") == "READY":
+            detail = "ready to request"
+        elif target:
+            detail = (
+                "waiting its turn"
+                if target.get("pr") is not None and target.get("pr") != pr and target.get("status") != "UNKNOWN"
+                else "selection unverified"
+            )
+        else:
+            detail = "eligible; selection unverified"
+    else:
+        detail = {
+            "RATE_LIMITED": "cooldown active",
+            "HELD": "new request blocked",
+            "HUMAN_STOPPED": "human bypass",
+            "OVERRIDE": "human bypass",
+            "HUMAN_STOP": "human bypass",
+            "MANUALLY_STOPPED": "human bypass",
+            "STOPPED_BY_HUMAN": "human bypass",
+            "COMPLETE": "review complete",
+            "ALLOCATION_EXHAUSTED": "review allowance used",
+            "OVER_CEILING": "file limit",
+            "PARENT_MOVED": "parent changed",
+            "UNRECONCILED": "needs reconciliation",
+            "MISSING_EVIDENCE": "needs evidence",
+            "JUDGMENT_REQUIRED": "needs decision",
+            "UNSTABLE": "evidence unclear",
+            "NOT_CHECKED": "not checked",
+        }.get(state, state.replace("_", " ").lower())
+    return f"{name} {detail}"
+
+
 def local_time(value: datetime) -> str:
     local = value.astimezone(LOCAL_TIMEZONE)
     return f"{local.day} {local.strftime('%b %H:%M %Z')}"
@@ -289,6 +328,7 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
             "mode": report.get("mode"),
             "controller_status": report.get("status"),
             "detail_window": report.get("detail_window", {}),
+            "review_targets": report.get("review_targets", {}),
             "queue": queue,
         }
     except (ValueError, KeyError, TypeError, AttributeError):
@@ -375,8 +415,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         channels = queue_item.get("channels", {}) if queue_item else {}
         states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
         named_states = [
-            f"{name} {state.replace('_', ' ').lower()}"
-            for name, state in zip(("Hosted", "CLI"), states)
+            channel_label(channel, state, number, review.get("review_targets", {}))
+            for channel, state in zip(("hosted", "cli"), states)
             if isinstance(state, str) and state
         ]
         has_controller_states = len(named_states) == 2

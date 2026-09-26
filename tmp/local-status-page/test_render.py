@@ -20,6 +20,18 @@ HEAD = "a" * 40
 
 
 class StatusPageTest(unittest.TestCase):
+    def test_channel_labels_distinguish_request_permission_from_cooldown_and_human_stop(self):
+        targets = {"hosted": {"pr": 42, "status": "READY"}}
+        self.assertEqual("Hosted ready to request", page.channel_label("hosted", "READY", 42, targets))
+        self.assertEqual("Hosted waiting its turn", page.channel_label("hosted", "READY", 43, targets))
+        self.assertEqual("Hosted cooldown active", page.channel_label("hosted", "RATE_LIMITED", 42, targets))
+        self.assertEqual("Hosted new request blocked", page.channel_label("hosted", "HELD", 42, targets))
+        self.assertEqual("Hosted human bypass", page.channel_label("hosted", "HUMAN_STOPPED", 42, targets))
+        self.assertEqual("Hosted human bypass", page.channel_label("hosted", "OVERRIDE", 42, targets))
+        self.assertEqual("CLI eligible; selection unverified", page.channel_label("cli", "READY", 42, {}))
+        self.assertEqual("CLI selection unverified", page.channel_label("cli", "READY", 42,
+                         {"cli": {"pr": None, "status": "UNKNOWN"}}))
+
     def fixture(self):
         return {
             "review_front": 42,
@@ -139,7 +151,7 @@ class StatusPageTest(unittest.TestCase):
         front_evidence = front.split('<div class="front-evidence">', 1)[1]
         self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span>/'
                       '<span class="deletions">−531</span> lines</span>', front_evidence)
-        self.assertIn('<span class="front-controller-state">Hosted ready · CLI held</span>', front_evidence)
+        self.assertIn('<span class="front-controller-state">Hosted eligible; selection unverified · CLI new request blocked</span>', front_evidence)
         self.assertNotIn('front-fact', front_copy)
         self.assertLess(front_evidence.index('<div class="front-facts">'), front_evidence.index('<div class="activity-grid">'))
         self.assertNotIn('At the review front', front)
@@ -235,9 +247,9 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('queue-status-front">REVIEW FRONT', row(42))
         self.assertIn('queue-status-reviewing">REVIEWING', row(43))
         self.assertIn('queue-status-queued">QUEUED', row(44))
-        self.assertIn('Hosted human stopped · CLI ready', row(44))
+        self.assertIn('Hosted human bypass · CLI eligible; selection unverified', row(44))
         self.assertIn('queue-status-review-closed">REVIEW CLOSED', row(45))
-        self.assertIn('Hosted human stopped · CLI override', row(45))
+        self.assertIn('Hosted human bypass · CLI human bypass', row(45))
         self.assertIn('queue-status-pending">PENDING', row(46))
 
         review["queue"][43]["channels"] = {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}
@@ -256,6 +268,23 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('queue-status-front">REVIEW FRONT', unavailable_train)
         self.assertIn('queue-status-pending">PENDING', unavailable_train)
         self.assertNotIn('queue-status-reviewing">REVIEWING', unavailable_train)
+
+    def test_only_selected_channel_target_says_ready_to_request(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 43})
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "READY", "cli": "COMPLETE"}},
+            43: {"channels": {"hosted": "READY", "cli": "READY"}},
+        }, "review_targets": {
+            "hosted": {"pr": 42, "status": "READY"},
+            "cli": {"pr": 43, "status": "READY"},
+        }})
+        result = page.render(data, review, NOW)
+        front = result.split('<li id="pr-42"', 1)[1].split("</li>", 1)[0]
+        later = result.split('<li id="pr-43"', 1)[1].split("</li>", 1)[0]
+        self.assertIn("Hosted ready to request · CLI review complete", front)
+        self.assertIn("Hosted waiting its turn · CLI ready to request", later)
 
     def test_stale_and_future_timestamps_are_explicit(self):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
@@ -505,7 +534,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                   "merged_at": {43: (NOW - timedelta(minutes=12)).isoformat()},
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
-        self.assertIn('<span class="sub">Hosted held · CLI ready</span>', result)
+        self.assertIn('<span class="sub">Hosted new request blocked · CLI eligible; selection unverified</span>', result)
         self.assertIn('<li id="pr-43" class="merged"><span class="order" aria-label="Queue position 2">02</span>', result)
         merged_row = result.split('<li id="pr-43"', 1)[1].split('</li>', 1)[0]
         front_row = result.split('<li id="pr-42"', 1)[1].split('</li>', 1)[0]
@@ -517,9 +546,9 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                       '<span class="sub"><time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time></span>', merged_row)
         self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-front">REVIEW FRONT</span>'
-                      '<span class="sub">Hosted held · CLI ready</span>', front_row)
-        self.assertNotIn('Hosted parent moved', merged_row)
-        self.assertNotIn('CLI parent moved', merged_row)
+                      '<span class="sub">Hosted new request blocked · CLI eligible; selection unverified</span>', front_row)
+        self.assertNotIn('Hosted parent changed', merged_row)
+        self.assertNotIn('CLI parent changed', merged_row)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
         self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h</time>', merged_row)
         self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
@@ -557,11 +586,11 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         def row(number):
             return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
-        self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
-        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted parent moved · CLI parent moved</span>', row(43))
-        self.assertIn('<span class="sub">Hosted parent moved · CLI parent moved</span>', row(43))
-        self.assertIn('<span class="sub">Hosted rate limited · CLI ready</span>', row(44))
-        self.assertIn('<span class="sub">Hosted ready · CLI ready</span>', row(45))
+        self.assertIn('<span class="sub">Hosted new request blocked · CLI new request blocked</span>', row(42))
+        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted parent changed · CLI parent changed</span>', row(43))
+        self.assertIn('<span class="sub">Hosted parent changed · CLI parent changed</span>', row(43))
+        self.assertIn('<span class="sub">Hosted cooldown active · CLI eligible; selection unverified</span>', row(44))
+        self.assertIn('<span class="sub">Hosted eligible; selection unverified · CLI eligible; selection unverified</span>', row(45))
         self.assertEqual(2, row(46).count('class="sub"'))
         self.assertNotIn("Ready for review", result)
         self.assertNotIn("Review eligibility unavailable", result)
@@ -582,20 +611,20 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         def row(number):
             return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
-        self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
+        self.assertIn('<span class="sub">Hosted new request blocked · CLI new request blocked</span>', row(42))
         self.assertNotIn("Up next in queue", row(43))
         self.assertNotIn("Up next in queue", row(44))
-        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted over ceiling · CLI parent moved</span>', row(45))
-        self.assertIn('<span class="sub">Hosted over ceiling · CLI parent moved</span>', row(45))
+        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted file limit · CLI parent changed</span>', row(45))
+        self.assertIn('<span class="sub">Hosted file limit · CLI parent changed</span>', row(45))
         self.assertNotIn("Up next in queue", row(46))
-        self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(46))
+        self.assertIn('<span class="sub">Hosted new request blocked · CLI new request blocked</span>', row(46))
         self.assertNotIn("Up next in queue", result)
 
         review["queue"][45] = {"channels": {"hosted": "HELD"}}
         incomplete = page.render(data, review, NOW, github)
         next_row = incomplete.split('<li id="pr-45"', 1)[1].split("</li>", 1)[0]
-        self.assertIn("Hosted held · Review state unavailable (CLI)", next_row)
-        self.assertNotIn("CLI held", next_row)
+        self.assertIn("Hosted new request blocked · Review state unavailable (CLI)", next_row)
+        self.assertNotIn("CLI new request blocked", next_row)
 
     def test_near_front_and_later_rows_show_available_controller_states(self):
         data = self.fixture()
@@ -617,13 +646,13 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         def row(number):
             return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
-        self.assertIn("Hosted ready · CLI held", row(42))
-        self.assertIn("Hosted held · CLI held", row(43))
-        self.assertIn("Hosted held · CLI parent moved", row(44))
-        self.assertIn("Hosted human stopped · CLI held", row(45))
+        self.assertIn("Hosted eligible; selection unverified · CLI new request blocked", row(42))
+        self.assertIn("Hosted new request blocked · CLI new request blocked", row(43))
+        self.assertIn("Hosted new request blocked · CLI parent changed", row(44))
+        self.assertIn("Hosted human bypass · CLI new request blocked", row(45))
         self.assertIn("Hosted not checked · CLI not checked", row(46))
         self.assertIn("Review evidence not checked in this refresh · identity only", row(46))
-        self.assertIn("Hosted held · Review state unavailable (CLI)", row(47))
+        self.assertIn("Hosted new request blocked · Review state unavailable (CLI)", row(47))
         self.assertIn("Review state unavailable", row(48))
         self.assertNotIn("Ready for review", result)
 
@@ -714,6 +743,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         report = {
             "ordered_prs": [42, 43],
             "status": "COHERENT",
+            "review_targets": {"hosted": {"pr": 42, "status": "READY"}},
             "prs": [
                 {"pr": 42, "head": HEAD, "channels": {"hosted": "READY", "cli": "HELD"}},
                 {"pr": 43, "head": "c" * 40, "channels": {"hosted": "HELD", "cli": "HELD"}},
@@ -724,10 +754,11 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertEqual([sys.executable, "/tmp/pr-review", "status", "--json"], run.call_args.args[0])
         self.assertTrue(snapshot["available"])
         self.assertEqual(HEAD, snapshot["head"])
+        self.assertEqual(42, snapshot["review_targets"]["hosted"]["pr"])
         self.assertFalse(snapshot["saved_head_stale"])
         self.assertEqual({42, 43}, set(snapshot["queue"]))
         result = page.render(self.fixture(), snapshot, NOW)
-        self.assertIn('<span class="sub">Hosted ready · CLI held</span>', result)
+        self.assertIn('<span class="sub">Hosted ready to request · CLI new request blocked</span>', result)
         self.assertNotIn("raw /", result.split('<div class="review-train">', 1)[1])
         report["prs"][0]["head"] = "b" * 40
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
