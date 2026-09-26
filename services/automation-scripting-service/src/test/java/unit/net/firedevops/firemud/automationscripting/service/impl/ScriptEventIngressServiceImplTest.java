@@ -662,7 +662,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -876,7 +875,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1104,7 +1102,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1193,7 +1190,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1323,7 +1319,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1432,7 +1427,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1557,7 +1551,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1680,7 +1673,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1773,7 +1765,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1876,7 +1867,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -1974,7 +1964,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -2070,7 +2059,6 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionEpoch(7L)
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -2563,7 +2551,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -2832,7 +2819,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -2926,7 +2912,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -2993,7 +2978,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -3061,7 +3045,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -3438,7 +3421,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-other")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -3711,7 +3693,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                         .build())
@@ -3829,7 +3810,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -3896,7 +3876,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
@@ -4897,7 +4876,6 @@ class ScriptEventIngressServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setScriptPinEpoch(1L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(1L)
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)

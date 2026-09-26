@@ -180,6 +180,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
     requireCommand(command);
     String dispatchId = dispatchId(workItem, command.ordinal());
     lockAdmissionScope(workItem);
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    if (acceptedResult != null) {
+      return acceptedResult;
+    }
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
     String admissionFenceReason =
@@ -313,6 +317,34 @@ public class ScriptGameplayCommandHandoffServiceImpl
     return result;
   }
 
+  private HandoffResult acceptedHandoffResult(ScriptWorkItem workItem, EmittedCommand command) {
+    ScriptHandoffEvent existing =
+        handoffEventRepository
+            .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                workItem.getTenantId(), workItem.getId(), command.ordinal())
+            .orElse(null);
+    if (existing == null) {
+      return null;
+    }
+    return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
+      case "enqueued" ->
+          new HandoffResult(
+              true, "ENQUEUED", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "duplicate_noop" ->
+          new HandoffResult(
+              true, "DUPLICATE_NOOP", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "remote_scheduled" ->
+          new HandoffResult(
+              true,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
+              "",
+              normalize(existing.getRemoteCoordinatorId()),
+              normalize(existing.getRemoteFollowupId()),
+              "");
+      default -> null;
+    };
+  }
+
   @Override
   @Transactional
   public void recordUnattempted(
@@ -323,6 +355,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (reason.isBlank()) {
       throw new IllegalArgumentException("fenceReason must not be blank");
     }
+    lockAdmissionScope(workItem);
     ScriptHandoffEvent existing =
         handoffEventRepository
             .findByTenantIdAndWorkItemIdAndCommandOrdinal(

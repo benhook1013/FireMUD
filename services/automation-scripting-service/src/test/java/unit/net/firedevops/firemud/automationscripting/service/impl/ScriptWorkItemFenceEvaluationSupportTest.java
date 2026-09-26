@@ -76,6 +76,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
   }
 
   @Test
+  void rejectsCapturedPluginVersionWhenAnotherVersionIsCurrentlyEnabled() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginId("plugin-1");
+    workItem.setPluginVersionId("plugin-v1");
+    workItem.setPluginActivationEpoch(4L);
+    workItem.setLifecycleRevision(8L);
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+                workItem, "plugin-v2", PluginState.PLUGIN_STATE_ENABLED, 4L, 8L))
+        .isEqualTo("plugin_binding_mismatch");
+  }
+
+  @Test
   void rejectsCurrentDisabledPluginFence() {
     ScriptWorkItem workItem = runtimeWorkItem();
     workItem.setPluginId("plugin-1");

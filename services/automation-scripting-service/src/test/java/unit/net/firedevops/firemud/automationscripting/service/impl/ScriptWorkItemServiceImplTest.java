@@ -38,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
 
@@ -355,6 +356,7 @@ class ScriptWorkItemServiceImplTest {
     item.setStatus("PENDING_EVALUATION");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ArgumentCaptor<Instant> eligibleAtCaptor = ArgumentCaptor.forClass(Instant.class);
     when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
             Mockito.eq("PENDING_EVALUATION"),
             Mockito.any(Instant.class),
@@ -374,11 +376,18 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(PluginRuntimeStateService.class),
             gameDesignClient());
 
+    Instant claimStartedAt = Instant.now();
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
+    Instant claimFinishedAt = Instant.now();
 
     assertThat(claimed).containsExactly(item);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     assertThat(item.getUpdatedAt()).isNotNull();
+    verify(workItemRepository)
+        .findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"), eligibleAtCaptor.capture(),
+            Mockito.eq(PageRequest.of(0, 10)));
+    assertThat(eligibleAtCaptor.getValue()).isBetween(claimStartedAt, claimFinishedAt);
     verify(workItemRepository).saveAll(List.of(item));
   }
 
@@ -408,6 +417,7 @@ class ScriptWorkItemServiceImplTest {
     item.setId(99L);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ArgumentCaptor<Instant> eligibleAtCaptor = ArgumentCaptor.forClass(Instant.class);
     when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
             Mockito.eq(List.of(99L, 100L)),
             Mockito.eq("PENDING_EVALUATION"),
@@ -428,10 +438,17 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(PluginRuntimeStateService.class),
             gameDesignClient());
 
+    Instant claimStartedAt = Instant.now();
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 99L, 100L), 10);
+    Instant claimFinishedAt = Instant.now();
 
     assertThat(claimed).containsExactly(item);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    verify(workItemRepository)
+        .findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq(List.of(99L, 100L)), Mockito.eq("PENDING_EVALUATION"),
+            eligibleAtCaptor.capture(), Mockito.eq(PageRequest.of(0, 10)));
+    assertThat(eligibleAtCaptor.getValue()).isBetween(claimStartedAt, claimFinishedAt);
     verify(workItemRepository).saveAll(List.of(item));
   }
 
