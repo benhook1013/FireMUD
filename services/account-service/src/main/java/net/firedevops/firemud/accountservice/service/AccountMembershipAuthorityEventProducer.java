@@ -456,8 +456,8 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
-   * Requires the latest checkpoint event to prove the exact current retained membership state.
-   * This read may fail closed during JOIN/reconciliation without undoing a caller's retry receipt.
+   * Requires the latest checkpoint event to prove the exact current retained membership state. This
+   * read may fail closed during JOIN/reconciliation without undoing a caller's retry receipt.
    */
   @Transactional(
       propagation = Propagation.MANDATORY,
