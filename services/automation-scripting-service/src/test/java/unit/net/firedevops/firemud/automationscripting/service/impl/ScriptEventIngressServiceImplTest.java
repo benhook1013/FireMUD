@@ -1034,7 +1034,13 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.reason()).isEqualTo("plugin_lifecycle_unavailable");
-    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+    ArgumentCaptor<ScriptEventIngressAudit> ingressAuditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(ingressAuditCaptor.capture());
+    ScriptEventIngressAudit ingressAudit = ingressAuditCaptor.getValue();
+    assertThat(ingressAudit.getAdmissionReason()).isEqualTo("plugin_lifecycle_unavailable");
+    assertThat(ingressAudit.getPluginActivationEpoch()).isZero();
+    assertThat(ingressAudit.getLifecycleRevision()).isZero();
     verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
     verify(eventAuditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
     verify(automationQueueService, never()).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));

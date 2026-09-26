@@ -98,6 +98,8 @@ public class ScriptScheduleInstanceRepository {
   }
 
   public ScriptScheduleInstance save(ScriptScheduleInstance entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
     if (entity.getId() == null) {
       ScriptScheduleInstancesRecord record = dsl.newRecord(SCRIPT_SCHEDULE_INSTANCES);
       populate(record, entity);

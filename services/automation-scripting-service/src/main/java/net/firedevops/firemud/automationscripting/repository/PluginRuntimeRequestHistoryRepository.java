@@ -38,6 +38,7 @@ public class PluginRuntimeRequestHistoryRepository {
 
   public PluginRuntimeRequestHistory insertOrGet(PluginRuntimeRequestHistory entity) {
     requireCoherentPluginFence(entity);
+    requireRequestFingerprint(entity);
     PluginRuntimeRequestHistoryRecord record = dsl.newRecord(PLUGIN_RUNTIME_REQUEST_HISTORY);
     populate(record, entity);
     PluginRuntimeRequestHistory winner =
@@ -71,6 +72,12 @@ public class PluginRuntimeRequestHistoryRepository {
   private static void requireCoherentPluginFence(PluginRuntimeRequestHistory entity) {
     AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
         entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+  }
+
+  private static void requireRequestFingerprint(PluginRuntimeRequestHistory entity) {
+    if (entity.getRequestFingerprint() == null || entity.getRequestFingerprint().isBlank()) {
+      throw new IllegalArgumentException("request_fingerprint must not be blank");
+    }
   }
 
   private static String normalize(String value) {

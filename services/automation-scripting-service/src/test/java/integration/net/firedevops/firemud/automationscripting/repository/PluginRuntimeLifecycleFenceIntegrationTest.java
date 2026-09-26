@@ -128,6 +128,53 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   }
 
   @Test
+  void lifecycleAdvisoryLockDoesNotSerializeJavaHashCollidingScopes() throws Exception {
+    String firstPluginId = "Aa";
+    String secondPluginId = "BB";
+    assertThat(("tenant-1\u0000game-1\u0000" + firstPluginId).hashCode())
+        .isEqualTo(("tenant-1\u0000game-1\u0000" + secondPluginId).hashCode());
+
+    CountDownLatch firstHasLock = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch secondReachedLockCall = new CountDownLatch(1);
+    CountDownLatch secondHasLock = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> firstTransaction = null;
+    Future<?> secondTransaction = null;
+    try {
+      firstTransaction =
+          executor.submit(
+              () ->
+                  dsl.transaction(
+                      configuration -> {
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
+                            .lockLifecycleScope("tenant-1", "game-1", firstPluginId);
+                        firstHasLock.countDown();
+                        await(releaseFirst);
+                      }));
+      assertThat(firstHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+      secondTransaction =
+          executor.submit(
+              () ->
+                  dsl.transaction(
+                      configuration -> {
+                        secondReachedLockCall.countDown();
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
+                            .lockLifecycleScope("tenant-1", "game-1", secondPluginId);
+                        secondHasLock.countDown();
+                      }));
+      assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+      releaseFirst.countDown();
+      firstTransaction.get(5, TimeUnit.SECONDS);
+      secondTransaction.get(5, TimeUnit.SECONDS);
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   void nextEligibleDefaultUsesUtcWhenSessionTimezoneIsNonUtc() {
     dsl.transaction(
         configuration -> {
@@ -147,7 +194,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                       "select next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
                           + "from script_work_items where script_event_id = 'event-utc-default'",
                       Boolean.class))
-              .isTrue();
+              .isEqualTo(Boolean.TRUE);
         });
   }
 
