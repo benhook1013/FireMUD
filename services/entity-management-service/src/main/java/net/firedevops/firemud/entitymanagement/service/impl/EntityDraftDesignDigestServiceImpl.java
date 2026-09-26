@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Map;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.entity.CraftingIngredient;
@@ -14,6 +15,7 @@ import net.firedevops.firemud.entitymanagement.repository.NpcRepository;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
 
 @Service
 @SuppressFBWarnings(
@@ -21,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
     justification =
         "Injected repositories and ObjectMapper are managed dependencies kept internal.")
 public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 1;
+  private static final int DIGEST_SCHEMA_VERSION = 2;
 
   private final ItemRepository itemRepository;
   private final NpcRepository npcRepository;
@@ -48,66 +50,76 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
     long versionKey = RequestIdValidation.requirePositiveLong(versionId, "versionId");
     try {
       String canonicalJson =
-          objectMapper.writeValueAsString(
-              Map.of(
-                  "items",
-                  itemRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          item ->
-                              Map.<String, Object>of(
-                                  "id", item.getId(),
-                                  "name", item.getName(),
-                                  "description", value(item.getDescription()),
-                                  "equipmentSlot", value(item.getEquipmentSlot()),
-                                  "container", item.isContainer(),
-                                  "stackable", item.isStackable(),
-                                  "stackCompatibilityMode", item.getStackCompatibilityMode().name(),
-                                  "stackVariantKey", value(item.getStackVariantKey()),
-                                  "effectPayloadJson", value(item.getEffectPayloadJson())))
-                      .toList(),
-                  "npcs",
-                  npcRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          npc ->
-                              Map.<String, Object>of(
-                                  "id", npc.getId(),
-                                  "name", npc.getName(),
-                                  "behavior", value(npc.getBehavior()),
-                                  "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
-                      .toList(),
-                  "craftingRecipes",
-                  craftingRecipeRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          recipe ->
-                              Map.<String, Object>of(
-                                  "id",
-                                  recipe.getId(),
-                                  "name",
-                                  recipe.getName(),
-                                  "resultItemId",
-                                  recipe.getResultItem().getId(),
-                                  "resultQuantity",
-                                  recipe.getResultQuantity(),
-                                  "ingredients",
-                                  recipe.getIngredients().stream()
-                                      .sorted(
-                                          Comparator.comparing(
-                                                  (CraftingIngredient ingredient) ->
-                                                      ingredient.getItem().getId())
-                                              .thenComparingInt(CraftingIngredient::getQuantity))
-                                      .map(
-                                          ingredient ->
-                                              Map.<String, Object>of(
-                                                  "itemId", ingredient.getItem().getId(),
-                                                  "quantity", ingredient.getQuantity()))
-                                      .toList()))
-                      .toList()));
+          objectMapper
+              .writer(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+              .writeValueAsString(
+                  Map.of(
+                      "items",
+                      itemRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              item ->
+                                  Map.<String, Object>ofEntries(
+                                      Map.entry("id", item.getId()),
+                                      Map.entry("name", item.getName()),
+                                      Map.entry("description", value(item.getDescription())),
+                                      Map.entry("equipmentSlot", value(item.getEquipmentSlot())),
+                                      Map.entry(
+                                          "equipmentSlotGroupKey",
+                                          normalizeOptionalKey(item.getEquipmentSlotGroupKey())),
+                                      Map.entry("container", item.isContainer()),
+                                      Map.entry("stackable", item.isStackable()),
+                                      Map.entry(
+                                          "stackCompatibilityMode",
+                                          item.getStackCompatibilityMode().name()),
+                                      Map.entry(
+                                          "stackVariantKey", value(item.getStackVariantKey())),
+                                      Map.entry(
+                                          "effectPayloadJson", value(item.getEffectPayloadJson()))))
+                          .toList(),
+                      "npcs",
+                      npcRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              npc ->
+                                  Map.<String, Object>of(
+                                      "id", npc.getId(),
+                                      "name", npc.getName(),
+                                      "behavior", value(npc.getBehavior()),
+                                      "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
+                          .toList(),
+                      "craftingRecipes",
+                      craftingRecipeRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              recipe ->
+                                  Map.<String, Object>of(
+                                      "id",
+                                      recipe.getId(),
+                                      "name",
+                                      recipe.getName(),
+                                      "resultItemId",
+                                      recipe.getResultItem().getId(),
+                                      "resultQuantity",
+                                      recipe.getResultQuantity(),
+                                      "ingredients",
+                                      recipe.getIngredients().stream()
+                                          .sorted(
+                                              Comparator.comparing(
+                                                      (CraftingIngredient ingredient) ->
+                                                          ingredient.getItem().getId())
+                                                  .thenComparingInt(
+                                                      CraftingIngredient::getQuantity))
+                                          .map(
+                                              ingredient ->
+                                                  Map.<String, Object>of(
+                                                      "itemId", ingredient.getItem().getId(),
+                                                      "quantity", ingredient.getQuantity()))
+                                          .toList()))
+                          .toList()));
       return new EntityDraftDesignDigest(
           tenantId,
           versionId,
@@ -121,6 +133,10 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
 
   private String value(String value) {
     return value == null ? "" : value;
+  }
+
+  private String normalizeOptionalKey(String value) {
+    return value == null || value.isBlank() ? "" : value.trim().toUpperCase(Locale.ROOT);
   }
 
   private String sha256(String value) {
