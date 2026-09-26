@@ -317,8 +317,10 @@ jobs:
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
             "Ignoring stale lifecycle event for an earlier PR head."
           if [[ "$ACTION" == deploy ]]; then
-            changed_files_json="$(gh api --paginate --slurp \
-              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+            if ! changed_files_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"; then
+              changed_files_json=''
+            fi
             expected_changed_file_count="$(jq -r \
               'if (.changed_files | type) == "number" and .changed_files >= 0 and (.changed_files | floor) == .changed_files
                then .changed_files else empty end' <<<"$pull_request_json")"

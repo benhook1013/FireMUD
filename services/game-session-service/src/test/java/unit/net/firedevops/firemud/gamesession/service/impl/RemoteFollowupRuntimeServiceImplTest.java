@@ -1123,6 +1123,10 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupUsesOriginInstanceWhenCommandIdIsReused() {
+    RemoteCommandCoordinator existing = coordinator();
+    existing.setCoordinatorId("coord-origin-7");
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(existing));
     when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1"))
         .thenReturn(Optional.empty());
 
@@ -1135,7 +1139,16 @@ class RemoteFollowupRuntimeServiceImplTest {
         .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1");
     verify(coordinatorRepository)
         .save(
-            argThat(coordinator -> Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())));
+            argThat(
+                coordinator ->
+                    Long.valueOf(1L).equals(coordinator.getTenantId())
+                        && Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())
+                        && "cmd-1".equals(coordinator.getCommandId())));
+    verify(coordinatorRepository, never()).save(argThat(saved -> saved == existing));
+    assertEquals(1L, existing.getTenantId());
+    assertEquals(7L, existing.getOriginGameInstanceId());
+    assertEquals("cmd-1", existing.getCommandId());
+    assertEquals("coord-origin-7", existing.getCoordinatorId());
   }
 
   @Test
