@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The monotonic generation contract is target state and is not fully implemented or proved. The current Unit 1B draft adds durable generation-storage primitives and initializes the Account UUID scope for newly registered global accounts, but retained-account enrollment, issuer/tenant/membership producers, projections, transactional issuance/revocation ordering, and cross-scope validation proof remain outstanding. Account runtime still uses legacy session keys and incomplete issued-token/auth-generation enforcement.
+The monotonic generation contract is target state and is not fully implemented or proved. The current Unit 1B draft adds durable generation-storage primitives, initializes the Account UUID scope for newly registered global accounts, and idempotently enrolls the exact Account JWT issuer at startup without resetting an existing generation. Account V33 adds a separately sequenced, immutable authority-outbox storage primitive, but no canonical producer emits an event through it yet. Retained-account and tenant/membership enrollment, authority-mutation composition, projections, transactional issuance/revocation ordering, and cross-scope validation proof remain outstanding. Account runtime still uses legacy session keys and incomplete issued-token/auth-generation enforcement.
 
 ## Decision Record
 

@@ -57,6 +57,29 @@ public class AccountAuthorityGenerationRepository {
     return readScopeState(scope, true);
   }
 
+  /**
+   * Enrolls the exact Account JWT issuer scope once, preserving any existing durable values.
+   *
+   * <p>The partial unique index arbitrates concurrent Account startups. The subsequent locked
+   * readback returns the exact persisted issuer row and rejects missing or malformed state.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ScopeState initializeIssuerIfAbsent(String exactIssuerId) {
+    AuthorityScope scope = AuthorityScope.issuer(exactIssuerId);
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + GENERATION_TABLE
+                + " (scope_kind, issuer_id, account_uuid, tenant_uuid, generation, source_version) "
+                + "VALUES ('ISSUER', ?, NULL, NULL, 1, 1) "
+                + "ON CONFLICT (issuer_id) WHERE scope_kind = 'ISSUER' DO NOTHING",
+            exactIssuerId);
+    if (inserted < 0 || inserted > 1) {
+      throw new IllegalStateException("Account issuer authority enrollment was ambiguous");
+    }
+    return readScopeState(scope, true);
+  }
+
   /** Reads one initialized exact scope and fails closed for absent or malformed state. */
   @Transactional(propagation = Propagation.MANDATORY)
   public ScopeState read(AuthorityScope scope) {

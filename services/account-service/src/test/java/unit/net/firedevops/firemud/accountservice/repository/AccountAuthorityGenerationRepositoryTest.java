@@ -61,6 +61,9 @@ class AccountAuthorityGenerationRepositoryTest {
     assertMandatory(
         AccountAuthorityGenerationRepository.class.getMethod("initialize", AuthorityScope.class));
     assertMandatory(
+        AccountAuthorityGenerationRepository.class.getMethod(
+            "initializeIssuerIfAbsent", String.class));
+    assertMandatory(
         AccountAuthorityGenerationRepository.class.getMethod("read", AuthorityScope.class));
     assertMandatory(
         AccountAuthorityGenerationRepository.class.getMethod(
@@ -84,6 +87,14 @@ class AccountAuthorityGenerationRepositoryTest {
     assertThatThrownBy(() -> repository.advance(state, new IssuanceFence(otherAccountId, 1L, 1L)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> repository.advance(state, null))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void issuerEnrollmentRejectsBlankIssuerBeforeStorageAccess() {
+    assertThatThrownBy(() -> repository.initializeIssuerIfAbsent("  "))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(dsl);

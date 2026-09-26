@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -64,7 +65,7 @@ class AccountAuthorityGenerationIntegrationTest {
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
 
-    AuthorityScope issuerScope = AuthorityScope.issuer("Issuer-A");
+    AuthorityScope issuerScope = AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER);
     AuthorityScope lowerIssuerScope = AuthorityScope.issuer("issuer-a");
     AuthorityScope accountScopeA = AuthorityScope.account(accountA);
     AuthorityScope accountScopeB = AuthorityScope.account(accountB);
@@ -84,8 +85,26 @@ class AccountAuthorityGenerationIntegrationTest {
                 .fetchOne(0, Long.class))
         .isZero();
 
-    assertThat(inTransaction(transaction, () -> repository.initialize(issuerScope)).generation())
+    proveConcurrentIssuerEnrollment(repository, transaction, issuerScope.issuerId());
+    assertThat(
+            setupDsl
+                .resultQuery(
+                    "SELECT count(*) FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ISSUER' AND issuer_id = ?",
+                    issuerScope.issuerId())
+                .fetchOne(0, Long.class))
         .isEqualTo(1L);
+    ScopeState enrolledIssuer = inTransaction(transaction, () -> repository.read(issuerScope));
+    assertThat(enrolledIssuer.generation()).isEqualTo(1L);
+    assertThat(enrolledIssuer.sourceVersion()).isEqualTo(1L);
+    ScopeState advancedIssuer =
+        inTransaction(transaction, () -> repository.advance(enrolledIssuer, null));
+    assertThat(advancedIssuer.generation()).isEqualTo(2L);
+    assertThat(advancedIssuer.sourceVersion()).isEqualTo(2L);
+    assertThat(
+            inTransaction(
+                transaction, () -> repository.initializeIssuerIfAbsent(issuerScope.issuerId())))
+        .isEqualTo(advancedIssuer);
     inTransaction(transaction, () -> repository.initialize(lowerIssuerScope));
     inTransaction(transaction, () -> repository.initialize(accountScopeA));
     inTransaction(transaction, () -> repository.initialize(accountScopeB));
@@ -217,6 +236,43 @@ class AccountAuthorityGenerationIntegrationTest {
       start.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private void proveConcurrentIssuerEnrollment(
+      AccountAuthorityGenerationRepository repository,
+      TransactionTemplate transaction,
+      String issuerId)
+      throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try {
+      var first =
+          executor.submit(
+              () -> concurrentIssuerEnrollment(repository, transaction, issuerId, ready, start));
+      var second =
+          executor.submit(
+              () -> concurrentIssuerEnrollment(repository, transaction, issuerId, ready, start));
+      ready.await();
+      start.countDown();
+      List<ScopeState> outcomes = List.of(first.get(), second.get());
+      ScopeState initial = new ScopeState(AuthorityScope.issuer(issuerId), 1L, 1L, null);
+      assertThat(outcomes).containsExactly(initial, initial);
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private ScopeState concurrentIssuerEnrollment(
+      AccountAuthorityGenerationRepository repository,
+      TransactionTemplate transaction,
+      String issuerId,
+      CountDownLatch ready,
+      CountDownLatch start) {
+    ready.countDown();
+    await(start);
+    return inTransaction(transaction, () -> repository.initializeIssuerIfAbsent(issuerId));
   }
 
   private boolean concurrentAdvance(
