@@ -222,6 +222,19 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void insertRejectsPluginLifecycleFenceWithoutPluginIdentity() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .withMessage("plugin lifecycle evidence requires plugin identity");
+  }
+
+  @Test
   void insertRejectsConflictingOwnerEvidenceAgainstExistingIdentity() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);

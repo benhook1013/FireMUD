@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
 import java.util.List;
@@ -378,6 +380,13 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
           () -> {
             try {
               publishAction.run();
+            } catch (StatusRuntimeException ex) {
+              Status.Code code = ex.getStatus().getCode();
+              if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
+                LOG.warn("Script event publish terminally rejected status={}", code);
+              } else {
+                LOG.warn("Script event publish task failed", ex);
+              }
             } catch (RuntimeException ex) {
               LOG.warn("Script event publish task failed", ex);
             }

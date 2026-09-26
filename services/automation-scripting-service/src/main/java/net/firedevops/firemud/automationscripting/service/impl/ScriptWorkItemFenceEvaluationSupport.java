@@ -12,6 +12,9 @@ final class ScriptWorkItemFenceEvaluationSupport {
     String pluginId = normalize(workItem.getPluginId());
     String pluginVersionId = normalize(workItem.getPluginVersionId());
     if (pluginId.isBlank() && pluginVersionId.isBlank()) {
+      if (workItem.getPluginActivationEpoch() != 0L || workItem.getLifecycleRevision() != 0L) {
+        return "plugin_binding_mismatch";
+      }
       return null;
     }
     if (pluginId.isBlank() || pluginVersionId.isBlank()) {

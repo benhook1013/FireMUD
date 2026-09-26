@@ -1891,6 +1891,8 @@ class ScriptWorkItemServiceImplTest {
     item.setEntityId("entity-1");
     item.setPluginId("plugin-1");
     item.setPluginVersionId("plugin-v1");
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-2");
@@ -1983,6 +1985,8 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(result.rejectedCount()).isEqualTo(0L);
+    assertThat(item.getPluginActivationEpoch()).isEqualTo(1L);
+    assertThat(item.getLifecycleRevision()).isEqualTo(1L);
     verify(pluginRuntimeStateService).getStatus("1", "game-1", "plugin-1");
   }
 

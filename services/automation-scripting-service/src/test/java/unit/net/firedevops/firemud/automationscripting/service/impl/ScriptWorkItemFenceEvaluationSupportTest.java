@@ -15,6 +15,16 @@ class ScriptWorkItemFenceEvaluationSupportTest {
   }
 
   @Test
+  void rejectsUnboundWorkItemWithCapturedPluginLifecycleEvidence() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginActivationEpoch(1L);
+    workItem.setLifecycleRevision(1L);
+
+    assertThat(ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem))
+        .isEqualTo("plugin_binding_mismatch");
+  }
+
+  @Test
   void rejectsPartialPluginBindingBeforeCurrentAuthorityLookup() {
     ScriptWorkItem workItem = runtimeWorkItem();
     workItem.setPluginId("plugin-1");
