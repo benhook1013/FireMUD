@@ -455,16 +455,25 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
         for record_path in records:
             record = hosted.load_trigger_reservation(record_path, repo, pr_number)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
-            # An already-posted Hosted request can run alongside the independent
-            # CLI process. The caller holds request.lock through CLI preflight and
-            # capture initialization, so trigger classification and candidate
-            # snapshotting remain serialized with Hosted posting. An ambiguous,
-            # unattributed, or timed-out response still fails closed.
-            if state.state in {"ambiguous", "unattributed", "timed_out"}:
+            # A terminal response whose immutable identity is known but whose
+            # attribution is ambiguous is historical context for CLI analysis.
+            # It provides no Hosted credit. Active requests, missing trigger or
+            # response identity, and timed-out requests remain blocking.
+            terminal_attribution_ambiguity = (
+                state.state == "ambiguous"
+                and state.terminal is True
+                and state.attributed is False
+                and isinstance(state.response_id, int)
+                and not isinstance(state.response_id, bool)
+                and state.response_id > 0
+            )
+            if state.state in {"active", "awaiting_response"}:
+                raise ReviewRunnerError(f"an active Hosted review blocks CLI review: {state.state}")
+            if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
                 raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
+            if terminal_attribution_ambiguity:
+                continue
             if state.state not in {
-                "active",
-                "awaiting_response",
                 "completed",
                 "noop",
                 "failed",

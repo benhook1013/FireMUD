@@ -831,7 +831,11 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
     if any(reviewed != selected for reviewed, selected in ratios):
         return True
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
-    return INCOMPLETE_FILE_COVERAGE.search(text_without_explicit_zero_omissions) is not None
+    return any(
+        INCOMPLETE_FILE_COVERAGE.search(sentence)
+        and re.search(r"\breview(?:ed|ing)?\b", sentence, re.IGNORECASE)
+        for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
+    )
 
 
 def _summary_proves_complete_file_coverage(text: str) -> bool:

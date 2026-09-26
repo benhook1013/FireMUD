@@ -933,6 +933,57 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state_for(selected_reply=active).state, "active")
         self.assertNotEqual(state_for(selected_reply=unattributed).state, "completed")
 
+    def test_zero_finding_summary_ignores_unrelated_docstring_skipped_files(self):
+        trigger_at = "2026-09-23T00:01:00Z"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.\n"
+                "📒 Files selected for processing (81)\n"
+                "Docstring Coverage: Analyzed 255 functions across 50 files. "
+                "(31 skipped: 24 unsupported, 7 over the file limit.)"
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = "2026-09-23T00:03:20Z"
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:03:00Z")
+
+        def state_for(selected_summary):
+            return hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, selected_summary, reply]),
+                trigger_record(),
+            )
+
+        self.assertEqual(state_for(summary).state, "completed")
+
+        genuinely_incomplete = {
+            **summary,
+            "body": summary["body"].replace(
+                "📒 Files selected for processing (81)",
+                "Files selected: 81. Files reviewed: 79. Files not reviewed: 2.",
+            ),
+        }
+        incomplete_state = state_for(genuinely_incomplete)
+        self.assertEqual(incomplete_state.state, "failed")
+        self.assertIn("incomplete file coverage", incomplete_state.reason)
+        self.assertTrue(incomplete_state.terminal)
+        self.assertTrue(incomplete_state.attributed)
+
+        nonquantitative_incomplete = {
+            **summary,
+            "body": summary["body"].replace(
+                "📒 Files selected for processing (81)",
+                "Review files were skipped during processing.",
+            ),
+        }
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(nonquantitative_incomplete["body"]))
+        self.assertEqual(state_for(nonquantitative_incomplete).state, "ambiguous")
+
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(
