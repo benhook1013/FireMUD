@@ -2,9 +2,12 @@
 """Materialize an externally custodied Account response-envelope ring into Kubernetes.
 
 This tool accepts an owner-only source record containing version=1, canonical Base64 for the
-exact manifest bytes, an opaque source generation, and the source expiry. It never creates or
-rotates key material. The caller supplies the trusted class maximum age separately. Re-running
-an exact generation is read-only and preserves its timestamps.
+exact manifest bytes, an opaque source generation, source expiry, target environment and
+namespace, predecessor generation, and an immutable source-created timestamp. That timestamp is
+a conservative age anchor for the Secret's materialized-at and expiry metadata, not a claim of
+the later Kubernetes write time. The source record must come from protected durable custody. The
+tool never creates or rotates key material. The caller supplies the trusted class maximum age
+separately. Re-running an exact generation is read-only and preserves its timestamps.
 """
 
 from __future__ import annotations
@@ -32,10 +35,16 @@ KUBECTL_TIMEOUT_SECONDS = 30
 ANNOTATION_MATERIALIZED_AT = "firemud.io/materialized-at"
 ANNOTATION_EXPIRES_AT = "firemud.io/expires-at"
 ANNOTATION_SOURCE_GENERATION = "firemud.io/source-generation"
+ANNOTATION_ENVIRONMENT_ID = "firemud.io/environment-id"
+ANNOTATION_TARGET_NAMESPACE = "firemud.io/target-namespace"
+ANNOTATION_PREVIOUS_SOURCE_GENERATION = "firemud.io/previous-source-generation"
 REQUIRED_ANNOTATIONS = (
     ANNOTATION_MATERIALIZED_AT,
     ANNOTATION_EXPIRES_AT,
     ANNOTATION_SOURCE_GENERATION,
+    ANNOTATION_ENVIRONMENT_ID,
+    ANNOTATION_TARGET_NAMESPACE,
+    ANNOTATION_PREVIOUS_SOURCE_GENERATION,
 )
 KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 KEY_BYTES_PATTERN = re.compile(rb"[A-Za-z0-9_-]{43}\Z")
@@ -67,6 +76,9 @@ class ExistingSecret:
     expires_at: dt.datetime
     expires_at_text: str
     source_generation: str
+    previous_source_generation: str | None
+    environment_id: str
+    target_namespace: str
     resource_version: str
     labels: dict[str, str]
     annotations: dict[str, str]
@@ -78,6 +90,11 @@ class SourceRecord:
     source_generation: str
     source_expires_at: dt.datetime
     source_expires_at_text: str
+    source_created_at: dt.datetime
+    source_created_at_text: str
+    environment_id: str
+    target_namespace: str
+    previous_source_generation: str | None
 
 
 def parse_rfc3339_utc(value: str, field_name: str) -> dt.datetime:
@@ -111,6 +128,26 @@ def validate_source_generation(value: str) -> str:
         raise MaterializationError("source generation must be a non-empty opaque annotation value")
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise MaterializationError("source generation must not contain control characters")
+    return value
+
+
+def validate_environment_id(value: str) -> str:
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeError as exc:
+        raise MaterializationError("environment ID must be valid UTF-8") from exc
+    if not value or len(encoded) > 4096:
+        raise MaterializationError("environment ID must be a non-empty opaque value")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise MaterializationError("environment ID must not contain control characters")
+    return value
+
+
+def validate_namespace(value: str) -> str:
+    if not isinstance(value, str) or len(value) > 63 or not re.fullmatch(
+        r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", value
+    ):
+        raise MaterializationError("target namespace must be a Kubernetes namespace name")
     return value
 
 
@@ -158,7 +195,16 @@ def read_source_record(path: Path) -> SourceRecord:
         )
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise MaterializationError("source record must be valid UTF-8 JSON") from exc
-    expected_fields = {"version", "manifestBase64", "sourceGeneration", "sourceExpiresAt"}
+    expected_fields = {
+        "version",
+        "manifestBase64",
+        "sourceGeneration",
+        "sourceExpiresAt",
+        "sourceCreatedAt",
+        "environmentId",
+        "targetNamespace",
+        "previousSourceGeneration",
+    }
     if not isinstance(record, dict) or set(record) != expected_fields:
         raise MaterializationError("source record fields do not match the version 1 contract")
     if type(record["version"]) is not int or record["version"] != 1:
@@ -169,6 +215,16 @@ def read_source_record(path: Path) -> SourceRecord:
         raise MaterializationError("source record sourceGeneration must be a string")
     if not isinstance(record["sourceExpiresAt"], str):
         raise MaterializationError("source record sourceExpiresAt must be a string")
+    if not isinstance(record["sourceCreatedAt"], str):
+        raise MaterializationError("source record sourceCreatedAt must be a string")
+    if not isinstance(record["environmentId"], str):
+        raise MaterializationError("source record environmentId must be a string")
+    if not isinstance(record["targetNamespace"], str):
+        raise MaterializationError("source record targetNamespace must be a string")
+    if record["previousSourceGeneration"] is not None and not isinstance(
+        record["previousSourceGeneration"], str
+    ):
+        raise MaterializationError("source record previousSourceGeneration must be a string or null")
     try:
         canonical_record = (
             json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
@@ -187,13 +243,27 @@ def read_source_record(path: Path) -> SourceRecord:
     if not manifest_bytes or len(manifest_bytes) > MAX_MANIFEST_BYTES:
         raise MaterializationError("source record manifest is empty or exceeds the format size limit")
     source_generation = validate_source_generation(record["sourceGeneration"])
+    environment_id = validate_environment_id(record["environmentId"])
+    target_namespace = validate_namespace(record["targetNamespace"])
+    previous_source_generation = record["previousSourceGeneration"]
+    if previous_source_generation is not None:
+        previous_source_generation = validate_source_generation(previous_source_generation)
     source_expires_at_text = record["sourceExpiresAt"]
     source_expires_at = parse_rfc3339_utc(source_expires_at_text, "source expiry")
+    source_created_at_text = record["sourceCreatedAt"]
+    source_created_at = parse_rfc3339_utc(source_created_at_text, "source creation time")
+    if source_expires_at <= source_created_at:
+        raise MaterializationError("source expiry must follow source creation time")
     return SourceRecord(
         manifest_bytes=manifest_bytes,
         source_generation=source_generation,
         source_expires_at=source_expires_at,
         source_expires_at_text=source_expires_at_text,
+        source_created_at=source_created_at,
+        source_created_at_text=source_created_at_text,
+        environment_id=environment_id,
+        target_namespace=target_namespace,
+        previous_source_generation=previous_source_generation,
     )
 
 
@@ -272,7 +342,9 @@ def _decode_secret_manifest(secret: dict[str, Any], namespace: str) -> tuple[byt
     return manifest_bytes, metadata
 
 
-def _load_existing_secret(secret: dict[str, Any], namespace: str) -> ExistingSecret:
+def _load_existing_secret(
+    secret: dict[str, Any], namespace: str, expected_environment_id: str
+) -> ExistingSecret:
     manifest_bytes, metadata = _decode_secret_manifest(secret, namespace)
     parsed_manifest = parse_manifest(manifest_bytes)
     annotations = metadata.get("annotations")
@@ -285,6 +357,16 @@ def _load_existing_secret(secret: dict[str, Any], namespace: str) -> ExistingSec
     if any(key not in annotations or not isinstance(annotations[key], str) for key in REQUIRED_ANNOTATIONS):
         raise MaterializationError("existing Secret freshness metadata is missing")
     generation = validate_source_generation(annotations[ANNOTATION_SOURCE_GENERATION])
+    environment_id = validate_environment_id(annotations[ANNOTATION_ENVIRONMENT_ID])
+    target_namespace = validate_namespace(annotations[ANNOTATION_TARGET_NAMESPACE])
+    previous_generation_text = annotations[ANNOTATION_PREVIOUS_SOURCE_GENERATION]
+    previous_generation = (
+        None
+        if previous_generation_text == ""
+        else validate_source_generation(previous_generation_text)
+    )
+    if environment_id != expected_environment_id or target_namespace != namespace:
+        raise MaterializationError("existing Secret environment or target namespace is inconsistent")
     materialized_text = annotations[ANNOTATION_MATERIALIZED_AT]
     expires_text = annotations[ANNOTATION_EXPIRES_AT]
     materialized_at = parse_rfc3339_utc(materialized_text, "existing materialized-at")
@@ -303,6 +385,9 @@ def _load_existing_secret(secret: dict[str, Any], namespace: str) -> ExistingSec
         expires_at=expires_at,
         expires_at_text=expires_text,
         source_generation=generation,
+        previous_source_generation=previous_generation,
+        environment_id=environment_id,
+        target_namespace=target_namespace,
         resource_version=resource_version,
         labels=dict(labels),
         annotations=dict(annotations),
@@ -371,6 +456,8 @@ def _secret_for_write(
     manifest_bytes: bytes,
     namespace: str,
     source_generation: str,
+    environment_id: str,
+    previous_source_generation: str | None,
     materialized_at: dt.datetime,
     expires_at: dt.datetime,
     existing: ExistingSecret | None,
@@ -389,6 +476,9 @@ def _secret_for_write(
             ANNOTATION_MATERIALIZED_AT: format_timestamp(materialized_at),
             ANNOTATION_EXPIRES_AT: format_timestamp(expires_at),
             ANNOTATION_SOURCE_GENERATION: source_generation,
+            ANNOTATION_ENVIRONMENT_ID: environment_id,
+            ANNOTATION_TARGET_NAMESPACE: namespace,
+            ANNOTATION_PREVIOUS_SOURCE_GENERATION: previous_source_generation or "",
         }
     )
     metadata["annotations"] = annotations
@@ -404,6 +494,7 @@ def _secret_for_write(
 def _verify_readback(
     secret: dict[str, Any] | None,
     namespace: str,
+    environment_id: str,
     manifest_bytes: bytes,
     source_generation: str,
     materialized_at_text: str,
@@ -416,7 +507,7 @@ def _verify_readback(
     observed_manifest, _ = _decode_secret_manifest(secret, namespace)
     if observed_manifest != manifest_bytes:
         raise MaterializationError("Secret readback manifest bytes do not match the source")
-    current = _load_existing_secret(secret, namespace)
+    current = _load_existing_secret(secret, namespace, environment_id)
     if current.source_generation != source_generation:
         raise MaterializationError("Secret readback source generation does not match")
     if current.materialized_at_text != materialized_at_text or current.expires_at_text != expires_at_text:
@@ -427,18 +518,24 @@ def _verify_readback(
 
 def materialize(
     source_record_path: Path,
+    environment_id: str,
     namespace: str,
     class_max_age_seconds: int,
     kubectl: str = "kubectl",
     now: dt.datetime | None = None,
 ) -> bool:
-    if not namespace or len(namespace) > 63 or not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", namespace):
-        raise MaterializationError("namespace must be a Kubernetes namespace name")
+    environment_id = validate_environment_id(environment_id)
+    namespace = validate_namespace(namespace)
     if class_max_age_seconds <= 0:
         raise MaterializationError("class maximum age must be a positive number of seconds")
     source_record = read_source_record(source_record_path)
+    if source_record.environment_id != environment_id:
+        raise MaterializationError("source record environment ID does not match the expected environment")
+    if source_record.target_namespace != namespace:
+        raise MaterializationError("source record target namespace does not match the expected namespace")
     source_generation = source_record.source_generation
     source_expires_at = source_record.source_expires_at
+    source_created_at = source_record.source_created_at
     source_bytes = source_record.manifest_bytes
     source_manifest = parse_manifest(source_bytes)
     current_time = now or dt.datetime.now(dt.timezone.utc)
@@ -447,24 +544,33 @@ def materialize(
     current_time = current_time.astimezone(dt.timezone.utc)
     if source_expires_at <= current_time:
         raise MaterializationError("source expiry must be in the future")
+    if source_created_at > current_time:
+        raise MaterializationError("source creation time must not be in the future")
+    expires_at = _bounded_expiry(source_expires_at, source_created_at, class_max_age_seconds)
+    if expires_at <= current_time:
+        raise MaterializationError("source generation has expired under the class maximum age")
 
     secret = _read_secret(kubectl, namespace)
     existing: ExistingSecret | None = None
     if secret is not None:
-        existing = _load_existing_secret(secret, namespace)
+        existing = _load_existing_secret(secret, namespace, environment_id)
         if existing.materialized_at > current_time:
             raise MaterializationError("existing Secret materialized-at timestamp is in the future")
         if existing.source_generation == source_generation:
-            expected_existing_expiry = _bounded_expiry(
-                source_expires_at, existing.materialized_at, class_max_age_seconds
-            )
-            if existing.expires_at != expected_existing_expiry:
-                raise MaterializationError("same-generation expiry metadata does not match the source input")
-            if existing.expires_at <= current_time:
-                raise MaterializationError("existing Secret has expired; controlled recovery is required")
+            if source_record.previous_source_generation != existing.previous_source_generation:
+                raise MaterializationError("same-generation predecessor does not match materialization lineage")
+            if (
+                existing.materialized_at_text != source_record.source_created_at_text
+                or existing.expires_at != expires_at
+            ):
+                raise MaterializationError("same-generation freshness metadata does not match the source record")
             if existing.manifest_bytes != source_bytes:
                 raise MaterializationError("same source generation has different manifest bytes")
             return False
+        if source_record.previous_source_generation != existing.source_generation:
+            raise MaterializationError("source predecessor does not match the current Secret generation")
+        if source_created_at < existing.materialized_at:
+            raise MaterializationError("source creation time regresses the current Secret generation")
         previous_age_deadline = _class_age_deadline(existing.materialized_at, class_max_age_seconds)
         if existing.expires_at > previous_age_deadline:
             raise MaterializationError("existing Secret expiry exceeds the supplied class maximum age")
@@ -477,15 +583,18 @@ def materialize(
         for key_id in existing.manifest.key_ids:
             if source_manifest.keys[key_id] != existing.manifest.keys[key_id]:
                 raise MaterializationError("replacement changes material for a retained prior key ID")
+    elif source_record.previous_source_generation is not None:
+        raise MaterializationError("source predecessor requires an existing Secret generation")
 
-    materialized_at = current_time
-    expires_at = _bounded_expiry(source_expires_at, materialized_at, class_max_age_seconds)
+    materialized_at = source_created_at
     if expires_at <= materialized_at:
-        raise MaterializationError("bounded Secret expiry must follow materialization")
+        raise MaterializationError("bounded Secret expiry must follow source creation time")
     manifest_object = _secret_for_write(
         source_bytes,
         namespace,
         source_generation,
+        environment_id,
+        source_record.previous_source_generation,
         materialized_at,
         expires_at,
         existing,
@@ -498,6 +607,7 @@ def materialize(
     _verify_readback(
         readback,
         namespace,
+        environment_id,
         source_bytes,
         source_generation,
         format_timestamp(materialized_at),
@@ -511,6 +621,7 @@ def materialize(
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-record", required=True, type=Path)
+    parser.add_argument("--environment-id", required=True)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--class-max-age-seconds", required=True, type=int)
     parser.add_argument("--kubectl", default="kubectl")
@@ -522,6 +633,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = _parse_args(argv)
         changed = materialize(
             source_record_path=args.source_record,
+            environment_id=args.environment_id,
             namespace=args.namespace,
             class_max_age_seconds=args.class_max_age_seconds,
             kubectl=args.kubectl,

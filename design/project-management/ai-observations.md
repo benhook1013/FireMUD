@@ -122,3 +122,8 @@ Entry format:
 - `2026-09-26`: Indexed PostgreSQL `TEXT` migrations may fail the jOOQ/H2 schema model
   - Context: Account's new authority-outbox stream key used an indexed `TEXT` column; PostgreSQL accepts that shape, but the configured jOOQ DDL interpreter mapped it to an H2 CLOB and rejected the primary-key index before Java compilation.
   - Expected pattern: use an explicit bounded `VARCHAR` for indexed identity fields with matching application validation, run the owning service's `generateJooq`, and still prove the migration and concurrency behavior separately against PostgreSQL. Parser success does not establish runtime database proof.
+
+- `2026-09-27`: RFC 3339 fractional-second parsing needs all permitted precisions
+  - Context: the Account response-envelope Secret materializer emitted canonical UTC timestamps with trailing fractional zeroes removed. A broad developer-tool run intermittently failed its CLI readback although focused tests using whole-second timestamps passed.
+  - Observation: this runner's Python `datetime.fromisoformat` rejected a valid five-digit fractional-second timestamp such as `.00101Z` after offset normalization. A timestamp round-trip sweep reproduced the defect, and the parser was changed to accept the contract's one-to-six fractional digits explicitly; the full 112-test developer-tool suite then passed.
+  - Expected pattern: test exact writer-to-reader timestamp round trips across fractional precisions, including live-clock output, before treating a source-generation/freshness readback as reliable.

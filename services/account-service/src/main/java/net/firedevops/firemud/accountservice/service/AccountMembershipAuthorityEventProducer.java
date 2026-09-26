@@ -1136,14 +1136,44 @@ public class AccountMembershipAuthorityEventProducer {
       Instant evaluatedAt,
       String outboxStreamKey) {
     public NeverJoinedMembershipSnapshot {
-      Objects.requireNonNull(accountId);
-      Objects.requireNonNull(tenantId);
-      Objects.requireNonNull(membershipVersion);
-      Objects.requireNonNull(membershipAuthorityGeneration);
-      Objects.requireNonNull(authorityTuple);
-      Objects.requireNonNull(issuanceFence);
-      Objects.requireNonNull(evaluatedAt);
-      Objects.requireNonNull(outboxStreamKey);
+      accountId = requireCanonicalUuid(accountId, "canonical Account UUID");
+      tenantId = requireCanonicalUuid(tenantId, "canonical tenant UUID");
+      membershipVersion = requirePositiveCanonicalDecimal(membershipVersion, "membership version");
+      membershipAuthorityGeneration =
+          requirePositiveCanonicalDecimal(
+              membershipAuthorityGeneration, "membership authority generation");
+      Objects.requireNonNull(authorityTuple, "complete authority tuple is required");
+      issuanceFence = requirePositiveCanonicalDecimal(issuanceFence, "Account issuance fence");
+      Objects.requireNonNull(evaluatedAt, "Account evaluation time is required");
+      outboxStreamKey =
+          Objects.requireNonNull(outboxStreamKey, "membership stream key is required");
+
+      if (!isPositiveCanonicalDecimal(authorityTuple.issuerAuthGeneration())
+          || !isPositiveCanonicalDecimal(authorityTuple.accountAuthorityGeneration())
+          || authorityTuple.tenantAuthorityGeneration().size() != 1
+          || authorityTuple.membershipAuthorityGeneration().size() != 1
+          || !authorityTuple.tenantAuthorityGeneration().containsKey(tenantId)
+          || !authorityTuple.membershipAuthorityGeneration().containsKey(tenantId)
+          || !isPositiveCanonicalDecimal(authorityTuple.tenantAuthorityGeneration().get(tenantId))
+          || !membershipAuthorityGeneration.equals(
+              authorityTuple.membershipAuthorityGeneration().get(tenantId))
+          || !authorityTuple.privateRealmGrantVersions().isEmpty()
+          || authorityTuple.accountSecurityCutoff().isPresent()
+          || authorityTuple.tenantBillingCutoff().isPresent()) {
+        throw new IllegalArgumentException(
+            "Never-joined Account authority tuple is incomplete or mismatched");
+      }
+
+      String expectedStreamKey =
+          MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+              + "membership/"
+              + accountId
+              + "/"
+              + tenantId;
+      if (!expectedStreamKey.equals(outboxStreamKey)) {
+        throw new IllegalArgumentException(
+            "Never-joined Account membership stream key is not canonical");
+      }
     }
 
     public long outboxSequence() {
@@ -1156,6 +1186,32 @@ public class AccountMembershipAuthorityEventProducer {
 
     public boolean gameplayAdmissionAllowed() {
       return false;
+    }
+
+    private static String requireCanonicalUuid(String value, String field) {
+      Objects.requireNonNull(value, field + " is required");
+      try {
+        if (!UUID.fromString(value).toString().equals(value)) {
+          throw new IllegalArgumentException(field + " must be a canonical lowercase UUID");
+        }
+      } catch (IllegalArgumentException exception) {
+        throw new IllegalArgumentException(
+            field + " must be a canonical lowercase UUID", exception);
+      }
+      return value;
+    }
+
+    private static String requirePositiveCanonicalDecimal(String value, String field) {
+      Objects.requireNonNull(value, field + " is required");
+      if (!isPositiveCanonicalDecimal(value)) {
+        throw new IllegalArgumentException(
+            field + " must be a positive canonical unsigned decimal string");
+      }
+      return value;
+    }
+
+    private static boolean isPositiveCanonicalDecimal(String value) {
+      return value != null && value.matches("[1-9][0-9]*");
     }
   }
 
