@@ -112,6 +112,50 @@ class AccountApplicationIntegrationTest {
     Number accountId =
         dsl.resultQuery("SELECT id FROM accounts WHERE email = ?", email).fetchOne(0, Number.class);
     assertThat(accountId).isNotNull();
+    UUID accountUuid =
+        dsl.resultQuery("SELECT account_uuid FROM accounts WHERE email = ?", email)
+            .fetchOne(0, UUID.class);
+    assertThat(accountUuid).isNotNull();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    accountUuid)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    Long generation =
+        dsl.resultQuery(
+                "SELECT generation FROM account_authority_generations "
+                    + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    Long sourceVersion =
+        dsl.resultQuery(
+                "SELECT source_version FROM account_authority_generations "
+                    + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    assertThat(generation).isPositive().isEqualTo(1L);
+    assertThat(sourceVersion).isPositive().isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    accountUuid)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    Long issuanceFence =
+        dsl.resultQuery(
+                "SELECT issuance_fence FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    Long issuanceFenceSourceVersion =
+        dsl.resultQuery(
+                "SELECT source_version FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    assertThat(issuanceFence).isPositive().isEqualTo(1L);
+    assertThat(issuanceFenceSourceVersion).isPositive().isEqualTo(1L);
     assertThat(dsl.fetchValue("SELECT tenant_id FROM accounts WHERE id = ?", accountId.longValue()))
         .isNull();
     assertThat(dsl.fetchValue("SELECT role FROM accounts WHERE id = ?", accountId.longValue()))

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,12 +30,14 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
@@ -46,6 +49,8 @@ import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -53,11 +58,14 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
@@ -85,13 +93,20 @@ class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
   @Mock private AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
+  @Mock private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
+
+  @Mock
+  private AccountTenantMembershipRoleSnapshotRepository
+      accountTenantMembershipRoleSnapshotRepository;
+
   @Mock private ProfileRepository profileRepository;
   @Mock private ProfileMapper profileMapper;
   @Mock private NotificationService notificationService;
@@ -193,16 +208,45 @@ class AccountServiceImplTest {
         .thenReturn(Optional.empty());
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
+    when(membershipAuthorityEventProducer.publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class)))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireNewMembershipBaseline(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(new AccountMembershipAuthorityEventProducer.NewMembershipBaseline(1L, 1L));
+    when(membershipAuthorityEventProducer.publishReactivatedMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class)))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireCommittedJoinEvent(
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.any(RoleSnapshot.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(joinAuthorityCheckpoint());
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
             membershipTransitionReceiptRepository,
+            membershipAuthorityEventProducer,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
+            accountTenantMembershipRoleSnapshotRepository,
             mapper,
             profileRepository,
             profileMapper,
@@ -227,11 +271,15 @@ class AccountServiceImplTest {
   void createAccountPersistsOnlyGlobalIdentity() {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", "  DEMO@example.com ", "password");
+    UUID accountUuid = UUID.randomUUID();
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
         .thenAnswer(
             invocation -> {
               Account saved = invocation.getArgument(0);
               saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
               return saved;
             });
 
@@ -243,6 +291,8 @@ class AccountServiceImplTest {
         org.mockito.ArgumentCaptor.forClass(Account.class);
     org.mockito.Mockito.verify(accountRepository).save(accountCaptor.capture());
     assertEquals("demo@example.com", accountCaptor.getValue().getEmail());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
     org.mockito.Mockito.verify(accountAuditOutboxRepository)
         .append(
             org.mockito.ArgumentMatchers.any(java.util.UUID.class),
@@ -252,6 +302,81 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
     assertEquals(null, accountCaptor.getValue().getRole());
     verifyNoInteractions(profileRepository, accountTenantMembershipRepository);
+  }
+
+  @Test
+  void createAccountInitializesCanonicalAccountAuthorityBeforeRegistrationAudit() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    UUID accountUuid = UUID.randomUUID();
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
+              return saved;
+            });
+
+    service.createAccount(request);
+
+    org.mockito.InOrder inOrder =
+        org.mockito.Mockito.inOrder(
+            accountRepository, accountAuthorityGenerationRepository, accountAuditOutboxRepository);
+    inOrder.verify(accountRepository).save(org.mockito.ArgumentMatchers.any(Account.class));
+    inOrder
+        .verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
+    inOrder
+        .verify(accountAuditOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq("platform"),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_REGISTERED"),
+            org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
+  }
+
+  @Test
+  void createAccountFailsClosedWithoutCanonicalIdentityBeforeAuthorityOrAudit() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              return saved;
+            });
+
+    assertThrows(IllegalStateException.class, () -> service.createAccount(request));
+
+    verifyNoInteractions(accountAuthorityGenerationRepository, accountAuditOutboxRepository);
+  }
+
+  @Test
+  void createAccountDoesNotAppendRegistrationAuditWhenAuthorityInitializationFails() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    UUID accountUuid = UUID.randomUUID();
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
+              return saved;
+            });
+    when(accountAuthorityGenerationRepository.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid)))
+        .thenThrow(new IllegalStateException("authority init failed"));
+
+    assertThrows(IllegalStateException.class, () -> service.createAccount(request));
+
+    verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
+    verifyNoInteractions(accountAuditOutboxRepository);
   }
 
   @Test
@@ -330,7 +455,7 @@ class AccountServiceImplTest {
     assertTrue(first.success());
     assertEquals("JOINED", first.outcomeCode());
     assertEquals(701L, first.membershipId());
-    assertEquals(1L, first.membershipVersion());
+    assertEquals(2L, first.membershipVersion());
     assertTrue(retried.success());
     assertTrue(retried.replayed());
     assertNotNull(onboardingToken.connectToken());
@@ -348,6 +473,14 @@ class AccountServiceImplTest {
             false));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.ArgumentCaptor<Collection<String>> roleSnapshotCaptor =
+        org.mockito.ArgumentCaptor.forClass(Collection.class);
+    org.mockito.Mockito.verify(accountTenantMembershipRoleSnapshotRepository)
+        .replace(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.eq(2L),
+            roleSnapshotCaptor.capture());
+    assertEquals(java.util.List.of("player"), roleSnapshotCaptor.getValue().stream().toList());
     org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
         .append(
             org.mockito.ArgumentMatchers.any(java.util.UUID.class),
@@ -356,7 +489,18 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
             org.mockito.ArgumentMatchers.contains("join-attempt-1"));
     assertEquals("COMMITTED", retainedOperation.get().status());
-
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .preparePairAuthorityForJoin(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireNewMembershipBaseline(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("join-attempt-1"),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireCommittedJoinEvent(org.mockito.ArgumentMatchers.any());
     AuthenticationException changedDigest =
         assertThrows(
             AuthenticationException.class,
@@ -365,6 +509,36 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new JoinPublicProductionRequest("different-scope", "join-attempt-1")));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
+
+    when(accountTenantMembershipRoleSnapshotRepository.findForUpdate(11L, 7L, 701L, 2L))
+        .thenReturn(Optional.of(new RoleSnapshot(11L, 7L, 701L, 2L, java.util.List.of("player"))));
+    when(membershipTransitionReceiptRepository.findLatestReceipt(11L, 7L))
+        .thenReturn(
+            Optional.of(
+                new MembershipTransitionReceipt(
+                    "membership-transition:account-11:tenant-7",
+                    1L,
+                    UUID.randomUUID(),
+                    "sha256:" + "0".repeat(64),
+                    "ACCOUNT_MEMBERSHIP_TRANSITION_RECEIPT_V1",
+                    "MEMBERSHIP_JOINED",
+                    "join-attempt-1",
+                    701L)));
+    JoinPublicProductionResult alreadyActive =
+        service.joinPublicProduction(
+            bootstrap.bootstrapToken(),
+            new JoinPublicProductionRequest(connectScopeId, "join-attempt-2"));
+
+    assertTrue(alreadyActive.success());
+    assertEquals("ALREADY_ACTIVE", alreadyActive.outcomeCode());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireCurrentMembershipEvent(
+            11L,
+            7L,
+            joinedMembership.get(),
+            new RoleSnapshot(11L, 7L, 701L, 2L, java.util.List.of("player")),
+            "join-attempt-1",
+            false);
   }
 
   @Test
@@ -627,6 +801,127 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void pairAuthorityPreparationFailureRetainsRetryablePolicyIndependentJoinIntent() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    org.mockito.Mockito.doThrow(new IllegalStateException("pair authority storage unavailable"))
+        .doNothing()
+        .when(membershipAuthorityEventProducer)
+        .preparePairAuthorityForJoin(11L, 7L);
+
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    active.setEntitlementVersion(1L);
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenReturn(java.util.List.of(active));
+    AtomicReference<AccountTenantMembership> joinedMembership = new AtomicReference<>();
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenAnswer(invocation -> Optional.ofNullable(joinedMembership.get()));
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              joinedMembership.set(membership);
+              return membership;
+            });
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    JoinPublicProductionRequest request =
+        new JoinPublicProductionRequest(connectScopeId, "join-pair-authority-retry-1");
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertNotNull(retainedOperation.get().intentDigest());
+    assertEquals(null, retainedOperation.get().requestDigest());
+    assertEquals(null, retainedOperation.get().requestDigestVersion());
+    assertEquals(null, retainedOperation.get().allowPublicJoin());
+    assertEquals(null, retainedOperation.get().entitlementVersion());
+    assertEquals("NOT_EVALUATED", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals("NOT_EVALUATED", retainedOperation.get().lastAttemptAuthorityAvailability());
+    assertEquals(null, joinedMembership.get());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .findByTenantIdForUpdate(7L);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(
+            accountTenantMembershipRoleSnapshotRepository, org.mockito.Mockito.never())
+        .replace(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyCollection());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.never())
+        .requireNewMembershipBaseline(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.never())
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipTransitionReceiptRepository, org.mockito.Mockito.never())
+        .appendTransition(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+
+    JoinPublicProductionResult retried =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertTrue(retried.success());
+    assertFalse(retried.replayed());
+    assertEquals("JOINED", retried.outcomeCode());
+    assertEquals("COMMITTED", retainedOperation.get().status());
+    assertEquals("AVAILABLE", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals(1L, retainedOperation.get().entitlementVersion());
+    assertNotNull(retainedOperation.get().requestDigest());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.times(2))
+        .preparePairAuthorityForJoin(11L, 7L);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(request.requestId()),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipTransitionReceiptRepository)
+        .appendTransition(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.eq("MEMBERSHIP_JOINED"),
+            org.mockito.ArgumentMatchers.eq(request.requestId()));
+    org.mockito.Mockito.verify(accountAuditOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq("tenant"),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
+            org.mockito.ArgumentMatchers.contains(request.requestId()));
+  }
+
+  @Test
   void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
     Account account = new Account();
     account.setId(11L);
@@ -663,7 +958,7 @@ class AccountServiceImplTest {
     assertNotNull(retainedOperation.get().intentDigest());
     assertEquals(null, retainedOperation.get().requestDigest());
     assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
-    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(3))
         .commit(org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(1))
         .rollback(org.mockito.ArgumentMatchers.any());
@@ -916,9 +1211,21 @@ class AccountServiceImplTest {
     when(accountConnectScopeRepository.find(org.mockito.ArgumentMatchers.anyString()))
         .thenAnswer(invocation -> Optional.ofNullable(retainedScope.get()));
     when(accountJoinOperationRepository.find(org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
+        .thenAnswer(
+            invocation -> {
+              var current = retainedOperation.get();
+              return current != null && current.requestId().equals(invocation.getArgument(0))
+                  ? Optional.of(current)
+                  : Optional.empty();
+            });
     when(accountJoinOperationRepository.findForUpdate(org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
+        .thenAnswer(
+            invocation -> {
+              var current = retainedOperation.get();
+              return current != null && current.requestId().equals(invocation.getArgument(0))
+                  ? Optional.of(current)
+                  : Optional.empty();
+            });
     org.mockito.Mockito.doAnswer(
             invocation -> {
               String requestId = invocation.getArgument(0);
@@ -1426,6 +1733,62 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void allAccountMintPathsUseCanonicalIssuerAndRetainTheirClaims() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+
+    AuthenticationResult controlUi = service.authenticate("demo", "password");
+    AuthenticationResult gameplayDelegation =
+        service.authenticateForGameplay("demo@example.com", "password");
+    assertCanonicalIssuerAndClaims(controlUi.authToken(), "control-ui", 11L);
+    assertEquals(java.util.List.of(), parseClaims(controlUi.authToken()).get("globalRoles"));
+    assertCanonicalIssuerAndClaims(gameplayDelegation.authToken(), "account-service", 11L);
+    assertEquals(
+        java.util.List.of(), parseClaims(gameplayDelegation.authToken()).get("globalRoles"));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    assertCanonicalIssuerAndClaims(bootstrap.bootstrapToken(), "player-bootstrap", 11L);
+
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var connectScopeClaims = parseClaims(connectScopeId);
+    assertCanonicalIssuerAndClaims(connectScopeId, "bootstrap-connect-scope", 11L);
+    assertEquals("4c4b57d8-e3a2-48fe-9977-e7df0fdce901", connectScopeClaims.get("realmId"));
+    assertEquals(7L, connectScopeClaims.get("tenantId", Long.class));
+
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    ConnectTokenResult connectToken =
+        service.issueConnectToken(
+            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "issuer-proof"));
+    assertCanonicalIssuerAndClaims(connectToken.connectToken(), "gameplay-connect", 11L);
+    assertEquals(7L, parseClaims(connectToken.connectToken()).get("tenantId", Long.class));
+    assertEquals(17L, parseClaims(connectToken.connectToken()).get("pointerVersion", Long.class));
+
+    Account otpAccount = new Account();
+    otpAccount.setId(12L);
+    otpAccount.setEmail("otp@example.com");
+    otpAccount.setLoginAuthModes("EMAIL_OTP");
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setAccountId(12L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountRepository.findByEmail("otp@example.com")).thenReturn(Optional.of(otpAccount));
+    when(accountEmailLoginChallengeRepository.findByAccountId(12L))
+        .thenReturn(Optional.of(challenge));
+    AuthenticationResult otpDelegation = service.verifyEmailLoginOtp("otp@example.com", "123456");
+    assertCanonicalIssuerAndClaims(otpDelegation.authToken(), "account-service", 12L);
+    assertEquals(java.util.List.of(), parseClaims(otpDelegation.authToken()).get("globalRoles"));
+  }
+
+  @Test
   void issuePlayerBootstrapReturnsShortLivedToken() {
     Account account = new Account();
     account.setId(7L);
@@ -1575,13 +1938,16 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
             membershipTransitionReceiptRepository,
+            membershipAuthorityEventProducer,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
+            accountTenantMembershipRoleSnapshotRepository,
             Mappers.getMapper(AccountMapper.class),
             profileRepository,
             profileMapper,
@@ -4481,6 +4847,27 @@ class AccountServiceImplTest {
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
         exception.getReason());
     org.mockito.Mockito.verifyNoInteractions(accountRepository);
+  }
+
+  private void assertCanonicalIssuerAndClaims(
+      String token, String expectedAudience, long expectedAccountId) {
+    var claims = parseClaims(token);
+    assertEquals("firemud-account-service", claims.getIssuer());
+    assertEquals(expectedAudience, claims.getAudience().iterator().next());
+    assertEquals(expectedAccountId, claims.get("accountId", Long.class));
+    assertNotNull(claims.get("jti"));
+  }
+
+  private io.jsonwebtoken.Claims parseClaims(String token) {
+    return new JwtUtil(JWT_SECRET, 3600000L).parseToken(token).getPayload();
+  }
+
+  private static Checkpoint joinAuthorityCheckpoint() {
+    return new Checkpoint(
+        "account:auth-authority:v1:membership/account-a/tenant-a",
+        1L,
+        "event-1",
+        "sha256:" + "0".repeat(64));
   }
 
   private static String hash(String password) {

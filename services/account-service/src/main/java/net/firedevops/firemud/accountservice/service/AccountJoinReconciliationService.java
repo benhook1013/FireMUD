@@ -17,12 +17,15 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,8 +56,10 @@ public class AccountJoinReconciliationService {
   private final AccountJoinOperationRepository joinOperationRepository;
   private final AccountConnectScopeRepository connectScopeRepository;
   private final AccountTenantMembershipRepository membershipRepository;
+  private final AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
   private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
   private final AccountAuditOutboxRepository auditOutboxRepository;
+  private final AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   private final TransactionTemplate joinTransactionTemplate;
   private final int batchSize;
   private final int maxAttempts;
@@ -68,8 +73,10 @@ public class AccountJoinReconciliationService {
       AccountJoinOperationRepository joinOperationRepository,
       AccountConnectScopeRepository connectScopeRepository,
       AccountTenantMembershipRepository membershipRepository,
+      AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountAuditOutboxRepository auditOutboxRepository,
+      AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer,
       MeterRegistry meterRegistry,
       PlatformTransactionManager transactionManager,
       @Value("${firemud.account.join-reconciliation.batch-size:50}") int batchSize,
@@ -90,8 +97,10 @@ public class AccountJoinReconciliationService {
     this.joinOperationRepository = joinOperationRepository;
     this.connectScopeRepository = connectScopeRepository;
     this.membershipRepository = membershipRepository;
+    this.roleSnapshotRepository = roleSnapshotRepository;
     this.transitionReceiptRepository = transitionReceiptRepository;
     this.auditOutboxRepository = auditOutboxRepository;
+    this.membershipAuthorityEventProducer = membershipAuthorityEventProducer;
     this.batchSize = batchSize;
     this.maxAttempts = maxAttempts;
     this.backoffMillis = backoffMillis;
@@ -188,6 +197,28 @@ public class AccountJoinReconciliationService {
       }
     }
 
+    RoleSnapshot roleSnapshot = null;
+    if (unresolvedReason == null) {
+      try {
+        roleSnapshot =
+            roleSnapshotRepository
+                .findForUpdate(
+                    operation.accountId(),
+                    operation.tenantId(),
+                    membership.membershipId(),
+                    membership.membershipVersion())
+                .orElse(null);
+      } catch (RuntimeException ex) {
+        unresolvedReason = "MEMBERSHIP_ROLE_SNAPSHOT_UNAVAILABLE";
+      }
+      if (unresolvedReason == null && roleSnapshot == null) {
+        unresolvedReason = "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT";
+      } else if (unresolvedReason == null
+          && !roleSnapshotMatches(operation, membership, roleSnapshot)) {
+        unresolvedReason = "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH";
+      }
+    }
+
     if (unresolvedReason == null) {
       try {
         transitionReceipt =
@@ -227,6 +258,24 @@ public class AccountJoinReconciliationService {
       }
     }
 
+    if (unresolvedReason != null) {
+      return recordUnresolvedAttempt(operation, now, unresolvedReason);
+    }
+
+    String eventRequestId =
+        "JOINED".equals(outcome) ? operation.requestId() : transitionReceipt.requestId();
+    boolean callerBoundAuthorityInvalidated =
+        "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType());
+    try {
+      Checkpoint checkpoint =
+          membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+              membership, roleSnapshot, eventRequestId, callerBoundAuthorityInvalidated);
+      if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+        unresolvedReason = "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE";
+      }
+    } catch (RuntimeException ex) {
+      unresolvedReason = "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE";
+    }
     if (unresolvedReason != null) {
       return recordUnresolvedAttempt(operation, now, unresolvedReason);
     }
@@ -330,6 +379,22 @@ public class AccountJoinReconciliationService {
         && "EXPLICIT_JOIN".equals(membership.authorityProvenance())
         && membership.membershipVersion() > 0
         && membership.membershipAuthorityGeneration() > 0;
+  }
+
+  private static boolean roleSnapshotMatches(
+      JoinOperation operation, JoinMembershipProof membership, RoleSnapshot roleSnapshot) {
+    if (roleSnapshot.accountId() != operation.accountId()
+        || roleSnapshot.tenantId() != operation.tenantId()
+        || roleSnapshot.membershipId() != membership.membershipId()
+        || roleSnapshot.snapshotVersion() != membership.membershipVersion()) {
+      return false;
+    }
+    try {
+      AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roleSnapshot.roles());
+      return roleSnapshot.roles().contains("player");
+    } catch (RuntimeException ex) {
+      return false;
+    }
   }
 
   private static boolean auditEnvelopeMatches(

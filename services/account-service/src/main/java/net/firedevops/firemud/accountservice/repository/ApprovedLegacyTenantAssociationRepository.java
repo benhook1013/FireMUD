@@ -23,14 +23,17 @@ public class ApprovedLegacyTenantAssociationRepository {
   private final DSLContext dsl;
   private final LegacyTenantSourceEvidence sourceEvidence;
   private final String workloadNamespace;
+  private final AccountAuthorityGenerationRepository authorityGenerationRepository;
 
   public ApprovedLegacyTenantAssociationRepository(
       DSLContext dsl,
       LegacyTenantSourceEvidence sourceEvidence,
-      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
+      AccountAuthorityGenerationRepository authorityGenerationRepository) {
     this.dsl = dsl;
     this.sourceEvidence = sourceEvidence;
     this.workloadNamespace = workloadNamespace;
+    this.authorityGenerationRepository = authorityGenerationRepository;
   }
 
   @Transactional(isolation = Isolation.SERIALIZABLE)
@@ -48,6 +51,7 @@ public class ApprovedLegacyTenantAssociationRepository {
         throw new IllegalStateException(
             "approved Account tenant association conflicts with readback");
       }
+      authorityGenerationRepository.initializeTenantIfAbsent(expected.canonicalTenantId());
       return existing.orElseThrow();
     }
 
@@ -81,6 +85,7 @@ public class ApprovedLegacyTenantAssociationRepository {
     if (!committed.equals(expected)) {
       throw new IllegalStateException("approved association readback differs");
     }
+    authorityGenerationRepository.initializeTenantIfAbsent(expected.canonicalTenantId());
     return committed;
   }
 

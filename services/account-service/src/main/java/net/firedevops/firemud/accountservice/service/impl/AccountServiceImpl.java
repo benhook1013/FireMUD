@@ -12,7 +12,9 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,6 +40,7 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
@@ -53,6 +56,7 @@ import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
@@ -64,6 +68,8 @@ import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPol
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -72,12 +78,15 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
@@ -114,19 +123,24 @@ public class AccountServiceImpl implements AccountService {
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
   private static final String JOIN_REQUIRED_CHARACTERS_MESSAGE =
       "Join the selected world before discovering characters";
+  public static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
   private final AccountRepository accountRepository;
+  private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
   private final AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
+  private final AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
+  private final AccountTenantMembershipRoleSnapshotRepository
+      accountTenantMembershipRoleSnapshotRepository;
   private final AccountMapper accountMapper;
   private final ProfileRepository profileRepository;
   private final ProfileMapper profileMapper;
@@ -151,13 +165,16 @@ public class AccountServiceImpl implements AccountService {
       justification = "Dependencies are injected and kept internal")
   public AccountServiceImpl(
       AccountRepository accountRepository,
+      AccountAuthorityGenerationRepository accountAuthorityGenerationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
       AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository,
+      AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer,
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
+      AccountTenantMembershipRoleSnapshotRepository accountTenantMembershipRoleSnapshotRepository,
       AccountMapper accountMapper,
       ProfileRepository profileRepository,
       ProfileMapper profileMapper,
@@ -177,13 +194,17 @@ public class AccountServiceImpl implements AccountService {
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       PlatformTransactionManager transactionManager) {
     this.accountRepository = accountRepository;
+    this.accountAuthorityGenerationRepository = accountAuthorityGenerationRepository;
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
     this.membershipTransitionReceiptRepository = membershipTransitionReceiptRepository;
+    this.membershipAuthorityEventProducer = membershipAuthorityEventProducer;
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
+    this.accountTenantMembershipRoleSnapshotRepository =
+        accountTenantMembershipRoleSnapshotRepository;
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
     this.profileMapper = profileMapper;
@@ -221,6 +242,9 @@ public class AccountServiceImpl implements AccountService {
     } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
       throw new AccountAlreadyExistsException(ex);
     }
+    requireCanonicalPersistedIdentity(saved);
+    accountAuthorityGenerationRepository.initialize(
+        AccountAuthorityGenerationRepository.AuthorityScope.account(saved.getAccountUuid()));
     accountAuditOutboxRepository.append(
         UUID.randomUUID(),
         "platform",
@@ -228,6 +252,17 @@ public class AccountServiceImpl implements AccountService {
         "ACCOUNT_REGISTERED",
         "{\"accountId\":" + saved.getId() + "}");
     return accountMapper.toDto(saved);
+  }
+
+  private void requireCanonicalPersistedIdentity(Account account) {
+    if (account == null
+        || account.getId() == null
+        || account.getAccountUuid() == null
+        || account.getAccountUuidProvenance() != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+        || !account.getId().equals(account.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
   }
 
   @Override
@@ -575,6 +610,32 @@ public class AccountServiceImpl implements AccountService {
       requireMatchingJoinIntent(claimed, requestId, callerBinding, retained);
     }
 
+    JoinOperation beforeAttempt =
+        accountJoinOperationRepository
+            .find(requestId)
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        "AUTH_UNAVAILABLE", "JOIN request claim is not yet readable"));
+    if ("PENDING".equals(beforeAttempt.status())) {
+      try {
+        // A first JOIN consumes a previously committed positive absence baseline; creating it
+        // inside the JOIN transaction would never make that baseline durable while absent.
+        joinTransactionTemplate.execute(
+            transactionStatus -> {
+              membershipAuthorityEventProducer.preparePairAuthorityForJoin(
+                  accountId, retained.tenantId());
+              return null;
+            });
+      } catch (RuntimeException unavailablePairAuthority) {
+        recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE",
+            "JOIN membership pair authority is unavailable; retry the same request",
+            unavailablePairAuthority);
+      }
+    }
+
     try {
       return joinTransactionTemplate.execute(
           transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
@@ -590,6 +651,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
+          requireCommittedOutcomeEventReadback(operation);
           return resultFromJoinOperation(operation, true);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
@@ -689,21 +751,32 @@ public class AccountServiceImpl implements AccountService {
     boolean transitioned = false;
     String membershipTransitionType = null;
     if (membership == null) {
-      membershipTransitionReceiptRepository.assertNewMembershipTransitionCanStart(
-          accountId, scope.tenantId());
+      var absenceBaseline =
+          membershipAuthorityEventProducer.requireNewMembershipBaseline(
+              accountId, scope.tenantId());
       membership = new AccountTenantMembership();
       membership.setAccount(requireAccount(accountId));
       membership.setTenantId(scope.tenantId());
-      membership.setMembershipVersion(1L);
-      membership.setMembershipAuthorityGeneration(1L);
+      membership.setMembershipVersion(Math.addExact(absenceBaseline.membershipVersion(), 1L));
+      membership.setMembershipAuthorityGeneration(absenceBaseline.membershipAuthorityGeneration());
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
+      accountTenantMembershipRoleSnapshotRepository.replace(
+          membership, membership.getMembershipVersion(), List.of("player"));
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
-      membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
+      RoleSnapshot roleSnapshot;
+      try {
+        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+        membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
+      } catch (IllegalStateException contradictoryRetainedEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
+      membershipAuthorityEventProducer.requireExistingMembershipAuthorityMatches(
+          accountId, scope.tenantId(), membership, roleSnapshot);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
@@ -712,20 +785,66 @@ public class AccountServiceImpl implements AccountService {
           membership.getMembershipAuthorityGeneration() + 1L);
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
+      List<String> restoredRoles = new ArrayList<>(roleSnapshot.roles());
+      if (!restoredRoles.contains("player")) {
+        restoredRoles.add("player");
+      }
+      accountTenantMembershipRoleSnapshotRepository.replace(
+          membership, membership.getMembershipVersion(), restoredRoles);
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_REACTIVATED";
     } else if ("ACTIVE".equals(membership.getLifecycleState())
         && membership.isGameplayAdmissionAllowed()) {
-      membershipTransitionReceiptRepository
-          .findLatestReceipt(accountId, scope.tenantId())
-          .orElseThrow(
-              () ->
-                  new IllegalStateException(
-                      "Active Account membership lacks a provisional transition receipt"));
+      RoleSnapshot roleSnapshot;
+      try {
+        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+      } catch (IllegalStateException contradictoryRoleEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
+      if (!roleSnapshot.roles().contains("player")) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
+      MembershipTransitionReceipt receipt;
+      try {
+        receipt =
+            membershipTransitionReceiptRepository
+                .findLatestReceipt(accountId, scope.tenantId())
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Active Account membership lacks a provisional transition receipt"));
+      } catch (IllegalStateException contradictoryReceiptEvidence) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
+      Checkpoint checkpoint =
+          membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+              accountId,
+              scope.tenantId(),
+              membership,
+              roleSnapshot,
+              receipt.requestId(),
+              "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
+      if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+        throw new IllegalStateException(
+            "Active Account membership authority checkpoint readback is incomplete");
+      }
     } else {
       return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
     }
     if (transitioned) {
+      var authorityCheckpoint =
+          switch (membershipTransitionType) {
+            case "MEMBERSHIP_JOINED" ->
+                membershipAuthorityEventProducer.publishNewMembershipChange(
+                    accountId, scope.tenantId(), requestId, membership);
+            case "MEMBERSHIP_REACTIVATED" ->
+                membershipAuthorityEventProducer.publishReactivatedMembershipChange(
+                    accountId, scope.tenantId(), requestId, membership);
+            default -> throw new IllegalStateException("Unsupported Account membership transition");
+          };
+      if (authorityCheckpoint == null || authorityCheckpoint.outboxSequence() <= 0L) {
+        throw new IllegalStateException("Account JOIN authority checkpoint readback is incomplete");
+      }
       membershipTransitionReceiptRepository.appendTransition(
           membership, membershipTransitionType, requestId);
       String payload =
@@ -759,6 +878,31 @@ public class AccountServiceImpl implements AccountService {
         membership.getMembershipVersion(),
         membership.getMembershipAuthorityGeneration(),
         false);
+  }
+
+  private RoleSnapshot requireRoleSnapshotForJoin(
+      long accountId, long tenantId, AccountTenantMembership membership) {
+    if (membership.getId() == null
+        || membership.getMembershipVersion() <= 0L
+        || membership.getAccount() == null
+        || membership.getAccount().getId() == null) {
+      throw new IllegalStateException("Account membership role snapshot identity is incomplete");
+    }
+    RoleSnapshot snapshot =
+        accountTenantMembershipRoleSnapshotRepository
+            .findForUpdate(
+                accountId, tenantId, membership.getId(), membership.getMembershipVersion())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Account membership role snapshot is missing or unverified"));
+    if (snapshot.accountId() != accountId
+        || snapshot.tenantId() != tenantId
+        || snapshot.membershipId() != membership.getId()
+        || snapshot.snapshotVersion() != membership.getMembershipVersion()) {
+      throw new IllegalStateException("Account membership role snapshot identity is mismatched");
+    }
+    return snapshot;
   }
 
   private JoinPublicProductionResult failedJoin(
@@ -855,7 +999,74 @@ public class AccountServiceImpl implements AccountService {
         throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
       }
     }
+    requireCommittedOutcomeEventReadback(operation);
     return resultFromJoinOperation(operation, true);
+  }
+
+  private void requireCommittedOutcomeEventReadback(JoinOperation operation) {
+    if ("COMMITTED".equals(operation.status())
+        && ("JOINED".equals(operation.outcome()) || "ALREADY_ACTIVE".equals(operation.outcome()))) {
+      try {
+        Checkpoint checkpoint;
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+          checkpoint = requireCommittedOutcomeEventEvidence(operation);
+        } else {
+          checkpoint =
+              joinTransactionTemplate.execute(
+                  transactionStatus -> requireCommittedOutcomeEventEvidence(operation));
+        }
+        if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+          throw new IllegalStateException("Committed JOIN authority checkpoint is incomplete");
+        }
+      } catch (RuntimeException exception) {
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE",
+            "Committed JOIN authority evidence is unavailable or mismatched",
+            exception);
+      }
+    }
+  }
+
+  private Checkpoint requireCommittedOutcomeEventEvidence(JoinOperation operation) {
+    if ("JOINED".equals(operation.outcome())) {
+      return membershipAuthorityEventProducer.requireCommittedJoinEvent(operation);
+    }
+    if (!"ALREADY_ACTIVE".equals(operation.outcome())
+        || operation.membershipId() == null
+        || operation.membershipVersion() == null
+        || operation.membershipAuthorityGeneration() == null) {
+      throw new IllegalStateException("Committed JOIN outcome has no exact membership identity");
+    }
+    AccountTenantMembership membership =
+        accountTenantMembershipRepository
+            .findByAccountIdAndTenantId(operation.accountId(), operation.tenantId())
+            .orElseThrow(() -> new IllegalStateException("Committed active membership is absent"));
+    if (!operation.membershipId().equals(membership.getId())
+        || operation.membershipVersion() != membership.getMembershipVersion()
+        || operation.membershipAuthorityGeneration()
+            != membership.getMembershipAuthorityGeneration()
+        || !"ACTIVE".equals(membership.getLifecycleState())
+        || !membership.isGameplayAdmissionAllowed()) {
+      throw new IllegalStateException(
+          "Committed ALREADY_ACTIVE operation differs from current membership state");
+    }
+    RoleSnapshot roles =
+        requireRoleSnapshotForJoin(operation.accountId(), operation.tenantId(), membership);
+    if (!roles.roles().contains("player")) {
+      throw new IllegalStateException("Committed active membership lacks the player role");
+    }
+    MembershipTransitionReceipt receipt =
+        membershipTransitionReceiptRepository
+            .findLatestReceipt(operation.accountId(), operation.tenantId())
+            .orElseThrow(
+                () -> new IllegalStateException("Committed active membership has no receipt"));
+    return membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+        operation.accountId(),
+        operation.tenantId(),
+        membership,
+        roles,
+        receipt.requestId(),
+        "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
   }
 
   private JoinPublicProductionResult resultFromJoinOperation(
@@ -1704,7 +1915,9 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
-    return jwtUtil.generateToken(subject, expirationMs, claims);
+    Map<String, Object> accountClaims = new HashMap<>(claims);
+    accountClaims.put("iss", ACCOUNT_JWT_ISSUER);
+    return jwtUtil.generateToken(subject, expirationMs, accountClaims);
   }
 
   private Map<String, Object> authenticationTokenClaims(String audience, Account account) {
