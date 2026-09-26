@@ -552,7 +552,8 @@ class ReviewController:
 
         if isinstance(value, Mapping):
             cleared = dict(value)
-            cleared.pop("non_counting", None)
+            if not ReviewController._intrinsic_scope_projection(value):
+                cleared.pop("non_counting", None)
             cleared.pop("streak_break_before", None)
             cleared.pop("lineage_proven_to_next", None)
             cleared.pop("current_candidate_descendant_proven", None)
@@ -1646,6 +1647,21 @@ class ReviewController:
             raise ControllerError("legacy transition evidence has a partial or spoofed identity anchor")
 
     @staticmethod
+    def _intrinsic_scope_projection(value: Any) -> bool:
+        """Recognize runtime-owned, non-counting scope observations."""
+
+        if not isinstance(value, Mapping) or value.get("non_counting") is not True:
+            return False
+        kind = value.get("kind")
+        if kind == "scope_timeline":
+            return value.get("scope_timeline") is True and value.get("scope_timeline_complete") is True
+        if kind == "scope_change":
+            return value.get("scope_changed") is True and value.get("scope_change_malformed") is False
+        if kind == "scope_change_malformed":
+            return value.get("scope_changed") is True and value.get("scope_change_malformed") is True
+        return False
+
+    @staticmethod
     def _reauthorization_observation(value: Any, pr: int) -> None:
         """Require every non-legacy observation to remain normal counting evidence."""
 
@@ -1819,7 +1835,11 @@ class ReviewController:
         retired_hosted = set((existing or prior).retired_hosted_fingerprints) if (existing or prior) else set()
         newly_missing_hosted: set[str] = set()
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-            values = tuple(_history(self._evidence_provider, pr, channel))
+            values = tuple(
+                value
+                for value in _history(self._evidence_provider, pr, channel)
+                if not self._intrinsic_scope_projection(value)
+            )
             reauthorization_reference = existing or prior
             if reauthorize and reauthorization_reference is not None:
                 expected = reauthorization_reference.fingerprints_for(channel.value)
@@ -3451,6 +3471,8 @@ class ReviewController:
         histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
         allocations: Mapping[int, Mapping[str, Any]],
         candidate_prs: Sequence[int],
+        *,
+        allocation_reopen_prs: Iterable[int] = (),
     ) -> policy.ChannelDecision:
         """Apply the same authoritative selector to already fetched status evidence."""
 
@@ -3497,6 +3519,19 @@ class ReviewController:
                 pr: view["reason"]
                 for pr, view in channel_allocations.items()
                 if view["status"] in {"CAP_FINDINGS_PENDING", "CAP_EXHAUSTED_PENDING"}
+                or (
+                    view["status"] == "CAP_ACTIVE"
+                    and view.get("selection_control") == "unresolved_work"
+                )
+            },
+            allocation_reopen_prs=set(allocation_reopen_prs)
+            | {
+                pr
+                for pr, view in channel_allocations.items()
+                if view["status"] == "CAP_ACTIVE"
+                and view.get("selection_control") == "taper"
+                and view.get("remaining", 0) > 0
+                and view.get("used", 0) == 0
             },
         )
         if (
@@ -3598,6 +3633,11 @@ class ReviewController:
             {selected: history, other: other_history},
             allocations,
             state.ordered_prs,
+            allocation_reopen_prs=(
+                (expected_pr,)
+                if allow_completed_allocation and expected_pr is not None
+                else ()
+            ),
         )
         completed_allocation_override = False
         if decision.target is None:

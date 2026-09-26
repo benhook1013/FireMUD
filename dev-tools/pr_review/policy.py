@@ -348,6 +348,7 @@ def select_review_target(
     exhausted_prs: Iterable[int] = (),
     allocation_blocks: Mapping[int, str] | None = None,
     allocation_holds: Mapping[int, str] | None = None,
+    allocation_reopen_prs: Iterable[int] = (),
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
@@ -359,6 +360,7 @@ def select_review_target(
     exhausted = set(exhausted_prs)
     allocation_blocks = allocation_blocks or {}
     allocation_holds = allocation_holds or {}
+    allocation_reopen = set(allocation_reopen_prs)
     encountered_human_stop = False
     for pr in live_prs:
         if pr in handed_off:
@@ -404,6 +406,13 @@ def select_review_target(
             other_channel_head=other_channel_heads.get(pr),
         )
         if status == ReviewStatus.COMPLETE:
+            if pr in allocation_reopen:
+                return ChannelDecision(
+                    selected,
+                    pr,
+                    ReviewStatus.READY,
+                    f"{pr} has unused bounded {selected.value} review capacity",
+                )
             continue
         return ChannelDecision(
             selected,

@@ -388,7 +388,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     } catch (StatusRuntimeException ex) {
       Status.Code code = ex.getStatus().getCode();
       if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
-        LOG.warn("Script event publish terminally rejected status={}", code);
+        LOG.warn(
+            "Script event publish terminally rejected status={} description={}",
+            code,
+            ex.getStatus().getDescription());
       } else {
         LOG.warn("Script event publish task failed", ex);
       }
