@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.entity.EntityDigestBaselineMigrationAudit;
 import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
@@ -10,6 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Commits one guarded baseline replacement and its immutable audit row in the same transaction. */
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring repositories are internal collaborators.")
 public class EntityDigestBaselineMigrationWriteService {
   private final RecordedParticipantDigestRepository baselineRepository;
   private final EntityDigestBaselineMigrationAuditRepository auditRepository;

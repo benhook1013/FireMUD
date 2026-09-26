@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -24,6 +25,9 @@ import org.springframework.stereotype.Service;
 
 /** Bounded enumeration, preflight, and one-scope recomputation for retained Entity v1 baselines. */
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring repositories and clients are internal collaborators.")
 public class EntityDigestBaselineMigrationService {
   private static final int SOURCE_SCHEMA_VERSION = 1;
   private static final int TARGET_SCHEMA_VERSION = 2;

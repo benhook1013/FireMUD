@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.maintenance;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +21,9 @@ import org.springframework.stereotype.Component;
 
 /** Trusted, one-shot entry point; no HTTP, gRPC server, or user-JWT mutation route is exposed. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring collaborators are internal to the migration Job.")
 @ConditionalOnProperty(
     prefix = "firemud.entity-baseline-migration",
     name = "enabled",

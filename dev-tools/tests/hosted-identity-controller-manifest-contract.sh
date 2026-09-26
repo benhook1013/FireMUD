@@ -1430,6 +1430,28 @@ assert "object.metadata.labels['firemud.dev/role'] == 'grpc-account-service'" in
 assert "object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service'" in cert_manager_expression
 assert "object.metadata.name == 'dev-grpc-account-service'" in cert_manager_expression
 assert "object.metadata.name == 'dev-grpc-game-session-service'" in cert_manager_expression
+assert cert_manager_expression.count(
+    "request.name == 'firemud-grpc-game-design-baseline-migrator'"
+) == 1, "migrator Secret admission match must be a single exact branch"
+for migration_secret_gate in (
+    "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
+    "object.metadata.name == 'firemud-grpc-game-design-baseline-migrator'",
+    "object.metadata.labels['firemud.dev/managed-by'] == 'entity-baseline-migration'",
+    "object.metadata.labels['firemud.dev/role'] == 'grpc-game-design-baseline-migrator'",
+    "object.metadata.labels['firemud.dev/retention'] == 'ephemeral'",
+    "object.metadata.annotations['cert-manager.io/certificate-name'] == request.namespace + '-grpc-game-design-baseline-migrator'",
+    "object.metadata.annotations['cert-manager.io/issuer-name'] == 'firemud-ca-issuer'",
+    "ref.name == request.namespace + '-grpc-game-design-baseline-migrator'",
+):
+    assert migration_secret_gate in cert_manager_expression, migration_secret_gate
+assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" not in (
+    cert_manager_expression.split(
+        "object.metadata.name == 'firemud-grpc-game-design-baseline-migrator'", 1
+    )[0].rsplit(
+        "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
+        1,
+    )[-1]
+), "migrator Secret authorization must not include retained identity namespaces"
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-telnet-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-gateway-internal-ws'" in cert_manager_expression
@@ -1451,6 +1473,7 @@ assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certific
 assert "request.operation == 'DELETE'" in certificate_namespace_match
 assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "request.name.startsWith(" in certificate_namespace_match
+assert "request.name == request.namespace + '-grpc-game-design-baseline-migrator'" in certificate_namespace_match
 assert "request.operation != 'DELETE'" in certificate_namespace_match
 assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "object.metadata.name.startsWith(" in certificate_namespace_match
@@ -1485,6 +1508,8 @@ assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gat
 assert "grpc-publication-" in certificate_match
 assert "grpc-account-service" in certificate_match
 assert "grpc-game-session-service" in certificate_match
+assert "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer" in certificate_match
+assert "object.spec.secretName == 'firemud-grpc-game-design-baseline-migrator'" in certificate_match
 assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
 
 certificate_expressions = [
