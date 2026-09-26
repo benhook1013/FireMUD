@@ -267,7 +267,12 @@ class LegacyTenantAssociationImportIntegrationTest {
                       () ->
                           repository.importApproved(
                               legacyTenantId,
-                              ownerRead(legacyTenantId, ROLLBACK_TENANT_ID, evidenceDigest))))
+                              ownerRead(legacyTenantId, ROLLBACK_TENANT_ID, evidenceDigest)
+                                  .toBuilder()
+                                  .setSourceLegacyGameTenantId("legacy-game-9")
+                                  .setSourceGameRowId(9L)
+                                  .setOperationId("99999999-9999-4999-8999-999999999999")
+                                  .build())))
           .isInstanceOf(DataAccessException.class)
           .hasMessageContaining("forced tenant generation failure");
       assertThat(repository.findByLegacyTenantId(legacyTenantId)).isEmpty();
