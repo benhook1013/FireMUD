@@ -559,7 +559,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(event.accountId()).isEqualTo(fixture.accountUuid().toString());
     assertThat(event.tenantId()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(event.membershipLifecycleState()).isEqualTo("ACTIVE");
-    assertThat(event.membershipVersion()).isEqualTo("2");
+    assertThat(event.membershipVersion()).isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
     assertThat(event.roles()).containsExactly("player");
     assertThat(event.gameplayAdmissionAllowed()).isTrue();
     assertThat(event.canonicalJson()).isEqualTo(payloadJson);

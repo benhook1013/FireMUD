@@ -66,6 +66,28 @@ class MembershipAuthorityEventVectorTest {
   }
 
   @Test
+  void membershipVersionVectorsUseTheExactOneTenantMap() throws IOException {
+    JsonNode vectors = readVectors();
+
+    for (JsonNode vector : vectors.path("validEvents")) {
+      JsonNode event = vector.path("event");
+      String tenantId = event.path("tenantId").asText();
+      JsonNode versions = event.path("membershipVersion");
+
+      assertTrue(versions.isObject(), "membershipVersion must be an object");
+      assertEquals(1, versions.size(), "membershipVersion must contain one tenant");
+      assertTrue(versions.has(tenantId), "membershipVersion must use event.tenantId");
+      assertTrue(versions.path(tenantId).isTextual(), "membership version must be decimal text");
+      assertTrue(
+          versions.path(tenantId).asText().matches("[1-9][0-9]*"),
+          "membership version must be a positive canonical decimal");
+      assertEquals(
+          Map.of(tenantId, versions.path(tenantId).asText()),
+          MembershipAuthorityEventV1Codec.verify(toMap(event)).membershipVersion());
+    }
+  }
+
+  @Test
   void changedPreimageFieldProducesDifferentDigest() throws IOException {
     JsonNode vectors = readVectors();
     JsonNode sourceEvent = vectors.path("validEvents").get(0).path("event");
@@ -130,7 +152,12 @@ class MembershipAuthorityEventVectorTest {
   private static void collectCounterEvidence(
       Object value, String fieldName, List<BigInteger> largeCounters) {
     if (value instanceof Map<?, ?> object) {
-      object.forEach((key, child) -> collectCounterEvidence(child, key.toString(), largeCounters));
+      object.forEach(
+          (key, child) ->
+              collectCounterEvidence(
+                  child,
+                  fieldName.equals("membershipVersion") ? fieldName : key.toString(),
+                  largeCounters));
       return;
     }
     if (value instanceof List<?> array) {

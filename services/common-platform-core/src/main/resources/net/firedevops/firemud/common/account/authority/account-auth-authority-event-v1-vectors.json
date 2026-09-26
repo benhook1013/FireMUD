@@ -15,7 +15,9 @@
         "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
         "membershipExists": true,
         "membershipLifecycleState": "ACTIVE",
-        "membershipVersion": "9007199254740993",
+        "membershipVersion": {
+          "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "9007199254740993"
+        },
         "membershipAuthorityGeneration": "12",
         "authorityTuple": {
           "issuerAuthGeneration": "5",
@@ -53,7 +55,7 @@
         "roles": ["designer", "player"],
         "gameplayAdmissionAllowed": true,
         "callerBoundAuthorityInvalidated": true,
-        "eventDigest": "sha256:bc65682bff77fd0ae4ca4adcc4abb24a69fcfd53a2b119a139a07a2d90882bec"
+        "eventDigest": "sha256:c8f05f154c6a2a2983789936a65082a7906704d06451111c0d35f77438901da6"
       }
     },
     {
@@ -70,7 +72,9 @@
         "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
         "membershipExists": true,
         "membershipLifecycleState": "INACTIVE",
-        "membershipVersion": "43",
+        "membershipVersion": {
+          "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "43"
+        },
         "membershipAuthorityGeneration": "13",
         "authorityTuple": {
           "issuerAuthGeneration": "5",
@@ -87,7 +91,7 @@
         "roles": [],
         "gameplayAdmissionAllowed": false,
         "callerBoundAuthorityInvalidated": false,
-        "eventDigest": "sha256:aa13ccc55b2db8608ce57395dbf04804a0c238732e8109bf64811dd26b3040f3"
+        "eventDigest": "sha256:d91160853c4c86fc4f08ce8e5201087fcf2e91aacd2072e9a24080653b63ba5d"
       }
     },
     {
@@ -104,7 +108,9 @@
         "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
         "membershipExists": true,
         "membershipLifecycleState": "ACTIVE",
-        "membershipVersion": "9007199254740993",
+        "membershipVersion": {
+          "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "9007199254740993"
+        },
         "membershipAuthorityGeneration": "9007199254740993",
         "authorityTuple": {
           "issuerAuthGeneration": "9007199254740993",
@@ -142,7 +148,7 @@
         "roles": ["player"],
         "gameplayAdmissionAllowed": true,
         "callerBoundAuthorityInvalidated": true,
-        "eventDigest": "sha256:5148e1938c4066182fc3520bfccbf19feceaf2fcdc0de9738586a87ce04f67b4"
+        "eventDigest": "sha256:1474381be42037f4ab9f88ac50c82eb3b649bf59993f5228a2a7b06a83252c86"
       }
     }
   ],
@@ -158,7 +164,7 @@
     {"name": "tenant-id", "path": "/tenantId", "replacement": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e50"},
     {"name": "membership-exists", "path": "/membershipExists", "replacement": false},
     {"name": "lifecycle", "path": "/membershipLifecycleState", "replacement": "INACTIVE"},
-    {"name": "membership-version", "path": "/membershipVersion", "replacement": "9007199254740994"},
+    {"name": "membership-version", "path": "/membershipVersion/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "replacement": "9007199254740994"},
     {"name": "membership-authority-generation", "path": "/membershipAuthorityGeneration", "replacement": "13"},
     {"name": "issuer-generation", "path": "/authorityTuple/issuerAuthGeneration", "replacement": "6"},
     {"name": "account-generation", "path": "/authorityTuple/accountAuthorityGeneration", "replacement": "9"},
@@ -186,7 +192,13 @@
     {"name": "null-optional-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": null},
     {"name": "empty-present-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": {}},
     {"name": "json-number-counter", "op": "replace", "path": "/outboxSequence", "value": 7},
-    {"name": "leading-zero-counter", "op": "replace", "path": "/membershipVersion", "value": "01"},
+    {"name": "membership-version-scalar", "op": "replace", "path": "/membershipVersion", "value": "43"},
+    {"name": "membership-version-empty-map", "op": "replace", "path": "/membershipVersion", "value": {}},
+    {"name": "membership-version-extra-tenant", "op": "add", "path": "/membershipVersion/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "value": "1"},
+    {"name": "membership-version-wrong-tenant", "op": "replace", "path": "/membershipVersion", "value": {"018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": "1"}},
+    {"name": "membership-version-leading-zero", "op": "replace", "path": "/membershipVersion/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "value": "01"},
+    {"name": "membership-version-zero", "op": "replace", "path": "/membershipVersion/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "value": "0"},
+    {"name": "membership-version-json-number", "op": "replace", "path": "/membershipVersion/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "value": 7},
     {"name": "zero-sequence", "op": "replace", "path": "/outboxSequence", "value": "0"},
     {"name": "mismatched-membership-generation", "op": "replace", "path": "/authorityTuple/membershipAuthorityGeneration/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "value": "99"},
     {"name": "extra-tenant-generation-scope", "op": "add", "path": "/authorityTuple/tenantAuthorityGeneration/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "value": "1"},

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.util.Map;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -29,7 +30,10 @@ class MembershipAuthorityEventVectorTest {
 
       assertEquals(wireEvent.path("eventDigest").asText(), verified.eventDigest());
       assertEquals(wireEvent.path("outboxSequence").asText(), verified.outboxSequence());
-      assertEquals(wireEvent.path("membershipVersion").asText(), verified.membershipVersion());
+      String tenantId = wireEvent.path("tenantId").asText();
+      assertEquals(
+          Map.of(tenantId, wireEvent.path("membershipVersion").path(tenantId).asText()),
+          verified.membershipVersion());
       assertEquals(
           wireEvent.path("membershipAuthorityGeneration").asText(),
           verified.membershipAuthorityGeneration());
@@ -42,20 +46,32 @@ class MembershipAuthorityEventVectorTest {
   void acceptsLargeCountersOnlyInTheirCanonicalDecimalStringForm() throws IOException {
     JsonNode vectors = readVectors();
     boolean sawLargeCounter = false;
+    boolean sawLargeMembershipVersion = false;
     BigInteger maxSafeInteger = new BigInteger("9007199254740991");
 
     for (JsonNode vector : vectors.path("validEvents")) {
       JsonNode event = vector.path("event");
       JsonNode sequence = event.path("outboxSequence");
+      String tenantId = event.path("tenantId").asText();
+      JsonNode membershipVersions = event.path("membershipVersion");
+      JsonNode membershipVersion = membershipVersions.path(tenantId);
       assertTrue(sequence.isTextual(), "outboxSequence must remain a decimal string");
+      assertTrue(membershipVersions.isObject(), "membershipVersion must be a tenant map");
+      assertEquals(1, membershipVersions.size(), "membershipVersion must have exactly one tenant");
+      assertTrue(membershipVersion.isTextual(), "membershipVersion must remain a decimal string");
       if (new BigInteger(sequence.asText()).compareTo(maxSafeInteger) > 0) {
         sawLargeCounter = true;
       }
+      if (new BigInteger(membershipVersion.asText()).compareTo(maxSafeInteger) > 0) {
+        sawLargeMembershipVersion = true;
+      }
       var verified = MembershipAuthorityEventV1Codec.verify(JSON.writeValueAsString(event));
       assertEquals(sequence.asText(), verified.outboxSequence());
+      assertEquals(Map.of(tenantId, membershipVersion.asText()), verified.membershipVersion());
     }
 
     assertTrue(sawLargeCounter, "shared vectors must include a counter above 2^53");
+    assertTrue(sawLargeMembershipVersion, "membershipVersion must include a value above 2^53");
   }
 
   @Test

@@ -217,7 +217,7 @@ public class AccountMembershipAuthorityEventProducer {
         verified.tenantId(),
         verified.membershipLifecycleState(),
         verified.gameplayAdmissionAllowed(),
-        verified.membershipVersion(),
+        membershipVersionValue(verified, identity),
         verified.membershipAuthorityGeneration(),
         verified.roles(),
         verified.authorityTuple(),
@@ -674,7 +674,8 @@ public class AccountMembershipAuthorityEventProducer {
                     new IllegalStateException(
                         "Committed JOIN has no matching V33 authority event"));
     MembershipEvent verified = verifyStoredEvent(event, identity, operation.requestId());
-    if (!Long.toString(operation.membershipVersion()).equals(verified.membershipVersion())
+    if (!Map.of(identity.tenantUuid().toString(), Long.toString(operation.membershipVersion()))
+            .equals(verified.membershipVersion())
         || !Long.toString(operation.membershipAuthorityGeneration())
             .equals(verified.membershipAuthorityGeneration())
         || !verified.gameplayAdmissionAllowed()
@@ -769,7 +770,8 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Account authority event readback differs from its append");
     }
     MembershipEvent verified = verifyStoredEvent(exactReadback, identity, requestId);
-    if (!verified.eventDigest().equals(expected.eventDigest())
+    if (!verified.membershipVersion().equals(expected.membershipVersion())
+        || !verified.eventDigest().equals(expected.eventDigest())
         || !verified.canonicalJson().equals(expected.canonicalJson())) {
       throw new IllegalStateException("Account authority event codec readback differs");
     }
@@ -855,7 +857,8 @@ public class AccountMembershipAuthorityEventProducer {
         || !Long.toString(snapshot.issuanceFence().value()).equals(verified.issuanceFence())
         || member.generation() != membershipAuthorityGeneration
         || !lifecycleState.equals(verified.membershipLifecycleState())
-        || !Long.toString(membershipVersion).equals(verified.membershipVersion())
+        || !Map.of(identity.tenantUuid().toString(), Long.toString(membershipVersion))
+            .equals(verified.membershipVersion())
         || !Long.toString(membershipAuthorityGeneration)
             .equals(verified.membershipAuthorityGeneration())
         || !exactRoles.equals(verified.roles())
@@ -913,7 +916,9 @@ public class AccountMembershipAuthorityEventProducer {
     event.put("tenantId", identity.tenantUuid().toString());
     event.put("membershipExists", true);
     event.put("membershipLifecycleState", membership.getLifecycleState());
-    event.put("membershipVersion", decimal(membership.getMembershipVersion()));
+    event.put(
+        "membershipVersion",
+        Map.of(identity.tenantUuid().toString(), decimal(membership.getMembershipVersion())));
     event.put(
         "membershipAuthorityGeneration", decimal(membership.getMembershipAuthorityGeneration()));
     event.put("authorityTuple", authorityTuple);
@@ -949,6 +954,24 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Stored Account authority event identity or digest differs");
     }
     return verified;
+  }
+
+  /**
+   * Extracts Account's local numeric membership value only after validating the complete canonical
+   * one-tenant event carrier. The event itself and all equality checks retain the map unchanged.
+   */
+  private String membershipVersionValue(MembershipEvent event, Identity identity) {
+    String tenantId = identity.tenantUuid().toString();
+    Map<String, String> versions = event.membershipVersion();
+    String version = versions.get(tenantId);
+    if (versions.size() != 1
+        || !versions.containsKey(tenantId)
+        || version == null
+        || !version.matches("[1-9][0-9]*")) {
+      throw new IllegalStateException(
+          "Stored Account membership event has no exact canonical one-tenant version map");
+    }
+    return version;
   }
 
   private void requireNoUnmodeledCutoff(Identity identity) {
@@ -1263,7 +1286,8 @@ public class AccountMembershipAuthorityEventProducer {
           || !accountId.equals(authorityEvent.accountId())
           || !tenantId.equals(authorityEvent.tenantId())
           || !membershipLifecycleState.equals(authorityEvent.membershipLifecycleState())
-          || !membershipVersion.equals(authorityEvent.membershipVersion())
+          || !membershipVersion.matches("[1-9][0-9]*")
+          || !Map.of(tenantId, membershipVersion).equals(authorityEvent.membershipVersion())
           || !membershipAuthorityGeneration.equals(authorityEvent.membershipAuthorityGeneration())
           || !roles.equals(authorityEvent.roles())
           || !authorityTuple.equals(authorityEvent.authorityTuple())

@@ -163,7 +163,7 @@ public final class MembershipAuthorityEventV1Codec {
     requireExactText(event, "outboxStreamKey", streamKey, "event");
 
     requirePositiveDecimal(event, "outboxSequence", "event");
-    requirePositiveDecimal(event, "membershipVersion", "event");
+    validateMembershipVersion(event.get("membershipVersion"), tenantId);
     String membershipGeneration =
         requirePositiveDecimal(event, "membershipAuthorityGeneration", "event");
     requirePositiveDecimal(event, "issuanceFence", "event");
@@ -268,6 +268,18 @@ public final class MembershipAuthorityEventV1Codec {
     return Collections.unmodifiableMap(values);
   }
 
+  private static void validateMembershipVersion(
+      JsonNode membershipVersionNode, String eventTenantId) {
+    if (!(membershipVersionNode instanceof ObjectNode membershipVersion)) {
+      throw invalid("event.membershipVersion", "must be a one-tenant version map");
+    }
+    if (membershipVersion.size() != 1 || !membershipVersion.has(eventTenantId)) {
+      throw invalid(
+          "event.membershipVersion", "must contain exactly the event tenantId key");
+    }
+    requirePositiveDecimal(membershipVersion, eventTenantId, "event.membershipVersion");
+  }
+
   private static void validatePrivateRealmGrants(JsonNode grantsNode, String eventTenantId) {
     if (grantsNode == null || !grantsNode.isArray()) {
       throw invalid("authorityTuple.privateRealmGrantVersions", "must be a required array");
@@ -352,6 +364,7 @@ public final class MembershipAuthorityEventV1Codec {
         readStringMap(tupleNode.get("tenantAuthorityGeneration"));
     Map<String, String> membershipGenerations =
         readStringMap(tupleNode.get("membershipAuthorityGeneration"));
+    Map<String, String> membershipVersions = readStringMap(wire.get("membershipVersion"));
 
     List<PrivateRealmGrantVersion> grants = new ArrayList<>();
     for (JsonNode grant : tupleNode.get("privateRealmGrantVersions")) {
@@ -417,7 +430,7 @@ public final class MembershipAuthorityEventV1Codec {
         wire.get("accountId").textValue(),
         wire.get("tenantId").textValue(),
         wire.get("membershipLifecycleState").textValue(),
-        wire.get("membershipVersion").textValue(),
+        membershipVersions,
         wire.get("membershipAuthorityGeneration").textValue(),
         authorityTuple,
         wire.get("issuanceFence").textValue(),
@@ -603,7 +616,7 @@ public final class MembershipAuthorityEventV1Codec {
     private final String accountId;
     private final String tenantId;
     private final String membershipLifecycleState;
-    private final String membershipVersion;
+    private final Map<String, String> membershipVersion;
     private final String membershipAuthorityGeneration;
     private final AuthorityTuple authorityTuple;
     private final String issuanceFence;
@@ -624,7 +637,7 @@ public final class MembershipAuthorityEventV1Codec {
         String accountId,
         String tenantId,
         String membershipLifecycleState,
-        String membershipVersion,
+        Map<String, String> membershipVersion,
         String membershipAuthorityGeneration,
         AuthorityTuple authorityTuple,
         String issuanceFence,
@@ -643,7 +656,7 @@ public final class MembershipAuthorityEventV1Codec {
       this.accountId = accountId;
       this.tenantId = tenantId;
       this.membershipLifecycleState = membershipLifecycleState;
-      this.membershipVersion = membershipVersion;
+      this.membershipVersion = immutableMap(membershipVersion);
       this.membershipAuthorityGeneration = membershipAuthorityGeneration;
       this.authorityTuple = authorityTuple;
       this.issuanceFence = issuanceFence;
@@ -694,8 +707,8 @@ public final class MembershipAuthorityEventV1Codec {
       return membershipLifecycleState;
     }
 
-    public String membershipVersion() {
-      return membershipVersion;
+    public Map<String, String> membershipVersion() {
+      return immutableMap(membershipVersion);
     }
 
     public String membershipAuthorityGeneration() {

@@ -52,6 +52,11 @@ class MembershipAuthorityEventV1CodecTest {
       }
       wireEvent.put("eventDigest", sealed.eventDigest());
       MembershipEvent verified = MembershipAuthorityEventV1Codec.verify(wireEvent.toString());
+      assertThat(verified.membershipVersion())
+          .isEqualTo(
+              Map.of(
+                  verified.tenantId(),
+                  wireEvent.path("membershipVersion").path(verified.tenantId()).asText()));
       assertThat(verified.canonicalJsonUtf8())
           .isEqualTo(Rfc8785CanonicalJson.canonicalizeUtf8(wireEvent.toString()));
       assertThat(sealed.eventDigest()).isEqualTo(verified.eventDigest());
@@ -135,6 +140,13 @@ class MembershipAuthorityEventV1CodecTest {
     assertThatThrownBy(() -> event.roles().add("moderator"))
         .isInstanceOf(UnsupportedOperationException.class);
     assertThatThrownBy(() -> event.authorityTuple().membershipAuthorityGeneration().put("x", "1"))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThat(event.membershipVersion())
+        .isEqualTo(
+            Map.of(
+                event.tenantId(),
+                wireEvent.path("membershipVersion").path(event.tenantId()).asText()));
+    assertThatThrownBy(() -> event.membershipVersion().put(event.tenantId(), "2"))
         .isInstanceOf(UnsupportedOperationException.class);
     assertThat(event.membershipAuthorityGeneration())
         .isEqualTo(event.authorityTuple().membershipAuthorityGeneration().get(event.tenantId()));

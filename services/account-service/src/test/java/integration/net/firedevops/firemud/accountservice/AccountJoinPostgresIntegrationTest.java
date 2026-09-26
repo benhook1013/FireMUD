@@ -854,6 +854,9 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(snapshot.membershipLifecycleState()).isEqualTo("ACTIVE");
     assertThat(snapshot.gameplayAdmissionAllowed()).isTrue();
     assertThat(snapshot.membershipVersion()).isEqualTo(Long.toString(joined.membershipVersion()));
+    assertThat(snapshot.authorityEvent().membershipVersion())
+        .isEqualTo(
+            Map.of(fixture.tenantUuid().toString(), Long.toString(joined.membershipVersion())));
     assertThat(snapshot.membershipAuthorityGeneration())
         .isEqualTo(Long.toString(joined.membershipAuthorityGeneration()));
     assertThat(snapshot.roles()).containsExactly("player");
@@ -872,6 +875,25 @@ class AccountJoinPostgresIntegrationTest {
         .isEqualTo(snapshot.authorityEvent().eventId());
     assertThat(snapshot.outboxCheckpoints().getFirst().sourceEventDigest())
         .isEqualTo(snapshot.authorityEvent().eventDigest());
+  }
+
+  @Test
+  void positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps() {
+    JoinFixture scalarVersion = fixture("active");
+    assertStoredMembershipVersionFailsClosed(scalarVersion, "\"2\"");
+
+    JoinFixture wrongTenantVersion = fixture("active");
+    assertStoredMembershipVersionFailsClosed(
+        wrongTenantVersion, "{\"%s\":\"2\"}".formatted(differentTenantUuid(wrongTenantVersion)));
+
+    JoinFixture extraTenantVersion = fixture("active");
+    assertStoredMembershipVersionFailsClosed(
+        extraTenantVersion,
+        "{\""
+            + extraTenantVersion.tenantUuid()
+            + "\":\"2\",\""
+            + differentTenantUuid(extraTenantVersion)
+            + "\":\"1\"}");
   }
 
   @Test
@@ -1526,7 +1548,9 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(event.accountId()).isEqualTo(fixture.accountUuid().toString());
     assertThat(event.tenantId()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(event.membershipLifecycleState()).isEqualTo("ACTIVE");
-    assertThat(event.membershipVersion()).isEqualTo(Long.toString(expectedMembershipVersion));
+    assertThat(event.membershipVersion())
+        .isEqualTo(
+            Map.of(fixture.tenantUuid().toString(), Long.toString(expectedMembershipVersion)));
     assertThat(event.roles()).containsExactlyElementsOf(committedRoles(fixture));
     assertThat(event.gameplayAdmissionAllowed()).isTrue();
     assertThat(event.callerBoundAuthorityInvalidated())
@@ -1586,6 +1610,43 @@ class AccountJoinPostgresIntegrationTest {
             authorityStreamKey(fixture),
             sequence)
         .fetchOne();
+  }
+
+  private void assertStoredMembershipVersionFailsClosed(
+      JoinFixture fixture, String malformedMembershipVersionJson) {
+    JoinPublicProductionResult joined = join(fixture);
+    assertThat(joined.success()).isTrue();
+    var row = authorityMembershipEventRow(fixture, 1L);
+    String payload = new String(row.get("payload", byte[].class), StandardCharsets.UTF_8);
+    String exactMembershipVersionJson =
+        "\"membershipVersion\":{\""
+            + fixture.tenantUuid()
+            + "\":\""
+            + joined.membershipVersion()
+            + "\"}";
+    assertThat(payload).contains(exactMembershipVersionJson);
+    String malformedPayload =
+        payload.replace(
+            exactMembershipVersionJson, "\"membershipVersion\":" + malformedMembershipVersionJson);
+    assertThat(malformedPayload).isNotEqualTo(payload);
+    assertThat(
+            dsl.execute(
+                "UPDATE account_authority_outbox_events SET payload = ? "
+                    + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                malformedPayload.getBytes(StandardCharsets.UTF_8),
+                authorityStreamKey(fixture)))
+        .isEqualTo(1);
+
+    assertThatThrownBy(() -> readPositiveMembershipSnapshot(fixture))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Stored Account authority event is invalid");
+  }
+
+  private UUID differentTenantUuid(JoinFixture fixture) {
+    UUID candidate = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    return candidate.equals(fixture.tenantUuid())
+        ? UUID.fromString("00000000-0000-0000-0000-000000000002")
+        : candidate;
   }
 
   private long authorityGeneration(
