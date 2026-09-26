@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.LongFunction;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -31,6 +32,7 @@ public class AccountAuthorityOutboxRepository {
   private static final int MAX_STREAM_KEY_LENGTH = 2048;
   private static final int MAX_REQUEST_ID_LENGTH = 512;
   private static final int MAX_EVENT_ID_LENGTH = 512;
+  private static final int MAX_EVENT_DIGEST_LENGTH = 512;
 
   private final DSLContext dsl;
 
@@ -54,9 +56,30 @@ public class AccountAuthorityOutboxRepository {
       byte[] payload) {
     validateStreamKey(outboxStreamKey);
     requireBoundedNonBlank(requestId, "request ID", MAX_REQUEST_ID_LENGTH);
-    requireBoundedNonBlank(eventId, "event ID", MAX_EVENT_ID_LENGTH);
-    requireNonBlank(eventDigest, "event digest");
-    byte[] exactPayload = copyPayload(payload);
+    EventEvidence evidence = new EventEvidence(eventId, eventDigest, payload);
+    return append(outboxStreamKey, requestId, ignoredSequence -> evidence);
+  }
+
+  /**
+   * Appends one event whose immutable evidence is produced after the exact stream is locked.
+   *
+   * <p>The factory receives the next sequence for a new request, or the committed sequence for an
+   * exact-request retry. Its payload is the complete producer wire payload (including its {@code
+   * eventDigest} field). The producer must ensure that field matches the separate digest; this
+   * repository treats both as opaque evidence and does not interpret the payload or validate that
+   * equality. The factory may run again for an exact-request retry, so it must be deterministic and
+   * side-effect-free for the same request and sequence. It is invoked before the stream head is
+   * advanced, so a failed factory cannot advance the head. The caller must let a factory failure
+   * escape its transaction if it also needs the initial zero-sequence stream row rolled back.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Event append(
+      String outboxStreamKey, String requestId, LongFunction<EventEvidence> evidenceFactory) {
+    validateStreamKey(outboxStreamKey);
+    requireBoundedNonBlank(requestId, "request ID", MAX_REQUEST_ID_LENGTH);
+    if (evidenceFactory == null) {
+      throw new IllegalArgumentException("Account authority outbox evidence factory is required");
+    }
 
     dsl.execute(
         "INSERT INTO account_authority_outbox_streams (outbox_stream_key, last_sequence) "
@@ -74,7 +97,8 @@ public class AccountAuthorityOutboxRepository {
             requestId);
     if (priorRequest != null) {
       Event committed = toEvent(outboxStreamKey, requestId, priorRequest);
-      if (!committed.matches(eventId, eventDigest, exactPayload)) {
+      EventEvidence candidate = produceEvidence(evidenceFactory, committed.outboxSequence());
+      if (!committed.matches(candidate)) {
         throw new IdempotencyConflictException(
             "Account authority outbox request was reused with different event evidence");
       }
@@ -84,23 +108,19 @@ public class AccountAuthorityOutboxRepository {
       return committed;
     }
 
+    long nextSequence = nextSequence(currentSequence);
+    EventEvidence evidence = produceEvidence(evidenceFactory, nextSequence);
     Record priorEventId =
         dsl.fetchOne(
             "SELECT request_id FROM account_authority_outbox_events "
                 + "WHERE outbox_stream_key = ? AND event_id = ?",
             outboxStreamKey,
-            eventId);
+            evidence.eventId());
     if (priorEventId != null) {
       throw new IdempotencyConflictException(
           "Account authority outbox event ID is already bound to another request");
     }
 
-    long nextSequence;
-    try {
-      nextSequence = Math.addExact(currentSequence, 1L);
-    } catch (ArithmeticException overflow) {
-      throw new IllegalStateException("Account authority outbox sequence is exhausted", overflow);
-    }
     Record advancedHead =
         dsl.fetchOne(
             "UPDATE account_authority_outbox_streams SET last_sequence = ? "
@@ -121,13 +141,36 @@ public class AccountAuthorityOutboxRepository {
             outboxStreamKey,
             nextSequence,
             requestId,
-            eventId,
-            eventDigest,
-            exactPayload);
+            evidence.eventId(),
+            evidence.eventDigest(),
+            evidence.payload());
     if (inserted != 1) {
       throw new IllegalStateException("Account authority outbox event was not appended");
     }
-    return new Event(outboxStreamKey, requestId, nextSequence, eventId, eventDigest, exactPayload);
+    return new Event(
+        outboxStreamKey,
+        requestId,
+        nextSequence,
+        evidence.eventId(),
+        evidence.eventDigest(),
+        evidence.payload());
+  }
+
+  private static long nextSequence(long currentSequence) {
+    try {
+      return Math.addExact(currentSequence, 1L);
+    } catch (ArithmeticException overflow) {
+      throw new IllegalStateException("Account authority outbox sequence is exhausted", overflow);
+    }
+  }
+
+  private static EventEvidence produceEvidence(
+      LongFunction<EventEvidence> evidenceFactory, long sequence) {
+    EventEvidence produced = evidenceFactory.apply(sequence);
+    if (produced == null) {
+      throw new IllegalArgumentException("Account authority outbox evidence factory returned null");
+    }
+    return new EventEvidence(produced.eventId(), produced.eventDigest(), produced.payload());
   }
 
   /** Exact event readback for a positive sequence; sequence zero is not an event identity. */
@@ -255,6 +298,20 @@ public class AccountAuthorityOutboxRepository {
     return payload.clone();
   }
 
+  /** Immutable producer evidence; payload contains the complete canonical wire bytes. */
+  public record EventEvidence(String eventId, String eventDigest, byte[] payload) {
+    public EventEvidence {
+      requireBoundedNonBlank(eventId, "event ID", MAX_EVENT_ID_LENGTH);
+      requireBoundedNonBlank(eventDigest, "event digest", MAX_EVENT_DIGEST_LENGTH);
+      payload = copyPayload(payload);
+    }
+
+    @Override
+    public byte[] payload() {
+      return payload.clone();
+    }
+  }
+
   /** Immutable event evidence returned by append and exact readback. */
   public record Event(
       String outboxStreamKey,
@@ -267,7 +324,7 @@ public class AccountAuthorityOutboxRepository {
       validateStreamKey(outboxStreamKey);
       requireBoundedNonBlank(requestId, "request ID", MAX_REQUEST_ID_LENGTH);
       requireBoundedNonBlank(eventId, "event ID", MAX_EVENT_ID_LENGTH);
-      requireNonBlank(eventDigest, "event digest");
+      requireBoundedNonBlank(eventDigest, "event digest", MAX_EVENT_DIGEST_LENGTH);
       if (outboxSequence <= 0) {
         throw new IllegalArgumentException("Authority outbox event sequence must be positive");
       }
@@ -301,11 +358,10 @@ public class AccountAuthorityOutboxRepository {
       return 31 * result + Arrays.hashCode(payload);
     }
 
-    private boolean matches(
-        String candidateEventId, String candidateDigest, byte[] candidatePayload) {
-      return Objects.equals(eventId, candidateEventId)
-          && Objects.equals(eventDigest, candidateDigest)
-          && Arrays.equals(payload, candidatePayload);
+    private boolean matches(EventEvidence candidate) {
+      return Objects.equals(eventId, candidate.eventId())
+          && Objects.equals(eventDigest, candidate.eventDigest())
+          && Arrays.equals(payload, candidate.payload());
     }
   }
 

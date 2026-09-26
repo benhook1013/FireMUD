@@ -1,0 +1,223 @@
+{
+  "schemaVersion": "account-auth-authority-event-vectors/v1",
+  "validEvents": [
+    {
+      "name": "active-membership-with-cutoffs-and-grant",
+      "event": {
+        "schemaVersion": "account-auth-authority-event/v1",
+        "eventType": "MEMBERSHIP_CHANGED",
+        "eventId": "event-membership-001",
+        "requestId": "request-membership-001",
+        "outboxStreamKey": "account:auth-authority:v1:membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "outboxSequence": "7",
+        "sourceScope": "membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "accountId": "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+        "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "membershipExists": true,
+        "membershipLifecycleState": "ACTIVE",
+        "membershipVersion": "9007199254740993",
+        "membershipAuthorityGeneration": "12",
+        "authorityTuple": {
+          "issuerAuthGeneration": "5",
+          "accountAuthorityGeneration": "8",
+          "tenantAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "13"
+          },
+          "membershipAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "12"
+          },
+          "privateRealmGrantVersions": [
+            {
+              "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+              "worldSlug": "alpha",
+              "realmSlug": "builders",
+              "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a",
+              "grantVersion": "3"
+            }
+          ],
+          "accountSecurityCutoff": {
+            "accountAuthorityGeneration": "8",
+            "outboxStreamKey": "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            "outboxSequence": "4"
+          },
+          "tenantBillingCutoff": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": {
+              "tenantAuthorityGeneration": "13",
+              "tenantBillingSequence": "5",
+              "outboxStreamKey": "account:auth-authority:v1:tenant/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+              "outboxSequence": "9"
+            }
+          }
+        },
+        "issuanceFence": "9007199254740995",
+        "roles": ["designer", "player"],
+        "gameplayAdmissionAllowed": true,
+        "callerBoundAuthorityInvalidated": true,
+        "eventDigest": "sha256:bc65682bff77fd0ae4ca4adcc4abb24a69fcfd53a2b119a139a07a2d90882bec"
+      }
+    },
+    {
+      "name": "inactive-membership-with-optional-cutoffs-omitted",
+      "event": {
+        "schemaVersion": "account-auth-authority-event/v1",
+        "eventType": "MEMBERSHIP_CHANGED",
+        "eventId": "event-membership-002",
+        "requestId": "request-membership-002",
+        "outboxStreamKey": "account:auth-authority:v1:membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "outboxSequence": "8",
+        "sourceScope": "membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "accountId": "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+        "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "membershipExists": true,
+        "membershipLifecycleState": "INACTIVE",
+        "membershipVersion": "43",
+        "membershipAuthorityGeneration": "13",
+        "authorityTuple": {
+          "issuerAuthGeneration": "5",
+          "accountAuthorityGeneration": "8",
+          "tenantAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "13"
+          },
+          "membershipAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "13"
+          },
+          "privateRealmGrantVersions": []
+        },
+        "issuanceFence": "28",
+        "roles": [],
+        "gameplayAdmissionAllowed": false,
+        "callerBoundAuthorityInvalidated": false,
+        "eventDigest": "sha256:aa13ccc55b2db8608ce57395dbf04804a0c238732e8109bf64811dd26b3040f3"
+      }
+    },
+    {
+      "name": "large-counter-values",
+      "event": {
+        "schemaVersion": "account-auth-authority-event/v1",
+        "eventType": "MEMBERSHIP_CHANGED",
+        "eventId": "event-membership-large",
+        "requestId": "request-membership-large",
+        "outboxStreamKey": "account:auth-authority:v1:membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "outboxSequence": "9007199254740993",
+        "sourceScope": "membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "accountId": "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+        "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+        "membershipExists": true,
+        "membershipLifecycleState": "ACTIVE",
+        "membershipVersion": "9007199254740993",
+        "membershipAuthorityGeneration": "9007199254740993",
+        "authorityTuple": {
+          "issuerAuthGeneration": "9007199254740993",
+          "accountAuthorityGeneration": "9007199254740993",
+          "tenantAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "9007199254740993"
+          },
+          "membershipAuthorityGeneration": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "9007199254740993"
+          },
+          "privateRealmGrantVersions": [
+            {
+              "tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+              "worldSlug": "alpha",
+              "realmSlug": "builders",
+              "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a",
+              "grantVersion": "9007199254740993"
+            }
+          ],
+          "accountSecurityCutoff": {
+            "accountAuthorityGeneration": "9007199254740993",
+            "outboxStreamKey": "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            "outboxSequence": "9007199254740993"
+          },
+          "tenantBillingCutoff": {
+            "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": {
+              "tenantAuthorityGeneration": "9007199254740993",
+              "tenantBillingSequence": "9007199254740993",
+              "outboxStreamKey": "account:auth-authority:v1:tenant/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f",
+              "outboxSequence": "9007199254740993"
+            }
+          }
+        },
+        "issuanceFence": "9007199254740993",
+        "roles": ["player"],
+        "gameplayAdmissionAllowed": true,
+        "callerBoundAuthorityInvalidated": true,
+        "eventDigest": "sha256:5148e1938c4066182fc3520bfccbf19feceaf2fcdc0de9738586a87ce04f67b4"
+      }
+    }
+  ],
+  "changedFieldMutations": [
+    {"name": "schema-version", "path": "/schemaVersion", "replacement": "account-auth-authority-event/v2"},
+    {"name": "event-type", "path": "/eventType", "replacement": "MEMBERSHIP_DELETED"},
+    {"name": "event-id", "path": "/eventId", "replacement": "event-membership-changed"},
+    {"name": "request-id", "path": "/requestId", "replacement": "request-membership-changed"},
+    {"name": "stream-key", "path": "/outboxStreamKey", "replacement": "account:auth-authority:v1:membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e50"},
+    {"name": "sequence", "path": "/outboxSequence", "replacement": "8"},
+    {"name": "source-scope", "path": "/sourceScope", "replacement": "membership/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e50"},
+    {"name": "account-id", "path": "/accountId", "replacement": "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0b"},
+    {"name": "tenant-id", "path": "/tenantId", "replacement": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e50"},
+    {"name": "membership-exists", "path": "/membershipExists", "replacement": false},
+    {"name": "lifecycle", "path": "/membershipLifecycleState", "replacement": "INACTIVE"},
+    {"name": "membership-version", "path": "/membershipVersion", "replacement": "9007199254740994"},
+    {"name": "membership-authority-generation", "path": "/membershipAuthorityGeneration", "replacement": "13"},
+    {"name": "issuer-generation", "path": "/authorityTuple/issuerAuthGeneration", "replacement": "6"},
+    {"name": "account-generation", "path": "/authorityTuple/accountAuthorityGeneration", "replacement": "9"},
+    {"name": "tenant-generation", "path": "/authorityTuple/tenantAuthorityGeneration/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "replacement": "14"},
+    {"name": "membership-generation-map", "path": "/authorityTuple/membershipAuthorityGeneration/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "replacement": "13"},
+    {"name": "grant-version", "path": "/authorityTuple/privateRealmGrantVersions/0/grantVersion", "replacement": "4"},
+    {"name": "grant-scope", "path": "/authorityTuple/privateRealmGrantVersions/0/worldSlug", "replacement": "beta"},
+    {"name": "account-cutoff-generation", "path": "/authorityTuple/accountSecurityCutoff/accountAuthorityGeneration", "replacement": "9"},
+    {"name": "account-cutoff-sequence", "path": "/authorityTuple/accountSecurityCutoff/outboxSequence", "replacement": "5"},
+    {"name": "tenant-cutoff-generation", "path": "/authorityTuple/tenantBillingCutoff/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f/tenantAuthorityGeneration", "replacement": "14"},
+    {"name": "tenant-billing-sequence", "path": "/authorityTuple/tenantBillingCutoff/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f/tenantBillingSequence", "replacement": "6"},
+    {"name": "tenant-cutoff-sequence", "path": "/authorityTuple/tenantBillingCutoff/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f/outboxSequence", "replacement": "10"},
+    {"name": "issuance-fence", "path": "/issuanceFence", "replacement": "9007199254740996"},
+    {"name": "roles", "path": "/roles/0", "replacement": "moderator"},
+    {"name": "admission", "path": "/gameplayAdmissionAllowed", "replacement": false},
+    {"name": "caller-bound-invalidation", "path": "/callerBoundAuthorityInvalidated", "replacement": false}
+  ],
+  "invalidMutations": [
+    {"name": "unsupported-schema", "op": "replace", "path": "/schemaVersion", "value": "account-auth-authority-event/v2"},
+    {"name": "unsupported-event-type", "op": "replace", "path": "/eventType", "value": "MEMBERSHIP_DELETED"},
+    {"name": "missing-event-digest", "op": "remove", "path": "/eventDigest"},
+    {"name": "undeclared-top-level-field", "op": "add", "path": "/unexpected", "value": true},
+    {"name": "missing-required-roles", "op": "remove", "path": "/roles"},
+    {"name": "null-optional-account-cutoff", "op": "replace", "path": "/authorityTuple/accountSecurityCutoff", "value": null},
+    {"name": "null-optional-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": null},
+    {"name": "empty-present-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": {}},
+    {"name": "json-number-counter", "op": "replace", "path": "/outboxSequence", "value": 7},
+    {"name": "leading-zero-counter", "op": "replace", "path": "/membershipVersion", "value": "01"},
+    {"name": "zero-sequence", "op": "replace", "path": "/outboxSequence", "value": "0"},
+    {"name": "mismatched-membership-generation", "op": "replace", "path": "/authorityTuple/membershipAuthorityGeneration/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "value": "99"},
+    {"name": "extra-tenant-generation-scope", "op": "add", "path": "/authorityTuple/tenantAuthorityGeneration/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "value": "1"},
+    {"name": "extra-tenant-cutoff-scope", "op": "add", "path": "/authorityTuple/tenantBillingCutoff/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "value": {
+      "tenantAuthorityGeneration": "1",
+      "tenantBillingSequence": "1",
+      "outboxStreamKey": "account:auth-authority:v1:tenant/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a",
+      "outboxSequence": "1"
+    }},
+    {"name": "foreign-tenant-grant", "op": "replace", "path": "/authorityTuple/privateRealmGrantVersions/0/tenantId", "value": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a"},
+    {"name": "extra-tuple-field", "op": "add", "path": "/authorityTuple/unknown", "value": "x"},
+    {"name": "missing-required-tuple-field", "op": "remove", "path": "/authorityTuple/issuerAuthGeneration"},
+    {"name": "extra-account-cutoff-field", "op": "add", "path": "/authorityTuple/accountSecurityCutoff/unknown", "value": "x"},
+    {"name": "missing-account-cutoff-sequence", "op": "remove", "path": "/authorityTuple/accountSecurityCutoff/outboxSequence"},
+    {"name": "wrong-account-cutoff-stream", "op": "replace", "path": "/authorityTuple/accountSecurityCutoff/outboxStreamKey", "value": "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0b"},
+    {"name": "missing-tenant-cutoff-sequence", "op": "remove", "path": "/authorityTuple/tenantBillingCutoff/018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f/outboxSequence"},
+    {"name": "incomplete-grant-entry", "op": "remove", "path": "/authorityTuple/privateRealmGrantVersions/0/playtestLifecycleId"},
+    {"name": "unsorted-roles", "op": "replace", "path": "/roles", "value": ["player", "designer"]},
+    {"name": "duplicate-roles", "op": "replace", "path": "/roles", "value": ["designer", "designer"]},
+    {"name": "global-role-in-membership", "op": "replace", "path": "/roles", "value": ["support"]},
+    {"name": "inactive-admission", "op": "replace", "path": "/membershipLifecycleState", "value": "INACTIVE"},
+    {"name": "uppercase-account-uuid", "op": "replace", "path": "/accountId", "value": "018F8F0A-1A6B-7B13-8D04-5F6E7D8C9B0A"},
+    {"name": "noncanonical-uuid", "op": "replace", "path": "/tenantId", "value": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5"},
+    {"name": "unsorted-grants", "op": "replace", "path": "/authorityTuple/privateRealmGrantVersions", "value": [
+      {"tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "worldSlug": "zeta", "realmSlug": "builders", "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "grantVersion": "4"},
+      {"tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "worldSlug": "alpha", "realmSlug": "builders", "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "grantVersion": "3"}
+    ]},
+    {"name": "duplicate-grant-identity", "op": "replace", "path": "/authorityTuple/privateRealmGrantVersions", "value": [
+      {"tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "worldSlug": "alpha", "realmSlug": "builders", "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "grantVersion": "3"},
+      {"tenantId": "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", "worldSlug": "alpha", "realmSlug": "builders", "playtestLifecycleId": "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "grantVersion": "4"}
+    ]},
+    {"name": "invalid-digest", "op": "replace", "path": "/eventDigest", "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+  ]
+}

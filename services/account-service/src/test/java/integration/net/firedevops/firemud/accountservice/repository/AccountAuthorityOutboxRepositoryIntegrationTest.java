@@ -133,6 +133,31 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
     }
   }
 
+  @Test
+  void evidenceFactoryFailureRollsBackStreamCreationAndDoesNotAdvanceHead() {
+    TestContext context = newTestContext();
+    AccountAuthorityOutboxRepository repository = context.repository();
+    TransactionTemplate transaction = context.transaction();
+    String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    transaction,
+                    () ->
+                        repository.append(
+                            stream,
+                            "factory-failure-request",
+                            sequence -> {
+                              assertThat(sequence).isEqualTo(1L);
+                              throw new IllegalStateException("producer failed");
+                            })))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("producer failed");
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream))).isEmpty();
+  }
+
   private Event concurrentAppend(
       AccountAuthorityOutboxRepository repository,
       TransactionTemplate transaction,
