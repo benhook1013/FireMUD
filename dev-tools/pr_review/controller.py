@@ -3503,17 +3503,36 @@ class ReviewController:
                 **({"deep_error": deep_error} if deep_error else {}),
             },
             "prs": values,
-            "review_targets": (
-                self._unknown_review_targets(f"deep review evidence is unavailable: {deep_error}")
-                if deep_error is not None
-                else self._unknown_review_targets(
-                    "live PR identity changed between batch overview and deep reconciliation"
-                )
-                if changed_target_pr is not None
-                else (scoped_report or {}).get("review_targets", self._empty_review_targets(state))
-            ),
+            "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
+        if deep_error is not None:
+            report["review_targets"] = self._unknown_review_targets(
+                f"deep review evidence is unavailable: {deep_error}"
+            )
+        elif changed_target_pr is not None:
+            unknown_targets = self._unknown_review_targets(
+                "live PR identity changed between batch overview and deep reconciliation"
+            )
+            positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
+            changed_position = positions[changed_target_pr]
+            selected_targets = report["review_targets"]
+            stable_targets = {}
+            # A later child cannot invalidate a target already selected earlier
+            # in the queue; a changed selected PR or earlier dependency still can.
+            for channel in (policy.Channel.HOSTED.value, policy.Channel.CLI.value):
+                target = selected_targets.get(channel)
+                selected_pr = target.get("pr") if isinstance(target, Mapping) else None
+                selected_position = (
+                    positions.get(selected_pr)
+                    if isinstance(selected_pr, int) and not isinstance(selected_pr, bool)
+                    else None
+                )
+                if selected_position is not None and selected_position < changed_position:
+                    stable_targets[channel] = target
+                else:
+                    stable_targets[channel] = unknown_targets[channel]
+            report["review_targets"] = stable_targets
         return report
 
     def resolve_cli_target(self, expected_pr: int | None = None) -> ReviewTarget:

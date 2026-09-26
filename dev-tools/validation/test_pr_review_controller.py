@@ -2034,6 +2034,39 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["ordered_prs"], [1, 2, 3])
         self.assertEqual(batch_calls, [tuple(values)])
 
+    def test_status_overview_keeps_front_target_when_downstream_parent_is_stale(self):
+        values, heads = _stacked_prs(6)
+        values[2] = dataclasses.replace(values[2], base_tip="9" * 40)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for channel in ("hosted", "cli"):
+            useful = self.review_evidence(controller, 1, channel, f"{channel}-front")
+            useful.update({"raw": 1, "accepted": 1})
+            evidence[(1, channel)] = [useful]
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(report["prs"][1]["reconciliation"], "UNRECONCILED")
+        for channel in ("hosted", "cli"):
+            self.assertEqual(report["review_targets"][channel]["pr"], 1)
+            self.assertEqual(report["review_targets"][channel]["status"], "READY")
+
+    def test_status_overview_keeps_selected_target_fail_closed_when_its_parent_is_stale(self):
+        values, heads = _stacked_prs(4)
+        values[1] = dataclasses.replace(values[1], base_tip="9" * 40)
+        controller = self.make(values, CountingEvidence(), heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        for channel in ("hosted", "cli"):
+            self.assertIsNone(report["review_targets"][channel]["pr"])
+            self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+
     def test_status_overview_keeps_coherent_deep_target_with_historic_saved_identity(self):
         values, heads = _stacked_prs(3)
         controller = self.make(values, CountingEvidence(), heads=heads)
