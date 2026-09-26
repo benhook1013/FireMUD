@@ -129,14 +129,8 @@ public class PluginRuntimeStateRepository {
 
   private static void requireCoherentPluginFence(PluginRuntimeState entity) {
     long activationEpoch = entity.getPluginActivationEpoch();
-    long lifecycleRevision = entity.getLifecycleRevision();
-    if (activationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
-    }
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        activationEpoch, entity.getLifecycleRevision());
     if (activationEpoch == 0L
         && entity.getActivePluginVersionId() != null
         && !entity.getActivePluginVersionId().isBlank()) {

@@ -134,7 +134,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               + "(tenant_id, game_instance_id, runtime_region_id, runtime_region_epoch, plugin_id, "
               + "active_plugin_version_id, plugin_state, status_reason) "
               + "values ('tenant-retained', 'instance-retained', 'region-1', 7, 'plugin-retained', "
-              + "'version-1', 'ENABLED', 'retained'), "
+              + "'version-1', 'PLUGIN_STATE_ENABLED', 'retained'), "
               + "('tenant-empty', 'instance-empty', null, null, 'plugin-empty', '', 'DISABLED', 'retained')");
       insertSchedule(
           retainedDsl,
@@ -233,7 +233,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       retainedDsl.execute(
           "insert into plugin_runtime_states "
               + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, plugin_state, status_reason) "
-              + "values ('tenant-contradictory', 'instance-contradictory', 'plugin-contradictory', '', 'ENABLED', 'retained')");
+              + "values ('tenant-contradictory', 'instance-contradictory', 'plugin-contradictory', '', 'PLUGIN_STATE_ENABLED', 'retained')");
 
       assertThatThrownBy(() -> migrateExistingSchemaToLatest(contradictorySchema))
           .isInstanceOf(FlywayException.class)
@@ -253,7 +253,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                         + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
                         + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
                         + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
-                        + "'version-active', 'ENABLED', 'invalid', 0, 0)"))
+                        + "'version-active', 'PLUGIN_STATE_ENABLED', 'invalid', 0, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
     assertThatThrownBy(

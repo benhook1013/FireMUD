@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,6 +50,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
+  private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String PRIORITY_HIGH = "high";
   private static final String PRIORITY_NORMAL = "normal";
@@ -57,6 +59,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
+  // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
+  // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
+  private static final List<Duration> AUTHORITY_UNAVAILABLE_RETRY_DELAYS =
+      List.of(Duration.ofSeconds(15), Duration.ofSeconds(30), Duration.ofSeconds(60));
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -348,7 +354,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
-        requeueAfterRetryableFailure(workItem);
+        retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_ADMISSION);
         return false;
       }
       cancel(workItem, STAGE_ADMISSION, "canceled", pluginFence.reason(), now);
@@ -400,7 +406,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
-        requeueAfterRetryableFailure(workItem);
+        retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_DSL_EVAL);
         return false;
       }
       cancel(workItem, STAGE_DSL_EVAL, "canceled", pluginFence.reason(), now);
@@ -465,6 +471,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     PluginFenceValidation retryableFanoutFence = null;
+    PluginFenceValidation terminalFanoutFence = null;
     handoffService.beginAggregateFanout(workItem);
     try {
       for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
@@ -472,10 +479,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         if (handoffPluginFence != null) {
           if (handoffPluginFence.retryable()) {
             retryableFanoutFence = handoffPluginFence;
-            break;
+          } else {
+            terminalFanoutFence = handoffPluginFence;
           }
-          cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffPluginFence.reason(), now);
-          return false;
+          break;
         }
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
@@ -497,9 +504,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       recordTerminalHandoffOutcome(workItem, firstRejectedHandoff);
       return false;
     }
-    if (retryableFanoutFence != null
-        || (firstRejectedHandoff != null
-            && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff))) {
+    if (terminalFanoutFence != null) {
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", terminalFanoutFence.reason(), now);
+      return false;
+    }
+    if (retryableFanoutFence != null) {
+      retryOrDeadLetterPluginFence(workItem, retryableFanoutFence, STAGE_DSL_EVAL);
+      return false;
+    }
+    if (firstRejectedHandoff != null
+        && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       requeueAfterRetryableFailure(workItem);
       return false;
     }
@@ -518,6 +532,27 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, workItem, LOGGER);
+  }
+
+  private void retryOrDeadLetterPluginFence(
+      ScriptWorkItem workItem, PluginFenceValidation pluginFence, String stage) {
+    if (!REASON_AUTHORITY_UNAVAILABLE.equals(pluginFence.reason())) {
+      requeueAfterRetryableFailure(workItem);
+      return;
+    }
+
+    Instant retryAt = Instant.now();
+    int retryCount = workItem.getAuthorityUnavailableRetryCount();
+    if (retryCount < 0 || retryCount >= AUTHORITY_UNAVAILABLE_RETRY_DELAYS.size()) {
+      deadLetter(
+          workItem, stage, OUTCOME_INFRASTRUCTURE_ERROR, REASON_AUTHORITY_UNAVAILABLE, retryAt);
+      return;
+    }
+
+    Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
+    workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
+    workItem.setNextEligibleAt(retryAt.plus(delay));
+    requeueAfterRetryableFailure(workItem);
   }
 
   private static long requireWorkItemId(ScriptWorkItem workItem) {

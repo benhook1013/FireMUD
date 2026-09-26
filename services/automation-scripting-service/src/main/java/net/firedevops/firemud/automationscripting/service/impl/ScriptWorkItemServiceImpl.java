@@ -161,7 +161,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     Instant now = Instant.now();
     List<ScriptWorkItem> items =
         workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
-            STATUS_PENDING_EVALUATION, PageRequest.of(0, maxItems));
+            STATUS_PENDING_EVALUATION, now, PageRequest.of(0, maxItems));
     items.forEach(
         item -> {
           item.setStatus(STATUS_EVALUATING);
@@ -186,6 +186,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
             workItemIds.stream().distinct().toList(),
             STATUS_PENDING_EVALUATION,
+            now,
             PageRequest.of(0, maxItems));
     items.forEach(
         item -> {
@@ -521,6 +522,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       }
       item.setStatus(STATUS_PENDING_EVALUATION);
       item.setCancelReason("");
+      item.setAuthorityUnavailableRetryCount(0);
+      item.setNextEligibleAt(now);
       item.setUpdatedAt(now);
       workItemRepository.save(item);
       refreshReadinessProjectionIfNeeded(item);

@@ -17,4 +17,14 @@ final class AutomationScriptingJooqRepositorySupport {
   static String normalize(String value) {
     return value == null ? "" : value;
   }
+
+  static void requireCoherentPluginFence(long activationEpoch, long lifecycleRevision) {
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
+  }
 }

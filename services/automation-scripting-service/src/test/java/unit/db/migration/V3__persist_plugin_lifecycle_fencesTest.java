@@ -33,7 +33,7 @@ class V3__persist_plugin_lifecycle_fencesTest {
     String normalized = migration.replaceAll("\\s+", " ").trim();
 
     assertThat(normalized)
-        .contains("plugin_state IN ('ENABLED', 'DRAINING')")
+        .contains("plugin_state IN ('PLUGIN_STATE_ENABLED', 'PLUGIN_STATE_DRAINING')")
         .contains(
             "V3 cannot establish plugin lifecycle fence for executable runtime state without active plugin version")
         .contains(
@@ -62,6 +62,17 @@ class V3__persist_plugin_lifecycle_fencesTest {
         .doesNotContain("UPDATE script_event_audit")
         .doesNotContain("UPDATE script_event_ingress_audit")
         .doesNotContain("UPDATE script_handoff_events");
+  }
+
+  @Test
+  void authorityUnavailableRetryBudgetHasDurableBoundedEligibility() throws IOException {
+    String normalized = readMigration().replaceAll("\\s+", " ").trim();
+
+    assertThat(normalized)
+        .contains("ADD COLUMN authority_unavailable_retry_count INT NOT NULL DEFAULT 0")
+        .contains("ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        .contains(
+            "CONSTRAINT ck_script_work_items_authority_unavailable_retry_count CHECK ( authority_unavailable_retry_count BETWEEN 0 AND 3 )");
   }
 
   private String readMigration() throws IOException {

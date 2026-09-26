@@ -274,6 +274,29 @@ class ControllerTests(unittest.TestCase):
             repository="owner/repo",
         )
 
+    @staticmethod
+    def review_evidence(controller, pr_number, channel, checkpoint):
+        state = controller.store.load()
+        live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+        anchor = controller._anchor(pr_number, live[pr_number], reconciliation.links[pr_number])
+        return {
+            "pr": pr_number,
+            "channel": channel,
+            "head": anchor.child_head,
+            "checkpoint": checkpoint,
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+            "child_head": anchor.child_head,
+            "parent_identity": anchor.parent_identity,
+            "parent_head": anchor.parent_head,
+            "merge_base": anchor.merge_base,
+            "patch_id": anchor.patch_id,
+        }
+
     def test_stop_uses_the_hosted_request_runner_lock_path(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -1972,6 +1995,122 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
         self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
         self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_status_overview_reports_divergent_controller_selected_targets(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        hosted = self.review_evidence(controller, 1, "hosted", "hosted-1")
+        cli = self.review_evidence(controller, 1, "cli", "cli-1")
+        evidence[(1, "hosted")] = [hosted]
+        evidence[(1, "cli")] = [cli]
+        batch_calls = self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "MISSING_EVIDENCE")
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 1)
+        self.assertEqual(report["review_targets"]["cli"]["status"], "READY")
+        self.assertEqual(report["ordered_prs"], [1, 2, 3])
+        self.assertEqual(batch_calls, [tuple(values)])
+
+    def test_status_overview_expands_only_until_both_channel_targets_are_selected(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for pr_number in range(1, 5):
+            evidence[(pr_number, "hosted")] = [
+                self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            ]
+            evidence[(pr_number, "cli")] = [
+                self.review_evidence(controller, pr_number, "cli", f"cli-{pr_number}-{round_number}")
+                for round_number in range(1, 4)
+            ]
+        batch_calls = self._enable_batch_status(controller, values)
+        pull_calls = []
+        original_pull = controller.github.pull_request
+
+        def pull(number):
+            pull_calls.append(number)
+            return original_pull(number)
+
+        controller.github.pull_request = pull
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 5)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 5)
+        self.assertEqual(report["detail_window"]["deep_prs"], [1, 2, 3, 4, 5])
+        self.assertEqual(report["prs"][5]["evidence_status"], "unknown")
+        self.assertEqual(batch_calls, [tuple(values)])
+        self.assertEqual(pull_calls, [1, 2, 3, 4, 5])
+        self.assertEqual(set(evidence.history_reads), {
+            (pr_number, channel)
+            for pr_number in range(1, 6)
+            for channel in ("hosted", "cli")
+        })
+        self.assertEqual(len(evidence.history_reads), 10)
+
+    def test_status_overview_skips_merged_and_human_stopped_targets(self):
+        values, heads = _stacked_prs(4, merged=(1,))
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        stopped = self.review_evidence(controller, 2, "hosted", "hosted-stop-2")
+        evidence[(2, "hosted")] = [stopped]
+        controller.decide_stop(
+            pr=2,
+            channel="hosted",
+            reason="skip the already adjudicated Hosted target",
+            head=stopped["head"],
+        )
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 3)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 2)
+        self.assertEqual(report["prs"][0]["merged"], True)
+        self.assertEqual(report["prs"][1]["channels"]["hosted"], "HUMAN_STOPPED")
+
+    def test_status_overview_distinguishes_blocked_no_target_and_unknown_provider_state(self):
+        values, heads = _stacked_prs(2)
+        blocked_evidence = CountingEvidence({
+            (1, "hosted"): [{"pr": 1, "head": HEAD_1, "checkpoint": "held", "held": True}]
+        })
+        blocked = self.make(values, blocked_evidence, heads=heads)
+        blocked.set_stack(list(values))
+        self._enable_batch_status(blocked, values)
+
+        blocked_report = blocked.status_overview()
+
+        self.assertEqual(blocked_report["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(blocked_report["review_targets"]["hosted"]["status"], "HELD")
+
+        merged_values, merged_heads = _stacked_prs(2, merged=(1, 2))
+        no_target = self.make(merged_values, heads=merged_heads)
+        no_target.set_stack(list(merged_values))
+        self._enable_batch_status(no_target, merged_values)
+
+        no_target_report = no_target.status_overview()
+
+        self.assertIsNone(no_target_report["review_targets"]["hosted"]["pr"])
+        self.assertEqual(no_target_report["review_targets"]["hosted"]["status"], "COMPLETE")
+
+        partial = self.make(values, CountingEvidence(), heads=heads)
+        partial.set_stack(list(values))
+        partial.github.batch_pull_requests = lambda numbers: {
+            number: _batch_identity(values[number]) for number in numbers if number != 2
+        }
+
+        partial_report = partial.status_overview()
+
+        self.assertIsNone(partial_report["review_targets"]["hosted"]["pr"])
+        self.assertEqual(partial_report["review_targets"]["hosted"]["status"], "UNKNOWN")
+        self.assertIn("missing PR #2", partial_report["review_targets"]["hosted"]["reason"])
 
     def test_status_overview_deepens_active_tail_target_without_allocation(self):
         values, heads = _stacked_prs(7)

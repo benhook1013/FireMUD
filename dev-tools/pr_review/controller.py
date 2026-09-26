@@ -557,11 +557,17 @@ class ReviewController:
         return value
 
     def _counting_history_for_anchor(
-        self, state: ReviewState, pr: int, channel: policy.Channel, anchor: AnchorFacts
+        self,
+        state: ReviewState,
+        pr: int,
+        channel: policy.Channel,
+        anchor: AnchorFacts,
+        *,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> list[Any]:
         """Return only observations not captured by the exact legacy transition."""
 
-        history = _history(self._evidence_provider, pr, channel)
+        history = self._cached_history(pr, channel, history_cache)
         transition = self._legacy_transition_for(state, pr, anchor)
         if transition is None:
             return [self._clear_untrusted_non_counting(value) for value in history]
@@ -578,6 +584,8 @@ class ReviewController:
         pr: int,
         channel: policy.Channel,
         reconciliation: stack.Reconciliation,
+        *,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> list[Any]:
         """Project exact legacy observations as non-counting policy history.
 
@@ -587,7 +595,7 @@ class ReviewController:
         deliberately left visible to policy and can still block review.
         """
 
-        history = _history(self._evidence_provider, pr, channel)
+        history = self._cached_history(pr, channel, history_cache)
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
@@ -601,6 +609,21 @@ class ReviewController:
             else:
                 projected.append(self._clear_untrusted_non_counting(value))
         return self._project_cli_hosted_ambiguity(channel, projected)
+
+    def _cached_history(
+        self,
+        pr: int,
+        channel: policy.Channel,
+        history_cache: dict[tuple[int, str], list[Any]] | None,
+    ) -> list[Any]:
+        """Read one channel history once during a composed status invocation."""
+
+        if history_cache is None:
+            return _history(self._evidence_provider, pr, channel)
+        key = (pr, channel.value)
+        if key not in history_cache:
+            history_cache[key] = _history(self._evidence_provider, pr, channel)
+        return history_cache[key]
 
     @staticmethod
     def _project_cli_hosted_ambiguity(channel: policy.Channel, history: Sequence[Any]) -> list[Any]:
@@ -688,6 +711,7 @@ class ReviewController:
         live_identities: Mapping[int, Any] | None = None,
         refresh_prs: set[int] | None = None,
         evidence_prs: set[int] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         remote_heads = self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(
@@ -823,7 +847,11 @@ class ReviewController:
             if current is None:
                 continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
+                latest = _latest_review(
+                    self._counting_history_for_anchor(
+                        state, pr, channel, current, history_cache=history_cache
+                    )
+                )
                 if latest is not None:
                     if (
                         pr in direct_default_fronts
@@ -968,7 +996,11 @@ class ReviewController:
             if pr not in selected_evidence_prs:
                 continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                latest = _latest_review(self._counting_history_for_anchor(state, pr, channel, current))
+                latest = _latest_review(
+                    self._counting_history_for_anchor(
+                        state, pr, channel, current, history_cache=history_cache
+                    )
+                )
                 if latest is None:
                     continue
                 previous = latest
@@ -2563,6 +2595,93 @@ class ReviewController:
             )
         return views
 
+    @staticmethod
+    def _select_review_decision(
+        state: ReviewState,
+        channel: policy.Channel,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        allocations: Mapping[int, Mapping[str, Any]],
+        candidate_prs: Sequence[int],
+    ) -> policy.ChannelDecision:
+        """Apply the same authoritative selector to already fetched status evidence."""
+
+        other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
+        other_heads: dict[int, str] = {}
+        for pr in candidate_prs:
+            values = histories[other].get(pr, ())
+            latest = _latest_review(values)
+            other_anchor_status = reconciliation.status_for(pr, other.value)
+            if latest is not None and other_anchor_status not in {
+                stack.ReconciliationStatus.PATCH_CHANGED,
+                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+            }:
+                value = _field(latest, "head", "reviewed_head")
+                if isinstance(value, str):
+                    other_heads[pr] = value
+        channel_allocations = allocations
+        return policy.select_review_target(
+            state,
+            channel,
+            tuple(pr for pr in candidate_prs if not live[pr].merged),
+            histories[channel],
+            reconciliation_by_pr={
+                pr: reconciliation.status_for(pr, channel.value) for pr in candidate_prs
+            },
+            other_channel_heads=other_heads,
+            handed_off_prs=(
+                pr for pr, view in channel_allocations.items() if view["status"] == "HANDED_OFF"
+            ),
+            human_stopped_prs=(
+                pr for pr, view in channel_allocations.items() if view["status"] == "STOPPED"
+            ),
+            exhausted_prs=(
+                pr for pr, view in channel_allocations.items() if view["status"] == "EXHAUSTED_PENDING"
+            ),
+            allocation_blocks={
+                pr: view["reason"]
+                for pr, view in channel_allocations.items()
+                if view["status"] == "INVALID"
+            },
+        )
+
+    def _status_review_targets(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        allocations: Mapping[policy.Channel, Mapping[int, Mapping[str, Any]]],
+        candidate_prs: Sequence[int],
+        *,
+        selection_complete: bool,
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            decision = self._select_review_decision(
+                state,
+                channel,
+                live,
+                reconciliation,
+                histories,
+                allocations[channel],
+                candidate_prs,
+            )
+            if decision.target is None and not selection_complete:
+                result[channel.value] = {
+                    "channel": channel.value,
+                    "pr": None,
+                    "status": "UNKNOWN",
+                    "reason": "review target selection continues beyond the deeply checked status window",
+                    "provisional": False,
+                }
+                continue
+            value = decision.to_dict()
+            value["pr"] = value.pop("target")
+            result[channel.value] = value
+        return result
+
     def _target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> Target:
         selected = policy.Channel(channel)
         state = self._state()
@@ -2579,31 +2698,18 @@ class ReviewController:
         }
         allocations = self._allocation_views(state, live, reconciliation, selected, history)
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
-        other_heads = {}
-        for pr in state.ordered_prs:
-            values = self._policy_history(state, pr, other, reconciliation)
-            latest = _latest_review(values)
-            other_anchor_status = reconciliation.status_for(pr, other.value)
-            if latest is not None and other_anchor_status not in {
-                stack.ReconciliationStatus.PATCH_CHANGED,
-                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-            }:
-                value = _field(latest, "head", "reviewed_head")
-                if isinstance(value, str):
-                    other_heads[pr] = value
-        decision = policy.select_review_target(
+        other_history = {
+            pr: self._policy_history(state, pr, other, reconciliation)
+            for pr in state.ordered_prs
+        }
+        decision = self._select_review_decision(
             state,
             selected,
-            tuple(pr for pr in state.ordered_prs if not live[pr].merged),
-            history,
-            reconciliation_by_pr={pr: reconciliation.status_for(pr, selected.value) for pr in state.ordered_prs},
-            other_channel_heads=other_heads,
-            handed_off_prs=(pr for pr, view in allocations.items() if view["status"] == "HANDED_OFF"),
-            human_stopped_prs=(pr for pr, view in allocations.items() if view["status"] == "STOPPED"),
-            exhausted_prs=(pr for pr, view in allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
-            allocation_blocks={
-                pr: view["reason"] for pr, view in allocations.items() if view["status"] == "INVALID"
-            },
+            live,
+            reconciliation,
+            {selected: history, other: other_history},
+            allocations,
+            state.ordered_prs,
         )
         if decision.target is None:
             raise ControllerError(decision.reason)
@@ -2669,7 +2775,12 @@ class ReviewController:
             raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}")
 
     def status(self) -> dict[str, Any]:
-        return self._status_from_state(self._state())
+        state = self._state()
+        return self._status_from_state(
+            state,
+            review_target_prs=state.ordered_prs,
+            review_target_selection_complete=True,
+        )
 
     def _status_from_state(
         self,
@@ -2677,24 +2788,44 @@ class ReviewController:
         *,
         evidence_prs: set[int] | None = None,
         live_identities: Mapping[int, Any] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        live_identity_cache: dict[int, Any] | None = None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        review_target_prs: Sequence[int] | None = None,
+        review_target_selection_complete: bool = False,
     ) -> dict[str, Any]:
         if not state.ordered_prs:
-            return {
+            report = {
                 "ordered_prs": [],
                 "status": "EMPTY",
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
             }
+            if review_target_prs is not None:
+                report["review_targets"] = self._empty_review_targets(state)
+            return report
+        refresh_prs = evidence_prs
+        selected_live_identities = live_identities
+        if live_identity_cache is not None:
+            for pr in evidence_prs or ():
+                if pr not in live_identity_cache:
+                    live_identity_cache[pr] = self._require_github().pull_request(pr)
+            selected_live_identities = dict(live_identities or {})
+            selected_live_identities.update(live_identity_cache)
+            refresh_prs = set()
         live, reconciliation = self._reconciliation(
             state,
-            live_identities=live_identities,
-            refresh_prs=evidence_prs,
+            live_identities=selected_live_identities,
+            refresh_prs=refresh_prs,
             evidence_prs=evidence_prs,
+            history_cache=history_cache,
         )
         values: list[dict[str, Any]] = []
         histories = {
             channel: {
                 pr: (
-                    self._policy_history(state, pr, channel, reconciliation)
+                    self._policy_history(
+                        state, pr, channel, reconciliation, history_cache=history_cache
+                    )
                     if evidence_prs is None or pr in evidence_prs
                     else []
                 )
@@ -2702,7 +2833,8 @@ class ReviewController:
             }
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
-        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        if stop_audit_cache is None:
+            stop_audit_cache = {}
         allocations = {
             channel: self._allocation_views(
                 state,
@@ -2776,12 +2908,46 @@ class ReviewController:
                     },
                 }
             )
-        return {
+        report = {
             "ordered_prs": list(state.ordered_prs),
             "status": reconciliation.status.value,
             "prs": values,
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
+        if review_target_prs is not None:
+            report["review_targets"] = self._status_review_targets(
+                state,
+                live,
+                reconciliation,
+                histories,
+                allocations,
+                review_target_prs,
+                selection_complete=review_target_selection_complete,
+            )
+        return report
+
+    @staticmethod
+    def _unknown_review_targets(reason: str) -> dict[str, dict[str, Any]]:
+        return {
+            channel.value: {
+                "channel": channel.value,
+                "pr": None,
+                "status": "UNKNOWN",
+                "reason": reason,
+                "provisional": False,
+            }
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+
+    @staticmethod
+    def _empty_review_targets(state: ReviewState) -> dict[str, dict[str, Any]]:
+        result = {}
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            decision = policy.select_review_target(state, channel, (), {})
+            value = decision.to_dict()
+            value["pr"] = value.pop("target")
+            result[channel.value] = value
+        return result
 
     @staticmethod
     def _unknown_overview(state: ReviewState, reason: str) -> dict[str, Any]:
@@ -2817,6 +2983,7 @@ class ReviewController:
                 "reason": reason,
             },
             "prs": prs,
+            "review_targets": ReviewController._unknown_review_targets(reason),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
 
@@ -2906,6 +3073,7 @@ class ReviewController:
                 "mode": "windowed",
                 "detail_window": {"unmerged_limit": 4, "batch_status": "complete", "deep_prs": []},
                 "prs": [],
+                "review_targets": self._empty_review_targets(state),
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
             }
 
@@ -2957,19 +3125,64 @@ class ReviewController:
         target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
         deep_prs = target_prs.intersection(state.ordered_prs)
         frontier = max(target_indexes, default=-1)
-        scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
-        scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
         scoped_report: dict[str, Any] | None = None
         deep_error = None
-        if scoped_prs:
+        history_cache: dict[tuple[int, str], list[Any]] = {}
+        live_identity_cache: dict[int, Any] = {}
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        target_scan_prs: list[int] = []
+        while deep_prs:
+            frontier = max(state.ordered_prs.index(pr) for pr in deep_prs)
+            scoped_prs = state.ordered_prs[: frontier + 1]
+            scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
+            target_scan_prs: list[int] = []
+            for pr in state.ordered_prs:
+                if batch_live[pr].merged:
+                    continue
+                if pr not in deep_prs:
+                    break
+                target_scan_prs.append(pr)
+            target_scan_complete = all(
+                batch_live[pr].merged or pr in deep_prs for pr in state.ordered_prs
+            )
             try:
                 scoped_report = self._status_from_state(
                     scoped_state,
                     evidence_prs=deep_prs,
                     live_identities=raw_identities,
+                    history_cache=history_cache,
+                    live_identity_cache=live_identity_cache,
+                    stop_audit_cache=stop_audit_cache,
+                    review_target_prs=target_scan_prs,
+                    review_target_selection_complete=target_scan_complete,
                 )
             except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
                 deep_error = str(error)
+                break
+
+            review_targets = scoped_report.get("review_targets", {})
+            if not any(
+                isinstance(value, Mapping) and value.get("status") == "UNKNOWN"
+                for value in review_targets.values()
+            ):
+                break
+            next_pr = next(
+                (
+                    pr
+                    for pr in state.ordered_prs
+                    if not batch_live[pr].merged and pr not in deep_prs
+                ),
+                None,
+            )
+            if next_pr is None:
+                break
+            deep_prs.add(next_pr)
+
+        scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
+        if not scoped_prs and deep_error is None:
+            # The configured stack may contain only merged PRs; policy selection
+            # then has no live candidate and returns its canonical no-target result.
+            scoped_report = {"review_targets": self._empty_review_targets(state)}
 
         deep_by_pr = {
             item.get("pr"): item
@@ -3001,6 +3214,23 @@ class ReviewController:
                 if links[pr].parent_pr in mismatch and pr not in mismatch:
                     mismatch.add(pr)
                     changed = True
+
+        changed_target_pr = next(
+            (
+                pr
+                for pr in target_scan_prs
+                if pr in mismatch
+                or (
+                    not batch_live[pr].merged
+                    and (
+                        batch_live[pr].base_ref != links[pr].parent_ref
+                        or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
+                    )
+                )
+                or self._saved_identity_moved(state, pr, batch_live[pr], links[pr])
+            ),
+            None,
+        )
 
         values: list[dict[str, Any]] = []
         for pr in state.ordered_prs:
@@ -3066,7 +3296,7 @@ class ReviewController:
             "status": "PARTIAL",
             "mode": "windowed",
             "detail_window": {
-                "unmerged_limit": 4,
+                "unmerged_limit": max(4, len(target_scan_prs)),
                 "batch_status": "complete",
                 "deep_prs": [
                     pr for pr in state.ordered_prs if pr in deep_prs and not batch_live[pr].merged
@@ -3078,6 +3308,15 @@ class ReviewController:
                 **({"deep_error": deep_error} if deep_error else {}),
             },
             "prs": values,
+            "review_targets": (
+                self._unknown_review_targets(f"deep review evidence is unavailable: {deep_error}")
+                if deep_error is not None
+                else self._unknown_review_targets(
+                    "live PR identity changed between batch overview and deep reconciliation"
+                )
+                if changed_target_pr is not None
+                else (scoped_report or {}).get("review_targets", self._empty_review_targets(state))
+            ),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
         return report

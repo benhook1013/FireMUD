@@ -583,7 +583,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptHandoffEventRepository handoffEventRepository =
         Mockito.mock(ScriptHandoffEventRepository.class);
@@ -604,6 +607,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     service.handoff(
         workItem(), emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());

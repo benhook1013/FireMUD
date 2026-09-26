@@ -53,6 +53,8 @@ public class ScriptWorkItem {
   private long admissionEpoch = 1L;
   private String status = "PENDING_EVALUATION";
   private String cancelReason;
+  private int authorityUnavailableRetryCount;
+  private Instant nextEligibleAt = Instant.now();
   private Instant createdAt = Instant.now();
   private Instant updatedAt = Instant.now();
   private int rowVersion;

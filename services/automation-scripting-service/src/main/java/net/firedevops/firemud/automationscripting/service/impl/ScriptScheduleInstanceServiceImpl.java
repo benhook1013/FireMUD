@@ -779,8 +779,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
     boolean existingRow = instance.getId() != null;
+    long previousPluginActivationEpoch = instance.getPluginActivationEpoch();
+    long previousLifecycleRevision = instance.getLifecycleRevision();
+    Instant previousNextDueAt = instance.getNextDueAt();
+    Long previousNextDueTickId = instance.getNextDueTickId();
+    String pluginId = blankToEmpty(definition.getPluginId());
+    String pluginVersionId = blankToEmpty(definition.getPluginVersionId());
+    long pluginActivationEpoch = 0L;
+    long lifecycleRevision = 0L;
+    if (!pluginId.isBlank()) {
+      PluginRuntimeState pluginState = activePluginStates.get(pluginId);
+      if (pluginState != null
+          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
+          && pluginVersionId.equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
+        pluginActivationEpoch = pluginState.getPluginActivationEpoch();
+        lifecycleRevision = pluginState.getLifecycleRevision();
+      }
+    }
+    boolean pluginLifecycleFenceChanged =
+        existingRow
+            && isPluginOwned(pluginId, pluginVersionId)
+            && (previousPluginActivationEpoch != pluginActivationEpoch
+                || previousLifecycleRevision != lifecycleRevision);
     boolean sameRuntimeGeneration =
         existingRow && sameRuntimeGeneration(instance, definition, runtimeState);
+    boolean compatibleRuntimeGeneration = sameRuntimeGeneration && !pluginLifecycleFenceChanged;
     boolean sameScheduleConfiguration =
         existingRow && sameScheduleConfiguration(instance, definition, binding);
     instance.setTenantId(tenantId);
@@ -797,23 +820,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setBindingId(applicableBindingId(definition, binding));
-    if (!instance.getPluginId().isBlank()) {
-      PluginRuntimeState pluginState = activePluginStates.get(instance.getPluginId());
-      if (pluginState != null
-          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
-          && instance
-              .getPluginVersionId()
-              .equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
-        instance.setPluginActivationEpoch(pluginState.getPluginActivationEpoch());
-        instance.setLifecycleRevision(pluginState.getLifecycleRevision());
-      } else {
-        instance.setPluginActivationEpoch(0L);
-        instance.setLifecycleRevision(0L);
-      }
-    } else {
-      instance.setPluginActivationEpoch(0L);
-      instance.setLifecycleRevision(0L);
-    }
+    instance.setPluginActivationEpoch(pluginActivationEpoch);
+    instance.setLifecycleRevision(lifecycleRevision);
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -838,11 +846,17 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (UNIT_MILLISECONDS.equals(definition.getCadenceUnit())) {
       instance.setMaterializationStatus(STATUS_READY);
       boolean compatibleExistingRow =
-          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+          nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration;
       if (!compatibleExistingRow) {
         Instant seed = nonPinTransitionSeed != null ? nonPinTransitionSeed : pinObservedAt;
         try {
-          instance.setNextDueAt(seed.plusMillis(definition.getCadenceValue()));
+          Instant nextDueAt = seed.plusMillis(definition.getCadenceValue());
+          if (pluginLifecycleFenceChanged && Objects.equals(nextDueAt, previousNextDueAt)) {
+            // Lifecycle revision is fence evidence but not candidate identity. Do not let a
+            // re-seeded wall-clock schedule recreate the displaced generation's due identity.
+            nextDueAt = nextDueAt.plusMillis(definition.getCadenceValue());
+          }
+          instance.setNextDueAt(nextDueAt);
         } catch (DateTimeException | ArithmeticException ex) {
           throw new IllegalArgumentException(REASON_DUE_TIME_OVERFLOW, ex);
         }
@@ -854,15 +868,32 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       instance.setNextDueTickId(null);
     } else {
       boolean compatibleExistingRow =
-          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+          nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration;
       if (!compatibleExistingRow) {
-        instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
-        instance.setNextDueAt(null);
-        instance.setNextDueTickId(null);
-        instance.setRuntimeRegionId("");
-        instance.setRuntimeRegionEpoch(null);
-        instance.setLastObservedTickId(null);
-        instance.setLastRuntimeProgressObservedAt(null);
+        if (pluginLifecycleFenceChanged
+            && sameRuntimeGeneration
+            && sameScheduleConfiguration
+            && previousNextDueTickId != null) {
+          // Retire the old lifecycle's due tick and begin with its next cadence point. The
+          // row is already eligible for the new fence because this materialization only runs
+          // for an enabled plugin version.
+          try {
+            long nextDueTickId = Math.addExact(previousNextDueTickId, definition.getCadenceValue());
+            instance.setMaterializationStatus(STATUS_READY);
+            instance.setNextDueTickId(nextDueTickId);
+            instance.setNextDueAt(null);
+          } catch (ArithmeticException ex) {
+            fenceMaterialization(instance, now);
+          }
+        } else {
+          instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
+          instance.setNextDueAt(null);
+          instance.setNextDueTickId(null);
+          instance.setRuntimeRegionId("");
+          instance.setRuntimeRegionEpoch(null);
+          instance.setLastObservedTickId(null);
+          instance.setLastRuntimeProgressObservedAt(null);
+        }
       } else if (hasRetainedMaterializationEvidence(instance)) {
         instance.setMaterializationStatus(STATUS_READY);
       }

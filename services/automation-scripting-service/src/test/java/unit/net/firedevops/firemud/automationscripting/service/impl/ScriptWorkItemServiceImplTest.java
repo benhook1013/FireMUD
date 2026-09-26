@@ -175,6 +175,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(result.rejectedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
+    assertThat(item.getNextEligibleAt()).isNotNull();
     verify(workItemRepository).findById(90L);
   }
 
@@ -350,7 +352,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
-            "PENDING_EVALUATION", PageRequest.of(0, 10)))
+            "PENDING_EVALUATION", Mockito.any(Instant.class), PageRequest.of(0, 10)))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
@@ -401,7 +403,10 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-            List.of(99L, 100L), "PENDING_EVALUATION", PageRequest.of(0, 10)))
+            List.of(99L, 100L),
+            "PENDING_EVALUATION",
+            Mockito.any(Instant.class),
+            PageRequest.of(0, 10)))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
@@ -417,7 +422,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(PluginRuntimeStateService.class),
             gameDesignClient());
 
-    List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 100L), 10);
+    List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 99L, 100L), 10);
 
     assertThat(claimed).containsExactly(item);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
