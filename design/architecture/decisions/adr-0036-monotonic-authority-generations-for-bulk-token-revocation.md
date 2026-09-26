@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The monotonic generation contract is target state and is not fully implemented or proved. Current Account runtime documentation records legacy Account session keys and incomplete issued-token/auth-generation enforcement; durable generation records and projections, transactional issuance/revocation ordering, and cross-scope validation proof remain outstanding.
+The monotonic generation contract is target state and is not fully implemented or proved. The current Unit 1B draft adds durable generation-storage primitives and initializes the Account UUID scope for newly registered global accounts, but retained-account enrollment, issuer/tenant/membership producers, projections, transactional issuance/revocation ordering, and cross-scope validation proof remain outstanding. Account runtime still uses legacy session keys and incomplete issued-token/auth-generation enforcement.
 
 ## Decision Record
 

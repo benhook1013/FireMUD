@@ -36,6 +36,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
@@ -47,6 +48,7 @@ import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -87,6 +89,7 @@ class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
@@ -203,6 +206,7 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -235,11 +239,15 @@ class AccountServiceImplTest {
   void createAccountPersistsOnlyGlobalIdentity() {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", "  DEMO@example.com ", "password");
+    UUID accountUuid = UUID.randomUUID();
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
         .thenAnswer(
             invocation -> {
               Account saved = invocation.getArgument(0);
               saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
               return saved;
             });
 
@@ -251,6 +259,8 @@ class AccountServiceImplTest {
         org.mockito.ArgumentCaptor.forClass(Account.class);
     org.mockito.Mockito.verify(accountRepository).save(accountCaptor.capture());
     assertEquals("demo@example.com", accountCaptor.getValue().getEmail());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
     org.mockito.Mockito.verify(accountAuditOutboxRepository)
         .append(
             org.mockito.ArgumentMatchers.any(java.util.UUID.class),
@@ -260,6 +270,81 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
     assertEquals(null, accountCaptor.getValue().getRole());
     verifyNoInteractions(profileRepository, accountTenantMembershipRepository);
+  }
+
+  @Test
+  void createAccountInitializesCanonicalAccountAuthorityBeforeRegistrationAudit() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    UUID accountUuid = UUID.randomUUID();
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
+              return saved;
+            });
+
+    service.createAccount(request);
+
+    org.mockito.InOrder inOrder =
+        org.mockito.Mockito.inOrder(
+            accountRepository, accountAuthorityGenerationRepository, accountAuditOutboxRepository);
+    inOrder.verify(accountRepository).save(org.mockito.ArgumentMatchers.any(Account.class));
+    inOrder
+        .verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
+    inOrder
+        .verify(accountAuditOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq("platform"),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_REGISTERED"),
+            org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
+  }
+
+  @Test
+  void createAccountFailsClosedWithoutCanonicalIdentityBeforeAuthorityOrAudit() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              return saved;
+            });
+
+    assertThrows(IllegalStateException.class, () -> service.createAccount(request));
+
+    verifyNoInteractions(accountAuthorityGenerationRepository, accountAuditOutboxRepository);
+  }
+
+  @Test
+  void createAccountDoesNotAppendRegistrationAuditWhenAuthorityInitializationFails() {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    UUID accountUuid = UUID.randomUUID();
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
+              return saved;
+            });
+    when(accountAuthorityGenerationRepository.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid)))
+        .thenThrow(new IllegalStateException("authority init failed"));
+
+    assertThrows(IllegalStateException.class, () -> service.createAccount(request));
+
+    verify(accountAuthorityGenerationRepository)
+        .initialize(AccountAuthorityGenerationRepository.AuthorityScope.account(accountUuid));
+    verifyNoInteractions(accountAuditOutboxRepository);
   }
 
   @Test
@@ -1647,6 +1732,7 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,

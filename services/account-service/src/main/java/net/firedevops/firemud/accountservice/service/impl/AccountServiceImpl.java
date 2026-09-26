@@ -55,6 +55,7 @@ import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
@@ -66,6 +67,7 @@ import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPol
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -125,6 +127,7 @@ public class AccountServiceImpl implements AccountService {
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
   private final AccountRepository accountRepository;
+  private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
@@ -158,6 +161,7 @@ public class AccountServiceImpl implements AccountService {
       justification = "Dependencies are injected and kept internal")
   public AccountServiceImpl(
       AccountRepository accountRepository,
+      AccountAuthorityGenerationRepository accountAuthorityGenerationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
@@ -185,6 +189,7 @@ public class AccountServiceImpl implements AccountService {
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       PlatformTransactionManager transactionManager) {
     this.accountRepository = accountRepository;
+    this.accountAuthorityGenerationRepository = accountAuthorityGenerationRepository;
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
@@ -231,6 +236,9 @@ public class AccountServiceImpl implements AccountService {
     } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
       throw new AccountAlreadyExistsException(ex);
     }
+    requireCanonicalPersistedIdentity(saved);
+    accountAuthorityGenerationRepository.initialize(
+        AccountAuthorityGenerationRepository.AuthorityScope.account(saved.getAccountUuid()));
     accountAuditOutboxRepository.append(
         UUID.randomUUID(),
         "platform",
@@ -238,6 +246,17 @@ public class AccountServiceImpl implements AccountService {
         "ACCOUNT_REGISTERED",
         "{\"accountId\":" + saved.getId() + "}");
     return accountMapper.toDto(saved);
+  }
+
+  private void requireCanonicalPersistedIdentity(Account account) {
+    if (account == null
+        || account.getId() == null
+        || account.getAccountUuid() == null
+        || account.getAccountUuidProvenance() != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+        || !account.getId().equals(account.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
   }
 
   @Override
