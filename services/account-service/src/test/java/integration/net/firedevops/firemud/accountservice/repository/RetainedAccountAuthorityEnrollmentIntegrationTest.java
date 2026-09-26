@@ -163,7 +163,7 @@ class RetainedAccountAuthorityEnrollmentIntegrationTest {
 
     assertThatThrownBy(() -> migrateToLatest(database))
         .isInstanceOf(FlywayException.class)
-        .hasStackTraceContaining("account_authority_retained_pair_incomplete");
+        .hasStackTraceContaining("has incomplete authority generation and issuance-fence state");
 
     assertThat(accountGenerationCount(database.dsl(), generationOnlyUuid)).isEqualTo(1L);
     assertThat(issuanceFenceCount(database.dsl(), generationOnlyUuid)).isZero();
