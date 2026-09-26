@@ -158,7 +158,10 @@ class GameplayPresenceRoleClassifierTest {
         JWT_UTIL.generateToken(
             "202",
             java.util.Map.of(
-                "accountId", "202", "scopedRoles", java.util.Map.of("22", java.util.List.of("god"))));
+                "accountId",
+                "202",
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("god"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(

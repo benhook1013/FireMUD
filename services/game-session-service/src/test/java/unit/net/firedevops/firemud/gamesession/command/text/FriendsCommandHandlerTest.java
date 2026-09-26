@@ -371,7 +371,8 @@ class FriendsCommandHandlerTest {
                                 .setWorldDisplayName("Demo World")
                                 .setRealmSlug("production")
                                 .setRealmDisplayName("Live Realm")
-                                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                                .setPlayableStateScope(
+                                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                                 .setPointerVersion(17L)
                                 .setActivityState(
                                     FriendPresenceActivityState
@@ -855,7 +856,7 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
-  void friendsShowByOrdinalUsesCanonicalDetailSurface() {
+  void friendsShowByOrdinalRedactsMissingPolicyAndRendersDetail() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
     FriendsCommandHandler handler =
@@ -871,7 +872,12 @@ class FriendsCommandHandlerTest {
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId("77")
+                                .setOnline(true)
                                 .setCharacterName("Sora")
+                                .setWorldDisplayName("Demo World")
+                                .setActivityState(
+                                    FriendPresenceActivityState
+                                        .FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
                                 .build())
                         .build())
                 .build());
@@ -885,6 +891,18 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     FriendDetailViewOutput detail = (FriendDetailViewOutput) result.outputs().getFirst().payload();
     assertThat(detail.friend().ordinal()).isEqualTo(1);
+    assertThat(detail.friend().displayName()).isEqualTo("Friend #77");
+    assertThat(detail.friend().online()).isNull();
+    assertThat(detail.friend().characterName()).isNull();
+    assertThat(detail.friend().worldDisplayName()).isNull();
+    assertThat(detail.friend().activityState()).isNull();
+    assertThat(
+            new TextPlayerOutputRenderer(
+                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
+                .render(result.outputs().getFirst()))
+        .contains("Presence: presence unavailable")
+        .contains("Roster entry: #1")
+        .doesNotContain("Sora", "Demo World", "online", "idle");
     Mockito.verify(socialGroupsClient).getFriendByOrdinal(1L, 41L, 1);
   }
 
@@ -1113,8 +1131,7 @@ class FriendsCommandHandlerTest {
     FriendPresencePolicyViewOutput view =
         (FriendPresencePolicyViewOutput) result.outputs().getFirst().payload();
     assertThat(view.currentPolicy()).isEqualTo("FRIENDS_ONLY");
-    assertThat(view.options())
-        .noneMatch(option -> option.policy().equals("HIDDEN_STAFF"));
+    assertThat(view.options()).noneMatch(option -> option.policy().equals("HIDDEN_STAFF"));
     assertThat(view.options())
         .anySatisfy(
             option -> {
@@ -1316,9 +1333,7 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS,
-                java.util.List.of("HIDDEN_STAFF"),
-                "FRIENDS HIDDEN_STAFF"),
+                TextCommandType.FRIENDS, java.util.List.of("HIDDEN_STAFF"), "FRIENDS HIDDEN_STAFF"),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isFalse();
