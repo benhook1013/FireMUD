@@ -3,7 +3,9 @@
 
 This is an unactivated operator bootstrap helper. It creates one version-1 source
 record for the Account response-envelope materializer in an operator-supplied,
-owner-only directory outside this repository. The source record is intended for
+owner-only directory outside this repository. The initial record binds the exact
+dedicated materializer service-account username for its environment and namespace;
+explicit rotation retains that identity. The source record is intended for
 protected durable custody; creating this local file does not prove that custody,
 sole-writer RBAC, Kubernetes deployment, or workload readiness exists.
 
@@ -32,6 +34,9 @@ OWNER_DIRECTORY_MODE = 0o700
 OWNER_FILE_MODE = 0o600
 KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 NAMESPACE_PATTERN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?\Z")
+SERVICE_ACCOUNT_NAME_PATTERN = re.compile(
+    r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z"
+)
 RFC3339_UTC_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z"
 )
@@ -75,6 +80,24 @@ def _validate_namespace(value: str) -> str:
     return value
 
 
+def _validate_materializer_username(value: str, namespace: str) -> str:
+    prefix = f"system:serviceaccount:{namespace}:"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise BootstrapError(
+            "materializer username must be a Kubernetes service-account username in the target namespace"
+        )
+    service_account_name = value[len(prefix) :]
+    if (
+        not service_account_name
+        or len(service_account_name) > 253
+        or not SERVICE_ACCOUNT_NAME_PATTERN.fullmatch(service_account_name)
+    ):
+        raise BootstrapError(
+            "materializer username must be a Kubernetes service-account username in the target namespace"
+        )
+    return value
+
+
 def _validate_source_ttl(source_ttl_seconds: int) -> int:
     if type(source_ttl_seconds) is not int or source_ttl_seconds <= 0:
         raise BootstrapError("source TTL must be a positive number of seconds")
@@ -106,6 +129,7 @@ def _manifest() -> bytes:
 def _source_record_bytes(
     environment_id: str,
     namespace: str,
+    materializer_username: str,
     source_ttl_seconds: int,
     now: dt.datetime,
     manifest: bytes,
@@ -114,6 +138,7 @@ def _source_record_bytes(
 ) -> bytes:
     environment_id = _validate_environment_id(environment_id)
     namespace = _validate_namespace(namespace)
+    materializer_username = _validate_materializer_username(materializer_username, namespace)
     source_ttl_seconds = _validate_source_ttl(source_ttl_seconds)
     if now.tzinfo is None or now.utcoffset() is None:
         raise BootstrapError("bootstrap clock must be timezone-aware")
@@ -132,6 +157,7 @@ def _source_record_bytes(
         "sourceCreatedAt": created_at,
         "environmentId": environment_id,
         "targetNamespace": namespace,
+        "materializerUsername": materializer_username,
         "previousSourceGeneration": previous_source_generation,
     }
     return (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode(
@@ -142,15 +168,21 @@ def _source_record_bytes(
 def build_source_record(
     environment_id: str,
     namespace: str,
+    materializer_username: str,
     source_ttl_seconds: int,
     now: dt.datetime | None = None,
 ) -> bytes:
     """Build one canonical initial source record without writing or printing it."""
 
+    environment_id = _validate_environment_id(environment_id)
+    namespace = _validate_namespace(namespace)
+    materializer_username = _validate_materializer_username(materializer_username, namespace)
+    source_ttl_seconds = _validate_source_ttl(source_ttl_seconds)
     current_time = now or dt.datetime.now(dt.timezone.utc)
     return _source_record_bytes(
         environment_id,
         namespace,
+        materializer_username,
         source_ttl_seconds,
         current_time,
         _manifest(),
@@ -282,6 +314,7 @@ def build_rotated_source_record(
     source_record = _source_record_bytes(
         environment_id,
         namespace,
+        previous.materializer_username,
         source_ttl_seconds,
         current_time,
         _rotation_manifest(materializer, previous.manifest_bytes),
@@ -381,6 +414,7 @@ def create_initial_source_record(
     output: Path,
     environment_id: str,
     namespace: str,
+    materializer_username: str,
     source_ttl_seconds: int,
     now: dt.datetime | None = None,
     repository_root: Path | None = None,
@@ -390,7 +424,13 @@ def create_initial_source_record(
     output = Path(output)
     directory_fd, output_name = _open_owner_directory(output, repository_root or _repository_root())
     try:
-        source_record = build_source_record(environment_id, namespace, source_ttl_seconds, now)
+        source_record = build_source_record(
+            environment_id,
+            namespace,
+            materializer_username,
+            source_ttl_seconds,
+            now,
+        )
         _write_once(directory_fd, output_name, source_record)
     finally:
         os.close(directory_fd)
@@ -440,6 +480,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--environment-id", required=True)
     parser.add_argument("--namespace", required=True)
     parser.add_argument(
+        "--materializer-username",
+        help="dedicated Kubernetes service-account username; required for initial creation",
+    )
+    parser.add_argument(
         "--previous-source-record",
         type=Path,
         help="protected prior source record; required only for explicit rotation",
@@ -461,6 +505,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.action == "rotate" and args.previous_source_record is None:
             raise BootstrapError("rotate action requires a previous source record")
         if args.action == "rotate":
+            if args.materializer_username is not None:
+                raise BootstrapError("rotation must retain the prior materializer username")
             create_rotated_source_record(
                 output=args.output,
                 previous_source_record=args.previous_source_record,
@@ -470,10 +516,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             success_message = "created rotated Account response-envelope source record"
         else:
+            if args.materializer_username is None:
+                raise BootstrapError("create action requires --materializer-username")
             create_initial_source_record(
                 output=args.output,
                 environment_id=args.environment_id,
                 namespace=args.namespace,
+                materializer_username=args.materializer_username,
                 source_ttl_seconds=args.source_ttl_seconds,
             )
             success_message = "created initial Account response-envelope source record"

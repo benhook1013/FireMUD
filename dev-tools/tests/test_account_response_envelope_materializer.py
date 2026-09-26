@@ -34,6 +34,9 @@ NEXT_SOURCE_CREATED_AT = "2026-09-27T12:00:00Z"
 MAX_AGE_SECONDS = 86_400
 ENVIRONMENT_ID = "player-facing-prod"
 TARGET_NAMESPACE = "account-prod"
+MATERIALIZER_USERNAME = (
+    "system:serviceaccount:account-prod:firemud-secret-materializer"
+)
 UNSET = object()
 
 
@@ -57,6 +60,7 @@ def source_record_for(
     environment_id: str,
     target_namespace: str,
     previous_generation: str | None,
+    materializer_username: str = MATERIALIZER_USERNAME,
 ) -> bytes:
     record = {
         "version": 1,
@@ -66,6 +70,7 @@ def source_record_for(
         "sourceCreatedAt": created_at,
         "environmentId": environment_id,
         "targetNamespace": target_namespace,
+        "materializerUsername": materializer_username,
         "previousSourceGeneration": previous_generation,
     }
     encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -77,17 +82,22 @@ class FakeKubectl:
         self.secret: dict | None = None
         self.mutations: list[tuple[str, dict]] = []
         self.operations: list[str] = []
+        self.commands: list[str] = []
+        self.identity_commands: list[list[str]] = []
         self.attempts: list[tuple[str, dict]] = []
         self.reads = 0
         self.mutate_readback = False
         self.fail_operation: str | None = None
         self.raise_timeout = False
         self.raise_unicode_error = False
+        self.identity_username = MATERIALIZER_USERNAME
+        self.identity_output: str | None = None
+        self.identity_returncode = 0
         self.timeouts: list[int | None] = []
 
     def __call__(self, command: list[str], **kwargs) -> SimpleNamespace:
         operation = command[1]
-        self.operations.append(operation)
+        self.commands.append(operation)
         self.timeouts.append(kwargs.get("timeout"))
         if self.raise_timeout:
             raise MATERIALIZER.subprocess.TimeoutExpired(
@@ -95,6 +105,18 @@ class FakeKubectl:
             )
         if self.raise_unicode_error:
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid test output")
+        if operation == "auth":
+            self.identity_commands.append(list(command))
+            return SimpleNamespace(
+                returncode=self.identity_returncode,
+                stdout=self.identity_output
+                if self.identity_output is not None
+                else json.dumps(
+                    {"status": {"userInfo": {"username": self.identity_username}}}
+                ),
+                stderr="identity provider error",
+            )
+        self.operations.append(operation)
         if operation == "get":
             self.reads += 1
             return SimpleNamespace(
@@ -138,6 +160,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.source_created_at = SOURCE_CREATED_AT
         self.environment_id = ENVIRONMENT_ID
         self.target_namespace = TARGET_NAMESPACE
+        self.materializer_username = MATERIALIZER_USERNAME
         self.previous_generation: str | None = None
         self.write_source_record()
         self.fake_kubectl = FakeKubectl()
@@ -156,6 +179,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         created_at: str | None = None,
         environment_id: str | None = None,
         target_namespace: str | None = None,
+        materializer_username: str | None = None,
         previous_generation: str | None | object = UNSET,
         raw: bytes | None = None,
     ) -> None:
@@ -171,6 +195,8 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.environment_id = environment_id
         if target_namespace is not None:
             self.target_namespace = target_namespace
+        if materializer_username is not None:
+            self.materializer_username = materializer_username
         if previous_generation is not UNSET:
             self.previous_generation = previous_generation
         source_record = raw or source_record_for(
@@ -181,6 +207,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.environment_id,
             self.target_namespace,
             self.previous_generation,
+            self.materializer_username,
         )
         self.source_path.write_bytes(source_record)
         os.chmod(self.source_path, 0o600)
@@ -213,6 +240,11 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         created = json.loads(json.dumps(self.fake_kubectl.secret))
         self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
         self.assertEqual([30], self.fake_kubectl.timeouts[:1])
+        self.assertEqual(["auth", "get", "create", "get"], self.fake_kubectl.commands)
+        self.assertEqual(
+            [["kubectl-test-double", "auth", "whoami", "-o", "json"]],
+            self.fake_kubectl.identity_commands,
+        )
         annotations = created["metadata"]["annotations"]
         self.assertEqual("custody-generation-1", annotations[MATERIALIZER.ANNOTATION_SOURCE_GENERATION])
         self.assertEqual(SOURCE_CREATED_AT, annotations[MATERIALIZER.ANNOTATION_MATERIALIZED_AT])
@@ -257,6 +289,79 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.run_materializer(expected_namespace="account-preview")
 
         self.assertEqual([], self.fake_kubectl.operations)
+
+    def test_malformed_bound_materializer_username_is_rejected_before_kubernetes_access(self) -> None:
+        self.write_source_record(
+            materializer_username=(
+                "system:serviceaccount:account-preview:firemud-secret-materializer"
+            )
+        )
+
+        with self.assertRaisesRegex(
+            MATERIALIZER.MaterializationError, "service-account username"
+        ):
+            self.run_materializer()
+
+        self.assertEqual([], self.fake_kubectl.commands)
+        self.assertEqual([], self.fake_kubectl.operations)
+
+    def test_wrong_server_authenticated_account_or_deploy_identity_fails_before_secret_access(self) -> None:
+        for username in (
+            "system:serviceaccount:account-prod:account-service",
+            "system:serviceaccount:account-prod:deployment",
+        ):
+            with self.subTest(username=username):
+                self.fake_kubectl.identity_username = username
+
+                with self.assertRaisesRegex(
+                    MATERIALIZER.MaterializationError,
+                    "does not match the protected source record",
+                ):
+                    self.run_materializer()
+
+                self.assertEqual(["auth"], self.fake_kubectl.commands)
+                self.assertEqual([], self.fake_kubectl.operations)
+                self.fake_kubectl.commands.clear()
+
+    def test_missing_malformed_or_failed_whoami_fails_before_secret_access(self) -> None:
+        for response, returncode, expected_message in (
+            ("{}", 0, "did not return an authenticated username"),
+            ("not-json", 0, "malformed identity"),
+            (
+                '{"status":{"userInfo":{"username":"one","username":"two"}}}',
+                0,
+                "malformed identity",
+            ),
+            ("", 1, "identity verification failed"),
+        ):
+            with self.subTest(response=response, returncode=returncode):
+                self.fake_kubectl.identity_output = response
+                self.fake_kubectl.identity_returncode = returncode
+
+                with self.assertRaisesRegex(
+                    MATERIALIZER.MaterializationError, expected_message
+                ):
+                    self.run_materializer()
+
+                self.assertEqual(["auth"], self.fake_kubectl.commands)
+                self.assertEqual([], self.fake_kubectl.operations)
+                self.fake_kubectl.commands.clear()
+                self.fake_kubectl.identity_output = None
+                self.fake_kubectl.identity_returncode = 0
+
+    def test_identity_is_rechecked_before_each_exact_generation_retry(self) -> None:
+        self.run_materializer()
+        self.fake_kubectl.identity_username = "system:serviceaccount:account-prod:account-service"
+        self.fake_kubectl.commands.clear()
+
+        with self.assertRaisesRegex(
+            MATERIALIZER.MaterializationError,
+            "does not match the protected source record",
+        ):
+            self.run_materializer()
+
+        self.assertEqual(["auth"], self.fake_kubectl.commands)
+        self.assertEqual(["get", "create", "get"], self.fake_kubectl.operations)
 
     def test_same_generation_with_different_bytes_fails_without_write(self) -> None:
         self.run_materializer()
@@ -463,7 +568,8 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.run_materializer()
 
         self.assertNotIn("sensitive output", str(raised.exception))
-        self.assertEqual(["get"], self.fake_kubectl.operations)
+        self.assertEqual(["auth"], self.fake_kubectl.commands)
+        self.assertEqual([], self.fake_kubectl.operations)
         self.assertEqual([30], self.fake_kubectl.timeouts)
         self.assertEqual([], self.fake_kubectl.attempts)
 
@@ -474,7 +580,8 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.run_materializer()
 
         self.assertNotIn("invalid test output", str(raised.exception))
-        self.assertEqual(["get"], self.fake_kubectl.operations)
+        self.assertEqual(["auth"], self.fake_kubectl.commands)
+        self.assertEqual([], self.fake_kubectl.operations)
         self.assertEqual([], self.fake_kubectl.attempts)
 
     def test_missing_source_fails_before_kubernetes_access(self) -> None:
@@ -515,6 +622,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             "sourceCreatedAt": self.source_created_at,
             "environmentId": self.environment_id,
             "targetNamespace": self.target_namespace,
+            "materializerUsername": self.materializer_username,
             "previousSourceGeneration": self.previous_generation,
         }
         raw_record = (

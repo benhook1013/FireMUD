@@ -40,14 +40,29 @@ MATERIALIZER_SPEC.loader.exec_module(MATERIALIZER)
 NOW = dt.datetime(2026, 9, 27, 12, 0, 0, 123400, tzinfo=dt.timezone.utc)
 ENVIRONMENT_ID = "player-facing-prod"
 TARGET_NAMESPACE = "account-prod"
+MATERIALIZER_USERNAME = (
+    "system:serviceaccount:account-prod:firemud-secret-materializer"
+)
 
 
 class FakeKubectl:
     def __init__(self) -> None:
         self.secret: dict | None = None
+        self.username = MATERIALIZER_USERNAME
+        self.operations: list[str] = []
+        self.mutations: list[str] = []
 
     def __call__(self, command: list[str], **kwargs: object) -> SimpleNamespace:
         operation = command[1]
+        self.operations.append(operation)
+        if operation == "auth":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {"status": {"userInfo": {"username": self.username}}}
+                ),
+                stderr="",
+            )
         if operation == "get":
             return SimpleNamespace(
                 returncode=0,
@@ -67,6 +82,7 @@ class FakeKubectl:
             resource_version = str(int(self.secret["metadata"]["resourceVersion"]) + 1)
         else:
             raise AssertionError(f"unexpected kubectl operation: {operation}")
+        self.mutations.append(operation)
         request["metadata"]["resourceVersion"] = resource_version
         self.secret = request
         return SimpleNamespace(returncode=0, stdout=json.dumps(self.secret), stderr="")
@@ -85,6 +101,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
             "output": self.output,
             "environment_id": ENVIRONMENT_ID,
             "namespace": TARGET_NAMESPACE,
+            "materializer_username": MATERIALIZER_USERNAME,
             "source_ttl_seconds": 3600,
             "now": NOW,
         }
@@ -97,6 +114,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         source = MATERIALIZER.read_source_record(self.output)
         self.assertEqual(ENVIRONMENT_ID, source.environment_id)
         self.assertEqual(TARGET_NAMESPACE, source.target_namespace)
+        self.assertEqual(MATERIALIZER_USERNAME, source.materializer_username)
         self.assertIsNone(source.previous_source_generation)
         self.assertEqual("2026-09-27T12:00:00.1234Z", source.source_created_at_text)
         self.assertEqual("2026-09-27T13:00:00.1234Z", source.source_expires_at_text)
@@ -139,6 +157,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertGreater(rotated.source_created_at, previous.source_created_at)
         self.assertEqual(ENVIRONMENT_ID, rotated.environment_id)
         self.assertEqual(TARGET_NAMESPACE, rotated.target_namespace)
+        self.assertEqual(previous.materializer_username, rotated.materializer_username)
         previous_manifest = MATERIALIZER.parse_manifest(previous.manifest_bytes)
         rotated_manifest = MATERIALIZER.parse_manifest(rotated.manifest_bytes)
         self.assertNotEqual(previous_manifest.active_key_id, rotated_manifest.active_key_id)
@@ -193,6 +212,50 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
                 now=NOW + dt.timedelta(minutes=1),
             )
         self.assertFalse(wrong_namespace_output.exists())
+
+    def test_rotation_keeps_the_bound_identity_and_rejects_a_changed_caller(self) -> None:
+        self.create()
+        rotated_output = self.custody_directory / "rotated-source-record.json"
+        BOOTSTRAP.create_rotated_source_record(
+            output=rotated_output,
+            previous_source_record=self.output,
+            environment_id=ENVIRONMENT_ID,
+            namespace=TARGET_NAMESPACE,
+            source_ttl_seconds=3600,
+            now=NOW + dt.timedelta(minutes=10),
+        )
+        initial = MATERIALIZER.read_source_record(self.output)
+        rotated = MATERIALIZER.read_source_record(rotated_output)
+        self.assertEqual(initial.materializer_username, rotated.materializer_username)
+
+        fake_kubectl = FakeKubectl()
+        with patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl):
+            self.assertTrue(
+                MATERIALIZER.materialize(
+                    self.output,
+                    ENVIRONMENT_ID,
+                    TARGET_NAMESPACE,
+                    7200,
+                    now=NOW + dt.timedelta(minutes=1),
+                )
+            )
+            fake_kubectl.username = "system:serviceaccount:account-prod:account-service"
+            fake_kubectl.operations.clear()
+
+            with self.assertRaisesRegex(
+                MATERIALIZER.MaterializationError,
+                "does not match the protected source record",
+            ):
+                MATERIALIZER.materialize(
+                    rotated_output,
+                    ENVIRONMENT_ID,
+                    TARGET_NAMESPACE,
+                    7200,
+                    now=NOW + dt.timedelta(minutes=11),
+                )
+
+        self.assertEqual(["auth"], fake_kubectl.operations)
+        self.assertEqual(["create"], fake_kubectl.mutations)
 
     def test_rotation_rejects_unprotected_previous_directory(self) -> None:
         self.create()
@@ -279,6 +342,35 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertNotIn(rotated_text, output_text)
         self.assertNotIn(MATERIALIZER.read_source_record(rotated_output).manifest_bytes.decode("ascii"), output_text)
 
+    def test_rotation_cli_rejects_materializer_identity_override(self) -> None:
+        previous_output = self.custody_directory / "previous-source-record.json"
+        self.create(output=previous_output)
+        rotated_output = self.custody_directory / "rotated-source-record.json"
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            result = BOOTSTRAP.main(
+                [
+                    "rotate",
+                    "--output",
+                    str(rotated_output),
+                    "--previous-source-record",
+                    str(previous_output),
+                    "--environment-id",
+                    ENVIRONMENT_ID,
+                    "--namespace",
+                    TARGET_NAMESPACE,
+                    "--materializer-username",
+                    "system:serviceaccount:account-prod:alternate-materializer",
+                    "--source-ttl-seconds",
+                    "3600",
+                ]
+            )
+
+        self.assertEqual(1, result)
+        self.assertIn("must retain the prior materializer username", stderr.getvalue())
+        self.assertFalse(rotated_output.exists())
+
     def test_output_is_created_once_and_retry_preserves_bytes_without_regeneration(self) -> None:
         self.create()
         first_bytes = self.output.read_bytes()
@@ -352,6 +444,8 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
                     ENVIRONMENT_ID,
                     "--namespace",
                     TARGET_NAMESPACE,
+                    "--materializer-username",
+                    MATERIALIZER_USERNAME,
                     "--source-ttl-seconds",
                     "3600",
                 ]
@@ -380,6 +474,43 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
             BOOTSTRAP.main(["--output", str(self.output), "--environment-id", ENVIRONMENT_ID, "--namespace", TARGET_NAMESPACE])
         self.assertEqual(2, raised.exception.code)
         self.assertFalse(self.output.exists())
+
+    def test_cli_requires_materializer_username_for_initial_creation(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = BOOTSTRAP.main(
+                [
+                    "--output",
+                    str(self.output),
+                    "--environment-id",
+                    ENVIRONMENT_ID,
+                    "--namespace",
+                    TARGET_NAMESPACE,
+                    "--source-ttl-seconds",
+                    "3600",
+                ]
+            )
+
+        self.assertEqual(1, result)
+        self.assertIn("requires --materializer-username", stderr.getvalue())
+        self.assertFalse(self.output.exists())
+
+    def test_initial_creation_rejects_non_target_or_malformed_service_account(self) -> None:
+        for index, username in enumerate(
+            (
+                "system:serviceaccount:account-preview:firemud-secret-materializer",
+                "system:serviceaccount:account-prod:",
+                "account-prod:firemud-secret-materializer",
+            )
+        ):
+            with self.subTest(username=username):
+                output = self.custody_directory / f"invalid-source-{index}.json"
+                with self.assertRaisesRegex(
+                    BOOTSTRAP.BootstrapError, "service-account username"
+                ):
+                    self.create(output=output, materializer_username=username)
+                self.assertFalse(output.exists())
 
     def test_relative_output_is_rejected(self) -> None:
         with self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "absolute path"):

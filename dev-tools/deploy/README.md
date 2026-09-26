@@ -9,6 +9,8 @@ These scripts answer two different questions:
 
 They are not generic CI utilities. They enforce the deployment contract for player-facing and self-hosted environments.
 
+The unactivated Account response-envelope bootstrap now requires `--materializer-username system:serviceaccount:<namespace>:<dedicated-name>` for initial creation. That exact username is bound in the protected source record, retained across rotation, and checked against the server-reported `kubectl auth whoami -o json` result before each materializer Secret access. This guard is not sole-writer RBAC, protected custody, or the authenticated non-secret handoff receipt; the Account mount remains unpublished until those gates and exact deployment readback are proved.
+
 ## Script Map
 
 - `preflight.py`

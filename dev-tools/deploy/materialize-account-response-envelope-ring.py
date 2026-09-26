@@ -3,11 +3,13 @@
 
 This tool accepts an owner-only source record containing version=1, canonical Base64 for the
 exact manifest bytes, an opaque source generation, source expiry, target environment and
-namespace, predecessor generation, and an immutable source-created timestamp. That timestamp is
-a conservative age anchor for the Secret's materialized-at and expiry metadata, not a claim of
-the later Kubernetes write time. The source record must come from protected durable custody. The
-tool never creates or rotates key material. The caller supplies the trusted class maximum age
-separately. Re-running an exact generation is read-only and preserves its timestamps.
+namespace, the exact dedicated materializer service-account username, predecessor generation,
+and an immutable source-created timestamp. That timestamp is a conservative age anchor for the
+Secret's materialized-at and expiry metadata, not a claim of the later Kubernetes write time.
+The source record must come from protected durable custody. The tool verifies the
+server-reported kubectl identity before any Secret access and never creates or rotates key
+material. The caller supplies the trusted class maximum age separately. Re-running an exact
+generation is read-only and preserves its timestamps.
 """
 
 from __future__ import annotations
@@ -50,6 +52,9 @@ KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 KEY_BYTES_PATTERN = re.compile(rb"[A-Za-z0-9_-]{43}\Z")
 RFC3339_UTC_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z"
+)
+SERVICE_ACCOUNT_NAME_PATTERN = re.compile(
+    r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z"
 )
 
 
@@ -94,6 +99,7 @@ class SourceRecord:
     source_created_at_text: str
     environment_id: str
     target_namespace: str
+    materializer_username: str
     previous_source_generation: str | None
 
 
@@ -151,6 +157,24 @@ def validate_namespace(value: str) -> str:
     return value
 
 
+def validate_materializer_username(value: str, namespace: str) -> str:
+    prefix = f"system:serviceaccount:{namespace}:"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise MaterializationError(
+            "materializer username must be a Kubernetes service-account username in the target namespace"
+        )
+    service_account_name = value[len(prefix) :]
+    if (
+        not service_account_name
+        or len(service_account_name) > 253
+        or not SERVICE_ACCOUNT_NAME_PATTERN.fullmatch(service_account_name)
+    ):
+        raise MaterializationError(
+            "materializer username must be a Kubernetes service-account username in the target namespace"
+        )
+    return value
+
+
 def read_protected_source_record(path: Path) -> bytes:
     try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -203,6 +227,7 @@ def read_source_record(path: Path) -> SourceRecord:
         "sourceCreatedAt",
         "environmentId",
         "targetNamespace",
+        "materializerUsername",
         "previousSourceGeneration",
     }
     if not isinstance(record, dict) or set(record) != expected_fields:
@@ -221,6 +246,8 @@ def read_source_record(path: Path) -> SourceRecord:
         raise MaterializationError("source record environmentId must be a string")
     if not isinstance(record["targetNamespace"], str):
         raise MaterializationError("source record targetNamespace must be a string")
+    if not isinstance(record["materializerUsername"], str):
+        raise MaterializationError("source record materializerUsername must be a string")
     if record["previousSourceGeneration"] is not None and not isinstance(
         record["previousSourceGeneration"], str
     ):
@@ -245,6 +272,9 @@ def read_source_record(path: Path) -> SourceRecord:
     source_generation = validate_source_generation(record["sourceGeneration"])
     environment_id = validate_environment_id(record["environmentId"])
     target_namespace = validate_namespace(record["targetNamespace"])
+    materializer_username = validate_materializer_username(
+        record["materializerUsername"], target_namespace
+    )
     previous_source_generation = record["previousSourceGeneration"]
     if previous_source_generation is not None:
         previous_source_generation = validate_source_generation(previous_source_generation)
@@ -263,6 +293,7 @@ def read_source_record(path: Path) -> SourceRecord:
         source_created_at_text=source_created_at_text,
         environment_id=environment_id,
         target_namespace=target_namespace,
+        materializer_username=materializer_username,
         previous_source_generation=previous_source_generation,
     )
 
@@ -394,7 +425,12 @@ def _load_existing_secret(
     )
 
 
-def _run_kubectl(command: Sequence[str], request_object: dict[str, Any] | None = None) -> str:
+def _run_kubectl(
+    command: Sequence[str],
+    request_object: dict[str, Any] | None = None,
+    *,
+    failure_message: str = "Kubernetes operation failed; existing Secret was left for diagnosis",
+) -> str:
     try:
         completed = subprocess.run(
             list(command),
@@ -411,8 +447,26 @@ def _run_kubectl(command: Sequence[str], request_object: dict[str, Any] | None =
     except OSError as exc:
         raise MaterializationError("kubectl could not be started") from exc
     if completed.returncode != 0:
-        raise MaterializationError("Kubernetes operation failed; existing Secret was left for diagnosis")
+        raise MaterializationError(failure_message)
     return completed.stdout
+
+
+def _verify_materializer_identity(kubectl: str, expected_username: str) -> None:
+    output = _run_kubectl(
+        [kubectl, "auth", "whoami", "-o", "json"],
+        failure_message="server-authenticated materializer identity verification failed",
+    )
+    try:
+        identity = json.loads(output, object_pairs_hook=_unique_json_members)
+    except (json.JSONDecodeError, MaterializationError, RecursionError) as exc:
+        raise MaterializationError("kubectl auth whoami returned malformed identity") from exc
+    status = identity.get("status") if isinstance(identity, dict) else None
+    user_info = status.get("userInfo") if isinstance(status, dict) else None
+    username = user_info.get("username") if isinstance(user_info, dict) else None
+    if not isinstance(username, str):
+        raise MaterializationError("kubectl auth whoami did not return an authenticated username")
+    if username != expected_username:
+        raise MaterializationError("authenticated username does not match the protected source record")
 
 
 def _read_secret(kubectl: str, namespace: str) -> dict[str, Any] | None:
@@ -533,6 +587,7 @@ def materialize(
         raise MaterializationError("source record environment ID does not match the expected environment")
     if source_record.target_namespace != namespace:
         raise MaterializationError("source record target namespace does not match the expected namespace")
+    _verify_materializer_identity(kubectl, source_record.materializer_username)
     source_generation = source_record.source_generation
     source_expires_at = source_record.source_expires_at
     source_created_at = source_record.source_created_at
