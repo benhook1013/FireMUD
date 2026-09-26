@@ -133,10 +133,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(countJoinOutbox(absentScope)).isEqualTo(1L);
 
     JoinFixture expiredWithoutMembership = committedEvidencePendingFixture();
-    dsl.execute(
-        "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
-        expiredWithoutMembership.accountId(),
-        expiredWithoutMembership.tenantId());
+    deleteMembershipEvidence(expiredWithoutMembership);
     expireScopeBeforeReconciliationButAfterEvaluation(expiredWithoutMembership);
     assertUnresolved(expiredWithoutMembership, "MEMBERSHIP_EVIDENCE_ABSENT");
     assertThat(countMemberships(expiredWithoutMembership)).isZero();
@@ -146,10 +143,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   @Test
   void absentMembershipOrAuditEnvelopeCannotTerminalizePendingOperation() {
     JoinFixture absentMembership = committedEvidencePendingFixture();
-    dsl.execute(
-        "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
-        absentMembership.accountId(),
-        absentMembership.tenantId());
+    deleteMembershipEvidence(absentMembership);
     assertUnresolved(absentMembership, "MEMBERSHIP_EVIDENCE_ABSENT");
     assertThat(countJoinOutbox(absentMembership)).isEqualTo(1L);
 
@@ -160,6 +154,16 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertUnresolved(absentAudit, "JOIN_AUDIT_ENVELOPE_ABSENT");
     assertThat(countMemberships(absentAudit)).isEqualTo(1L);
     assertThat(countJoinOutbox(absentAudit)).isZero();
+  }
+
+  @Test
+  void absentRoleSnapshotLeavesPendingAndPreservesMembershipAndAuditEvidence() {
+    JoinFixture fixture = committedEvidencePendingFixture();
+    deleteRoleSnapshot(fixture);
+
+    assertUnresolved(fixture, "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT");
+    assertThat(countMemberships(fixture)).isEqualTo(1L);
+    assertThat(countJoinOutbox(fixture)).isEqualTo(1L);
   }
 
   @Test
@@ -287,6 +291,43 @@ class AccountJoinReconciliationPostgresIntegrationTest {
                 fixture.accountId(),
                 fixture.tenantId())
             .fetchOne(0, Long.class));
+  }
+
+  private void deleteMembershipEvidence(JoinFixture fixture) {
+    long membershipId = deleteRoleSnapshot(fixture);
+    int deletedMemberships =
+        dsl.execute(
+            "DELETE FROM account_tenant_membership WHERE id = ? AND account_id = ? AND tenant_id = ?",
+            membershipId,
+            fixture.accountId(),
+            fixture.tenantId());
+    assertThat(deletedMemberships).isEqualTo(1);
+  }
+
+  private long deleteRoleSnapshot(JoinFixture fixture) {
+    var membership =
+        dsl.resultQuery(
+                "SELECT id, membership_version FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne();
+    assertThat(membership).isNotNull();
+    long membershipId = Objects.requireNonNull(membership.get("id", Long.class));
+    long snapshotVersion = Objects.requireNonNull(membership.get("membership_version", Long.class));
+
+    int deletedRoles =
+        dsl.execute(
+            "DELETE FROM account_tenant_membership_role_snapshot_roles WHERE membership_id = ? AND snapshot_version = ?",
+            membershipId,
+            snapshotVersion);
+    assertThat(deletedRoles).isEqualTo(1);
+    int deletedHeaders =
+        dsl.execute(
+            "DELETE FROM account_tenant_membership_role_snapshots WHERE membership_id = ? AND snapshot_version = ?",
+            membershipId,
+            snapshotVersion);
+    assertThat(deletedHeaders).isEqualTo(1);
+    return membershipId;
   }
 
   private void assertMembershipAndAuditOnce(JoinFixture fixture, long membershipId) {
