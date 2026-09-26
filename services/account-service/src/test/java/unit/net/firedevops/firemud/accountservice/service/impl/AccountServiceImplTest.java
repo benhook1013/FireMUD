@@ -801,6 +801,127 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void pairAuthorityPreparationFailureRetainsRetryablePolicyIndependentJoinIntent() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    org.mockito.Mockito.doThrow(new IllegalStateException("pair authority storage unavailable"))
+        .doNothing()
+        .when(membershipAuthorityEventProducer)
+        .preparePairAuthorityForJoin(11L, 7L);
+
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    active.setEntitlementVersion(1L);
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenReturn(java.util.List.of(active));
+    AtomicReference<AccountTenantMembership> joinedMembership = new AtomicReference<>();
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenAnswer(invocation -> Optional.ofNullable(joinedMembership.get()));
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              joinedMembership.set(membership);
+              return membership;
+            });
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    JoinPublicProductionRequest request =
+        new JoinPublicProductionRequest(connectScopeId, "join-pair-authority-retry-1");
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertNotNull(retainedOperation.get().intentDigest());
+    assertEquals(null, retainedOperation.get().requestDigest());
+    assertEquals(null, retainedOperation.get().requestDigestVersion());
+    assertEquals(null, retainedOperation.get().allowPublicJoin());
+    assertEquals(null, retainedOperation.get().entitlementVersion());
+    assertEquals("NOT_EVALUATED", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals("NOT_EVALUATED", retainedOperation.get().lastAttemptAuthorityAvailability());
+    assertEquals(null, joinedMembership.get());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .findByTenantIdForUpdate(7L);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(
+            accountTenantMembershipRoleSnapshotRepository, org.mockito.Mockito.never())
+        .replace(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyCollection());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.never())
+        .requireNewMembershipBaseline(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.never())
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipTransitionReceiptRepository, org.mockito.Mockito.never())
+        .appendTransition(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+
+    JoinPublicProductionResult retried =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertTrue(retried.success());
+    assertFalse(retried.replayed());
+    assertEquals("JOINED", retried.outcomeCode());
+    assertEquals("COMMITTED", retainedOperation.get().status());
+    assertEquals("AVAILABLE", retainedOperation.get().entitlementAuthorityAvailability());
+    assertEquals(1L, retainedOperation.get().entitlementVersion());
+    assertNotNull(retainedOperation.get().requestDigest());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer, org.mockito.Mockito.times(2))
+        .preparePairAuthorityForJoin(11L, 7L);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(request.requestId()),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipTransitionReceiptRepository)
+        .appendTransition(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.eq("MEMBERSHIP_JOINED"),
+            org.mockito.ArgumentMatchers.eq(request.requestId()));
+    org.mockito.Mockito.verify(accountAuditOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq("tenant"),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
+            org.mockito.ArgumentMatchers.contains(request.requestId()));
+  }
+
+  @Test
   void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
     Account account = new Account();
     account.setId(11L);

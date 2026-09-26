@@ -61,9 +61,10 @@ BEGIN
     END IF;
     IF NEW.membership_version <> OLD.membership_version + 1
         OR NEW.last_event_sequence <> OLD.last_event_sequence + 1
-        OR NEW.membership_authority_generation <>
-            OLD.membership_authority_generation +
-                CASE WHEN NEW.last_transition_invalidated THEN 1 ELSE 0 END THEN
+        OR (NEW.last_transition_invalidated AND NEW.membership_authority_generation <>
+            OLD.membership_authority_generation + 1)
+        OR (NOT NEW.last_transition_invalidated AND NEW.membership_authority_generation <>
+            OLD.membership_authority_generation) THEN
         RAISE EXCEPTION 'Account membership pair transition must advance exact authority'
             USING ERRCODE = '23514',
                 CONSTRAINT = 'account_membership_pair_authority_transition_monotonic';
