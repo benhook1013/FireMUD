@@ -195,7 +195,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<section class="queue-stage" aria-labelledby="queue-stage-1">', train)
         self.assertIn('<li id="pr-42" class="merged front">', train)
         self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/42">'
-                      '#42 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-merged">MERGED</span></div>', train)
+                      '#42 &lt;unsafe&gt; &amp; status</a></div>', train)
+        self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-merged">MERGED</span>', train)
         self.assertIn('<section class="queue-stage" aria-labelledby="queue-stage-2">', train)
         self.assertIn('<li id="pr-44" class="merged">', train)
         self.assertNotIn('<li id="pr-45" class="merged">', train)
@@ -507,11 +508,14 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         merged_row = result.split('<li id="pr-43"', 1)[1].split('</li>', 1)[0]
         front_row = result.split('<li id="pr-42"', 1)[1].split('</li>', 1)[0]
         self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/43">'
-                      '#43 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-merged">MERGED</span></div>', merged_row)
+                      '#43 &lt;unsafe&gt; &amp; status</a></div>', merged_row)
         self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/42">'
-                      '#42 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-front">REVIEW FRONT</span></div>', front_row)
-        self.assertIn('<span class="sub"><time class="relative-age" '
+                      '#42 &lt;unsafe&gt; &amp; status</a></div>', front_row)
+        self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-merged">MERGED</span>'
+                      '<span class="sub"><time class="relative-age" '
                       'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time></span>', merged_row)
+        self.assertIn('<div class="pr-status-line"><span class="queue-status queue-status-front">REVIEW FRONT</span>'
+                      '<span class="sub">Hosted held · CLI ready</span>', front_row)
         self.assertNotIn('Hosted parent moved', merged_row)
         self.assertNotIn('CLI parent moved', merged_row)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
@@ -552,7 +556,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
             return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
         self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
-        self.assertIn('<strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.', row(43))
+        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted parent moved · CLI parent moved</span>', row(43))
         self.assertIn('<span class="sub">Hosted parent moved · CLI parent moved</span>', row(43))
         self.assertIn('<span class="sub">Hosted rate limited · CLI ready</span>', row(44))
         self.assertIn('<span class="sub">Hosted ready · CLI ready</span>', row(45))
@@ -579,11 +583,11 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
         self.assertNotIn("Up next in queue", row(43))
         self.assertNotIn("Up next in queue", row(44))
-        self.assertIn('<strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.', row(45))
+        self.assertIn('queue-status-up-next">UP NEXT</span><span class="sub">Hosted over ceiling · CLI parent moved</span>', row(45))
         self.assertIn('<span class="sub">Hosted over ceiling · CLI parent moved</span>', row(45))
         self.assertNotIn("Up next in queue", row(46))
         self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(46))
-        self.assertEqual(1, result.count("Up next in queue"))
+        self.assertNotIn("Up next in queue", result)
 
         review["queue"][45] = {"channels": {"hosted": "HELD"}}
         incomplete = page.render(data, review, NOW, github)

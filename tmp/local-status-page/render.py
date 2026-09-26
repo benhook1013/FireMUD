@@ -423,11 +423,6 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 if number == next_pr else
                 '<span class="queue-status queue-status-pending">PENDING</span>'
             )
-        if number == next_pr:
-            status_html = (
-                '<span class="sub"><strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.</span>'
-                + status_html
-            )
         if queue_item and queue_item.get("detail_level") == "identity_only":
             evidence = queue_item.get("evidence_status")
             label = (
@@ -510,9 +505,9 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         row_class = f' class="{" ".join(row_classes)}"' if row_classes else ""
         rows.append((item["stage"], position,
             f'<li id="pr-{number}"{row_class}><span class="order" aria-label="Queue position {position}">{position:02d}</span><div class="pr-main">'
-            f'<div class="pr-title-line"><a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>{queue_badge_html}</div>'
+            f'<div class="pr-title-line"><a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a></div>'
             f'<span class="sub">{size_html}</span>'
-            f'{status_html}'
+            f'<div class="pr-status-line">{queue_badge_html}{status_html}</div>'
             f'{activity_grid}'
             f'</div></li>'))
     train = []
@@ -678,6 +673,8 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .queue-stage > .stack li.merged {{ background: var(--plum-wash); border-left: 0; box-shadow: none; }}
 .queue-stage > .stack li.merged .order {{ background: var(--plum); }}
 .pr-title-line {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .55rem; }}
+.pr-status-line {{ display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; margin-top: .25rem; }}
+.pr-status-line .sub {{ display: inline; margin-top: 0; }}
 .queue-status {{ display: inline-flex; align-items: center; padding: .16rem .38rem; border: 1px solid transparent; font-size: .59rem; font-weight: 900; letter-spacing: .045em; line-height: 1.2; white-space: nowrap; }}
 .queue-status-front {{ background: var(--fire); color: #fff; }}
 .queue-status-merged {{ background: var(--plum); color: #fff; }}

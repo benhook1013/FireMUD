@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import ipaddress
 import json
 import re
 import subprocess
@@ -20,6 +19,7 @@ SSH_TARGET = "root@77.42.29.156"
 HOST = "status.preview.firedevops.net"
 NAMESPACE = "overseer-status"
 IMAGE = "docker.io/library/nginx@sha256:7150b3a39203cb5bee612ff4a9d18774f8c7caf6399d6e8985e97e28eb751c18"
+LOCAL_STATUS_URL = "http://192.168.50.100:8877/"
 BRIEF_LINK = re.compile(r'<a href="\.\./\.\./task-briefs/[^"]+">([^<]+)</a>')
 REFRESH_FORM = re.compile(r'<form class="refresh-form"[^>]*>.*?</form>', re.DOTALL)
 REFRESH_TIME = re.compile(r'<span class="refresh-time">.*?</span>', re.DOTALL)
@@ -29,24 +29,7 @@ SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re
 
 
 def local_wifi_url() -> str:
-    query = (
-        "Get-NetIPAddress -InterfaceAlias WiFi -AddressFamily IPv4 -AddressState Preferred | "
-        "Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' "
-        "-and -not $_.SkipAsSource } | Select-Object -First 1 -ExpandProperty IPAddress"
-    )
-    result = subprocess.run(
-        ["/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-NoProfile", "-NonInteractive", "-Command", query],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    if result.returncode:
-        raise RuntimeError("could not determine the Windows Wi-Fi address")
-    address = ipaddress.IPv4Address(result.stdout.strip())
-    if not address.is_private:
-        raise ValueError("the Windows Wi-Fi address is not private")
-    return f"http://{address}:8877/"
+    return LOCAL_STATUS_URL
 
 
 def public_html(source: str, local_url: str) -> str:
