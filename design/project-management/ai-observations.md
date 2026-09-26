@@ -104,3 +104,8 @@ Entry format:
   - Context: during #2873 implementation, `dev-tools/pr-review status --pr 2873` returned `review allocation contains fields outside the private schema` before review intake.
   - Observation: the controller could not report current review state; no review was requested or allocation edited. The cause and ownership of the private record remain unverified.
   - Expected pattern: diagnose the record against the controller's current schema with its owning operator before CodeRabbit intake; do not bypass the controller or infer review eligibility from GitHub's visible state alone.
+
+- `2026-09-26`: One-shot certificate issuance and readback require separate proof
+  - Context: the Entity baseline migrator needs a short-lived dedicated client identity without giving its certificate writer general Secret-read or deletion privileges.
+  - Observation: a leaf verifying against the CA bundled in the same Secret is only self-consistent; it does not show that the namespace trusts that CA, and static issuance tests do not show the live Entity server accepts the identity.
+  - Expected pattern: keep issuance opt-in and narrowly admitted, verify the projected leaf and chain against the namespace's independent trust projection under a separately authorized reader, then report live served-mTLS acceptance and later identity retirement as distinct proof.

@@ -31,6 +31,15 @@ class GrpcPeerIdentityTest {
   }
 
   @Test
+  void extractsDedicatedEntityBaselineMigratorIdentity() throws Exception {
+    String uri = "spiffe://firemud/ns/firemud/sa/game-design-baseline-migrator";
+    assertThat(GrpcPeerIdentity.fromSslSession(sessionWithUriSans(uri)))
+        .get()
+        .extracting(GrpcPeerIdentity::uri, GrpcPeerIdentity::namespace, GrpcPeerIdentity::service)
+        .containsExactly(uri, "firemud", "game-design-baseline-migrator");
+  }
+
+  @Test
   void normalizesCanonicalEquivalentUriSanBeforeValidatingWorkloadIdentity() {
     assertThat(GrpcPeerIdentity.parseUri("spiffe://FIREMUD/ns/%66iremud/sa/game-%64esign-service"))
         .get()
