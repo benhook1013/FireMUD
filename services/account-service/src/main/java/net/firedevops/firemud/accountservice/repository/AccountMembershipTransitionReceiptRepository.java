@@ -55,8 +55,7 @@ public class AccountMembershipTransitionReceiptRepository {
     String streamKey = MembershipTransitionReceiptDigest.receiptStreamKey(accountId, tenantId);
     UUID receiptId = MembershipTransitionReceiptDigest.receiptIdForRequest(requestId);
     Long sequence =
-        (Long)
-            dsl.fetchValue(
+        dsl.resultQuery(
                 "INSERT INTO account_membership_transition_receipt_stream_heads "
                     + "(account_id, tenant_id, receipt_stream_key, last_receipt_sequence, updated_at) "
                     + "VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP) "
@@ -65,10 +64,10 @@ public class AccountMembershipTransitionReceiptRepository {
                     + "account_membership_transition_receipt_stream_heads.last_receipt_sequence + 1, "
                     + "updated_at = CURRENT_TIMESTAMP "
                     + "RETURNING last_receipt_sequence",
-                Long.class,
                 accountId,
                 tenantId,
-                streamKey);
+                streamKey)
+            .fetchOne(0, Long.class);
     if (sequence == null || sequence <= 0L) {
       throw new IllegalStateException("Account membership receipt sequence was not allocated");
     }

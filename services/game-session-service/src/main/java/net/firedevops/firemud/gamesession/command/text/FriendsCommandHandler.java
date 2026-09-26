@@ -432,11 +432,7 @@ public class FriendsCommandHandler {
     FriendPresenceEntry presence = entry.getPresence();
     long friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
     if (!isPlayerDisclosablePolicy(presence.getVisibilityPolicy())) {
-      return redactedEntry(
-          ordinal,
-          entry,
-          friendAccountId,
-          "Friend #" + friendAccountId);
+      return redactedEntry(ordinal, entry, friendAccountId, "Friend #" + friendAccountId);
     }
     String characterName =
         presence.getCharacterName().isBlank() ? null : presence.getCharacterName().trim();
@@ -462,10 +458,7 @@ public class FriendsCommandHandler {
   }
 
   private FriendPresenceViewOutput.Entry redactedEntry(
-      int ordinal,
-      FriendRosterEntry entry,
-      long friendAccountId,
-      String displayName) {
+      int ordinal, FriendRosterEntry entry, long friendAccountId, String displayName) {
     return new FriendPresenceViewOutput.Entry(
         ordinal,
         parseOptionalLong(entry.getFriendLinkId()),

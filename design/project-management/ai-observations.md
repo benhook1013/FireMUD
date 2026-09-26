@@ -102,8 +102,8 @@ Entry format:
 
 - `2026-09-26`: Review status refused a shared private allocation record
   - Context: during #2873 implementation, `dev-tools/pr-review status --pr 2873` returned `review allocation contains fields outside the private schema` before review intake.
-  - Observation: the controller could not report current review state; no review was requested or allocation edited. The cause and ownership of the private record remain unverified.
-  - Expected pattern: diagnose the record against the controller's current schema with its owning operator before CodeRabbit intake; do not bypass the controller or infer review eligibility from GitHub's visible state alone.
+  - Observation: the shared `2818` review allocation contains historical `stop_*` and retained-ambiguity fields that this worktree's `ReviewAllocation.from_dict` does not recognize. The controller could not report current review state; no review was requested or allocation edited. This is a cross-worktree private-state/schema mismatch, not evidence that #2873 has a review allocation.
+  - Expected pattern: reconcile the shared record against the controller version that wrote it with the owning operator before CodeRabbit intake; do not bypass the controller, delete private evidence, or infer review eligibility from GitHub's visible state alone.
 
 - `2026-09-26`: One-shot certificate issuance and readback require separate proof
   - Context: the Entity baseline migrator needs a short-lived dedicated client identity without giving its certificate writer general Secret-read or deletion privileges.

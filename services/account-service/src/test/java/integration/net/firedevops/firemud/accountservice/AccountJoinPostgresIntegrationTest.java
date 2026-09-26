@@ -8,7 +8,9 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -90,6 +92,7 @@ class AccountJoinPostgresIntegrationTest {
   @MockitoBean private LoggingAdminClient loggingAdminClient;
   @MockitoBean private JavaMailSender mailSender;
   @MockitoSpyBean private AccountJoinOperationRepository joinOperationRepository;
+  private final Map<Long, GameplayRealm> fixtureRealms = new LinkedHashMap<>();
 
   @Test
   void terminalCommitWithLostAcknowledgementReadsBackExactStoredJoinResult() {
@@ -539,7 +542,9 @@ class AccountJoinPostgresIntegrationTest {
             .setPublicProductionRealm(true)
             .setStateScope("SHARED")
             .build();
-    when(gameSessionClient.listGameplayRealms(WORLD_SLUG)).thenReturn(List.of(realm));
+    fixtureRealms.put(tenantId, realm);
+    when(gameSessionClient.listGameplayRealms(WORLD_SLUG))
+        .thenReturn(List.copyOf(fixtureRealms.values()));
     when(gameSessionClient.getAdmissionPointer(tenantId, WORLD_SLUG, REALM_SLUG))
         .thenReturn(pointer);
 

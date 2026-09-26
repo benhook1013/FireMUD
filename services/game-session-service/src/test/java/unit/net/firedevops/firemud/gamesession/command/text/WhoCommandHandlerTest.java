@@ -57,10 +57,7 @@ class WhoCommandHandlerTest {
         jwtUtil.generateToken(
             "1",
             java.util.Map.of(
-                "accountId",
-                "1",
-                "scopedRoles",
-                java.util.Map.of("22", java.util.List.of("god"))));
+                "accountId", "1", "scopedRoles", java.util.Map.of("22", java.util.List.of("god"))));
 
     gameplayPresenceService.registerConnected(
         new SessionContext(1L, 22L, 1L, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt));
@@ -104,7 +101,8 @@ class WhoCommandHandlerTest {
                 java.util.List.of("platformAdmin", "support", "billingAdmin", "god", "moderator")));
 
     gameplayPresenceService.registerConnected(
-        new SessionContext(1L, 22L, 1L, "staff@example.com", 101L, "Aster", 7L, "R-1", globalOnlyJwt));
+        new SessionContext(
+            1L, 22L, 1L, "staff@example.com", 101L, "Aster", 7L, "R-1", globalOnlyJwt));
 
     TextCommandInterpretationResult result =
         handler.handle(

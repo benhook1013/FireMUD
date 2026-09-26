@@ -780,10 +780,9 @@ public class PlayCommandHandler {
   }
 
   private boolean isValidMembershipLifecycleEvidence(
-    GetTenantMembershipForRuntimeResponse response) {
+      GetTenantMembershipForRuntimeResponse response) {
     return switch (response.getMembershipLifecycleState()) {
-      case "MISSING" ->
-          !response.getMembershipExists() && !response.getGameplayAdmissionAllowed();
+      case "MISSING" -> !response.getMembershipExists() && !response.getGameplayAdmissionAllowed();
       case "INACTIVE" ->
           response.getMembershipExists()
               && response.getMembershipVersion() > 0L
