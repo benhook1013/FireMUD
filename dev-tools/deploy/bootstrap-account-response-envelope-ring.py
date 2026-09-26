@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the one-time initial Account response-envelope ring source record.
+"""Create initial or explicitly rotated Account response-envelope ring source records.
 
 This is an unactivated operator bootstrap helper. It creates one version-1 source
 record for the Account response-envelope materializer in an operator-supplied,
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
@@ -102,21 +103,21 @@ def _manifest() -> bytes:
     ).encode("ascii")
 
 
-def build_source_record(
+def _source_record_bytes(
     environment_id: str,
     namespace: str,
     source_ttl_seconds: int,
-    now: dt.datetime | None = None,
+    now: dt.datetime,
+    manifest: bytes,
+    previous_source_generation: str | None,
+    source_generation: str | None = None,
 ) -> bytes:
-    """Build one canonical initial source record without writing or printing it."""
-
     environment_id = _validate_environment_id(environment_id)
     namespace = _validate_namespace(namespace)
     source_ttl_seconds = _validate_source_ttl(source_ttl_seconds)
-    current_time = now or dt.datetime.now(dt.timezone.utc)
-    if current_time.tzinfo is None or current_time.utcoffset() is None:
+    if now.tzinfo is None or now.utcoffset() is None:
         raise BootstrapError("bootstrap clock must be timezone-aware")
-    current_time = current_time.astimezone(dt.timezone.utc)
+    current_time = now.astimezone(dt.timezone.utc)
     try:
         expiry = current_time + dt.timedelta(seconds=source_ttl_seconds)
     except OverflowError as exc:
@@ -125,16 +126,35 @@ def build_source_record(
     expires_at = format_timestamp(expiry)
     record = {
         "version": SOURCE_RECORD_VERSION,
-        "manifestBase64": base64.b64encode(_manifest()).decode("ascii"),
-        "sourceGeneration": _random_identifier(32),
+        "manifestBase64": base64.b64encode(manifest).decode("ascii"),
+        "sourceGeneration": source_generation or _random_identifier(32),
         "sourceExpiresAt": expires_at,
         "sourceCreatedAt": created_at,
         "environmentId": environment_id,
         "targetNamespace": namespace,
-        "previousSourceGeneration": None,
+        "previousSourceGeneration": previous_source_generation,
     }
     return (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode(
         "utf-8"
+    )
+
+
+def build_source_record(
+    environment_id: str,
+    namespace: str,
+    source_ttl_seconds: int,
+    now: dt.datetime | None = None,
+) -> bytes:
+    """Build one canonical initial source record without writing or printing it."""
+
+    current_time = now or dt.datetime.now(dt.timezone.utc)
+    return _source_record_bytes(
+        environment_id,
+        namespace,
+        source_ttl_seconds,
+        current_time,
+        _manifest(),
+        None,
     )
 
 
@@ -149,9 +169,141 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _load_materializer():
+    materializer_path = Path(__file__).with_name("materialize-account-response-envelope-ring.py")
+    spec = importlib.util.spec_from_file_location(
+        "account_response_envelope_materializer_for_bootstrap", materializer_path
+    )
+    if spec is None or spec.loader is None:
+        raise BootstrapError("response-envelope materializer is unavailable")
+    materializer = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = materializer
+    try:
+        spec.loader.exec_module(materializer)
+    except (ImportError, OSError, SyntaxError) as exc:
+        raise BootstrapError("response-envelope materializer is unavailable") from exc
+    return materializer
+
+
+def _read_previous_source_record(path: Path, repository_root: Path):
+    if not path.is_absolute():
+        raise BootstrapError("previous source record must be an absolute path")
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_repository = repository_root.resolve(strict=True)
+        metadata = os.lstat(path)
+        directory_metadata = os.lstat(path.parent)
+    except OSError as exc:
+        raise BootstrapError("previous source record is missing or unreadable") from exc
+    if _is_within(resolved_path, resolved_repository):
+        raise BootstrapError("previous source record must be outside the repository")
+    if not stat.S_ISDIR(directory_metadata.st_mode) or stat.S_IMODE(directory_metadata.st_mode) != OWNER_DIRECTORY_MODE:
+        raise BootstrapError("previous source directory must be owner-only mode 0700")
+    if not hasattr(os, "getuid") or directory_metadata.st_uid != os.getuid():
+        raise BootstrapError("previous source directory must be owned by the operator")
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise BootstrapError("previous source record must be a regular owner-only file")
+    if metadata.st_uid != os.getuid():
+        raise BootstrapError("previous source record must be owned by the operator")
+    materializer = _load_materializer()
+    try:
+        previous = materializer.read_source_record(path)
+    except materializer.MaterializationError as exc:
+        raise BootstrapError("previous source record is invalid or unreadable") from exc
+    return materializer, previous
+
+
+def _rotation_manifest(materializer, previous_manifest: bytes) -> bytes:
+    previous = materializer.parse_manifest(previous_manifest)
+    previous_material = {
+        key_material
+        for purposes in previous.keys.values()
+        for key_material in purposes.values()
+    }
+    previous_key_ids = set(previous.keys)
+    while True:
+        active_key_id = _random_identifier(16)
+        if active_key_id not in previous_key_ids:
+            break
+
+    def fresh_key() -> bytes:
+        while True:
+            candidate = secrets.token_bytes(KEY_BYTES)
+            if candidate not in previous_material:
+                return candidate
+
+    bare_login_key = fresh_key()
+    connect_token_key = fresh_key()
+    while connect_token_key == bare_login_key:
+        connect_token_key = fresh_key()
+    lines = ["version=1", f"activeKeyId={active_key_id}"]
+    for key_id, purposes in previous.keys.items():
+        for purpose in ("bare-login", "connect-token"):
+            encoded = base64.urlsafe_b64encode(purposes[purpose]).rstrip(b"=").decode("ascii")
+            lines.append(f"key:{key_id}:{purpose}={encoded}")
+    for purpose, key_material in (
+        ("bare-login", bare_login_key),
+        ("connect-token", connect_token_key),
+    ):
+        encoded = base64.urlsafe_b64encode(key_material).rstrip(b"=").decode("ascii")
+        lines.append(f"key:{active_key_id}:{purpose}={encoded}")
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def build_rotated_source_record(
+    previous_source_record: Path,
+    environment_id: str,
+    namespace: str,
+    source_ttl_seconds: int,
+    now: dt.datetime | None = None,
+    repository_root: Path | None = None,
+) -> bytes:
+    """Build a rotation record while retaining every prior decrypt-only key."""
+
+    repository_root = repository_root or _repository_root()
+    environment_id = _validate_environment_id(environment_id)
+    namespace = _validate_namespace(namespace)
+    source_ttl_seconds = _validate_source_ttl(source_ttl_seconds)
+    materializer, previous = _read_previous_source_record(Path(previous_source_record), repository_root)
+    if previous.environment_id != environment_id:
+        raise BootstrapError("previous source record environment does not match the requested environment")
+    if previous.target_namespace != namespace:
+        raise BootstrapError("previous source record namespace does not match the requested namespace")
+    current_time = now or dt.datetime.now(dt.timezone.utc)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        raise BootstrapError("bootstrap clock must be timezone-aware")
+    current_time = current_time.astimezone(dt.timezone.utc)
+    if current_time <= previous.source_created_at:
+        raise BootstrapError("rotation source creation time must follow the previous source creation time")
+    while True:
+        source_generation = _random_identifier(32)
+        if source_generation != previous.source_generation:
+            break
+    source_record = _source_record_bytes(
+        environment_id,
+        namespace,
+        source_ttl_seconds,
+        current_time,
+        _rotation_manifest(materializer, previous.manifest_bytes),
+        previous.source_generation,
+        source_generation,
+    )
+    if len(source_record) > materializer.MAX_SOURCE_RECORD_BYTES:
+        raise BootstrapError("rotated source record exceeds the materializer size limit")
+    return source_record
+
+
 def _open_owner_directory(output_path: Path, repository_root: Path) -> tuple[int, str]:
     if not output_path.is_absolute():
         raise BootstrapError("output must be an absolute path")
+    try:
+        os.lstat(output_path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise BootstrapError("output path cannot be inspected") from exc
+    else:
+        raise BootstrapError("output already exists; refusing to overwrite or regenerate")
     try:
         resolved_output = output_path.resolve(strict=False)
         resolved_repository = repository_root.resolve(strict=True)
@@ -244,6 +396,33 @@ def create_initial_source_record(
         os.close(directory_fd)
 
 
+def create_rotated_source_record(
+    output: Path,
+    previous_source_record: Path,
+    environment_id: str,
+    namespace: str,
+    source_ttl_seconds: int,
+    now: dt.datetime | None = None,
+    repository_root: Path | None = None,
+) -> None:
+    """Create one explicit rotation record without retiring any prior key."""
+
+    repository_root = repository_root or _repository_root()
+    directory_fd, output_name = _open_owner_directory(Path(output), repository_root)
+    try:
+        source_record = build_rotated_source_record(
+            previous_source_record=previous_source_record,
+            environment_id=environment_id,
+            namespace=namespace,
+            source_ttl_seconds=source_ttl_seconds,
+            now=now,
+            repository_root=repository_root,
+        )
+        _write_once(directory_fd, output_name, source_record)
+    finally:
+        os.close(directory_fd)
+
+
 def _positive_seconds(value: str) -> int:
     try:
         parsed = int(value)
@@ -256,9 +435,15 @@ def _positive_seconds(value: str) -> int:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", nargs="?", choices=("create", "rotate"), default=None)
     parser.add_argument("--output", required=True, type=Path, help="absolute owner-only custody output file")
     parser.add_argument("--environment-id", required=True)
     parser.add_argument("--namespace", required=True)
+    parser.add_argument(
+        "--previous-source-record",
+        type=Path,
+        help="protected prior source record; required only for explicit rotation",
+    )
     parser.add_argument(
         "--source-ttl-seconds",
         required=True,
@@ -271,19 +456,34 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = _parse_args(argv)
-        create_initial_source_record(
-            output=args.output,
-            environment_id=args.environment_id,
-            namespace=args.namespace,
-            source_ttl_seconds=args.source_ttl_seconds,
-        )
+        if args.action != "rotate" and args.previous_source_record is not None:
+            raise BootstrapError("create action cannot specify a previous source record")
+        if args.action == "rotate" and args.previous_source_record is None:
+            raise BootstrapError("rotate action requires a previous source record")
+        if args.action == "rotate":
+            create_rotated_source_record(
+                output=args.output,
+                previous_source_record=args.previous_source_record,
+                environment_id=args.environment_id,
+                namespace=args.namespace,
+                source_ttl_seconds=args.source_ttl_seconds,
+            )
+            success_message = "created rotated Account response-envelope source record"
+        else:
+            create_initial_source_record(
+                output=args.output,
+                environment_id=args.environment_id,
+                namespace=args.namespace,
+                source_ttl_seconds=args.source_ttl_seconds,
+            )
+            success_message = "created initial Account response-envelope source record"
     except BootstrapError as exc:
         print(f"bootstrap failed: {exc}", file=sys.stderr)
         return 1
     except (OSError, OverflowError, TypeError, ValueError):
         print("bootstrap failed: unable to create protected source record", file=sys.stderr)
         return 1
-    print("created initial Account response-envelope source record")
+    print(success_message)
     return 0
 
 
