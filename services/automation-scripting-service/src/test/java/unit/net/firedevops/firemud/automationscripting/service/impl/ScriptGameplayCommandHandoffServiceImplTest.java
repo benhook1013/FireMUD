@@ -34,6 +34,8 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -646,14 +648,15 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("plugin_disabled");
   }
 
-  @Test
-  void preservesPriorAttemptedChildWhenLaterFanoutIsFenced() {
+  @ParameterizedTest
+  @CsvSource({"enqueued", "duplicate_noop"})
+  void preservesPriorAttemptedChildWhenLaterFanoutIsFenced(String attemptedOutcome) {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptHandoffEventRepository handoffEventRepository =
         Mockito.mock(ScriptHandoffEventRepository.class);
     ScriptHandoffEvent acceptedEvent = new ScriptHandoffEvent();
-    acceptedEvent.setHandoffOutcome("accepted");
+    acceptedEvent.setHandoffOutcome(attemptedOutcome);
     acceptedEvent.setHandoffReason("game_session_accepted");
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 2))
         .thenReturn(Optional.of(acceptedEvent));
@@ -673,8 +676,45 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     verifyNoInteractions(gameSessionClient);
     verify(handoffEventRepository, never()).save(Mockito.any());
-    assertThat(acceptedEvent.getHandoffOutcome()).isEqualTo("accepted");
+    assertThat(acceptedEvent.getHandoffOutcome()).isEqualTo(attemptedOutcome);
     assertThat(acceptedEvent.getHandoffReason()).isEqualTo("game_session_accepted");
+  }
+
+  @Test
+  void rewritesExistingUnattemptedChildWithLatestFenceReason() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent existingEvent = new ScriptHandoffEvent();
+    existingEvent.setId(44L);
+    existingEvent.setRowVersion(7);
+    existingEvent.setHandoffOutcome("unattempted");
+    existingEvent.setHandoffReason("runtime_paused");
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 2))
+        .thenReturn(Optional.of(existingEvent));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    service.recordUnattempted(
+        workItem(),
+        emittedCommand("WAIT", "target-entity-1", "7", "region-1", 12L, 34L, 2),
+        "plugin_disabled");
+
+    verifyNoInteractions(gameSessionClient);
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getId()).isEqualTo(44L);
+    assertThat(handoffCaptor.getValue().getRowVersion()).isEqualTo(7);
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("unattempted");
+    assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("plugin_disabled");
   }
 
   @Test
