@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FireMUD ember crest</title>
+  <path d="M32 3 57 12v19c0 16-9 25-25 31C16 56 7 47 7 31V12L32 3Z" fill="#a51f27"/>
+  <path d="M32 7 53 15v16c0 13-7 21-21 26-14-5-21-13-21-26V15L32 7Z" fill="none" stroke="#ffbc68" stroke-width="2"/>
+  <path d="M32 14c1 8-3 11-8 17-4 5-5 9-5 13 0 8 6 13 13 13s13-5 13-13c0-7-4-12-8-17 0 7-2 10-5 12 2-9-4-14 0-25Z" fill="#ff8b42"/>
+  <path d="M32 36c0 4-4 7-4 11 0 3 2 5 4 5 3 0 5-2 5-5 0-4-3-6-3-8 0 3-1 4-2 5v-8Z" fill="#fff2c9"/>
+</svg>

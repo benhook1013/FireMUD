@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FireMUD flame M monogram</title>
+  <rect width="64" height="64" rx="14" fill="#25212a"/>
+  <path d="M9 51V28l8 8c0-13 7-20 15-30 1 11 8 14 8 23l7-7c7 8 9 17 8 29H43V36L32 49 21 36v15H9Z" fill="#f15a35"/>
+  <path d="M21 51V36l11 13 11-13v15h-7v-7l-4 5-4-5v7h-7Z" fill="#ffd18a"/>
+</svg>

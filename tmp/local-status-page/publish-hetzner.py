@@ -14,6 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "output" / "index.html"
 PUBLIC_COPY = ROOT / "output" / "public-index.html"
+ASSET_FILES = (
+    "icon-options.html", "flame-ember.svg", "flame-monogram.svg", "flame-crest.svg", "flame-pixel.svg",
+)
 SSH_KEY = Path("/home/ben/.ssh/firemud_preview_ed25519")
 SSH_TARGET = "root@77.42.29.156"
 HOST = "status.preview.firedevops.net"
@@ -74,7 +77,9 @@ def public_html(source: str, local_url: str) -> str:
 
 
 def resources(document: str) -> tuple[dict, dict]:
-    digest = hashlib.sha256(document.encode()).hexdigest()
+    pages = {"index.html": document}
+    pages.update({name: (ROOT / "assets" / name).read_text(encoding="utf-8") for name in ASSET_FILES})
+    digest = hashlib.sha256(json.dumps(pages, sort_keys=True).encode()).hexdigest()
     labels = {"app": "firemud-status-page"}
     namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}
     objects = {
@@ -85,7 +90,7 @@ def resources(document: str) -> tuple[dict, dict]:
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "status-page-html", "namespace": NAMESPACE, "labels": labels},
-                "data": {"index.html": document},
+                "data": pages,
             },
             {
                 "apiVersion": "apps/v1",

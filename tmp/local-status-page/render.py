@@ -20,6 +20,9 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = ROOT / "status.json"
 DEFAULT_OUTPUT = ROOT / "output" / "index.html"
+ASSET_FILES = (
+    "icon-options.html", "flame-ember.svg", "flame-monogram.svg", "flame-crest.svg", "flame-pixel.svg",
+)
 REPO_URL = "https://github.com/benhook1013/FireMUD/pull/"
 REPO_HOME = "https://github.com/benhook1013/FireMUD"
 REPO = "benhook1013/FireMUD"
@@ -575,7 +578,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="status-snapshot" content="{safe(now.isoformat())}">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<link rel="icon" type="image/svg+xml" href="/flame-ember.svg">
 <title>FireMUD · local delivery status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
@@ -586,14 +590,14 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }} heade
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ display: grid; grid-template-columns: 12.5rem minmax(0,1fr); gap: .65rem; align-items: center; min-height: 2.6rem; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
-.refresh-slot {{ display: flex; align-items: center; width: 12.5rem; min-height: 2.6rem; }}
-.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 2.6rem; border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-form {{ display: grid; grid-template-columns: 12.5rem minmax(0,1fr); gap: .65rem; align-items: center; height: 2.6rem; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
+.refresh-slot {{ display: flex; align-items: center; width: 12.5rem; height: 100%; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
 .refresh-time {{ line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
 .refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
-.refresh-form.failed .refresh-progress {{ position: static; width: auto; height: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal; }}
+.refresh-form.failed .refresh-progress {{ position: fixed; z-index: 10; left: 1rem; right: 1rem; bottom: 1rem; width: auto; height: auto; max-width: 36rem; margin: 0 auto; padding: .75rem 1rem; overflow: visible; clip-path: none; white-space: normal; border: 1px solid #e9b7bb; border-radius: 8px; background: #71232f; color: #fff; box-shadow: 0 4px 18px #252b3940; }}
 section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #5c6571; font-size: .88rem; }}
 .stack, .card {{ background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; box-shadow: 0 3px 12px #252b390c; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
@@ -635,7 +639,7 @@ header.mast {{ background: var(--smoke); padding: 1rem clamp(1rem,4vw,3.5rem) .8
 .mast-inner {{ max-width: 1440px; margin: auto; }}
 .mast-top {{ display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; }}
 .brand {{ display: inline-block; align-self: flex-start; margin: 0; color: #fff; text-decoration: none; font-size: 1.25rem; font-weight: 850; letter-spacing: -.04em; }}
-.snapshot {{ color: #eadfe2; font-size: .75rem; text-align: right; }}
+.snapshot {{ color: #eadfe2; font-size: .75rem; text-align: right; }} .snapshot a {{ color: #fff; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
@@ -644,7 +648,7 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
 .front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
 .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: #fff; color: var(--ink); font-size: .8rem; }}
-.front-fact > strong {{ color: #62212f; font-size: .8rem; font-weight: 800; }}
+.front-fact > strong {{ color: #62212f; font-size: .8rem; font-weight: 700; }}
 .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 .front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
 .front-fact-value .additions {{ color: #9de0bd; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #ffc390; }}
@@ -687,9 +691,9 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
 a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .snapshot {{ align-self: flex-start; text-align: left; }} .refresh-form {{ align-items: center; flex-direction: row; gap: .65rem; margin-left: 0; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .snapshot {{ align-self: flex-start; text-align: left; }} .refresh-form {{ gap: .65rem; margin-left: 0; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="mast-top"><a class="brand" href="{REPO_HOME}">FireMUD</a><span class="snapshot">Private local snapshot</span></div>
+<header class="mast"><div class="mast-inner"><div class="mast-top"><a class="brand" href="{REPO_HOME}">FireMUD</a><span class="snapshot">Private local snapshot · <a href="/icon-options.html">Icon options</a></span></div>
 <form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{header_time}</span></form></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
@@ -720,6 +724,15 @@ def main() -> None:
     now = datetime.now(timezone.utc)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
+    for name in ASSET_FILES:
+        source = ROOT / "assets" / name
+        with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=".asset-", delete=False) as asset_temp:
+            asset_temp.write(source.read_bytes())
+            asset_temp_path = Path(asset_temp.name)
+        try:
+            os.replace(asset_temp_path, args.output.parent / name)
+        finally:
+            asset_temp_path.unlink(missing_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".status-", delete=False) as temporary:
         temporary.write(rendered)
         temporary_path = Path(temporary.name)

@@ -12,6 +12,14 @@ SPEC.loader.exec_module(publisher)
 
 
 class PublishedPageTest(unittest.TestCase):
+    def test_public_resources_include_icon_gallery_and_favicon(self):
+        _, objects = publisher.resources("<html>status</html>")
+        pages = objects["items"][0]["data"]
+        self.assertIn("icon-options.html", pages)
+        self.assertIn("flame-ember.svg", pages)
+        self.assertIn('src="/flame-ember.svg"', pages["icon-options.html"])
+        self.assertIn('<svg xmlns="http://www.w3.org/2000/svg"', pages["flame-ember.svg"])
+
     def test_local_refresh_url_uses_static_windows_lan_address(self):
         with mock.patch.object(publisher.subprocess, "run", side_effect=AssertionError("unexpected subprocess")) as run:
             self.assertEqual(publisher.local_wifi_url(), "http://192.168.50.100:8877/")
