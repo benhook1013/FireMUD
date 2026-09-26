@@ -888,6 +888,64 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void activationRejectsCurrentRowRequestIdWithoutImmutableHistory() {
+    PluginRuntimeState existing = activePluginState();
+    existing.setControlPlaneRequestId("reused-request");
+    existing.setControlPlaneRequestFingerprint("");
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    PluginRuntimeStateService service =
+        service(repository, eventRepository, historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1",
+                        "game-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "reused-request",
+                        "operator",
+                        "activate")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("control_plane_request_id has no immutable activation request history");
+
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(eventRepository);
+  }
+
+  @Test
+  void transitionRejectsCurrentRowRequestIdWithoutImmutableHistory() {
+    PluginRuntimeState existing = activePluginState();
+    existing.setControlPlaneRequestId("reused-request");
+    existing.setControlPlaneRequestFingerprint("matching-looking-fingerprint");
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    PluginRuntimeStateService service =
+        service(repository, eventRepository, historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.disable(
+                    new PluginRuntimeStateService.PluginStateCommand(
+                        "1", "game-1", "plugin-1", "reused-request", "operator", "disable")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("control_plane_request_id has no immutable plugin state request history");
+
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(eventRepository);
+  }
+
+  @Test
   void readsRuntimeStatusWithPublicationLookupFailureMetadata() {
     PluginRuntimeState existing = new PluginRuntimeState();
     existing.setTenantId("1");

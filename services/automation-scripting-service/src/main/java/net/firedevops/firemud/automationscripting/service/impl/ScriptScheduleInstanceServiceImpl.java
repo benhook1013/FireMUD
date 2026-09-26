@@ -806,6 +806,21 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     boolean compatibleRuntimeGeneration = sameRuntimeGeneration && !pluginLifecycleFenceChanged;
     boolean sameScheduleConfiguration =
         existingRow && sameScheduleConfiguration(instance, definition, binding);
+    boolean settledWallClockLifecycleRefresh =
+        nonPinTransitionSeed == null
+            && existingRow
+            && UNIT_MILLISECONDS.equals(definition.getCadenceUnit())
+            && STATUS_READY.equals(instance.getMaterializationStatus())
+            && previousNextDueAt == null
+            && instance.getLastObservedTickId() != null
+            && !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
+            && instance.getRuntimeRegionEpoch() != null
+            && instance.getRuntimeRegionEpoch() > 0
+            && sameRuntimeGeneration
+            && sameScheduleConfiguration
+            && pluginActivationEpoch > 0
+            && previousPluginActivationEpoch == pluginActivationEpoch
+            && previousLifecycleRevision != lifecycleRevision;
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
@@ -846,12 +861,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (UNIT_MILLISECONDS.equals(definition.getCadenceUnit())) {
       instance.setMaterializationStatus(STATUS_READY);
       boolean compatibleExistingRow =
-          nonPinTransitionSeed == null && compatibleRuntimeGeneration && sameScheduleConfiguration;
+          (nonPinTransitionSeed == null
+                  && compatibleRuntimeGeneration
+                  && sameScheduleConfiguration)
+              || settledWallClockLifecycleRefresh;
       if (!compatibleExistingRow) {
         Instant seed = nonPinTransitionSeed != null ? nonPinTransitionSeed : pinObservedAt;
         try {
           Instant nextDueAt = seed.plusMillis(definition.getCadenceValue());
-          if (pluginLifecycleFenceChanged && Objects.equals(nextDueAt, previousNextDueAt)) {
+          if (pluginLifecycleFenceChanged
+              && Objects.equals(nextDueAt, previousNextDueAt)) {
             // Lifecycle revision is fence evidence but not candidate identity. Do not let a
             // re-seeded wall-clock schedule recreate the displaced generation's due identity.
             nextDueAt = nextDueAt.plusMillis(definition.getCadenceValue());
@@ -1073,6 +1092,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         && hasRetainedMaterializationEvidence(instance)) {
       // See the tick path above: keep a retained wall-clock due point pending until complete
       // materialization evidence arrives.
+      return new WallClockAdvanceResult(false, null, null);
+    }
+    if (!runtimeScopeChanged
+        && currentDueAt == null
+        && hasRetainedMaterializationEvidence(instance)) {
+      // A null due point with retained runtime progress is a settled occurrence, not an
+      // uninitialized schedule. Preserve it across observations until a new generation is
+      // materialized.
       return new WallClockAdvanceResult(false, null, null);
     }
     TimerFiringCandidate suppressedCandidate =

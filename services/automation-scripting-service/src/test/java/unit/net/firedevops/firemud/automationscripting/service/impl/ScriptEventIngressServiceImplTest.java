@@ -4584,7 +4584,8 @@ class ScriptEventIngressServiceImplTest {
     verify(repository).save(finalizedCaptor.capture());
     assertThat(finalizedCaptor.getValue().getPluginActivationEpoch()).isEqualTo(1L);
     assertThat(finalizedCaptor.getValue().getLifecycleRevision()).isEqualTo(1L);
-    assertThat(finalizedCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_ADMITTED");
+    assertThat(finalizedCaptor.getValue().getSourceState())
+        .isEqualTo("TRIGGER_ADMITTED");
     InOrder order = Mockito.inOrder(repository, pluginRuntimeStateService);
     order.verify(repository).insertIfAbsentByIdentity(Mockito.any());
     order.verify(pluginRuntimeStateService)

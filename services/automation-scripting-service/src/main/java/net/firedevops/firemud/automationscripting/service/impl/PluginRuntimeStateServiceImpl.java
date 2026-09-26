@@ -206,11 +206,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     String previous = normalize(state.getActivePluginVersionId());
     String actorPrincipal = normalize(command.actorPrincipal());
     if (controlPlaneRequestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different activation request");
-      }
-      return new ActivationResult(previous, previous, controlPlaneRequestId);
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable activation request history");
     }
     GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
     if (matches(state, command.targetPluginVersionId(), PluginState.PLUGIN_STATE_ENABLED)) {
@@ -572,11 +569,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                         command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
     String previous = normalize(state.getActivePluginVersionId());
     if (requestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different plugin state request");
-      }
-      return true;
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable plugin state request history");
     }
     if (targetState.name().equals(state.getPluginState())) {
       recordRequest(

@@ -382,12 +382,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
-    if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
-        > outputProperties.getMaxSerializedWorkItemBytes()) {
-      return validation(
-          new TriggerAdmission(
-              false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0));
-    }
     if (definition == null) {
       return validation(rejected("unknown_event_type"));
     }
