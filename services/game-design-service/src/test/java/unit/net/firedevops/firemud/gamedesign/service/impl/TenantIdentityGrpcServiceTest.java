@@ -13,11 +13,15 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
+import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityResponse;
 import org.junit.jupiter.api.Test;
@@ -29,8 +33,52 @@ class TenantIdentityGrpcServiceTest {
       UUID.fromString("87426bb3-a733-43f0-9c8e-2e379cbdf7ec");
 
   private final GameRepository repository = mock(GameRepository.class);
+  private final TenantAssociationMigrationService associationService =
+      mock(TenantAssociationMigrationService.class);
   private final TenantIdentityGrpcService service =
-      new TenantIdentityGrpcService(repository, "test");
+      new TenantIdentityGrpcService(repository, associationService, "test");
+
+  @Test
+  void approvedAccountAssociationReadBindsExactOwnerAndManifestEvidence() {
+    when(associationService.findByLegacyAccountTenantId(41L))
+        .thenReturn(Optional.of(approvedAssociation()));
+
+    AssociationObserver observer = associationCall(41L, ACCOUNT_PEER);
+
+    assertNull(observer.errorCode);
+    assertTrue(observer.completed);
+    assertNotNull(observer.value);
+    assertEquals(41L, observer.value.getLegacyAccountTenantId());
+    assertEquals("legacy-game-7", observer.value.getSourceLegacyGameTenantId());
+    assertEquals(CANONICAL_TENANT_ID.toString(), observer.value.getCanonicalTenantId());
+    assertEquals("sha256:" + "a".repeat(64), observer.value.getAccountEvidenceDigest());
+    assertEquals("sha256:" + "b".repeat(64), observer.value.getManifestDigest());
+    assertEquals(
+        Base64.getEncoder().encodeToString(new byte[64]), observer.value.getManifestSignature());
+    assertEquals("reviewed-change-123", observer.value.getApprovalReference());
+    assertEquals(1, observer.value.getManifestSchemaVersion());
+    verify(associationService).findByLegacyAccountTenantId(41L);
+  }
+
+  @Test
+  void associationReadRejectsMissingPeerAndInvalidNumericKeyBeforeOwnerRead() {
+    assertEquals(Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, null)));
+    assertEquals(
+        Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, WRONG_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT, associationStatus(associationCall(0L, ACCOUNT_PEER)));
+    verifyNoInteractions(associationService);
+  }
+
+  @Test
+  void associationReadFailsClosedForAbsentOrCorruptOwnerEvidence() {
+    when(associationService.findByLegacyAccountTenantId(41L)).thenReturn(Optional.empty());
+    when(associationService.findByLegacyAccountTenantId(42L))
+        .thenThrow(new IllegalStateException("corrupt operation"));
+    assertEquals(Status.Code.NOT_FOUND, associationStatus(associationCall(41L, ACCOUNT_PEER)));
+    assertEquals(
+        Status.Code.FAILED_PRECONDITION, associationStatus(associationCall(42L, ACCOUNT_PEER)));
+  }
 
   @Test
   void exactAccountPeerReadsOwnerSourceAndProvenance() {
@@ -119,6 +167,48 @@ class TenantIdentityGrpcServiceTest {
     return observer;
   }
 
+  private AssociationObserver associationCall(long accountTenantId, String peerUri) {
+    AssociationObserver observer = new AssociationObserver();
+    Context context = Context.current();
+    if (peerUri != null) {
+      context =
+          context.withValue(
+              GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
+    }
+    context.run(
+        () ->
+            service.resolveLegacyAccountTenantAssociation(
+                ResolveLegacyAccountTenantAssociationRequest.newBuilder()
+                    .setLegacyAccountTenantId(accountTenantId)
+                    .build(),
+                observer));
+    return observer;
+  }
+
+  private ApprovedAssociation approvedAssociation() {
+    return new ApprovedAssociation(
+        41L,
+        "legacy-game-7",
+        CANONICAL_TENANT_ID,
+        7L,
+        "sha256:" + "a".repeat(64),
+        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+        "sha256:" + "b".repeat(64),
+        Base64.getEncoder().encodeToString(new byte[64]),
+        "test",
+        "game-design-owner-2026",
+        "owner@example.test",
+        "reviewed-change-123",
+        "2026-09-26T00:00:00Z",
+        1,
+        1);
+  }
+
+  private static Status.Code associationStatus(AssociationObserver observer) {
+    assertNotNull(observer.errorCode);
+    return observer.errorCode;
+  }
+
   private static Status.Code status(TestObserver observer) {
     assertNotNull(observer.errorCode);
     return observer.errorCode;
@@ -132,6 +222,28 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onNext(ResolveLegacyGameTenantIdentityResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class AssociationObserver
+      implements StreamObserver<ResolveLegacyAccountTenantAssociationResponse> {
+    private ResolveLegacyAccountTenantAssociationResponse value;
+    private Status.Code errorCode;
+    private boolean completed;
+
+    @Override
+    public void onNext(ResolveLegacyAccountTenantAssociationResponse response) {
       value = response;
     }
 
