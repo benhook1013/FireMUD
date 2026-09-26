@@ -150,6 +150,7 @@ class AccountJoinPostgresIntegrationTest {
                   .isEqualTo(1L);
             });
     assertTransitionAndAuditOutboxOnce(fixture, result.membershipId());
+    assertRoleSnapshot(fixture, result.membershipId(), 1L, List.of("player"));
   }
 
   @Test
@@ -190,6 +191,8 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(countMemberships(fixture)).isZero();
     assertThat(countJoinOutbox(fixture)).isZero();
     assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countRoleSnapshotHeaders(fixture)).isZero();
+    assertThat(countRoleSnapshotRows(fixture)).isZero();
 
     JoinPublicProductionResult recovered = join(fixture);
 
@@ -198,6 +201,7 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(recovered.replayed()).isFalse();
     assertThat(countMemberships(fixture)).isEqualTo(1L);
     assertTransitionAndAuditOutboxOnce(fixture, recovered.membershipId());
+    assertRoleSnapshot(fixture, recovered.membershipId(), 1L, List.of("player"));
   }
 
   @Test
@@ -272,6 +276,9 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(replayed.replayed()).isTrue();
     assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(1L);
     assertMembershipTransitionReceipt(fixture, "MEMBERSHIP_JOINED", 1L);
+    assertThat(countRoleSnapshotHeaders(fixture)).isEqualTo(1L);
+    assertThat(countRoleSnapshotRows(fixture)).isEqualTo(1L);
+    assertRoleSnapshot(fixture, joined.membershipId(), 1L, List.of("player"));
   }
 
   @Test
@@ -298,6 +305,33 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
+  void activeSnapshotWithoutLowercasePlayerFailsClosedInsteadOfAlreadyActive() {
+    JoinFixture initialJoin = fixture("active");
+    JoinPublicProductionResult initial = join(initialJoin);
+    assertThat(initial.success()).isTrue();
+
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshot_roles WHERE membership_id = ?",
+        initial.membershipId());
+    dsl.execute(
+        "INSERT INTO account_tenant_membership_role_snapshot_roles "
+            + "(membership_id, snapshot_version, role_identifier) VALUES (?, ?, ?)",
+        initial.membershipId(),
+        1L,
+        "designer");
+
+    JoinFixture retry = fixtureForMembership(initialJoin);
+    JoinPublicProductionResult result = join(retry);
+
+    assertThat(result.success()).isFalse();
+    assertThat(result.outcomeCode()).isEqualTo("MEMBERSHIP_RECONCILIATION_REQUIRED");
+    assertThat(countMembershipTransitionReceipts(retry)).isEqualTo(1L);
+    assertThat(countRoleSnapshotHeaders(retry)).isEqualTo(1L);
+    assertThat(countRoleSnapshotRows(retry)).isEqualTo(1L);
+    assertRoleSnapshot(retry, initial.membershipId(), 1L, List.of("designer"));
+  }
+
+  @Test
   void membershipTransitionReceiptSequenceIsIndependentForEachAccountTenantStream() {
     JoinFixture first = fixture("active");
     JoinFixture second = fixture("active", first.accountId());
@@ -316,6 +350,20 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(join(initialJoin).success()).isTrue();
     assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshot_roles "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
+    dsl.execute(
+        "INSERT INTO account_tenant_membership_role_snapshot_roles "
+            + "(membership_id, snapshot_version, role_identifier) "
+            + "SELECT id, membership_version, role_identifier FROM account_tenant_membership "
+            + "JOIN (VALUES ('designer')) AS roles(role_identifier) ON TRUE "
+            + "WHERE account_id = ? AND tenant_id = ?",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
     dsl.execute(
         "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
             + "gameplay_admission_allowed = FALSE WHERE account_id = ? AND tenant_id = ?",
@@ -341,6 +389,9 @@ class AccountJoinPostgresIntegrationTest {
               assertThat(row.get("membership_version", Long.class)).isEqualTo(2L);
               assertThat(row.get("membership_authority_generation", Long.class)).isEqualTo(2L);
             });
+    assertThat(countRoleSnapshotHeaders(reactivation)).isEqualTo(1L);
+    assertThat(countRoleSnapshotRows(reactivation)).isEqualTo(2L);
+    assertRoleSnapshot(reactivation, result.membershipId(), 2L, List.of("designer", "player"));
   }
 
   @Test
@@ -351,6 +402,18 @@ class AccountJoinPostgresIntegrationTest {
 
     dsl.execute("DELETE FROM account_join_operations WHERE request_id = ?", fixture.requestId());
 
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshot_roles "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        fixture.accountId(),
+        fixture.tenantId());
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshots "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        fixture.accountId(),
+        fixture.tenantId());
     dsl.execute(
         "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
         fixture.accountId(),
@@ -375,6 +438,18 @@ class AccountJoinPostgresIntegrationTest {
         initialJoin.tenantId());
     dsl.execute(
         "DELETE FROM account_join_operations WHERE request_id = ?", initialJoin.requestId());
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshot_roles "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshots "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
     dsl.execute(
         "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
         initialJoin.accountId(),
@@ -402,6 +477,18 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(join(initialJoin).success()).isTrue();
     dsl.execute(
         "DELETE FROM account_join_operations WHERE request_id = ?", initialJoin.requestId());
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshot_roles "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
+    dsl.execute(
+        "DELETE FROM account_tenant_membership_role_snapshots "
+            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
+            + "WHERE account_id = ? AND tenant_id = ?)",
+        initialJoin.accountId(),
+        initialJoin.tenantId());
     dsl.execute(
         "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
         initialJoin.accountId(),
@@ -457,15 +544,19 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(countMembershipTransitionReceipts(active)).isZero();
     assertThat(countMembershipTransitionReceipts(inactive)).isZero();
 
-    AuthenticationException activeJoinFailure =
-        assertThrows(AuthenticationException.class, () -> join(active));
-    AuthenticationException inactiveJoinFailure =
-        assertThrows(AuthenticationException.class, () -> join(inactive));
+    JoinPublicProductionResult activeJoinFailure = join(active);
+    JoinPublicProductionResult inactiveJoinFailure = join(inactive);
 
-    assertThat(activeJoinFailure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
-    assertThat(inactiveJoinFailure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(activeJoinFailure.success()).isFalse();
+    assertThat(activeJoinFailure.outcomeCode()).isEqualTo("MEMBERSHIP_RECONCILIATION_REQUIRED");
+    assertThat(inactiveJoinFailure.success()).isFalse();
+    assertThat(inactiveJoinFailure.outcomeCode()).isEqualTo("MEMBERSHIP_RECONCILIATION_REQUIRED");
     assertThat(countMembershipTransitionReceipts(active)).isZero();
     assertThat(countMembershipTransitionReceipts(inactive)).isZero();
+    assertThat(countRoleSnapshotHeaders(active)).isZero();
+    assertThat(countRoleSnapshotRows(active)).isZero();
+    assertThat(countRoleSnapshotHeaders(inactive)).isZero();
+    assertThat(countRoleSnapshotRows(inactive)).isZero();
     assertThat(
             dsl.resultQuery(
                     "SELECT lifecycle_state FROM account_tenant_membership "
@@ -617,6 +708,55 @@ class AccountJoinPostgresIntegrationTest {
                 fixture.accountId(),
                 fixture.tenantId())
             .fetchOne(0, Long.class));
+  }
+
+  private long countRoleSnapshotHeaders(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_tenant_membership_role_snapshots s "
+                    + "JOIN account_tenant_membership m ON m.id = s.membership_id "
+                    + "WHERE m.account_id = ? AND m.tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne(0, Long.class));
+  }
+
+  private long countRoleSnapshotRows(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_tenant_membership_role_snapshot_roles r "
+                    + "JOIN account_tenant_membership m ON m.id = r.membership_id "
+                    + "WHERE m.account_id = ? AND m.tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne(0, Long.class));
+  }
+
+  private void assertRoleSnapshot(
+      JoinFixture fixture, long membershipId, long expectedVersion, List<String> expectedRoles) {
+    var header =
+        dsl.resultQuery(
+                "SELECT membership_id, snapshot_version "
+                    + "FROM account_tenant_membership_role_snapshots "
+                    + "WHERE membership_id = ?",
+                membershipId)
+            .fetchOne();
+    assertThat(header).isNotNull();
+    assertThat(header.get("membership_id", Long.class)).isEqualTo(membershipId);
+    assertThat(header.get("snapshot_version", Long.class)).isEqualTo(expectedVersion);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT r.role_identifier "
+                        + "FROM account_tenant_membership_role_snapshot_roles r "
+                        + "JOIN account_tenant_membership m ON m.id = r.membership_id "
+                        + "WHERE m.account_id = ? AND m.tenant_id = ? "
+                        + "AND r.snapshot_version = ? "
+                        + "ORDER BY convert_to(r.role_identifier, 'UTF8')",
+                    fixture.accountId(),
+                    fixture.tenantId(),
+                    expectedVersion)
+                .fetch("role_identifier", String.class))
+        .containsExactlyElementsOf(expectedRoles);
   }
 
   private String receiptStreamKey(JoinFixture fixture) {

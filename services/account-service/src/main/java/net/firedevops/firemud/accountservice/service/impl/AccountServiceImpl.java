@@ -12,6 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +73,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
@@ -127,6 +130,8 @@ public class AccountServiceImpl implements AccountService {
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
+  private final AccountTenantMembershipRoleSnapshotRepository
+      accountTenantMembershipRoleSnapshotRepository;
   private final AccountMapper accountMapper;
   private final ProfileRepository profileRepository;
   private final ProfileMapper profileMapper;
@@ -158,6 +163,7 @@ public class AccountServiceImpl implements AccountService {
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
+      AccountTenantMembershipRoleSnapshotRepository accountTenantMembershipRoleSnapshotRepository,
       AccountMapper accountMapper,
       ProfileRepository profileRepository,
       ProfileMapper profileMapper,
@@ -184,6 +190,8 @@ public class AccountServiceImpl implements AccountService {
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
+    this.accountTenantMembershipRoleSnapshotRepository =
+        accountTenantMembershipRoleSnapshotRepository;
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
     this.profileMapper = profileMapper;
@@ -700,9 +708,17 @@ public class AccountServiceImpl implements AccountService {
       membership.setGameplayAdmissionAllowed(true);
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
+      accountTenantMembershipRoleSnapshotRepository.replace(
+          membership, membership.getMembershipVersion(), List.of("player"));
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
+      RoleSnapshot roleSnapshot;
+      try {
+        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+      } catch (IllegalStateException ex) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
       membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
       membership.setLifecycleState("ACTIVE");
@@ -712,10 +728,25 @@ public class AccountServiceImpl implements AccountService {
           membership.getMembershipAuthorityGeneration() + 1L);
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
+      List<String> restoredRoles = new ArrayList<>(roleSnapshot.roles());
+      if (!restoredRoles.contains("player")) {
+        restoredRoles.add("player");
+      }
+      accountTenantMembershipRoleSnapshotRepository.replace(
+          membership, membership.getMembershipVersion(), restoredRoles);
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_REACTIVATED";
     } else if ("ACTIVE".equals(membership.getLifecycleState())
         && membership.isGameplayAdmissionAllowed()) {
+      try {
+        if (!requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership)
+            .roles()
+            .contains("player")) {
+          return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+        }
+      } catch (IllegalStateException ex) {
+        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      }
       membershipTransitionReceiptRepository
           .findLatestReceipt(accountId, scope.tenantId())
           .orElseThrow(
@@ -759,6 +790,31 @@ public class AccountServiceImpl implements AccountService {
         membership.getMembershipVersion(),
         membership.getMembershipAuthorityGeneration(),
         false);
+  }
+
+  private RoleSnapshot requireRoleSnapshotForJoin(
+      long accountId, long tenantId, AccountTenantMembership membership) {
+    if (membership.getId() == null
+        || membership.getMembershipVersion() <= 0L
+        || membership.getAccount() == null
+        || membership.getAccount().getId() == null) {
+      throw new IllegalStateException("Account membership role snapshot identity is incomplete");
+    }
+    RoleSnapshot snapshot =
+        accountTenantMembershipRoleSnapshotRepository
+            .findForUpdate(
+                accountId, tenantId, membership.getId(), membership.getMembershipVersion())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Account membership role snapshot is missing or unverified"));
+    if (snapshot.accountId() != accountId
+        || snapshot.tenantId() != tenantId
+        || snapshot.membershipId() != membership.getId()
+        || snapshot.snapshotVersion() != membership.getMembershipVersion()) {
+      throw new IllegalStateException("Account membership role snapshot identity is mismatched");
+    }
+    return snapshot;
   }
 
   private JoinPublicProductionResult failedJoin(

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
@@ -92,6 +94,11 @@ class AccountServiceImplTest {
   @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
+
+  @Mock
+  private AccountTenantMembershipRoleSnapshotRepository
+      accountTenantMembershipRoleSnapshotRepository;
+
   @Mock private ProfileRepository profileRepository;
   @Mock private ProfileMapper profileMapper;
   @Mock private NotificationService notificationService;
@@ -203,6 +210,7 @@ class AccountServiceImplTest {
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
+            accountTenantMembershipRoleSnapshotRepository,
             mapper,
             profileRepository,
             profileMapper,
@@ -348,6 +356,14 @@ class AccountServiceImplTest {
             false));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.ArgumentCaptor<Collection<String>> roleSnapshotCaptor =
+        org.mockito.ArgumentCaptor.forClass(Collection.class);
+    org.mockito.Mockito.verify(accountTenantMembershipRoleSnapshotRepository)
+        .replace(
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.eq(1L),
+            roleSnapshotCaptor.capture());
+    assertEquals(java.util.List.of("player"), roleSnapshotCaptor.getValue().stream().toList());
     org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
         .append(
             org.mockito.ArgumentMatchers.any(java.util.UUID.class),
@@ -1582,6 +1598,7 @@ class AccountServiceImplTest {
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
+            accountTenantMembershipRoleSnapshotRepository,
             Mappers.getMapper(AccountMapper.class),
             profileRepository,
             profileMapper,

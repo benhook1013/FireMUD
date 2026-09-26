@@ -32,6 +32,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepo
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -55,7 +57,7 @@ class AccountJoinReconciliationServiceTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
 
   @Test
-  void exactReadbackCommitsEvenWhenScopeExpiredAndAuditOccurredAfterExpiry() {
+  void matchingRoleSnapshotCommitsEvenWhenScopeExpiredAndAuditOccurredAfterExpiry() {
     Fixture fixture = fixture(5);
     JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
     stubDue(fixture, pending, 5);
@@ -82,6 +84,8 @@ class AccountJoinReconciliationServiceTest {
     verify(fixture.joinOperations, never())
         .recordReconciliationAttempt(anyString(), anyInt(), anyInt(), any(), anyString(), any());
     verify(fixture.transitionReceipts).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.roleSnapshots)
+        .findForUpdate(ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION);
     verify(fixture.auditOutbox).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
     assertThat(reconciliationCounter(fixture, "committed")).isEqualTo(1);
   }
@@ -190,6 +194,99 @@ class AccountJoinReconciliationServiceTest {
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
     verifyNoInteractions(fixture.auditOutbox);
     assertThat(reconciliationCounter(fixture, "unresolved")).isEqualTo(1);
+  }
+
+  @Test
+  void missingRoleSnapshotStaysPendingAndDoesNotInferRoles() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(Optional.empty());
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT", NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT", NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verify(fixture.transitionReceipts, never()).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox, never()).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
+  }
+
+  @Test
+  void mismatchedRoleSnapshotStaysPendingAndDoesNotInferRoles() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(
+            Optional.of(
+                new RoleSnapshot(
+                    ACCOUNT_ID,
+                    TENANT_ID,
+                    MEMBERSHIP_ID,
+                    MEMBERSHIP_VERSION + 1,
+                    List.of("PLAYER"))));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH", NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH", NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verify(fixture.transitionReceipts, never()).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox, never()).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
+  }
+
+  @Test
+  void publicJoinSnapshotWithoutPlayerStaysPending() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending, 3);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(
+            Optional.of(
+                new RoleSnapshot(
+                    ACCOUNT_ID,
+                    TENANT_ID,
+                    MEMBERSHIP_ID,
+                    MEMBERSHIP_VERSION,
+                    List.of("designer"))));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH", NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID, 0, 3, NOW, "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH", NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -349,6 +446,8 @@ class AccountJoinReconciliationServiceTest {
     AccountJoinOperationRepository joinOperations = mock(AccountJoinOperationRepository.class);
     AccountConnectScopeRepository connectScopes = mock(AccountConnectScopeRepository.class);
     AccountTenantMembershipRepository memberships = mock(AccountTenantMembershipRepository.class);
+    AccountTenantMembershipRoleSnapshotRepository roleSnapshots =
+        mock(AccountTenantMembershipRoleSnapshotRepository.class);
     AccountMembershipTransitionReceiptRepository transitionReceipts =
         mock(AccountMembershipTransitionReceiptRepository.class);
     AccountAuditOutboxRepository auditOutbox = mock(AccountAuditOutboxRepository.class);
@@ -361,6 +460,7 @@ class AccountJoinReconciliationServiceTest {
             joinOperations,
             connectScopes,
             memberships,
+            roleSnapshots,
             transitionReceipts,
             auditOutbox,
             meterRegistry,
@@ -373,6 +473,7 @@ class AccountJoinReconciliationServiceTest {
         joinOperations,
         connectScopes,
         memberships,
+        roleSnapshots,
         transitionReceipts,
         auditOutbox,
         meterRegistry);
@@ -381,7 +482,15 @@ class AccountJoinReconciliationServiceTest {
   private static void stubActiveMembership(Fixture fixture) {
     when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
         .thenReturn(Optional.of(activeJoinMembership()));
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(Optional.of(activeRoleSnapshot()));
     stubReceiptFor(fixture, REQUEST_ID, MEMBERSHIP_ID);
+  }
+
+  private static RoleSnapshot activeRoleSnapshot() {
+    return new RoleSnapshot(
+        ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION, List.of("player"));
   }
 
   private static void stubReceiptFor(Fixture fixture, String requestId, long membershipId) {
@@ -628,6 +737,7 @@ class AccountJoinReconciliationServiceTest {
       AccountJoinOperationRepository joinOperations,
       AccountConnectScopeRepository connectScopes,
       AccountTenantMembershipRepository memberships,
+      AccountTenantMembershipRoleSnapshotRepository roleSnapshots,
       AccountMembershipTransitionReceiptRepository transitionReceipts,
       AccountAuditOutboxRepository auditOutbox,
       SimpleMeterRegistry meterRegistry) {}
