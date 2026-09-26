@@ -49,6 +49,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxReposi
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -87,6 +88,7 @@ class AccountServiceImplTest {
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
+  @Mock private AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
   @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -197,6 +199,7 @@ class AccountServiceImplTest {
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
+            membershipTransitionReceiptRepository,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
@@ -1575,6 +1578,7 @@ class AccountServiceImplTest {
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
+            membershipTransitionReceiptRepository,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
@@ -2257,6 +2261,137 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(11L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq(30000L));
+    org.mockito.Mockito.verifyNoInteractions(accountRealmAccessGrantRepository);
+  }
+
+  @Test
+  void issueConnectTokenRequiresCurrentGrantForNonPublicRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    PrivateConnectTokenContext context = preparePrivateConnectTokenContext(account, true);
+
+    ConnectTokenResult result =
+        service.issueConnectToken(
+            context.bootstrapToken(),
+            new ConnectTokenRequest(context.connectScopeId(), "req-private-grant"));
+
+    assertNotNull(result.connectToken());
+    assertFalse(result.replayed());
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository, org.mockito.Mockito.times(2))
+        .existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+    org.mockito.Mockito.verify(sessionService)
+        .storeSession(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(30000L));
+  }
+
+  @Test
+  void issueConnectTokenRejectsNonPublicRealmWhenCurrentGrantIsMissing() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    PrivateConnectTokenContext context = preparePrivateConnectTokenContext(account, false);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    context.bootstrapToken(),
+                    new ConnectTokenRequest(context.connectScopeId(), "req-private-grant-denied")));
+
+    assertEquals("REALM_ACCESS_DENIED", exception.getCode());
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository, org.mockito.Mockito.times(2))
+        .existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(context.connectScopeId()),
+            org.mockito.ArgumentMatchers.eq("req-private-grant-denied"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay -> !replay.success() && "REALM_ACCESS_DENIED".equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
+  }
+
+  @Test
+  void issueConnectTokenRequiresJoinForInactivePublicMembership() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    PrivateConnectTokenContext context = preparePublicInactiveConnectTokenContext(account, true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    context.bootstrapToken(),
+                    new ConnectTokenRequest(context.connectScopeId(), "req-inactive-public-join")));
+
+    assertEquals("JOIN_REQUIRED", exception.getCode());
+    verifyConnectTokenFailureDoesNotStoreSuccess(
+        context.connectScopeId(), "req-inactive-public-join", "JOIN_REQUIRED");
+  }
+
+  @Test
+  void issueConnectTokenRejectsInactivePublicMembershipWhenJoiningIsDisabled() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    PrivateConnectTokenContext context = preparePublicInactiveConnectTokenContext(account, false);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    context.bootstrapToken(),
+                    new ConnectTokenRequest(
+                        context.connectScopeId(), "req-inactive-public-policy-denied")));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    verifyConnectTokenFailureDoesNotStoreSuccess(
+        context.connectScopeId(),
+        "req-inactive-public-policy-denied",
+        "PUBLIC_PRODUCTION_ADMISSION_DENIED");
+  }
+
+  @Test
+  void issueConnectTokenRequiresActiveMembershipForNonPublicRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    PrivateConnectTokenContext context =
+        preparePrivateConnectTokenContext(account, true, "INACTIVE");
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    context.bootstrapToken(),
+                    new ConnectTokenRequest(context.connectScopeId(), "req-inactive-private")));
+
+    assertEquals("NON_PUBLIC_ENROLLMENT_REQUIRED", exception.getCode());
+    verifyConnectTokenFailureDoesNotStoreSuccess(
+        context.connectScopeId(), "req-inactive-private", "NON_PUBLIC_ENROLLMENT_REQUIRED");
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository, org.mockito.Mockito.times(1))
+        .existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
   }
 
   @Test
@@ -4357,6 +4492,99 @@ class AccountServiceImplTest {
       argon2.wipeArray(chars);
     }
   }
+
+  private PrivateConnectTokenContext preparePrivateConnectTokenContext(
+      Account account, boolean grantAtIssuance) {
+    return preparePrivateConnectTokenContext(account, grantAtIssuance, "ACTIVE");
+  }
+
+  private PrivateConnectTokenContext preparePrivateConnectTokenContext(
+      Account account, boolean grantAtIssuance, String membershipLifecycleState) {
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership tenantMembership = membership(account, 7L);
+    tenantMembership.setLifecycleState(membershipLifecycleState);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(tenantMembership));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(19L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            admissionPointer(7L, "demo", "preview", "55", 19L, true, false, "SHARED", "ALLOW_NEW"));
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true, grantAtIssuance);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    return new PrivateConnectTokenContext(bootstrap.bootstrapToken(), connectScopeId);
+  }
+
+  private PrivateConnectTokenContext preparePublicInactiveConnectTokenContext(
+      Account account, boolean publicJoiningAllowed) {
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership tenantMembership = membership(account, 7L);
+    tenantMembership.setLifecycleState("INACTIVE");
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(tenantMembership));
+    Subscription subscription = new Subscription();
+    subscription.setId(22L);
+    subscription.setTenantId(7L);
+    subscription.setStatus(publicJoiningAllowed ? "active" : "grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(subscription));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    return new PrivateConnectTokenContext(bootstrap.bootstrapToken(), connectScopeId);
+  }
+
+  private void verifyConnectTokenFailureDoesNotStoreSuccess(
+      String connectScopeId, String requestId, String errorCode) {
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq(requestId),
+            org.mockito.ArgumentMatchers.argThat(
+                replay -> !replay.success() && errorCode.equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
+  }
+
+  private record PrivateConnectTokenContext(String bootstrapToken, String connectScopeId) {}
 
   private static net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer admissionPointer(
       long tenantId,

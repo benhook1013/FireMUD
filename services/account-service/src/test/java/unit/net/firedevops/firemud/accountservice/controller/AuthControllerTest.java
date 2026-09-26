@@ -132,7 +132,7 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.data.gameInstanceId").value(42))
         .andExpect(jsonPath("$.data.realmSlug").value("production"))
         .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
-        .andExpect(jsonPath("$.data.jti").value("jti-1"))
+        .andExpect(jsonPath("$.data.jti").doesNotHaveJsonPath())
         .andExpect(jsonPath("$.data.requestId").value("req-7"))
         .andExpect(jsonPath("$.data.issuedAt").value("2026-03-30T00:00:00Z"))
         .andExpect(jsonPath("$.data.expiresAt").value("2026-03-30T00:00:30Z"))

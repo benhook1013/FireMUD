@@ -371,7 +371,8 @@ class FriendsCommandHandlerTest {
                                 .setWorldDisplayName("Demo World")
                                 .setRealmSlug("production")
                                 .setRealmDisplayName("Live Realm")
-                                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                                .setPlayableStateScope(
+                                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                                 .setPointerVersion(17L)
                                 .setActivityState(
                                     FriendPresenceActivityState
@@ -1113,8 +1114,7 @@ class FriendsCommandHandlerTest {
     FriendPresencePolicyViewOutput view =
         (FriendPresencePolicyViewOutput) result.outputs().getFirst().payload();
     assertThat(view.currentPolicy()).isEqualTo("FRIENDS_ONLY");
-    assertThat(view.options())
-        .noneMatch(option -> option.policy().equals("HIDDEN_STAFF"));
+    assertThat(view.options()).noneMatch(option -> option.policy().equals("HIDDEN_STAFF"));
     assertThat(view.options())
         .anySatisfy(
             option -> {
@@ -1316,9 +1316,7 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS,
-                java.util.List.of("HIDDEN_STAFF"),
-                "FRIENDS HIDDEN_STAFF"),
+                TextCommandType.FRIENDS, java.util.List.of("HIDDEN_STAFF"), "FRIENDS HIDDEN_STAFF"),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isFalse();

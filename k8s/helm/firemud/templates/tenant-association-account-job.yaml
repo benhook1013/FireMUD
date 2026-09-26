@@ -1,0 +1,185 @@
+{{- $migration := .Values.previewStack.tenantAssociationMigration | default (dict) -}}
+{{- $job := $migration.account | default (dict) -}}
+{{- if ($job.enabled | default false) -}}
+{{- if not .Values.previewStack.enabled -}}
+{{- fail "Account tenant association import requires previewStack.enabled=true" -}}
+{{- end -}}
+{{- $networkPolicies := .Values.previewStack.networkPolicies | default (dict) -}}
+{{- if not ($networkPolicies.enabled | default false) -}}
+{{- fail "Account tenant association import requires previewStack.networkPolicies.enabled=true" -}}
+{{- end -}}
+{{- $namespace := required "Account tenant association import requires targetNamespace" $job.targetNamespace -}}
+{{- if ne $namespace .Release.Namespace -}}
+{{- fail "Account tenant association targetNamespace must match the Helm release namespace" -}}
+{{- end -}}
+{{- $mode := required "Account tenant association import requires mode" $job.mode -}}
+{{- if not (has $mode (list "evidence" "import")) -}}
+{{- fail "Account tenant association mode must be evidence or import" -}}
+{{- end -}}
+{{- $runId := required "Account tenant association import requires runId" $job.runId -}}
+{{- if or (gt (len $runId) 32) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $runId)) -}}
+{{- fail "Account tenant association runId must be a DNS label of at most 32 characters" -}}
+{{- end -}}
+{{- $image := required "Account tenant association import requires an immutable image" $job.image -}}
+{{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" $image) -}}
+{{- fail "Account tenant association image must end in @sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- $tenantId := required "Account tenant association import requires legacyTenantId" $job.legacyTenantId | toString -}}
+{{- if not (regexMatch "^[1-9][0-9]*$" $tenantId) -}}
+{{- fail "Account tenant association legacyTenantId must be canonical positive decimal" -}}
+{{- end -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: account-tenant-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "account-tenant-%s-%s" $mode $runId | quote }}
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+  annotations:
+    firemud.dev/migration-mode: {{ $mode | quote }}
+    firemud.dev/migration-run-id: {{ $runId | quote }}
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: account-tenant-migrator
+        firemud.dev/workload: account-tenant-migrator
+    spec:
+      serviceAccountName: account-tenant-migrator
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.previewStack.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $secret := . }}
+        {{- if kindIs "string" $secret }}
+        - name: {{ $secret }}
+        {{- else }}
+{{ toYaml (list $secret) | indent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: migration
+          image: {{ $image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [java]
+          args:
+            - -jar
+            - /app/app.jar
+            - --spring.main.web-application-type=none
+            - --spring.grpc.server.enabled=false
+            - --firemud.account-tenant-migration.enabled=true
+          env:
+            - name: SPRING_FLYWAY_TABLE
+              value: flyway_schema_history_account_service
+            - name: SERVICE_SCHEMA
+              value: account_service
+            - name: FIREMUD_POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_HOST
+            - name: FIREMUD_POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_PORT
+            - name: FIREMUD_POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_DB
+            - name: FIREMUD_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_USER
+            - name: FIREMUD_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_PASSWORD
+            - name: FIREMUD_REDIS_ENABLED
+              value: "false"
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_ENABLED
+              value: "true"
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_MODE
+              value: {{ $mode | quote }}
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_LEGACY_TENANT_ID
+              value: {{ $tenantId | quote }}
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_TARGET_NAMESPACE
+              value: {{ $namespace | quote }}
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_ACCOUNT_TENANT_MIGRATION_POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 768Mi
+          volumeMounts:
+            - name: grpc-identity
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+            - name: migration-tmp
+              mountPath: /tmp
+      volumes:
+        - name: grpc-identity
+          secret:
+            secretName: firemud-grpc-account-tenant-migrator
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: migration-tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- end -}}

@@ -57,7 +57,7 @@ case " $* " in
       pr-42-tcp-proxy-bridge)
         printf '%s' '{"metadata":{"name":"pr-42-tcp-proxy-bridge"},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
         ;;
-      firemud-grpc-game-design-baseline-migrator)
+      firemud-grpc-game-design-baseline-migrator|firemud-grpc-account-tenant-migrator|firemud-grpc-game-design-tenant-migrator)
         if [[ -z "${FAKE_KUBECTL_SECRET_JSON:-}" ]]; then
           echo "migrator Secret fixture is required" >&2
           exit 2
@@ -230,6 +230,68 @@ grep -Fq 'did not become key-complete' "$TEMP_DIR/incomplete.err" || {
   exit 1
 }
 
+for migrator_identity in account-tenant-migrator game-design-tenant-migrator; do
+  runtime_calls_start="$(wc -l <"$STATE_DIR/calls")"
+  PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+    "$SCRIPT" "--$migrator_identity" dev >"$TEMP_DIR/$migrator_identity-issued.out"
+  runtime_calls="$(tail -n +$((runtime_calls_start + 1)) "$STATE_DIR/calls")"
+  if grep -Fq 'get secret' <<<"$runtime_calls"; then
+    echo "$migrator_identity certificate writer read a Secret" >&2
+    exit 1
+  fi
+  cp "$STATE_DIR/applied.yaml" "$TEMP_DIR/$migrator_identity-certificate.yaml"
+done
+python3 - "$TEMP_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(sys.argv[1])
+for identity in ("account-tenant-migrator", "game-design-tenant-migrator"):
+    document = yaml.safe_load((root / f"{identity}-certificate.yaml").read_text(encoding="utf-8"))
+    if document.get("kind") != "Certificate":
+        raise SystemExit(f"{identity} opt-in did not apply one Certificate")
+    namespace = document["metadata"].get("namespace")
+    if namespace != "dev" or document["metadata"].get("name") != f"{namespace}-grpc-{identity}":
+        raise SystemExit(f"{identity} Certificate name is not stable and namespace-bound")
+    spec = document["spec"]
+    if spec.get("secretName") != f"firemud-grpc-{identity}":
+        raise SystemExit(f"{identity} Certificate does not use its dedicated Secret")
+    if spec.get("uris") != [f"spiffe://firemud/ns/{namespace}/sa/{identity}"]:
+        raise SystemExit(f"{identity} Certificate URI SAN is not exact")
+    if "dnsNames" in spec or spec.get("usages") != ["digital signature", "key encipherment", "client auth"]:
+        raise SystemExit(f"{identity} Certificate is not URI-only clientAuth")
+    if spec.get("issuerRef") != {
+        "name": "firemud-ca-issuer",
+        "kind": "ClusterIssuer",
+        "group": "cert-manager.io",
+    }:
+        raise SystemExit(f"{identity} Certificate must use the internal ClusterIssuer")
+    if spec.get("secretTemplate", {}).get("metadata", {}).get("labels") != {
+        "firemud.dev/managed-by": "tenant-association-migration",
+        "firemud.dev/role": f"grpc-{identity}",
+        "firemud.dev/retention": "ephemeral",
+    }:
+        raise SystemExit(f"{identity} Secret labels do not match the tenant-migration profile")
+PY
+
+PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+  "$SCRIPT" --account-tenant-migrator dev >"$TEMP_DIR/account-tenant-migrator-repeat.out"
+python3 - "$TEMP_DIR/account-tenant-migrator-certificate.yaml" "$STATE_DIR/applied.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+first = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+second = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if first["metadata"]["name"] != second["metadata"]["name"]:
+    raise SystemExit("tenant migrator Certificate name changed on repeat issuance")
+if first["spec"] != second["spec"]:
+    raise SystemExit("tenant migrator Certificate spec changed on repeat issuance")
+PY
+
 runtime_calls_start="$(wc -l <"$STATE_DIR/calls")"
 PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
   "$SCRIPT" --migrator dev >"$TEMP_DIR/migrator-issued.out"
@@ -298,6 +360,31 @@ if grep -Fq 'tls.key' "$TEMP_DIR/migrator-verified.out"; then
   exit 1
 fi
 
+for migrator_identity in account-tenant-migrator game-design-tenant-migrator; do
+  openssl req -new -newkey rsa:2048 -nodes -keyout "$TEMP_DIR/$migrator_identity.key" \
+    -out "$TEMP_DIR/$migrator_identity.csr" -subj "/CN=$migrator_identity" \
+    -addext "subjectAltName=URI:spiffe://firemud/ns/dev/sa/$migrator_identity" \
+    -addext 'extendedKeyUsage=clientAuth' \
+    -addext 'keyUsage=digitalSignature,keyEncipherment' >/dev/null 2>&1
+  openssl x509 -req -in "$TEMP_DIR/$migrator_identity.csr" -CA "$TEMP_DIR/ca.crt" \
+    -CAkey "$TEMP_DIR/ca.key" -CAcreateserial -days 1 -copy_extensions copy \
+    -out "$TEMP_DIR/$migrator_identity.crt" >/dev/null 2>&1
+  jq -n \
+    --arg name "firemud-grpc-$migrator_identity" \
+    --arg leaf "$(base64 -w0 "$TEMP_DIR/$migrator_identity.crt")" \
+    --arg ca "$(base64 -w0 "$TEMP_DIR/ca.crt")" \
+    '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":"c2VjcmV0","ca.crt":$ca}}' \
+    >"$TEMP_DIR/$migrator_identity-secret.json"
+  PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+    FAKE_KUBECTL_SECRET_JSON="$TEMP_DIR/$migrator_identity-secret.json" \
+    FAKE_KUBECTL_TRUST_CA="$TEMP_DIR/ca.crt" \
+    "$SCRIPT" "--verify-$migrator_identity" dev >"$TEMP_DIR/$migrator_identity-verified.out"
+  grep -Fq "uri-san=spiffe://firemud/ns/dev/sa/$migrator_identity" \
+    "$TEMP_DIR/$migrator_identity-verified.out"
+  grep -Fq 'namespace-trust-match=true' "$TEMP_DIR/$migrator_identity-verified.out"
+  grep -Fq 'client-auth-only=true' "$TEMP_DIR/$migrator_identity-verified.out"
+done
+
 openssl req -new -newkey rsa:2048 -nodes -keyout "$TEMP_DIR/wrong-leaf.key" \
   -out "$TEMP_DIR/wrong-leaf.csr" -subj '/CN=wrong migrator' \
   -addext 'subjectAltName=URI:spiffe://firemud/ns/dev/sa/game-design-service' \
@@ -322,6 +409,24 @@ if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
 fi
 grep -Fq 'does not contain only the exact migrator SPIFFE URI SAN' \
   "$TEMP_DIR/wrong-migrator.err"
+
+jq -n \
+  --arg name firemud-grpc-account-tenant-migrator \
+  --arg leaf "$(base64 -w0 "$TEMP_DIR/wrong-leaf.crt")" \
+  --arg ca "$(base64 -w0 "$TEMP_DIR/ca.crt")" \
+  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":"c2VjcmV0","ca.crt":$ca}}' \
+  >"$TEMP_DIR/wrong-account-tenant-migrator-secret.json"
+if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+  FAKE_KUBECTL_SECRET_JSON="$TEMP_DIR/wrong-account-tenant-migrator-secret.json" \
+  FAKE_KUBECTL_TRUST_CA="$TEMP_DIR/ca.crt" \
+  "$SCRIPT" --verify-account-tenant-migrator dev \
+  >"$TEMP_DIR/wrong-account-tenant-migrator.out" \
+  2>"$TEMP_DIR/wrong-account-tenant-migrator.err"; then
+  echo "Account tenant migrator verifier accepted another workload identity" >&2
+  exit 1
+fi
+grep -Fq 'does not contain only the exact migrator SPIFFE URI SAN' \
+  "$TEMP_DIR/wrong-account-tenant-migrator.err"
 
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$TEMP_DIR/wrong-ca.key" \
   -out "$TEMP_DIR/wrong-ca.crt" -subj '/CN=Untrusted test CA' -days 1 >/dev/null 2>&1

@@ -158,8 +158,6 @@ components:
           type: string
         connectScopeId:
           type: string
-        jti:
-          type: string
         requestId:
           type: string
         issuedAt:
