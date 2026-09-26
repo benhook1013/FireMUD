@@ -66,9 +66,10 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
+    List<String> canonicalScriptNames = requestedNames.stream().sorted().toList();
     List<ScriptDefinition> defs =
         repository.findByTenantIdAndScriptVersionAndNameIn(
-            tenantKey, scriptPatchVersion, affectedScripts);
+            tenantKey, scriptPatchVersion, canonicalScriptNames);
     Set<String> resolvedNames =
         defs.stream().map(ScriptDefinition::getName).collect(java.util.stream.Collectors.toSet());
     if (defs.size() != requestedNames.size()
@@ -77,21 +78,46 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
-    if (!readinessProjectionService.beginPatchReadiness(
-        tenantId, scriptPatchVersion, defs.size())) {
+    defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();
+    readinessProjectionService.beginPatchReadiness(
+        tenantId, scriptPatchVersion, canonicalScriptNames);
+    List<ScriptDefinition> canonicalDefinitions = defs;
+    boolean applied =
+        readinessProjectionService.applyIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            admitOnLoad -> {
+              if (admitOnLoad) {
+                canonicalDefinitions.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
+              }
+              scheduleDefinitionService.refreshPatchSchedules(
+                  tenantId, scriptPatchVersion, canonicalDefinitions, canonicalScriptNames);
+              scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
+            });
+    if (!applied) {
       return false;
     }
-    defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
-    scheduleDefinitionService.refreshPatchSchedules(
-        tenantId, scriptPatchVersion, defs, affectedScripts);
-    scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
-    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
-    affectedScripts.forEach(map::remove);
-    for (ScriptDefinition def : defs) {
-      map.put(def.getName(), def.getDefinition());
+    boolean registryRebuilt =
+        readinessProjectionService.rebuildRegistryIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            () -> rebuildRegistry(tenantKey, canonicalScriptNames, canonicalDefinitions));
+    if (!registryRebuilt) {
+      return false;
     }
     logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
     return true;
+  }
+
+  private void rebuildRegistry(
+      long tenantKey, List<String> scriptNames, List<ScriptDefinition> definitions) {
+    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
+    scriptNames.forEach(map::remove);
+    for (ScriptDefinition definition : definitions) {
+      map.put(definition.getName(), definition.getDefinition());
+    }
   }
 
   private void admitOnLoad(

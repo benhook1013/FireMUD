@@ -70,6 +70,22 @@ rules:
       - replicasets
       - statefulsets
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The trusted migration preflight scales only these writer Deployments down
+  # before applying the retained-database migration release.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments/scale
+    resourceNames:
+      - account-service
+      - game-session-service
+      - automation-scripting-service
+    verbs: ["get", "update", "patch"]
+  # Service admission is restored only after the trusted migration helper
+  # observes that these services have no EndpointSlice endpoints.
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["list"]
   - apiGroups: ["batch"]
     resources:
       - cronjobs

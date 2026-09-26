@@ -170,8 +170,8 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
       start.countDown();
       UpdateOutcome firstOutcome = first.get(30, TimeUnit.SECONDS);
       UpdateOutcome secondOutcome = second.get(30, TimeUnit.SECONDS);
-      assertThat(firstOutcome.succeeded()).isTrue();
-      assertThat(secondOutcome.succeeded()).isTrue();
+      assertUpdateSucceeded(firstOutcome, "first concurrent update");
+      assertUpdateSucceeded(secondOutcome, "second concurrent update");
     } finally {
       start.countDown();
       executor.shutdownNow();
@@ -241,12 +241,18 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         throw new IllegalStateException("definition concurrency test did not start");
       }
       updateInTransaction(request);
-      return new UpdateOutcome(true);
+      return new UpdateOutcome(true, null);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("definition concurrency test interrupted", exception);
     } catch (RuntimeException exception) {
-      return new UpdateOutcome(false);
+      return new UpdateOutcome(false, exception);
+    }
+  }
+
+  private void assertUpdateSucceeded(UpdateOutcome outcome, String updateName) {
+    if (!outcome.succeeded()) {
+      throw new AssertionError(updateName + " failed", outcome.failure());
     }
   }
 
@@ -283,7 +289,7 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
     return dataSource;
   }
 
-  private record UpdateOutcome(boolean succeeded) {}
+  private record UpdateOutcome(boolean succeeded, RuntimeException failure) {}
 
   private static final class UpdateFailedException extends RuntimeException {
     private UpdateFailedException(SagaException cause) {

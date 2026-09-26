@@ -102,6 +102,14 @@ class FixtureGit:
         self._merge_bases = {
             str(key): _sha(value, f"merge_bases[{key!r}]") for key, value in merge_bases.items()
         }
+        test_merge_trees = _mapping(fixture.get("test_merge_trees", {}), "test_merge_trees")
+        self._test_merge_trees: dict[str, str] = {}
+        for key, value in test_merge_trees.items():
+            if not isinstance(key, str) or key.count("...") != 1:
+                raise AcceptanceFixtureError("test_merge_trees keys must identify one base/head pair")
+            base, head = key.split("...", 1)
+            normalized_key = _pair_key(_sha(base, "test-merge tree base"), _sha(head, "test-merge tree head"))
+            self._test_merge_trees[normalized_key] = _sha(value, f"test_merge_trees[{key!r}]")
         patches = _mapping(fixture.get("patch_ids", {}), "patch_ids")
         self._patch_ids = {str(key): value for key, value in patches.items()}
         if any(not isinstance(value, str) or not value for value in self._patch_ids.values()):
@@ -140,6 +148,13 @@ class FixtureGit:
             return self._patch_ids[key]
         except KeyError as exc:
             raise AcceptanceFixtureError(f"fixture has no patch identity for {merge_base} and {head}") from exc
+
+    def test_merge_tree(self, base: str, head: str) -> str:
+        key = _pair_key(_sha(base, "test-merge base"), _sha(head, "test-merge head"))
+        try:
+            return self._test_merge_trees[key]
+        except KeyError as exc:
+            raise AcceptanceFixtureError(f"fixture has no test-merge tree for {base} and {head}") from exc
 
 
 class FixtureEvidence:
@@ -264,6 +279,126 @@ class FixtureEvidence:
         )
         return (*baseline, *recorded)
 
+    def review_stop_audit(
+        self,
+        pr: int,
+        expected_anchor: Mapping[str, Any],
+        retained_ambiguous_fingerprints: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """Expose complete fixture evidence through the live stop-audit contract."""
+
+        live = self.github.pull_request(pr)
+        expected_head = expected_anchor.get("child_head")
+        expected_parent = expected_anchor.get("parent_head")
+        expected_parent_identity = expected_anchor.get("parent_identity")
+        if (
+            not isinstance(expected_head, str)
+            or expected_head.casefold() != live.head.casefold()
+            or not isinstance(expected_parent, str)
+            or expected_parent.casefold() != live.base_tip.casefold()
+            or (
+                isinstance(expected_parent_identity, str)
+                and not expected_parent_identity.isdecimal()
+                and expected_parent_identity != live.base_ref
+            )
+        ):
+            raise AcceptanceFixtureError("fixture PR head or parent moved during review stop")
+
+        pins = tuple(retained_ambiguous_fingerprints)
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in pins):
+            raise AcceptanceFixtureError("fixture stop audit received a malformed terminal ambiguity fingerprint")
+        if len(set(pins)) != len(pins):
+            raise AcceptanceFixtureError("fixture stop audit received duplicate terminal ambiguity fingerprints")
+        histories = {channel: tuple(self.history(pr, channel)) for channel in ("hosted", "cli")}
+        terminal = [
+            {"channel": channel, **dict(value)}
+            for channel, values in histories.items()
+            for value in values
+            if isinstance(value, Mapping) and value.get("terminal_ambiguous") is True
+        ]
+        retained: list[dict[str, Any]] = []
+        for fingerprint in pins:
+            matches = [item for item in terminal if item.get("fingerprint") == fingerprint]
+            if len(matches) != 1:
+                raise AcceptanceFixtureError("fixture stop pin does not identify one terminal ambiguous observation")
+            retained.append(matches[0])
+        retained_fingerprints = {item["fingerprint"] for item in retained}
+
+        active_reservations: list[Any] = []
+        unmatched_responses: list[Any] = []
+        historical_unmatched_responses: list[Any] = []
+        ambiguous_responses: list[Any] = []
+        unresolved_findings: list[Any] = []
+        checkpoints: list[dict[str, Any]] = []
+
+        def is_historical_unanchored_checkpoint(channel: str, value: Mapping[str, Any]) -> bool:
+            head = value.get("head", value.get("reviewed_head"))
+            checkpoint = value.get("checkpoint", value.get("checkpoint_id"))
+            return (
+                channel == "hosted"
+                and value.get("completed") is True
+                and value.get("attributable") is True
+                and value.get("anchored") is False
+                and value.get("provisional") is not True
+                and value.get("correction") is not True
+                and isinstance(head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", head) is not None
+                and head.casefold() != expected_head.casefold()
+                and isinstance(checkpoint, str)
+                and bool(checkpoint)
+                and not checkpoint.startswith(
+                    (
+                        "trigger:",
+                        "trigger-uncheckpointed:",
+                        "pending-capture:",
+                        "review-threads:",
+                        "summary-actions:",
+                        "over-ceiling:",
+                    )
+                )
+            )
+
+        for channel, values in histories.items():
+            for value in values:
+                if not isinstance(value, Mapping):
+                    raise AcceptanceFixtureError("fixture stop evidence entries must be objects")
+                historical_unanchored = is_historical_unanchored_checkpoint(channel, value)
+                if value.get("active_reservation") is True or value.get("active_review") is True:
+                    active_reservations.append(value.get("checkpoint", "active fixture review"))
+                if value.get("unmatched_response") is True and value.get("fingerprint") not in retained_fingerprints:
+                    destination = historical_unmatched_responses if historical_unanchored else unmatched_responses
+                    destination.append(value.get("checkpoint", "unmatched fixture response"))
+                if value.get("ambiguous_response") is True and value.get("fingerprint") not in retained_fingerprints:
+                    ambiguous_responses.append(value.get("checkpoint", "ambiguous fixture response"))
+                if any(
+                    value.get(flag) is True
+                    for flag in ("held", "unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
+                ) and value.get("fingerprint") not in retained_fingerprints and not (
+                    historical_unanchored
+                    and value.get("held") is True
+                    and not any(
+                        value.get(flag) is True
+                        for flag in ("unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited", "actionable")
+                    )
+                ):
+                    unresolved_findings.append(value.get("reason") or value.get("checkpoint", "unresolved fixture finding"))
+                if value.get("completed") is True and value.get("attributable") is True:
+                    checkpoints.append({"channel": channel, **dict(value)})
+
+        return {
+            "complete": True,
+            "head": live.head,
+            "anchor": dict(expected_anchor),
+            "active_reservations": active_reservations,
+            "unmatched_responses": unmatched_responses,
+            "historical_unmatched_responses": historical_unmatched_responses,
+            "ambiguous_responses": ambiguous_responses,
+            "unresolved_findings": unresolved_findings,
+            "checkpoints": checkpoints,
+            "ambiguous_terminal_responses": terminal,
+            "retained_ambiguous": retained,
+        }
+
     def legacy_transition_reauthorization_audit(
         self,
         pr: int,
@@ -289,12 +424,23 @@ class FixtureEvidence:
             or expected_base_tip.casefold() != live.base_tip.casefold()
         ):
             raise AcceptanceFixtureError("fixture PR head or base moved during missing Hosted fingerprint retirement")
+        audit = self.review_stop_audit(
+            pr,
+            {
+                "child_head": expected_head,
+                "parent_identity": expected_base_ref,
+                "parent_head": expected_base_tip,
+            },
+        )
         return {
-            "complete": True,
-            "active_reservations": [],
-            "unmatched_responses": [],
-            "ambiguous_responses": [],
-            "unresolved_findings": [],
+            "complete": audit["complete"],
+            "active_reservations": audit["active_reservations"],
+            "unmatched_responses": [
+                *audit["unmatched_responses"],
+                *audit["historical_unmatched_responses"],
+            ],
+            "ambiguous_responses": audit["ambiguous_responses"],
+            "unresolved_findings": audit["unresolved_findings"],
         }
     def next_result(self, target: ReviewTarget, channel: str) -> Mapping[str, Any] | None:
         """Consume one configured result exactly once across command invocations."""
@@ -507,6 +653,7 @@ class AcceptanceFixture:
             "branch_heads",
             "ancestors",
             "merge_bases",
+            "test_merge_trees",
             "patch_ids",
             "pull_requests",
             "evidence",

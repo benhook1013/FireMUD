@@ -13,6 +13,7 @@ for required_command in openssl base64 awk grep; do
     exit 1
   }
 done
+real_openssl="$(command -v openssl)"
 
 workloads=(
   game-design-service
@@ -226,6 +227,24 @@ exit 0
 EOF
 chmod +x "$mock_bin/kubectl" "$mock_bin/sleep"
 
+cat >"$mock_bin/openssl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FORCE_EXPIRED_CERT_CHECK:-false}" == true && "$*" == *' -checkend 0 '* ]]; then
+  exit 1
+fi
+if [[ "${FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT:-false}" == true &&
+  "$*" == *' -noout -ext basicConstraints' ]]; then
+  printf 'X509v3 Basic Constraints: critical\n    CA:TRUE\n'
+  for ((line = 0; line < 16384; line++)); do
+    printf '    unrelated extension detail to exercise complete output capture\n'
+  done
+  exit 0
+fi
+exec "$REAL_OPENSSL" "$@"
+EOF
+chmod +x "$mock_bin/openssl"
+
 applied_secret="$fixture_dir/applied-secret.yaml"
 
 run_helper() {
@@ -238,6 +257,7 @@ run_helper() {
   local cert_dir_parent="${7:-}"
   local applied_secret_path="${8:-$applied_secret}"
   local projection_snapshot_mode="${9:-present}"
+  local force_expired_cert_check="${10:-false}"
   mkdir -p "$state"
   PATH="$mock_bin:$PATH" \
     BASH_ENV="$bash_env_file" \
@@ -249,6 +269,8 @@ run_helper() {
     PREVIEW_GRPC_TLS_CERT_DIR="$cert_dir_parent" \
     PROJECTION_MODE="$mode" \
     STATE_DIR="$state" \
+    FORCE_EXPIRED_CERT_CHECK="$force_expired_cert_check" \
+    REAL_OPENSSL="$real_openssl" \
     CERTIFICATE_WAIT_TIMEOUT_SECONDS="$timeout_seconds" \
     bash "$HELPER" dev
 }
@@ -269,7 +291,20 @@ grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
   exit 1
 }
-if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log"; then
+large_constraints_log="$fixture_dir/large-constraints.log"
+if ! FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT=true run_helper complete "$large_constraints_log" \
+  "$fixture_dir/large-constraints-state" "" 30 >"$fixture_dir/large-constraints.out" \
+  2>"$fixture_dir/large-constraints.err"; then
+  cat "$fixture_dir/large-constraints.out" "$fixture_dir/large-constraints.err" >&2
+  echo "the helper failed to validate a CA extension after capturing its complete output" >&2
+  exit 1
+fi
+grep -Fq '5 distinct publication leaves' "$fixture_dir/large-constraints.out" || {
+  echo "the helper did not accept valid CA constraints with large extension output" >&2
+  exit 1
+}
+if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log" || \
+  grep -Fq 'ca.key' "$applied_secret"; then
   echo "the helper read or created a runtime-local CA key/Secret" >&2
   exit 1
 fi
@@ -307,6 +342,39 @@ grep -Fq '5 distinct publication leaves' "$fixture_dir/warning-lookup.out" || {
   echo "a warning on an absent Secret was treated as an existing Secret" >&2
   exit 1
 }
+
+# Expiry guidance names retained Certificate and Secret resources. Deleting
+# only a projected Secret lets cert-manager recreate it from its Certificate.
+if run_helper complete "$fixture_dir/expired.log" "$fixture_dir/expired-state" \
+  "" 30 present "" "$fixture_dir/expired-applied-secret.yaml" present true \
+  >"$fixture_dir/expired.out" 2>"$fixture_dir/expired.err"; then
+  echo "the helper accepted an expired shared certificate" >&2
+  exit 1
+fi
+grep -Fq 'delete these retained Certificates and Secrets before rerunning:' \
+  "$fixture_dir/expired.err" || {
+  echo "the helper did not identify retained Kubernetes resources for rotation" >&2
+  cat "$fixture_dir/expired.err" >&2
+  exit 1
+}
+for resource in \
+  'Secret/dev/firemud-grpc-tls' \
+  'Certificate/dev/dev-grpc-game-design-service' \
+  'Secret/dev/firemud-grpc-game-design-service' \
+  'Certificate/dev/dev-grpc-world-management-service' \
+  'Secret/dev/firemud-grpc-world-management-service' \
+  'Certificate/dev/dev-grpc-entity-management-service' \
+  'Secret/dev/firemud-grpc-entity-management-service' \
+  'Certificate/dev/dev-grpc-game-logic-service' \
+  'Secret/dev/firemud-grpc-game-logic-service' \
+  'Certificate/dev/dev-grpc-automation-scripting-service' \
+  'Secret/dev/firemud-grpc-automation-scripting-service'; do
+  grep -Fq "$resource" "$fixture_dir/expired.err" || {
+    echo "the helper's expiry guidance omitted $resource" >&2
+    cat "$fixture_dir/expired.err" >&2
+    exit 1
+  }
+done
 
 # A failed lookup must retain its diagnostic and remove the temporary stderr
 # capture along with the helper's certificate workspace.
@@ -424,6 +492,31 @@ grep -Fq 'aggregate 5s window' "$fixture_dir/aggregate-timeout.err" || {
 }
 if grep -q '^delete ' "$aggregate_timeout_log"; then
   echo "the helper deleted legacy Secrets before all projections met the aggregate deadline" >&2
+  exit 1
+fi
+
+# A non-CA certificate whose subject contains CA:TRUE must not satisfy the
+# projected issuer Basic Constraints check.
+openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/non-ca.key"
+openssl req -new -key "$fixture_dir/non-ca.key" -subj '/CN=CA:TRUE' -out "$fixture_dir/non-ca.csr"
+cat >"$fixture_dir/non-ca.ext" <<'EOF'
+[leaf]
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+EOF
+openssl x509 -req -in "$fixture_dir/non-ca.csr" -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" -CAcreateserial -days 30 -sha256 -extfile "$fixture_dir/non-ca.ext" -extensions leaf -out "$data_dir/game-design-service-ca.crt"
+non_ca_log="$fixture_dir/non-ca-ca-projection.log"
+if run_helper complete "$non_ca_log" "$fixture_dir/non-ca-state" >"$fixture_dir/non-ca.out" 2>"$fixture_dir/non-ca.err"; then
+  echo "the helper accepted a non-CA certificate whose subject contains CA:TRUE" >&2
+  exit 1
+fi
+grep -Fq 'cert-manager CA projection is not a CA certificate: dev/firemud-grpc-game-design-service' "$fixture_dir/non-ca.err" || {
+  echo "the helper rejected the non-CA projection for an unexpected reason" >&2
+  cat "$fixture_dir/non-ca.err" >&2
+  exit 1
+}
+if grep -Eq '^(apply|delete) ' "$non_ca_log"; then
+  echo "the helper mutated Kubernetes Secrets before rejecting the non-CA projection" >&2
   exit 1
 fi
 

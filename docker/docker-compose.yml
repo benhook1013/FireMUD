@@ -374,7 +374,7 @@ services:
       retries: 5
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-05-10T01-41-38Z
+    image: ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a
     command: ["server", "/data"]
     mem_limit: 512m
     environment:
@@ -391,7 +391,7 @@ services:
       retries: 5
 
   minio-setup:
-    image: quay.io/minio/mc:RELEASE.2024-05-09T17-04-24Z
+    image: ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf
     mem_limit: 128m
     depends_on:
       minio:

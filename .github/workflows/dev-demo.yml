@@ -131,6 +131,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.dev-demo-plan.outputs.head_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Resolve certificate identity mode
@@ -187,6 +188,20 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         uses: ./.github/actions/setup-gh
 
+      - name: Classify trusted V2 migration activation
+        id: v2-migration-mode
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/deploy/detect-hosted-v2-migration-activation.sh \
+            "$EVENT_NAME" "$EVENT_BEFORE_SHA" "$HEAD_SHA" "$RUNTIME_NAMESPACE" >> "$GITHUB_OUTPUT"
+
       - name: Check Hosted identity requester credentials
         id: requester-credentials
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
@@ -208,7 +223,7 @@ jobs:
           exit 1
 
       - name: Reset dev-demo namespace for clean deploy
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation != 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
@@ -392,6 +407,14 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Quiesce Account, Game Session, and Automation migration writers
+        id: quiesce-writers
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"
 
       - name: Deploy dev-demo release
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -943,6 +966,16 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Warn about migration writer recovery after quiesce or deploy failure
+        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && (steps.quiesce-writers.outcome == 'failure' || steps.deploy-release.outcome == 'failure') }}
+        run: |
+          {
+            echo ""
+            echo "### Migration writer recovery"
+            echo ""
+            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may be partially quiesced because migration activation did not complete. This can happen when writer quiescence fails or the Helm deploy fails partway through. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove dev-demo kubeconfigs
         if: ${{ always() }}

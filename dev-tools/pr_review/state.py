@@ -508,13 +508,13 @@ class LegacyEvidenceTransition:
 
 @dataclasses.dataclass(frozen=True)
 class ReviewAllocation:
-    """A durable, pre-authorized one-result review allocation.
+    """A durable one-result allocation or explicit channel-stop decision.
 
     The allocation is bound to the complete stack identity observed when an
-    operator made the promise.  The controller may consume it only after a
-    completed result for that identity, and the optional handoff proof records
-    the later corrected state without pretending that the review itself made
-    the PR merge-ready.
+    operator made the promise. The controller may consume it only after a
+    completed result for that identity. New stop decisions record the exact
+    reviewed checkpoint and the current live anchor separately; legacy handoff
+    fields remain readable for state migration and are never newly issued.
     """
 
     pr: int
@@ -529,6 +529,19 @@ class ReviewAllocation:
     handoff_checkpoint: str | None = None
     handoff_head: str | None = None
     handoff_validation: str | None = None
+    stop_basis: str | None = None
+    stop_checkpoint: str | None = None
+    stop_reviewed_head: str | None = None
+    stop_reviewed_patch_id: str | None = None
+    stop_head: str | None = None
+    stop_parent_identity: str | None = None
+    stop_parent_head: str | None = None
+    stop_merge_base: str | None = None
+    stop_patch_id: str | None = None
+    stop_reason: str | None = None
+    stop_summary_disposition_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_reason: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -555,6 +568,55 @@ class ReviewAllocation:
                 raise StateError("review allocation handoff proof must be complete")
             if not EXACT_SHA.fullmatch(self.handoff_head or ""):
                 raise StateError("review allocation handoff head must be an exact SHA")
+        stop_values = (
+            self.stop_checkpoint,
+            self.stop_reviewed_head,
+            self.stop_reviewed_patch_id,
+            self.stop_head,
+            self.stop_parent_identity,
+            self.stop_parent_head,
+            self.stop_merge_base,
+            self.stop_patch_id,
+            self.stop_reason,
+        )
+        if self.stop_basis is None:
+            if any(value is not None for value in stop_values):
+                raise StateError("review allocation stop fields require a stop basis")
+            if self.stop_summary_disposition_fingerprints or self.retained_ambiguous_fingerprints:
+                raise StateError("stop audit details require a stop basis")
+        else:
+            if self.stop_basis not in {"allocated", "direct_human"}:
+                raise StateError("review allocation stop basis must be allocated or direct_human")
+            if not all(isinstance(value, str) and value.strip() for value in stop_values):
+                raise StateError("review allocation stop proof must be complete")
+            for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if not EXACT_SHA.fullmatch(getattr(self, name) or ""):
+                    raise StateError(f"review allocation {name} must be an exact SHA")
+            if len(self.stop_reason or "") > 500 or any(ord(character) < 0x20 for character in self.stop_reason or ""):
+                raise StateError("review allocation stop reason must be at most 500 characters without controls")
+            if not isinstance(self.stop_summary_disposition_fingerprints, tuple) or any(
+                not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+                for value in self.stop_summary_disposition_fingerprints
+            ):
+                raise StateError("review allocation stop summary disposition fingerprints are malformed")
+            if len(set(self.stop_summary_disposition_fingerprints)) != len(self.stop_summary_disposition_fingerprints):
+                raise StateError("review allocation stop summary disposition fingerprints must be unique")
+        if not isinstance(self.retained_ambiguous_fingerprints, tuple) or any(
+            not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+            for value in self.retained_ambiguous_fingerprints
+        ):
+            raise StateError("retained ambiguous evidence requires exact fingerprints")
+        if len(set(self.retained_ambiguous_fingerprints)) != len(self.retained_ambiguous_fingerprints):
+            raise StateError("retained ambiguous fingerprints must be unique")
+        if bool(self.retained_ambiguous_fingerprints) != (self.retained_ambiguous_reason is not None):
+            raise StateError("retained ambiguous evidence requires both fingerprint and reason")
+        if self.retained_ambiguous_fingerprints and (
+            not isinstance(self.retained_ambiguous_reason, str)
+            or not self.retained_ambiguous_reason.strip()
+            or len(self.retained_ambiguous_reason) > 500
+            or any(ord(character) < 0x20 for character in self.retained_ambiguous_reason)
+        ):
+            raise StateError("retained ambiguous evidence requires a bounded reason without controls")
 
     @property
     def identity(self) -> str:
@@ -574,6 +636,19 @@ class ReviewAllocation:
             "handoff_checkpoint": self.handoff_checkpoint,
             "handoff_head": self.handoff_head,
             "handoff_validation": self.handoff_validation,
+            "stop_basis": self.stop_basis,
+            "stop_checkpoint": self.stop_checkpoint,
+            "stop_reviewed_head": self.stop_reviewed_head,
+            "stop_reviewed_patch_id": self.stop_reviewed_patch_id,
+            "stop_head": self.stop_head,
+            "stop_parent_identity": self.stop_parent_identity,
+            "stop_parent_head": self.stop_parent_head,
+            "stop_merge_base": self.stop_merge_base,
+            "stop_patch_id": self.stop_patch_id,
+            "stop_reason": self.stop_reason,
+            "stop_summary_disposition_fingerprints": list(self.stop_summary_disposition_fingerprints),
+            "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
+            "retained_ambiguous_reason": self.retained_ambiguous_reason,
         }
 
     @classmethod
@@ -591,12 +666,41 @@ class ReviewAllocation:
             "handoff_checkpoint",
             "handoff_head",
             "handoff_validation",
+            "stop_basis",
+            "stop_checkpoint",
+            "stop_reviewed_head",
+            "stop_reviewed_patch_id",
+            "stop_head",
+            "stop_parent_identity",
+            "stop_parent_head",
+            "stop_merge_base",
+            "stop_patch_id",
+            "stop_reason",
+            "stop_summary_disposition_fingerprints",
+            "retained_ambiguous_fingerprints",
+            "retained_ambiguous_fingerprint",
+            "retained_ambiguous_reason",
         }
         if set(value) - allowed:
             raise StateError("review allocation contains fields outside the private schema")
         raw_checkpoints = value.get("baseline_checkpoints")
         if not isinstance(raw_checkpoints, list):
             raise StateError("review allocation baseline checkpoints must be a JSON array")
+        raw_stop_dispositions = value.get("stop_summary_disposition_fingerprints", ())
+        if isinstance(raw_stop_dispositions, list):
+            raw_stop_dispositions = tuple(raw_stop_dispositions)
+        raw_retained_fingerprints = value.get("retained_ambiguous_fingerprints")
+        legacy_retained_fingerprint = value.get("retained_ambiguous_fingerprint")
+        if raw_retained_fingerprints is None:
+            raw_retained_fingerprints = (
+                () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
+            )
+        elif isinstance(raw_retained_fingerprints, list):
+            raw_retained_fingerprints = tuple(raw_retained_fingerprints)
+        else:
+            raise StateError("retained ambiguous fingerprints must be a JSON array")
+        if legacy_retained_fingerprint is not None and raw_retained_fingerprints != (legacy_retained_fingerprint,):
+            raise StateError("legacy retained ambiguous fingerprint conflicts with the fingerprint set")
         try:
             return cls(
                 pr=value["pr"],
@@ -611,6 +715,19 @@ class ReviewAllocation:
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),
                 handoff_validation=value.get("handoff_validation"),
+                stop_basis=value.get("stop_basis"),
+                stop_checkpoint=value.get("stop_checkpoint"),
+                stop_reviewed_head=value.get("stop_reviewed_head"),
+                stop_reviewed_patch_id=value.get("stop_reviewed_patch_id"),
+                stop_head=value.get("stop_head"),
+                stop_parent_identity=value.get("stop_parent_identity"),
+                stop_parent_head=value.get("stop_parent_head"),
+                stop_merge_base=value.get("stop_merge_base"),
+                stop_patch_id=value.get("stop_patch_id"),
+                stop_reason=value.get("stop_reason"),
+                stop_summary_disposition_fingerprints=raw_stop_dispositions,
+                retained_ambiguous_fingerprints=raw_retained_fingerprints,
+                retained_ambiguous_reason=value.get("retained_ambiguous_reason"),
             )
         except KeyError as exc:
             raise StateError("review allocation contains malformed private records") from exc
