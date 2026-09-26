@@ -31,8 +31,16 @@ try {
         -ConnectAddress $WslAddress -ConnectPort $Port
 
     Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) Serving WSL address $WslAddress`:$Port"
-    & $Wsl -d $Distro --exec python3 $ServerPath --bind $WslAddress --port $Port --external-origin $ExternalOrigin *>> $LogFile
-    $serverExitCode = $LASTEXITCODE
+    # Windows PowerShell 5.1 turns redirected native stderr into an error record.
+    # Python's routine HTTP access logs must not stop this long-running task.
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Wsl -d $Distro --exec python3 $ServerPath --bind $WslAddress --port $Port --external-origin $ExternalOrigin *>> $LogFile
+        $serverExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $priorErrorActionPreference
+    }
     throw "The WSL status server exited with code $serverExitCode."
 } catch {
     Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format o) Startup failed: $($_.Exception.Message)"
