@@ -363,8 +363,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                   state.getPluginId(),
                   normalize(state.getActivePluginVersionId())));
       if (disableReason.isPresent()) {
-        disableForPolicy(state, disableReason.get(), now);
-        disabledCount++;
+        if (disableForPolicy(state, disableReason.get(), now)) {
+          disabledCount++;
+        }
       } else {
         state.setLastPolicyCheckedAt(now);
         repository.save(state);
@@ -457,7 +458,19 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     };
   }
 
-  private void disableForPolicy(PluginRuntimeState state, String reason, Instant now) {
+  private boolean disableForPolicy(PluginRuntimeState snapshot, String reason, Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()) {
+      return false;
+    }
     String previous = normalize(state.getActivePluginVersionId());
     String previousState = normalize(state.getPluginState());
     long previousPluginActivationEpoch = state.getPluginActivationEpoch();
@@ -505,6 +518,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getActorPrincipal()),
         now);
     reconcileSchedules(saved);
+    return true;
   }
 
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> activeStates) {

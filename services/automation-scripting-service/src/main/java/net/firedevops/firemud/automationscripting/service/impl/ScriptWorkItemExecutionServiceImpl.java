@@ -348,7 +348,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
-        throw new IllegalStateException(pluginFence.reason());
+        requeueAfterRetryableFailure(workItem);
+        return false;
       }
       cancel(workItem, STAGE_ADMISSION, "canceled", pluginFence.reason(), now);
       return false;
@@ -399,7 +400,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
-        throw new IllegalStateException(pluginFence.reason());
+        requeueAfterRetryableFailure(workItem);
+        return false;
       }
       cancel(workItem, STAGE_DSL_EVAL, "canceled", pluginFence.reason(), now);
       return false;
@@ -462,13 +464,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
 
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
+    PluginFenceValidation retryableFanoutFence = null;
     handoffService.beginAggregateFanout(workItem);
     try {
       for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
         PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
         if (handoffPluginFence != null) {
           if (handoffPluginFence.retryable()) {
-            throw new IllegalStateException(handoffPluginFence.reason());
+            retryableFanoutFence = handoffPluginFence;
+            break;
           }
           cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffPluginFence.reason(), now);
           return false;
@@ -488,12 +492,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } finally {
       handoffService.endAggregateFanout(workItem);
     }
-    if (firstRejectedHandoff != null) {
-      if (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-        requeueAfterRetryableHandoff(workItem);
-        return false;
-      }
+    if (firstRejectedHandoff != null
+        && !ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       recordTerminalHandoffOutcome(workItem, firstRejectedHandoff);
+      return false;
+    }
+    if (retryableFanoutFence != null
+        || (firstRejectedHandoff != null
+            && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff))) {
+      requeueAfterRetryableFailure(workItem);
       return false;
     }
     markTerminalSuccess(
@@ -505,7 +512,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return true;
   }
 
-  private void requeueAfterRetryableHandoff(ScriptWorkItem workItem) {
+  private void requeueAfterRetryableFailure(ScriptWorkItem workItem) {
     workItem.setStatus("PENDING_EVALUATION");
     workItem.setUpdatedAt(Instant.now());
     workItemRepository.save(workItem);

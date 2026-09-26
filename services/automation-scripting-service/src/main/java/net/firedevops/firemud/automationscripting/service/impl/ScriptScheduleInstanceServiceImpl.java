@@ -1215,7 +1215,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setBindingId(applicableBindingId(instance));
     audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
-    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
     audit.setPluginActivationEpoch(instance.getPluginActivationEpoch());
     audit.setLifecycleRevision(instance.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
@@ -1681,7 +1680,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setBindingId(applicableBindingId(workItem));
     audit.setTargetScopeType(blankToEmpty(workItem.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(workItem.getTargetScopeId()));
-    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
     audit.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
     audit.setLifecycleRevision(workItem.getLifecycleRevision());
     audit.setEventType(instance.getEventType());

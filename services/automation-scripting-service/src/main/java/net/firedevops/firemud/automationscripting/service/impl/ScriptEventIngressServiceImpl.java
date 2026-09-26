@@ -1030,7 +1030,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         schemaVersion,
         definition,
         handler.binding().getScriptId(),
-        bindingIdentity(handler.binding()),
         handler.binding().getPriorityTag(),
         handler.pluginOwner(),
         handler.binding(),
@@ -1047,7 +1046,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
       String scriptId,
-      String bindingId,
       String priorityTag,
       PluginOwner pluginOwner,
       ScriptEventBinding binding,
@@ -1074,7 +1072,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
     item.setTargetScopeType(binding == null ? "" : normalize(binding.getTargetScopeType()));
     item.setTargetScopeId(binding == null ? "" : normalize(binding.getTargetScopeId()));
-    setPluginFence(item, request, pluginOwner, authority);
+    setPluginFence(item, request, authority);
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
     item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
@@ -1130,7 +1128,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         schemaVersion,
         definition,
         scriptId,
-        null,
         priorityTag,
         null,
         null,
@@ -1227,29 +1224,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         : pluginOwner.pluginVersionId();
   }
 
-  private static String bindingIdentity(ScriptEventBinding binding) {
-    return binding == null || binding.getId() == null ? null : binding.getId().toString();
-  }
-
-  private long currentScriptPinEpoch(
-      TriggerScriptEventRequest request, AdmissionAuthority authority) {
-    if (request.getGameInstanceId().isBlank()) {
-      return 0L;
-    }
-    GetGameInstanceRuntimeStateResponse runtime = authority.runtimeState;
-    if (runtime == null
-        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
-        || !runtime.hasRuntimeState()) {
-      return 0L;
-    }
-    return runtime.getRuntimeState().getScriptPinEpoch();
-  }
-
   private void setPluginFence(
-      ScriptWorkItem item,
-      TriggerScriptEventRequest request,
-      PluginOwner pluginOwner,
-      AdmissionAuthority authority) {
+      ScriptWorkItem item, TriggerScriptEventRequest request, AdmissionAuthority authority) {
     String pluginId = normalize(item.getPluginId());
     String pluginVersionId = normalize(item.getPluginVersionId());
     PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
@@ -1654,10 +1630,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         .setReadSnapshotToken(normalize(request.getReadSnapshotToken()))
         .setPayloadJson(normalize(request.getPayloadJson()))
         .build();
-  }
-
-  private static String optionalText(String value) {
-    return value == null || value.isBlank() ? null : value.strip();
   }
 
   private static String nullableText(String value) {

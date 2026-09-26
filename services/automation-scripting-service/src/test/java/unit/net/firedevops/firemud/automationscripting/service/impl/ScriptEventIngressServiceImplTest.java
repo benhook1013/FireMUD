@@ -55,6 +55,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 
 class ScriptEventIngressServiceImplTest {
@@ -4435,6 +4436,8 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressAudit finalized = new ScriptEventIngressAudit();
     finalized.setId(7L);
+    finalized.setPluginActivationEpoch(4L);
+    finalized.setLifecycleRevision(8L);
     finalized.setSourceState("TRIGGER_ADMITTED");
     finalized.setAdmitted(true);
     finalized.setAdmissionOutcome(
@@ -4452,6 +4455,8 @@ class ScriptEventIngressServiceImplTest {
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                 .setEventType("onCommand")
                 .setScriptPatchVersion("patch-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
                 .setScriptEventId("replay-event")
                 .build(),
             "v1",
@@ -4487,6 +4492,8 @@ class ScriptEventIngressServiceImplTest {
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setEventType("onCommand")
             .setScriptPatchVersion("patch-1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
             .setScriptEventId("replay-event")
             .build();
 
@@ -4494,8 +4501,85 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(
             new ScriptEventIngressService.TriggerAdmission(
                 true, "TRIGGER_ADMISSION_OUTCOME_ADMITTED", "admitted_handlers_resolved", 2));
+    ArgumentCaptor<ScriptEventIngressAudit> claimCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).insertIfAbsentByIdentity(claimCaptor.capture());
+    assertThat(claimCaptor.getValue().getPluginActivationEpoch()).isZero();
+    assertThat(claimCaptor.getValue().getLifecycleRevision()).isZero();
     verifyNoInteractions(bindingRepository, workItemRepository, eventAuditRepository);
     verify(repository, never()).save(Mockito.any());
+  }
+
+  @Test
+  void pluginAdmissionClaimsBeforeReadingAndFinalizesWithThePositiveRuntimeFence() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    AtomicReference<Long> claimedActivationEpoch = new AtomicReference<>();
+    AtomicReference<Long> claimedLifecycleRevision = new AtomicReference<>();
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptEventIngressAudit claim = invocation.getArgument(0);
+              claimedActivationEpoch.set(claim.getPluginActivationEpoch());
+              claimedLifecycleRevision.set(claim.getLifecycleRevision());
+              claim.setId(9L);
+              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
+            });
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    PluginRuntimeStateService pluginRuntimeStateService = enabledPluginRuntimeStateService();
+    ScriptEventIngressService service =
+        claimTestService(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            Mockito.mock(AutomationQueueService.class),
+            gameSessionClient,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            pluginRuntimeStateService,
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+    TriggerScriptEventRequest request =
+        gameplayRequestBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(7L)
+            .setEntityId("entity-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEventType("onCommand")
+            .setScriptPatchVersion("patch-1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
+            .setReadSnapshotToken("snapshot-1")
+            .setScriptEventId("plugin-initial-admission")
+            .build();
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(request, "game-session-service");
+
+    assertThat(admission.admitted()).isTrue();
+    assertThat(claimedActivationEpoch).hasValue(0L);
+    assertThat(claimedLifecycleRevision).hasValue(0L);
+    ArgumentCaptor<ScriptEventIngressAudit> finalizedCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(finalizedCaptor.capture());
+    assertThat(finalizedCaptor.getValue().getPluginActivationEpoch()).isEqualTo(1L);
+    assertThat(finalizedCaptor.getValue().getLifecycleRevision()).isEqualTo(1L);
+    assertThat(finalizedCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_ADMITTED");
+    InOrder order = Mockito.inOrder(repository, pluginRuntimeStateService);
+    order.verify(repository).insertIfAbsentByIdentity(Mockito.any());
+    order.verify(pluginRuntimeStateService).getStatus("1", "game-1", "plugin-1");
   }
 
   @Test
@@ -4504,6 +4588,8 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
     existing.setId(17L);
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(8L);
     existing.setSourceState("TRIGGER_ADMITTED");
     existing.setAdmitted(true);
     existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
@@ -4518,6 +4604,8 @@ class ScriptEventIngressServiceImplTest {
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setEventType("onCommand")
             .setScriptPatchVersion("patch-1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
             .setScriptEventId("conflicting-event")
             .build();
     existing.setRequestDigest(
