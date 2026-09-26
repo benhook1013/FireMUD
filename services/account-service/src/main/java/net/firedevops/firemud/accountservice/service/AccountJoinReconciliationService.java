@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
@@ -58,6 +59,7 @@ public class AccountJoinReconciliationService {
   private final AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
   private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
   private final AccountAuditOutboxRepository auditOutboxRepository;
+  private final AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   private final TransactionTemplate joinTransactionTemplate;
   private final int batchSize;
   private final int maxAttempts;
@@ -74,6 +76,7 @@ public class AccountJoinReconciliationService {
       AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountAuditOutboxRepository auditOutboxRepository,
+      AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer,
       MeterRegistry meterRegistry,
       PlatformTransactionManager transactionManager,
       @Value("${firemud.account.join-reconciliation.batch-size:50}") int batchSize,
@@ -97,6 +100,7 @@ public class AccountJoinReconciliationService {
     this.roleSnapshotRepository = roleSnapshotRepository;
     this.transitionReceiptRepository = transitionReceiptRepository;
     this.auditOutboxRepository = auditOutboxRepository;
+    this.membershipAuthorityEventProducer = membershipAuthorityEventProducer;
     this.batchSize = batchSize;
     this.maxAttempts = maxAttempts;
     this.backoffMillis = backoffMillis;
@@ -254,6 +258,24 @@ public class AccountJoinReconciliationService {
       }
     }
 
+    if (unresolvedReason != null) {
+      return recordUnresolvedAttempt(operation, now, unresolvedReason);
+    }
+
+    String eventRequestId =
+        "JOINED".equals(outcome) ? operation.requestId() : transitionReceipt.requestId();
+    boolean callerBoundAuthorityInvalidated =
+        "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType());
+    try {
+      Checkpoint checkpoint =
+          membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+              membership, roleSnapshot, eventRequestId, callerBoundAuthorityInvalidated);
+      if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+        unresolvedReason = "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE";
+      }
+    } catch (RuntimeException ex) {
+      unresolvedReason = "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE";
+    }
     if (unresolvedReason != null) {
       return recordUnresolvedAttempt(operation, now, unresolvedReason);
     }

@@ -40,6 +40,7 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
@@ -68,6 +69,7 @@ import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -84,6 +86,7 @@ import net.firedevops.firemud.accountservice.repository.PasswordResetTokenReposi
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
@@ -132,6 +135,7 @@ public class AccountServiceImpl implements AccountService {
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
   private final AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
+  private final AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -166,6 +170,7 @@ public class AccountServiceImpl implements AccountService {
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
       AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository,
+      AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer,
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
@@ -194,6 +199,7 @@ public class AccountServiceImpl implements AccountService {
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
     this.membershipTransitionReceiptRepository = membershipTransitionReceiptRepository;
+    this.membershipAuthorityEventProducer = membershipAuthorityEventProducer;
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
@@ -619,6 +625,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
+          requireCommittedOutcomeEventReadback(operation);
           return resultFromJoinOperation(operation, true);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
@@ -718,7 +725,7 @@ public class AccountServiceImpl implements AccountService {
     boolean transitioned = false;
     String membershipTransitionType = null;
     if (membership == null) {
-      membershipTransitionReceiptRepository.assertNewMembershipTransitionCanStart(
+      membershipAuthorityEventProducer.initializeNewMembershipAuthority(
           accountId, scope.tenantId());
       membership = new AccountTenantMembership();
       membership.setAccount(requireAccount(accountId));
@@ -734,13 +741,11 @@ public class AccountServiceImpl implements AccountService {
       transitioned = true;
       membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
-      RoleSnapshot roleSnapshot;
-      try {
-        roleSnapshot = requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
-      } catch (IllegalStateException ex) {
-        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
-      }
+      RoleSnapshot roleSnapshot =
+          requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
       membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
+      membershipAuthorityEventProducer.requireExistingMembershipAuthorityMatches(
+          accountId, scope.tenantId(), membership, roleSnapshot);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
@@ -759,25 +764,48 @@ public class AccountServiceImpl implements AccountService {
       membershipTransitionType = "MEMBERSHIP_REACTIVATED";
     } else if ("ACTIVE".equals(membership.getLifecycleState())
         && membership.isGameplayAdmissionAllowed()) {
-      try {
-        if (!requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership)
-            .roles()
-            .contains("player")) {
-          return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
-        }
-      } catch (IllegalStateException ex) {
-        return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
+      RoleSnapshot roleSnapshot =
+          requireRoleSnapshotForJoin(accountId, scope.tenantId(), membership);
+      if (!roleSnapshot.roles().contains("player")) {
+        throw new IllegalStateException(
+            "Active Account membership lacks its required player role snapshot");
       }
-      membershipTransitionReceiptRepository
-          .findLatestReceipt(accountId, scope.tenantId())
-          .orElseThrow(
-              () ->
-                  new IllegalStateException(
-                      "Active Account membership lacks a provisional transition receipt"));
+      MembershipTransitionReceipt receipt =
+          membershipTransitionReceiptRepository
+              .findLatestReceipt(accountId, scope.tenantId())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Active Account membership lacks a provisional transition receipt"));
+      Checkpoint checkpoint =
+          membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+              accountId,
+              scope.tenantId(),
+              membership,
+              roleSnapshot,
+              receipt.requestId(),
+              "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
+      if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+        throw new IllegalStateException(
+            "Active Account membership authority checkpoint readback is incomplete");
+      }
     } else {
       return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
     }
     if (transitioned) {
+      var authorityCheckpoint =
+          switch (membershipTransitionType) {
+            case "MEMBERSHIP_JOINED" ->
+                membershipAuthorityEventProducer.publishNewMembershipChange(
+                    accountId, scope.tenantId(), requestId, membership);
+            case "MEMBERSHIP_REACTIVATED" ->
+                membershipAuthorityEventProducer.publishReactivatedMembershipChange(
+                    accountId, scope.tenantId(), requestId, membership);
+            default -> throw new IllegalStateException("Unsupported Account membership transition");
+          };
+      if (authorityCheckpoint == null || authorityCheckpoint.outboxSequence() <= 0L) {
+        throw new IllegalStateException("Account JOIN authority checkpoint readback is incomplete");
+      }
       membershipTransitionReceiptRepository.appendTransition(
           membership, membershipTransitionType, requestId);
       String payload =
@@ -932,7 +960,74 @@ public class AccountServiceImpl implements AccountService {
         throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
       }
     }
+    requireCommittedOutcomeEventReadback(operation);
     return resultFromJoinOperation(operation, true);
+  }
+
+  private void requireCommittedOutcomeEventReadback(JoinOperation operation) {
+    if ("COMMITTED".equals(operation.status())
+        && ("JOINED".equals(operation.outcome()) || "ALREADY_ACTIVE".equals(operation.outcome()))) {
+      try {
+        Checkpoint checkpoint;
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+          checkpoint = requireCommittedOutcomeEventEvidence(operation);
+        } else {
+          checkpoint =
+              joinTransactionTemplate.execute(
+                  transactionStatus -> requireCommittedOutcomeEventEvidence(operation));
+        }
+        if (checkpoint == null || checkpoint.outboxSequence() <= 0L) {
+          throw new IllegalStateException("Committed JOIN authority checkpoint is incomplete");
+        }
+      } catch (RuntimeException exception) {
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE",
+            "Committed JOIN authority evidence is unavailable or mismatched",
+            exception);
+      }
+    }
+  }
+
+  private Checkpoint requireCommittedOutcomeEventEvidence(JoinOperation operation) {
+    if ("JOINED".equals(operation.outcome())) {
+      return membershipAuthorityEventProducer.requireCommittedJoinEvent(operation);
+    }
+    if (!"ALREADY_ACTIVE".equals(operation.outcome())
+        || operation.membershipId() == null
+        || operation.membershipVersion() == null
+        || operation.membershipAuthorityGeneration() == null) {
+      throw new IllegalStateException("Committed JOIN outcome has no exact membership identity");
+    }
+    AccountTenantMembership membership =
+        accountTenantMembershipRepository
+            .findByAccountIdAndTenantId(operation.accountId(), operation.tenantId())
+            .orElseThrow(() -> new IllegalStateException("Committed active membership is absent"));
+    if (!operation.membershipId().equals(membership.getId())
+        || operation.membershipVersion() != membership.getMembershipVersion()
+        || operation.membershipAuthorityGeneration()
+            != membership.getMembershipAuthorityGeneration()
+        || !"ACTIVE".equals(membership.getLifecycleState())
+        || !membership.isGameplayAdmissionAllowed()) {
+      throw new IllegalStateException(
+          "Committed ALREADY_ACTIVE operation differs from current membership state");
+    }
+    RoleSnapshot roles =
+        requireRoleSnapshotForJoin(operation.accountId(), operation.tenantId(), membership);
+    if (!roles.roles().contains("player")) {
+      throw new IllegalStateException("Committed active membership lacks the player role");
+    }
+    MembershipTransitionReceipt receipt =
+        membershipTransitionReceiptRepository
+            .findLatestReceipt(operation.accountId(), operation.tenantId())
+            .orElseThrow(
+                () -> new IllegalStateException("Committed active membership has no receipt"));
+    return membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+        operation.accountId(),
+        operation.tenantId(),
+        membership,
+        roles,
+        receipt.requestId(),
+        "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
   }
 
   private JoinPublicProductionResult resultFromJoinOperation(

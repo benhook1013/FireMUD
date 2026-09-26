@@ -262,6 +262,39 @@ class AccountAuthorityOutboxRepositoryTest {
   }
 
   @Test
+  void requestReadbackFindsAnExactHistoricalEventInItsStream() {
+    String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
+    Record event = mock(Record.class);
+    when(event.get("outbox_sequence", Long.class)).thenReturn(2L);
+    when(event.get("event_id", String.class)).thenReturn("event-2");
+    when(event.get("event_digest", String.class)).thenReturn("canonical-digest-2");
+    when(event.get("payload", byte[].class)).thenReturn(new byte[] {2});
+    when(event.get("request_id", String.class)).thenReturn("request-2");
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(event);
+
+    assertThat(repository.findEvent(streamKey, "request-2"))
+        .contains(
+            new Event(streamKey, "request-2", 2L, "event-2", "canonical-digest-2", new byte[] {2}));
+    verify(dsl)
+        .fetchOne(
+            startsWith(
+                "SELECT outbox_sequence, request_id, event_id, event_digest, payload "
+                    + "FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                    + "AND request_id = ?"),
+            any(Object[].class));
+  }
+
+  @Test
+  void requestReadbackRejectsInvalidRequestIdentityBeforeStorageAccess() {
+    assertThatThrownBy(
+            () ->
+                repository.findEvent(
+                    "account:auth-authority:v1:membership/account-a/tenant-a", "r".repeat(513)))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
   void storageOperationsRequireTheCallersTransaction() throws ReflectiveOperationException {
     assertMandatory(
         AccountAuthorityOutboxRepository.class.getMethod(
@@ -271,6 +304,8 @@ class AccountAuthorityOutboxRepositoryTest {
             "append", String.class, String.class, java.util.function.LongFunction.class));
     assertMandatory(
         AccountAuthorityOutboxRepository.class.getMethod("findEvent", String.class, long.class));
+    assertMandatory(
+        AccountAuthorityOutboxRepository.class.getMethod("findEvent", String.class, String.class));
     assertMandatory(
         AccountAuthorityOutboxRepository.class.getMethod("readCheckpoint", String.class));
   }

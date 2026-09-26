@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
@@ -49,6 +50,7 @@ import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -57,11 +59,13 @@ import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantR
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
@@ -94,6 +98,7 @@ class AccountServiceImplTest {
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
   @Mock private AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
+  @Mock private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -203,6 +208,29 @@ class AccountServiceImplTest {
         .thenReturn(Optional.empty());
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
+    when(membershipAuthorityEventProducer.publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class)))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.publishReactivatedMembershipChange(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class)))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireCommittedJoinEvent(
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(joinAuthorityCheckpoint());
+    when(membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class),
+            org.mockito.ArgumentMatchers.any(RoleSnapshot.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(joinAuthorityCheckpoint());
     service =
         new AccountServiceImpl(
             accountRepository,
@@ -211,6 +239,7 @@ class AccountServiceImplTest {
             accountConnectScopeRepository,
             accountJoinOperationRepository,
             membershipTransitionReceiptRepository,
+            membershipAuthorityEventProducer,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
@@ -457,7 +486,16 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
             org.mockito.ArgumentMatchers.contains("join-attempt-1"));
     assertEquals("COMMITTED", retainedOperation.get().status());
-
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .initializeNewMembershipAuthority(11L, 7L);
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .publishNewMembershipChange(
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("join-attempt-1"),
+            org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireCommittedJoinEvent(org.mockito.ArgumentMatchers.any());
     AuthenticationException changedDigest =
         assertThrows(
             AuthenticationException.class,
@@ -466,6 +504,36 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new JoinPublicProductionRequest("different-scope", "join-attempt-1")));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
+
+    when(accountTenantMembershipRoleSnapshotRepository.findForUpdate(11L, 7L, 701L, 1L))
+        .thenReturn(Optional.of(new RoleSnapshot(11L, 7L, 701L, 1L, java.util.List.of("player"))));
+    when(membershipTransitionReceiptRepository.findLatestReceipt(11L, 7L))
+        .thenReturn(
+            Optional.of(
+                new MembershipTransitionReceipt(
+                    "membership-transition:account-11:tenant-7",
+                    1L,
+                    UUID.randomUUID(),
+                    "sha256:" + "0".repeat(64),
+                    "ACCOUNT_MEMBERSHIP_TRANSITION_RECEIPT_V1",
+                    "MEMBERSHIP_JOINED",
+                    "join-attempt-1",
+                    701L)));
+    JoinPublicProductionResult alreadyActive =
+        service.joinPublicProduction(
+            bootstrap.bootstrapToken(),
+            new JoinPublicProductionRequest(connectScopeId, "join-attempt-2"));
+
+    assertTrue(alreadyActive.success());
+    assertEquals("ALREADY_ACTIVE", alreadyActive.outcomeCode());
+    org.mockito.Mockito.verify(membershipAuthorityEventProducer)
+        .requireCurrentMembershipEvent(
+            11L,
+            7L,
+            joinedMembership.get(),
+            new RoleSnapshot(11L, 7L, 701L, 1L, java.util.List.of("player")),
+            "join-attempt-1",
+            false);
   }
 
   @Test
@@ -1017,9 +1085,21 @@ class AccountServiceImplTest {
     when(accountConnectScopeRepository.find(org.mockito.ArgumentMatchers.anyString()))
         .thenAnswer(invocation -> Optional.ofNullable(retainedScope.get()));
     when(accountJoinOperationRepository.find(org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
+        .thenAnswer(
+            invocation -> {
+              var current = retainedOperation.get();
+              return current != null && current.requestId().equals(invocation.getArgument(0))
+                  ? Optional.of(current)
+                  : Optional.empty();
+            });
     when(accountJoinOperationRepository.findForUpdate(org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(invocation -> Optional.ofNullable(retainedOperation.get()));
+        .thenAnswer(
+            invocation -> {
+              var current = retainedOperation.get();
+              return current != null && current.requestId().equals(invocation.getArgument(0))
+                  ? Optional.of(current)
+                  : Optional.empty();
+            });
     org.mockito.Mockito.doAnswer(
             invocation -> {
               String requestId = invocation.getArgument(0);
@@ -1737,6 +1817,7 @@ class AccountServiceImplTest {
             accountConnectScopeRepository,
             accountJoinOperationRepository,
             membershipTransitionReceiptRepository,
+            membershipAuthorityEventProducer,
             accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
@@ -4653,6 +4734,14 @@ class AccountServiceImplTest {
 
   private io.jsonwebtoken.Claims parseClaims(String token) {
     return new JwtUtil(JWT_SECRET, 3600000L).parseToken(token).getPayload();
+  }
+
+  private static Checkpoint joinAuthorityCheckpoint() {
+    return new Checkpoint(
+        "account:auth-authority:v1:membership/account-a/tenant-a",
+        1L,
+        "event-1",
+        "sha256:" + "0".repeat(64));
   }
 
   private static String hash(String password) {

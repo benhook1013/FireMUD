@@ -22,9 +22,15 @@ In player-facing environments, the interim `jwt-signing-keys` private bundle is 
 
 The configurable cleanup margin controls issued-token registry retention only. Gameplay continuity is a separate Game Session policy documented in [Reconnection](../../system-architecture-reconnection.md); Account configuration does not derive or widen that lifetime.
 
+### Response-Envelope Key Delivery
+
+The Account-owned response-envelope ring is separate from JWT signing, JWKS, and request-digest material. Account alone reads its versioned key manifest from a read-only mounted Secret at the configured path; no inline key or JWT-key fallback is permitted. The manifest has one active write key ID and distinct AEAD material for connect-token issuance and bare first-party `LOGIN` under each retained ID. Rotation replaces the mounted projection atomically, moves prior IDs to decrypt-only use, and retains them until Account proves that no retained response envelope needing recovery references them. [Account Runtime and Data](./runtime-and-data.md#connect-token-issuance-persistence-and-retention) owns the exact-operation and fail-closed recovery contract. Deployment and producer/consumer proof remain required before either envelope path is enabled.
+
 ## Implementation Status
 
 The current runtime still uses the shared-HMAC compatibility profile for issuance and validation and has no asymmetric non-exportable signer delegation. Any Secret-backed asymmetric materialization is the explicit interim fallback/drift, not canonical target custody; the current preflight/manifests still treat signing paths and `jwt-signing-keys` mounts as shared workload configuration rather than enforcing Account as the sole private-material consumer, and the classpath fallback remains permitted when the configured JWKS file is absent. The runtime also retains the legacy creator-share percentage setting and provider-mutating code paths; they are unsupported implementation drift, not an accepted fee policy or product capability. These target-state requirements are not proof of current startup, custody, mount enforcement, or creator-commerce disablement; runtime, preflight, and manifest alignment is outside this documentation slice.
+
+The local Account response-envelope crypto primitive parses the separate mounted ring format, but no deployment currently provisions or mounts that Secret and neither credential operation persists or consumes its encrypted envelope. This is format/rotation proof only, not response-loss recovery or an enabled credential path.
 
 ## Service-Specific Variables
 
@@ -44,6 +50,7 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev or explicitly ephemeral stacks only (legacy compatibility; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to the interim versioned asymmetric signing bundle (fallback while delegated non-exportable signer custody is unavailable; mounted read-only from `jwt-signing-keys`) | *(none)* |
 | `FIREMUD_AUTH_JWKS_PATH` | Path to the Account-published public `jwks.json` file used by Account and JWT validators (required for player-facing environments; mounted read-only from `jwt-jwks`, normally `/var/run/secrets/firemud/jwks/jwks.json`) | *(none)* |
+| `FIREMUD_AUTH_RESPONSE_ENVELOPE_KEY_RING_PATH` | Account-only read-only mounted versioned AEAD ring manifest for connect-token and bare-`LOGIN` response envelopes; no inline or JWT-key fallback | *(none; required before either response-envelope path is enabled)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of newly issued JWTs for profiles using the global setting (target `control-ui` and receiver-specific private player-delegation profiles); Account-specific player-bootstrap and gameplay-connect lifetimes are configured separately below | `3600000` |
 | `FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS` | Current default legacy Account authentication-session record TTL when `SessionService.storeSession(tenantId, accountId, token)` is called without an explicit lifetime (currently gameplay text/delegation paths); control-ui and player-bootstrap account rows currently pass their corresponding JWT lifetimes directly, while connect-token rows pass the connect-token lifetime directly. It is not JWT `exp`, gameplay-continuity, or issued-token-registry retention | `3600000` |
 | `FIREMUD_ACCOUNT_TOKENS_PLAYER_BOOTSTRAP_EXPIRATION_MS` | `player-bootstrap` JWT lifetime; target ceiling is `300000` ms (five minutes). Current runtime consumes this override, but target startup/preflight bound validation remains incomplete | `300000` |

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -22,8 +23,12 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountJoinReconciliationService;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.v1.GameplayRealm;
 import net.firedevops.firemud.test.GatewayTestProperties;
@@ -51,6 +56,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
       GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
       GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
+      "firemud.grpc.workload-namespace=account_service",
       "firemud.account.join-reconciliation.interval-ms=3600000",
       "firemud.account.join-reconciliation.batch-size=20",
       "firemud.account.join-reconciliation.max-attempts=2",
@@ -81,6 +87,8 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
   @Autowired private AccountJoinReconciliationService reconciliationService;
+  @Autowired private ApprovedLegacyTenantAssociationRepository tenantAssociationRepository;
+  @Autowired private LegacyTenantSourceEvidence legacyTenantSourceEvidence;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -94,6 +102,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(original.success()).isTrue();
     assertThat(original.outcomeCode()).isEqualTo("JOINED");
     long membershipId = original.membershipId();
+    AuthorityEventSnapshot originalAuthorityEvent = assertAuthorityMembershipEvent(fixture);
 
     // This is a synthetic ambiguous row assembled from a genuine committed JOIN. The current
     // atomic terminal transaction cannot naturally commit membership/audit while leaving the
@@ -113,6 +122,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
                 .fetchOne(0, Long.class))
         .isEqualTo(1L);
     assertMembershipAndAuditOnce(fixture, membershipId);
+    assertThat(assertAuthorityMembershipEvent(fixture)).isEqualTo(originalAuthorityEvent);
 
     JoinPublicProductionResult retry = join(fixture);
     assertThat(retry.success()).isTrue();
@@ -120,6 +130,49 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(retry.replayed()).isTrue();
     assertThat(retry.membershipId()).isEqualTo(membershipId);
     assertMembershipAndAuditOnce(fixture, membershipId);
+    assertThat(assertAuthorityMembershipEvent(fixture)).isEqualTo(originalAuthorityEvent);
+  }
+
+  @Test
+  void newerMembershipGenerationWithoutCanonicalEventRemainsPending() {
+    JoinFixture fixture = fixture("active");
+    JoinPublicProductionResult committed = join(fixture);
+    assertThat(committed.success()).isTrue();
+    AuthorityEventSnapshot originalAuthorityEvent = assertAuthorityMembershipEvent(fixture);
+    makeOperationPendingWithRetainedEvidence(fixture);
+    Map<String, Object> originalReceipt = membershipTransitionReceiptSnapshot(fixture);
+    Map<String, Object> originalAudit = joinAuditEnvelopeSnapshot(fixture);
+
+    // Advance the canonical V31 membership generation and issuance fence monotonically while
+    // retaining the active membership, JOIN receipt, audit, and immutable V33 event unchanged.
+    // No event records this newer authority checkpoint, so the retained JOIN event is stale.
+    advanceMembershipGenerationAndFenceWithoutEvent(fixture);
+    Instant scopeExpiry = expireScopeBeforeReconciliationButAfterEvaluation(fixture);
+    reconciliationService.reconcileDueOperations(scopeExpiry.plusSeconds(1));
+
+    assertPendingAfterUnprovedAuthorityEvent(fixture);
+    assertMembershipAndAuditOnce(fixture, committed.membershipId());
+    assertThat(membershipTransitionReceiptSnapshot(fixture)).isEqualTo(originalReceipt);
+    assertThat(joinAuditEnvelopeSnapshot(fixture)).isEqualTo(originalAudit);
+    assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+    assertThat(assertAuthorityMembershipEvent(fixture)).isEqualTo(originalAuthorityEvent);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT lifecycle_state, gameplay_admission_allowed, membership_version, "
+                        + "membership_authority_generation FROM account_tenant_membership "
+                        + "WHERE account_id = ? AND tenant_id = ?",
+                    fixture.accountId(),
+                    fixture.tenantId())
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get("lifecycle_state", String.class)).isEqualTo("ACTIVE");
+              assertThat(row.get("gameplay_admission_allowed", Boolean.class)).isTrue();
+              assertThat(row.get("membership_version", Long.class)).isEqualTo(1L);
+              assertThat(row.get("membership_authority_generation", Long.class)).isEqualTo(1L);
+            });
+    assertThat(membershipAuthorityGeneration(fixture)).isEqualTo(2L);
+    assertThat(issuanceFence(fixture)).isEqualTo(2L);
   }
 
   @Test
@@ -284,6 +337,101 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     }
   }
 
+  private void assertPendingAfterUnprovedAuthorityEvent(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT status, outcome, membership_id, outcome_membership_version, "
+                    + "outcome_membership_authority_generation, reconciliation_attempt_count, "
+                    + "last_reconciliation_attempt_reason, "
+                    + "(next_reconciliation_attempt_at > last_reconciliation_attempt_at) "
+                    + "AS backoff_scheduled FROM account_join_operations WHERE request_id = ?",
+                fixture.requestId())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    assertThat(row.get("status", String.class)).isEqualTo("PENDING");
+    assertThat(row.get("outcome", String.class)).isNull();
+    assertThat(row.get("membership_id", Long.class)).isNull();
+    assertThat(row.get("outcome_membership_version", Long.class)).isNull();
+    assertThat(row.get("outcome_membership_authority_generation", Long.class)).isNull();
+    assertThat(row.get("reconciliation_attempt_count", Integer.class)).isEqualTo(1);
+    assertThat(row.get("last_reconciliation_attempt_reason", String.class))
+        .isEqualTo("MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE");
+    assertThat(row.get("backoff_scheduled", Boolean.class)).isTrue();
+  }
+
+  private void advanceMembershipGenerationAndFenceWithoutEvent(JoinFixture fixture) {
+    dsl.transaction(
+        configuration -> {
+          org.jooq.DSLContext transactionDsl = org.jooq.impl.DSL.using(configuration);
+          int generationUpdates =
+              transactionDsl.execute(
+                  "UPDATE account_authority_generations "
+                      + "SET generation = generation + 1, source_version = source_version + 1 "
+                      + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? "
+                      + "AND tenant_uuid = ? AND generation = 1 AND source_version = 1",
+                  fixture.accountUuid(),
+                  fixture.tenantUuid());
+          assertThat(generationUpdates).isEqualTo(1);
+          int fenceUpdates =
+              transactionDsl.execute(
+                  "UPDATE account_authority_issuance_fences "
+                      + "SET issuance_fence = issuance_fence + 1, "
+                      + "source_version = source_version + 1 "
+                      + "WHERE account_uuid = ? AND issuance_fence = 1 AND source_version = 1",
+                  fixture.accountUuid());
+          assertThat(fenceUpdates).isEqualTo(1);
+        });
+  }
+
+  private Map<String, Object> membershipTransitionReceiptSnapshot(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT receipt_stream_key, receipt_sequence, account_id, tenant_id, "
+                    + "evidence_status, transition_type, request_id, membership_id, "
+                    + "membership_lifecycle_state, gameplay_admission_allowed, membership_version, "
+                    + "membership_authority_generation, authority_provenance, receipt_id, "
+                    + "receipt_digest FROM account_membership_transition_receipts "
+                    + "WHERE account_id = ? AND tenant_id = ? ORDER BY receipt_sequence DESC LIMIT 1",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private Map<String, Object> joinAuditEnvelopeSnapshot(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT audit_event_id, scope, tenant_id, producer_service, event_type, "
+                    + "occurred_at, schema_version, payload_digest_version, payload_digest, "
+                    + "payload FROM account_audit_outbox "
+                    + "WHERE audit_event_id = ? AND tenant_id = ?",
+                joinAuditEventId(fixture.requestId()),
+                fixture.tenantId())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private long membershipAuthorityGeneration(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT generation FROM account_authority_generations "
+                    + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? AND tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .fetchOne(0, Long.class));
+  }
+
+  private long issuanceFence(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT issuance_fence FROM account_authority_issuance_fences "
+                    + "WHERE account_uuid = ?",
+                fixture.accountUuid())
+            .fetchOne(0, Long.class));
+  }
+
   private long originalMembershipId(JoinFixture fixture) {
     return Objects.requireNonNull(
         dsl.resultQuery(
@@ -351,6 +499,72 @@ class AccountJoinReconciliationPostgresIntegrationTest {
         .isEqualTo(1L);
   }
 
+  private AuthorityEventSnapshot assertAuthorityMembershipEvent(JoinFixture fixture) {
+    String streamKey = authorityStreamKey(fixture);
+    assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT last_sequence FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    streamKey)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    var row =
+        dsl.resultQuery(
+                "SELECT outbox_sequence, request_id, event_id, event_digest, payload "
+                    + "FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                streamKey)
+            .fetchOne();
+    assertThat(row).isNotNull();
+    assertThat(row.get("request_id", String.class)).isEqualTo(fixture.requestId());
+    String eventId = row.get("event_id", String.class);
+    String eventDigest = row.get("event_digest", String.class);
+    byte[] payload = row.get("payload", byte[].class);
+    String payloadJson = new String(payload, StandardCharsets.UTF_8);
+    MembershipAuthorityEventV1Codec.MembershipEvent event =
+        MembershipAuthorityEventV1Codec.verify(payloadJson);
+
+    assertThat(row.get("outbox_sequence", Long.class)).isEqualTo(1L);
+    assertThat(event.eventId()).isEqualTo(eventId);
+    assertThat(event.requestId()).isEqualTo(fixture.requestId());
+    assertThat(event.schemaVersion()).isEqualTo(MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+    assertThat(event.eventType()).isEqualTo(MembershipAuthorityEventV1Codec.EVENT_TYPE);
+    assertThat(event.outboxStreamKey()).isEqualTo(streamKey);
+    assertThat(event.outboxSequence()).isEqualTo("1");
+    assertThat(event.sourceScope())
+        .isEqualTo("membership/" + fixture.accountUuid() + "/" + fixture.tenantUuid());
+    assertThat(event.accountId()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(event.tenantId()).isEqualTo(fixture.tenantUuid().toString());
+    assertThat(event.membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(event.membershipVersion()).isEqualTo("1");
+    assertThat(event.roles()).containsExactly("player");
+    assertThat(event.gameplayAdmissionAllowed()).isTrue();
+    assertThat(event.canonicalJson()).isEqualTo(payloadJson);
+    assertThat(payload).containsExactly(event.canonicalJsonUtf8());
+    assertThat(eventDigest).isEqualTo(event.eventDigest());
+    assertThat(eventDigest).matches("sha256:[0-9a-f]{64}");
+
+    return new AuthorityEventSnapshot(eventId, eventDigest, payloadJson);
+  }
+
+  private String authorityStreamKey(JoinFixture fixture) {
+    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+        + "membership/"
+        + fixture.accountUuid()
+        + "/"
+        + fixture.tenantUuid();
+  }
+
+  private long countAuthorityMembershipEvents(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ?",
+                authorityStreamKey(fixture))
+            .fetchOne(0, Long.class));
+  }
+
   private long countMemberships(JoinFixture fixture) {
     return Objects.requireNonNull(
         dsl.resultQuery(
@@ -378,7 +592,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private JoinFixture fixture(String subscriptionStatus) {
     String suffix = UUID.randomUUID().toString();
     String requestId = "join-rec-" + suffix;
-    long tenantId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+    long tenantId = positiveRandomLong();
     long accountId =
         Objects.requireNonNull(
             dsl.resultQuery(
@@ -387,6 +601,41 @@ class AccountJoinReconciliationPostgresIntegrationTest {
                     "join-rec-" + suffix + "@example.com",
                     "test-hash")
                 .fetchOne(0, Long.class));
+    UUID accountUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
+                .fetchOne(0, UUID.class));
+    seedAccountAuthorityState(accountUuid);
+    seedRetainedV26TenantEvidence(tenantId, suffix);
+    UUID tenantUuid = UUID.randomUUID();
+    String evidenceDigest = legacyTenantSourceEvidence.digest(tenantId);
+    tenantAssociationRepository.importApproved(
+        tenantId, approvedTenantAssociation(tenantId, tenantUuid, evidenceDigest, suffix));
+    var storedAssociation =
+        tenantAssociationRepository.findByLegacyTenantId(tenantId).orElseThrow();
+    assertThat(storedAssociation.legacyTenantId()).isEqualTo(tenantId);
+    assertThat(storedAssociation.canonicalTenantId()).isEqualTo(tenantUuid);
+    assertThat(storedAssociation.accountEvidenceDigest()).isEqualTo(evidenceDigest);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT generation FROM account_authority_generations "
+                        + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
+                    tenantUuid)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_legacy_tenant_sources " + "WHERE account_id = ?",
+                    accountId)
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_legacy_membership_sources "
+                        + "WHERE account_id = ?",
+                    accountId)
+                .fetchOne(0, Long.class))
+        .isZero();
     dsl.execute(
         "INSERT INTO subscription (account_id, tenant_id, plan_id, status, entitlement_version) VALUES (?, ?, ?, ?, 1)",
         accountId,
@@ -448,7 +697,92 @@ class AccountJoinReconciliationPostgresIntegrationTest {
             CATALOG_REVISION,
             POINTER_VERSION);
     DirectTextJoinScope scope = accountService.issueDirectTextConnectScope(caller, target);
-    return new JoinFixture(accountId, tenantId, requestId, caller, scope.connectScopeId());
+    return new JoinFixture(
+        accountId, accountUuid, tenantId, tenantUuid, requestId, caller, scope.connectScopeId());
+  }
+
+  private void seedRetainedV26TenantEvidence(long tenantId, String suffix) {
+    long donorAccountId =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO accounts (username, email, password_hash, tenant_id) "
+                        + "VALUES (?, ?, ?, ?) RETURNING id",
+                    "join-rec-retained-donor-" + suffix,
+                    "join-rec-retained-donor-" + suffix + "@example.com",
+                    "test-hash",
+                    tenantId)
+                .fetchOne(0, Long.class));
+    UUID donorAccountUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", donorAccountId)
+                .fetchOne(0, UUID.class));
+    seedAccountAuthorityState(donorAccountUuid);
+    long retainedMembershipId =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO account_tenant_membership "
+                        + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+                        + "membership_version, membership_authority_generation, authority_provenance) "
+                        + "VALUES (?, ?, FALSE, 'LEGACY_UNVERIFIED', 1, 1, 'LEGACY_UNVERIFIED') "
+                        + "RETURNING id",
+                    donorAccountId,
+                    tenantId)
+                .fetchOne(0, Long.class));
+    dsl.execute(
+        "INSERT INTO account_legacy_tenant_sources "
+            + "(account_id, legacy_tenant_id, matching_membership_id, "
+            + "matching_membership_admission_allowed, profile_tenant_count, "
+            + "matching_profile_count, disposition) VALUES (?, ?, ?, FALSE, 0, 0, 'UNVERIFIED')",
+        donorAccountId,
+        tenantId,
+        retainedMembershipId);
+    dsl.execute(
+        "INSERT INTO account_legacy_membership_sources "
+            + "(membership_id, account_id, tenant_id, original_gameplay_admission_allowed, "
+            + "matches_account_legacy_tenant, disposition) "
+            + "VALUES (?, ?, ?, FALSE, TRUE, 'UNVERIFIED')",
+        retainedMembershipId,
+        donorAccountId,
+        tenantId);
+  }
+
+  private void seedAccountAuthorityState(UUID accountUuid) {
+    dsl.execute(
+        "INSERT INTO account_authority_generations "
+            + "(scope_kind, account_uuid, generation, source_version) "
+            + "VALUES ('ACCOUNT', ?, 1, 1)",
+        accountUuid);
+    dsl.execute(
+        "INSERT INTO account_authority_issuance_fences "
+            + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
+        accountUuid);
+  }
+
+  private ResolveLegacyAccountTenantAssociationResponse approvedTenantAssociation(
+      long legacyTenantId, UUID tenantUuid, String evidenceDigest, String suffix) {
+    String sourceLegacyGameTenantId = "legacy-game-" + suffix.replace("-", "").substring(0, 24);
+    return ResolveLegacyAccountTenantAssociationResponse.newBuilder()
+        .setLegacyAccountTenantId(legacyTenantId)
+        .setCanonicalTenantId(tenantUuid.toString())
+        .setSourceLegacyGameTenantId(sourceLegacyGameTenantId)
+        .setSourceGameRowId(positiveRandomLong())
+        .setAccountEvidenceDigest(evidenceDigest)
+        .setOperationId(UUID.randomUUID().toString())
+        .setManifestDigest("sha256:" + "b".repeat(64))
+        .setManifestSignature(java.util.Base64.getEncoder().encodeToString(new byte[64]))
+        .setTargetNamespace("account_service")
+        .setSignerKeyId("game-design-owner-test")
+        .setApprovedBy("owner@example.test")
+        .setApprovalReference("unit-1b-postgres-fixture")
+        .setSignedAt("2026-09-26T00:00:00Z")
+        .setOperationEntryCount(1)
+        .setManifestSchemaVersion(1)
+        .build();
+  }
+
+  private long positiveRandomLong() {
+    long candidate = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+    return candidate == 0L ? 1L : candidate;
   }
 
   private static UUID joinAuditEventId(String requestId) {
@@ -469,8 +803,12 @@ class AccountJoinReconciliationPostgresIntegrationTest {
 
   private record JoinFixture(
       long accountId,
+      UUID accountUuid,
       long tenantId,
+      UUID tenantUuid,
       String requestId,
       DirectTextCallerContext caller,
       String connectScopeId) {}
+
+  private record AuthorityEventSnapshot(String eventId, String eventDigest, String payloadJson) {}
 }

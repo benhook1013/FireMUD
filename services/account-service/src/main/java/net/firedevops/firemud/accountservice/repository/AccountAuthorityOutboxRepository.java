@@ -192,6 +192,23 @@ public class AccountAuthorityOutboxRepository {
         : Optional.of(toEvent(outboxStreamKey, row.get("request_id", String.class), row));
   }
 
+  /** Exact immutable event lookup for a request in one stream, including superseded events. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<Event> findEvent(String outboxStreamKey, String requestId) {
+    validateStreamKey(outboxStreamKey);
+    requireBoundedNonBlank(requestId, "request ID", MAX_REQUEST_ID_LENGTH);
+    Record row =
+        dsl.fetchOne(
+            "SELECT outbox_sequence, request_id, event_id, event_digest, payload "
+                + "FROM account_authority_outbox_events "
+                + "WHERE outbox_stream_key = ? AND request_id = ?",
+            outboxStreamKey,
+            requestId);
+    return row == null
+        ? Optional.empty()
+        : Optional.of(toEvent(outboxStreamKey, row.get("request_id", String.class), row));
+  }
+
   /**
    * Reads the exact latest positive checkpoint for a stream, or empty when no canonical event has
    * ever been committed to that stream.
