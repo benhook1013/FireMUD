@@ -1,8 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -10,8 +10,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
+import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,9 +41,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected collaborators are retained internally by Spring services.")
 public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecutionService {
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
@@ -50,6 +50,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
+  private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String PRIORITY_HIGH = "high";
   private static final String PRIORITY_NORMAL = "normal";
@@ -57,6 +58,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_UNKNOWN = "unknown";
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
+  private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
+  // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
+  // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
+  private static final List<Duration> AUTHORITY_UNAVAILABLE_RETRY_DELAYS =
+      List.of(Duration.ofSeconds(15), Duration.ofSeconds(30), Duration.ofSeconds(60));
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -72,6 +78,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
   private final AutomationQueueService automationQueueService;
+  private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
 
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
@@ -98,6 +105,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         new SimpleMeterRegistry(),
         null,
         null,
+        null,
         null);
   }
 
@@ -116,7 +124,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptReadinessCapacityService readinessCapacityService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -131,7 +140,39 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         meterRegistry,
         automationQueueService,
         readinessProjectionService,
-        readinessCapacityService);
+        readinessCapacityService,
+        pluginRuntimeStateRepository);
+  }
+
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        null,
+        null,
+        null,
+        pluginRuntimeStateRepository);
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -158,6 +199,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null,
         null,
         null);
@@ -190,6 +232,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         meterRegistry,
         automationQueueService,
         null,
+        null,
         null);
   }
 
@@ -208,6 +251,40 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       AutomationQueueService automationQueueService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ScriptReadinessCapacityService readinessCapacityService) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        null);
+  }
+
+  private ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -222,6 +299,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.meterRegistry = meterRegistry;
     this.automationQueueService = automationQueueService;
     this.readinessProjectionService = readinessProjectionService;
+    this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
   }
 
   @Override
@@ -273,6 +351,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
+    PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
+    if (pluginFence != null) {
+      if (pluginFence.retryable()) {
+        retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_ADMISSION);
+        return false;
+      }
+      cancel(workItem, STAGE_ADMISSION, "canceled", pluginFence.reason(), now);
+      return false;
+    }
     if (!workItem.isDryRun()
         && ScriptQuotaClasses.consumesLiveTenantBudget(workItem.getQuotaClass())
         && !tenantBudgetService.tryReserve(
@@ -313,6 +400,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
+    // Capacity admission may have taken time. Re-read plugin authority immediately before
+    // definition lookup/DSL parsing so a stale or unavailable lifecycle cannot reach even a
+    // zero-command success path.
+    PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
+    if (pluginFence != null) {
+      if (pluginFence.retryable()) {
+        retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_DSL_EVAL);
+        return false;
+      }
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", pluginFence.reason(), now);
+      return false;
+    }
     final long tenantId;
     try {
       tenantId = parseTenantId(workItem);
@@ -371,9 +470,27 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
 
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
+    PluginFenceValidation retryableFanoutFence = null;
+    PluginFenceValidation terminalFanoutFence = null;
     handoffService.beginAggregateFanout(workItem);
     try {
-      for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
+      for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
+        ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
+        PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
+        if (handoffPluginFence != null) {
+          if (handoffPluginFence.retryable()) {
+            retryableFanoutFence = handoffPluginFence;
+          } else {
+            terminalFanoutFence = handoffPluginFence;
+          }
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), handoffPluginFence.reason());
+          }
+          break;
+        }
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
         if (!result.accepted()
@@ -389,12 +506,22 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } finally {
       handoffService.endAggregateFanout(workItem);
     }
-    if (firstRejectedHandoff != null) {
-      if (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-        requeueAfterRetryableHandoff(workItem);
-        return false;
-      }
+    if (firstRejectedHandoff != null
+        && !ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       recordTerminalHandoffOutcome(workItem, firstRejectedHandoff);
+      return false;
+    }
+    if (terminalFanoutFence != null) {
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", terminalFanoutFence.reason(), now);
+      return false;
+    }
+    if (retryableFanoutFence != null) {
+      retryOrDeadLetterPluginFence(workItem, retryableFanoutFence, STAGE_DSL_EVAL);
+      return false;
+    }
+    if (firstRejectedHandoff != null
+        && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
+      requeueAfterRetryableFailure(workItem);
       return false;
     }
     markTerminalSuccess(
@@ -406,12 +533,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return true;
   }
 
-  private void requeueAfterRetryableHandoff(ScriptWorkItem workItem) {
+  private void requeueAfterRetryableFailure(ScriptWorkItem workItem) {
     workItem.setStatus("PENDING_EVALUATION");
     workItem.setUpdatedAt(Instant.now());
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, workItem, LOGGER);
+  }
+
+  private void retryOrDeadLetterPluginFence(
+      ScriptWorkItem workItem, PluginFenceValidation pluginFence, String stage) {
+    if (!REASON_AUTHORITY_UNAVAILABLE.equals(pluginFence.reason())) {
+      requeueAfterRetryableFailure(workItem);
+      return;
+    }
+
+    Instant retryAt = Instant.now();
+    int retryCount = workItem.getAuthorityUnavailableRetryCount();
+    if (retryCount < 0 || retryCount >= AUTHORITY_UNAVAILABLE_RETRY_DELAYS.size()) {
+      deadLetter(
+          workItem, stage, OUTCOME_INFRASTRUCTURE_ERROR, REASON_AUTHORITY_UNAVAILABLE, retryAt);
+      return;
+    }
+
+    Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
+    workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
+    workItem.setNextEligibleAt(retryAt.plus(delay));
+    requeueAfterRetryableFailure(workItem);
   }
 
   private static long requireWorkItemId(ScriptWorkItem workItem) {
@@ -870,6 +1018,65 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static long parseTenantId(ScriptWorkItem workItem) {
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
   }
+
+  private PluginFenceValidation validateCurrentPluginFence(ScriptWorkItem workItem) {
+    if (isOnLoad(workItem)) {
+      return null;
+    }
+    String capturedFailure =
+        ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem);
+    if (capturedFailure != null
+        || ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()).isBlank()) {
+      return capturedFailure == null ? null : new PluginFenceValidation(capturedFailure, false);
+    }
+    if (pluginRuntimeStateRepository == null) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    PluginRuntimeState state =
+        pluginRuntimeStateRepository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                workItem.getTenantId(),
+                workItem.getGameInstanceId(),
+                ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
+            .orElse(null);
+    if (state == null) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    if (state.getPluginState() == null) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    PluginState pluginState;
+    try {
+      pluginState = PluginState.valueOf(state.getPluginState());
+    } catch (IllegalArgumentException ex) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    if (pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    if (pluginState != PluginState.PLUGIN_STATE_ENABLED) {
+      return new PluginFenceValidation("plugin_disabled", false);
+    }
+    if (ScriptWorkItemFenceEvaluationSupport.normalize(state.getActivePluginVersionId()).isBlank()
+        || state.getPluginActivationEpoch() <= 0
+        || state.getLifecycleRevision() <= 0) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    String failure =
+        ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+            workItem,
+            state.getActivePluginVersionId(),
+            pluginState,
+            state.getPluginActivationEpoch(),
+            state.getLifecycleRevision());
+    if (failure != null) {
+      return new PluginFenceValidation(failure, false);
+    }
+    workItem.setAuthorityUnavailableRetryCount(0);
+    return null;
+  }
+
+  private record PluginFenceValidation(String reason, boolean retryable) {}
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {
     return EVENT_ON_LOAD.equals(workItem.getEventType());

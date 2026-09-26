@@ -266,21 +266,28 @@ public class ScriptWorkItemRepository {
   }
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
-      String status, Pageable pageable) {
+      String status, Instant eligibleAt, Pageable pageable) {
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.STATUS.eq(status),
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
   public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-      Collection<Long> ids, String status, Pageable pageable) {
+      Collection<Long> ids, String status, Instant eligibleAt, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)),
+        SCRIPT_WORK_ITEMS
+            .ID
+            .in(ids)
+            .and(SCRIPT_WORK_ITEMS.STATUS.eq(status))
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -392,6 +399,7 @@ public class ScriptWorkItemRepository {
   }
 
   public ScriptWorkItem save(ScriptWorkItem entity) {
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       return insertIfAbsentByTriggerIdentity(entity).workItem();
     }
@@ -411,6 +419,8 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.BINDING_ID, blankToEmpty(entity.getBindingId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, blankToEmpty(entity.getPluginId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, blankToEmpty(entity.getPluginVersionId()))
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
@@ -436,6 +446,10 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH, entity.getAdmissionEpoch())
             .set(SCRIPT_WORK_ITEMS.STATUS, entity.getStatus())
             .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, entity.getCancelReason())
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT,
+                entity.getAuthorityUnavailableRetryCount())
+            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
             .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
@@ -466,6 +480,7 @@ public class ScriptWorkItemRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script work item is required");
     }
+    requireCoherentPluginFence(entity);
     String normalizedRequestId = normalizedScriptPinControlPlaneRequestId(entity);
     for (int attempt = 0; attempt < MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
@@ -474,6 +489,7 @@ public class ScriptWorkItemRepository {
         if (!result.inserted()) {
           requireMatchingPinOwnerEvidence(
               normalizedRequestId, result.workItem().getScriptPinControlPlaneRequestId());
+          requireMatchingPluginFence(entity, result.workItem());
         }
         return new IdempotentInsertResult(result.workItem(), result.inserted());
       }
@@ -502,6 +518,7 @@ public class ScriptWorkItemRepository {
       if (existing.isPresent()) {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
+        requireMatchingPluginFence(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -734,6 +751,7 @@ public class ScriptWorkItemRepository {
   }
 
   private void populate(ScriptWorkItemsRecord record, ScriptWorkItem entity) {
+    requireCoherentPluginFence(entity);
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setRegionId(entity.getRegionId());
@@ -747,6 +765,8 @@ public class ScriptWorkItemRepository {
     record.setBindingId(blankToEmpty(entity.getBindingId()));
     record.setPluginId(blankToEmpty(entity.getPluginId()));
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setEventType(entity.getEventType());
@@ -772,6 +792,8 @@ public class ScriptWorkItemRepository {
     record.setAdmissionEpoch(entity.getAdmissionEpoch());
     record.setStatus(entity.getStatus());
     record.setCancelReason(entity.getCancelReason());
+    record.setAuthorityUnavailableRetryCount(entity.getAuthorityUnavailableRetryCount());
+    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
@@ -803,6 +825,30 @@ public class ScriptWorkItemRepository {
     }
   }
 
+  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+    boolean hasPluginId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginId()).isBlank();
+    boolean hasPluginVersionId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginVersionId()).isBlank();
+    if (!hasPluginId && !hasPluginVersionId) {
+      if (entity.getPluginActivationEpoch() != 0L || entity.getLifecycleRevision() != 0L) {
+        throw new IllegalArgumentException("plugin lifecycle evidence requires plugin identity");
+      }
+    }
+  }
+
+  private static void requireMatchingPluginFence(
+      ScriptWorkItem requested, ScriptWorkItem existing) {
+    if (requested.getPluginActivationEpoch() != existing.getPluginActivationEpoch()) {
+      throw new IllegalStateException("plugin_activation_epoch conflicts with existing identity");
+    }
+    if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
+      throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
   private ScriptWorkItem toEntity(Record record) {
     ScriptWorkItem entity = new ScriptWorkItem();
     entity.setId(record.get(SCRIPT_WORK_ITEMS.ID));
@@ -819,6 +865,10 @@ public class ScriptWorkItemRepository {
     entity.setBindingId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.BINDING_ID)));
     entity.setPluginId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
     entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
+    Long pluginActivationEpoch = record.get(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setTargetScopeType(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
@@ -845,6 +895,11 @@ public class ScriptWorkItemRepository {
     entity.setAdmissionEpoch(admissionEpoch == null ? 0L : admissionEpoch);
     entity.setStatus(record.get(SCRIPT_WORK_ITEMS.STATUS));
     entity.setCancelReason(record.get(SCRIPT_WORK_ITEMS.CANCEL_REASON));
+    Integer authorityUnavailableRetryCount =
+        record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT);
+    entity.setAuthorityUnavailableRetryCount(
+        authorityUnavailableRetryCount == null ? 0 : authorityUnavailableRetryCount);
+    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
     entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
     Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);

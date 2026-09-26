@@ -1850,8 +1850,12 @@ require_contains(
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces are not a recovery authorization",
-        "do not yet provide a durable request-result acknowledgement or matching readback identity",
+        "`SetAutomationAdmissionMode` persists the successful exact-scope request result and resulting admission epoch",
+        "`GetAutomationDrainStatus` returns the request ID, target mode, immutable fingerprint, outcome, and acknowledgement timestamp",
+        "the response does not expose the acknowledged resulting epoch separately",
+        "The acknowledged epoch therefore cannot be matched in current readback, and recovery must fail closed",
+        "Matching Set/Get evidence is required but is not complete recovery authorization",
+        "exact pin-epoch, process-cessation, and safe-rebuild proof remain unavailable",
         "deployment-wide Automation containment only with explicit impact approval",
         "durable request-result/fingerprint/acknowledgement readback before recovery proceeds",
     ],
@@ -1859,8 +1863,10 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "not a current recovery authorization",
-        "does not yet provide a durable request-result acknowledgement",
+        "the read does not expose the acknowledgement's resulting epoch as a separate field",
+        "keep the fence in place and fail closed",
+        "do not treat a successful RPC response, admission mode/epoch, fresh `observedAt`, or zero drain counts alone as proof of recovery containment",
+        "overall queue recovery/resume path still lacks exact pin-epoch, process-cessation, and rebuild proof",
         "deployment-wide Automation containment only with explicit impact approval",
         "complete affected-scope enumeration from the durable PostgreSQL/runtime inventory",
         "distinct durable deployment/owner acknowledgement plus authoritative readback",
@@ -2054,6 +2060,62 @@ require_absent(
         "service startup for each region to converge",
     ],
 )
+
+automation_base = (root / "k8s/base/automation-scripting-service.yaml").read_text(encoding="utf-8")
+automation_helm = (root / "k8s/helm/firemud/templates/apps.yaml").read_text(encoding="utf-8")
+automation_runtime = (
+    root / "design/architecture/microservices/automation-scripting-service/runtime-and-data.md"
+).read_text(encoding="utf-8")
+deployment_environments = (
+    root / "design/architecture/infrastructure/deployment-environments.md"
+).read_text(encoding="utf-8")
+
+if not re.search(
+    r"(?ms)^spec:\n  replicas: 2\n.*?^  strategy:\n    type: Recreate\n  selector:",
+    automation_base,
+):
+    raise SystemExit(
+        "k8s/base/automation-scripting-service.yaml: Automation Deployment must use Recreate"
+    )
+if not re.search(
+    r'(?ms)^\s*\{\{- if or \(eq \$service\.name "tcp-proxy-service"\) '
+    r'\(eq \$service\.name "account-service"\) '
+    r'\(eq \$service\.name "game-session-service"\) '
+    r'\(eq \$service\.name "automation-scripting-service"\) \}\}.*?'
+    r'^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$',
+    automation_helm,
+):
+    raise SystemExit(
+        "k8s/helm/firemud/templates/apps.yaml: Automation and TCP Proxy Recreate gate drifted"
+    )
+require_contains(
+    "k8s/helm/firemud/templates/apps.yaml",
+    [
+        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "account-service") (eq $service.name "game-session-service") (eq $service.name "automation-scripting-service") }}',
+        "  strategy:\n    type: Recreate",
+        "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
+        "# V3 changes the persisted plugin lifecycle fence; executor generations",
+    ],
+)
+for path, text in (
+    (
+        "design/architecture/microservices/automation-scripting-service/runtime-and-data.md",
+        automation_runtime,
+    ),
+    (
+        "design/architecture/infrastructure/deployment-environments.md",
+        deployment_environments,
+    ),
+):
+    for term in (
+        "coordinated/recreate",
+        "roll-forward-only",
+        "pre-V3 binary must not be rolled back",
+    ):
+        if term not in text:
+            raise SystemExit(f"{path}: missing Automation V3 rollout-compatibility term {term!r}")
+if "strategy.type: Recreate" not in deployment_environments:
+    raise SystemExit("deployment-environments.md: Automation Recreate strategy drifted")
 
 print("architecture doc contracts passed")
 PY

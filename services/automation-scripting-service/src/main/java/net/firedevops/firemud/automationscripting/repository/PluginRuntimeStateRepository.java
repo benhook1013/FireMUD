@@ -21,10 +21,29 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class PluginRuntimeStateRepository {
+  private static final long LIFECYCLE_LOCK_NAMESPACE = 0x504c5547L;
   private final DSLContext dsl;
 
   public PluginRuntimeStateRepository(DSLContext dsl) {
     this.dsl = dsl;
+  }
+
+  /** Serializes activation and lifecycle commands even before a state row exists. */
+  public void lockLifecycleScope(String tenantId, String gameInstanceId, String pluginId) {
+    String scope =
+        tenantId.length()
+            + ":"
+            + tenantId
+            + gameInstanceId.length()
+            + ":"
+            + gameInstanceId
+            + pluginId.length()
+            + ":"
+            + pluginId;
+    dsl.fetch(
+        "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, ?))",
+        scope,
+        LIFECYCLE_LOCK_NAMESPACE);
   }
 
   public Optional<PluginRuntimeState> findByTenantIdAndGameInstanceIdAndPluginId(
@@ -74,6 +93,7 @@ public class PluginRuntimeStateRepository {
   }
 
   public PluginRuntimeState save(PluginRuntimeState entity) {
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       PluginRuntimeStatesRecord record = dsl.newRecord(PLUGIN_RUNTIME_STATES);
       populate(record, entity);
@@ -89,11 +109,16 @@ public class PluginRuntimeStateRepository {
             .set(PLUGIN_RUNTIME_STATES.RUNTIME_REGION_EPOCH, entity.getRuntimeRegionEpoch())
             .set(PLUGIN_RUNTIME_STATES.PLUGIN_ID, entity.getPluginId())
             .set(PLUGIN_RUNTIME_STATES.ACTIVE_PLUGIN_VERSION_ID, entity.getActivePluginVersionId())
+            .set(PLUGIN_RUNTIME_STATES.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(PLUGIN_RUNTIME_STATES.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(
                 PLUGIN_RUNTIME_STATES.PENDING_PLUGIN_VERSION_ID, entity.getPendingPluginVersionId())
             .set(PLUGIN_RUNTIME_STATES.PLUGIN_STATE, entity.getPluginState())
             .set(PLUGIN_RUNTIME_STATES.STATUS_REASON, entity.getStatusReason())
             .set(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_ID, entity.getControlPlaneRequestId())
+            .set(
+                PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT,
+                entity.getControlPlaneRequestFingerprint())
             .set(PLUGIN_RUNTIME_STATES.ACTOR_PRINCIPAL, entity.getActorPrincipal())
             .set(PLUGIN_RUNTIME_STATES.LAST_CHANGED_AT, toLocalDateTime(entity.getLastChangedAt()))
             .set(
@@ -112,6 +137,18 @@ public class PluginRuntimeStateRepository {
     }
     entity.setRowVersion(nextRowVersion);
     return findById(entity.getId()).orElseThrow();
+  }
+
+  private static void requireCoherentPluginFence(PluginRuntimeState entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        activationEpoch, entity.getLifecycleRevision());
+    if (activationEpoch == 0L
+        && entity.getActivePluginVersionId() != null
+        && !entity.getActivePluginVersionId().isBlank()) {
+      throw new IllegalArgumentException(
+          "active_plugin_version_id requires a positive plugin fence pair");
+    }
   }
 
   private List<PluginRuntimeState> findByScopeAndPluginStateNot(
@@ -155,10 +192,13 @@ public class PluginRuntimeStateRepository {
     record.setRuntimeRegionEpoch(entity.getRuntimeRegionEpoch());
     record.setPluginId(entity.getPluginId());
     record.setActivePluginVersionId(entity.getActivePluginVersionId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setPendingPluginVersionId(entity.getPendingPluginVersionId());
     record.setPluginState(entity.getPluginState());
     record.setStatusReason(entity.getStatusReason());
     record.setControlPlaneRequestId(entity.getControlPlaneRequestId());
+    record.setControlPlaneRequestFingerprint(entity.getControlPlaneRequestFingerprint());
     record.setActorPrincipal(entity.getActorPrincipal());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
     record.setLastPolicyCheckedAt(toLocalDateTime(entity.getLastPolicyCheckedAt()));
@@ -174,10 +214,16 @@ public class PluginRuntimeStateRepository {
     entity.setRuntimeRegionEpoch(record.get(PLUGIN_RUNTIME_STATES.RUNTIME_REGION_EPOCH));
     entity.setPluginId(record.get(PLUGIN_RUNTIME_STATES.PLUGIN_ID));
     entity.setActivePluginVersionId(record.get(PLUGIN_RUNTIME_STATES.ACTIVE_PLUGIN_VERSION_ID));
+    Long pluginActivationEpoch = record.get(PLUGIN_RUNTIME_STATES.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(PLUGIN_RUNTIME_STATES.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setPendingPluginVersionId(record.get(PLUGIN_RUNTIME_STATES.PENDING_PLUGIN_VERSION_ID));
     entity.setPluginState(record.get(PLUGIN_RUNTIME_STATES.PLUGIN_STATE));
     entity.setStatusReason(record.get(PLUGIN_RUNTIME_STATES.STATUS_REASON));
     entity.setControlPlaneRequestId(record.get(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_ID));
+    entity.setControlPlaneRequestFingerprint(
+        record.get(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT));
     entity.setActorPrincipal(record.get(PLUGIN_RUNTIME_STATES.ACTOR_PRINCIPAL));
     entity.setLastChangedAt(toInstant(record.get(PLUGIN_RUNTIME_STATES.LAST_CHANGED_AT)));
     entity.setLastPolicyCheckedAt(

@@ -16,8 +16,9 @@ DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
 from pr_review import evidence, hosted
-from pr_review.cli import _render
+from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
+    HOSTED_CLI_OVERLAP_HOLD_REASON,
     EffectiveParent,
     PullRequestSnapshot,
     ReviewRunnerError,
@@ -42,6 +43,53 @@ CANDIDATE = "d" * 40
 CONTEXT = "f" * 40
 ADVANCED = "9" * 40
 OLDER_BASE = "e" * 40
+
+
+class BoundedAllocationCliParserTests(unittest.TestCase):
+    def test_bounded_allocation_grant_accepts_exact_checkpoint_and_positive_cap(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "2827",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD,
+                "--checkpoint",
+                "5846432587",
+                "--max-additional-completed",
+                "2",
+                "--reason",
+                "bounded additional reviews",
+            ]
+        )
+
+        self.assertEqual(args.action, "grant")
+        self.assertEqual(args.checkpoint, "5846432587")
+        self.assertEqual(args.max_additional_completed, 2)
+
+    def test_legacy_cancel_shape_needs_no_cap_replacement(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "allocation",
+                "cancel",
+                "--pr",
+                "2827",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD,
+                "--reason",
+                "cancel the explicit cap",
+            ]
+        )
+
+        self.assertIsNone(args.checkpoint)
+        self.assertIsNone(args.max_additional_completed)
 
 
 def _git(root, *args, input_text=None):
@@ -218,6 +266,7 @@ def target(
     reconciled=True,
     ancestor_links_valid=True,
     merge_base="",
+    patch_identity="",
     default_base_front=False,
 ):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
@@ -227,6 +276,7 @@ def target(
         reconciled=reconciled,
         ancestor_links_valid=ancestor_links_valid,
         merge_base=merge_base,
+        patch_identity=patch_identity,
         repository="owner/repo",
         default_base_front=default_base_front,
         default_test_merge_base_sha=BASE if default_base_front else "",
@@ -270,7 +320,7 @@ def hosted_payload(body="Full review triggered", *, include_response=True):
     }
 
 
-def write_hosted_trigger(common_dir, *, legacy=False, status="posted"):
+def write_hosted_trigger(common_dir, *, legacy=False, status="posted", head_sha=HEAD, anchor=None):
     namespace = "coderabbit-review-logs" if legacy else "firemud"
     directory = common_dir / namespace / "hosted" / "owner_repo" / "pr-42"
     directory.mkdir(parents=True)
@@ -282,7 +332,8 @@ def write_hosted_trigger(common_dir, *, legacy=False, status="posted"):
                 "status": status,
                 "repository": "owner/repo",
                 "pr_number": 42,
-                "head_sha": HEAD,
+                "head_sha": head_sha,
+                **({"anchor": anchor} if anchor is not None else {}),
                 **(
                     {
                         "trigger": {
@@ -300,6 +351,17 @@ def write_hosted_trigger(common_dir, *, legacy=False, status="posted"):
         )
     )
     return record_path
+
+
+def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARENT, patch_id=None):
+    return {
+        "pr": 42,
+        "child_head": HEAD,
+        "parent_identity": parent_identity,
+        "parent_head": parent_head,
+        "merge_base": merge_base,
+        "patch_id": patch_id or hashlib.sha256(f"candidate patch {HEAD}\n".encode()).hexdigest(),
+    }
 
 
 class CliReviewRunnerTests(unittest.TestCase):
@@ -842,26 +904,96 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(len(results), 1)
 
-    def test_active_or_awaiting_hosted_reservation_blocks_cli_and_preserves_record(self):
-        for include_response in (True, False):
-            with self.subTest(include_response=include_response), tempfile.TemporaryDirectory() as directory:
+    def test_attributable_active_hosted_review_allows_cli_on_same_published_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            selected = target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"])
+            record_path = write_hosted_trigger(common_dir, anchor=cli_anchor())
+            original_record = json.loads(record_path.read_text())
+            commands = FakeCommands(root)
+            with patch(
+                "pr_review.cli_runner.github_api.fetch_pull_request",
+                return_value=hosted_payload("Full review triggered"),
+            ):
+                run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_active_hosted_review_holds_cli_for_unpublished_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir, anchor=cli_anchor())
+            commands = FakeCommands(root, candidate=CANDIDATE)
+            with (
+                patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload("Full review triggered"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
+            ):
+                run_cli_review(
+                    target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_active_hosted_review_same_head_with_changed_anchor_holds_cli(self):
+        target_anchor = cli_anchor()
+        selected = target(merge_base=PARENT, patch_identity=target_anchor["patch_id"])
+        cases = {
+            "missing anchor": None,
+            "parent identity": cli_anchor(parent_identity="17"),
+            "parent head": cli_anchor(parent_head=OLDER_BASE),
+            "merge base": cli_anchor(merge_base=OLDER_BASE),
+            "patch identity": cli_anchor(patch_id="0" * 64),
+        }
+        for label, hosted_anchor in cases.items():
+            with self.subTest(anchor=label), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 common_dir = root / ".git"
                 common_dir.mkdir()
-                record_path = write_hosted_trigger(common_dir)
-                original_record = json.loads(record_path.read_text())
+                write_hosted_trigger(common_dir, anchor=hosted_anchor)
                 commands = FakeCommands(root)
-                response = "Full review triggered" if include_response else None
                 with (
                     patch(
                         "pr_review.cli_runner.github_api.fetch_pull_request",
-                        return_value=hosted_payload(response, include_response=include_response),
+                        return_value=hosted_payload("Full review triggered"),
                     ),
-                    self.assertRaisesRegex(ReviewRunnerError, "active Hosted review blocks CLI review"),
+                    self.assertRaisesRegex(
+                        ReviewRunnerError,
+                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; reservation_count=1",
+                    ),
                 ):
-                    run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+                    run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
                 self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
-                self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_awaiting_hosted_reservation_blocks_cli_and_preserves_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir)
+            original_record = json.loads(record_path.read_text())
+            commands = FakeCommands(root)
+            with (
+                patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(include_response=False),
+                ),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=awaiting_response; reservation_count=1",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
 
     def test_terminal_ambiguous_hosted_response_allows_cli_and_preserves_record(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -869,6 +1001,22 @@ class CliReviewRunnerTests(unittest.TestCase):
             common_dir = root / ".git"
             common_dir.mkdir()
             record_path = write_hosted_trigger(common_dir)
+            original_record = json.loads(record_path.read_text())
+            commands = FakeCommands(root)
+            with patch(
+                "pr_review.cli_runner.github_api.fetch_pull_request",
+                return_value=hosted_payload("Full review finished."),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_historical_terminal_ambiguity_allows_cli_on_a_later_published_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir, head_sha=OLDER_BASE)
             original_record = json.loads(record_path.read_text())
             commands = FakeCommands(root)
             with patch(
@@ -911,7 +1059,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                     patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=payload),
                     self.assertRaisesRegex(
                         ReviewRunnerError,
-                        f"Hosted review requires resolution before CLI review: {state}",
+                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count=1",
                     ),
                 ):
                     run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
@@ -947,10 +1095,34 @@ class CliReviewRunnerTests(unittest.TestCase):
             commands = FakeCommands(root)
             with (
                 patch("pr_review.cli_runner.github_api.fetch_pull_request") as fetch,
-                self.assertRaisesRegex(ReviewRunnerError, "multiple current Hosted reservations"),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=multiple_current_reservations; reservation_count=2",
+                ),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             fetch.assert_not_called()
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_unknown_hosted_reservation_state_holds_cli_with_classified_details(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir)
+            commands = FakeCommands(root)
+            with (
+                patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(),
+                ),
+                patch("pr_review.cli_runner.hosted.trigger_state", return_value=Mock(state="future_state")),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=future_state; reservation_count=1",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_hosted_posting_lock_blocks_cli_before_live_lookup(self):
@@ -999,7 +1171,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             commands = FakeCommands(root)
             with (
                 patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=hosted_payload()),
-                self.assertRaisesRegex(ReviewRunnerError, "Hosted review requires resolution.*ambiguous"),
+                self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))

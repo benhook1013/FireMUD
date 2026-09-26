@@ -686,11 +686,11 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(evidence, "git_common_dir", return_value=common),
             ):
                 history = LiveEvidence("owner/repo", live).history(42, "cli")
-            self.assertEqual(len(history), 1)
-            self.assertTrue(history[0]["completed"])
-            self.assertTrue(history[0]["attributable"])
-            self.assertFalse(history[0]["anchored"])
-            self.assertEqual(history[0]["accepted"], 0)
+            completed = [item for item in history if item.get("completed") is True]
+            self.assertEqual(len(completed), 1)
+            self.assertTrue(completed[0]["attributable"])
+            self.assertFalse(completed[0]["anchored"])
+            self.assertEqual(completed[0]["accepted"], 0)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -1070,6 +1070,64 @@ class RuntimeTest(unittest.TestCase):
             patch.object(evidence, "git_common_dir", return_value=common),
         ):
             return list(LiveEvidence("owner/repo", live).history(42, channel))
+
+    def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
+        valid = {
+            "databaseId": 90,
+            "body": (
+                "**Review scope changed:** reused PR scope was reset\n"
+                "<!-- firemud-review-scope-change -->"
+            ),
+            "createdAt": "2026-09-23T00:00:00Z",
+            "updatedAt": "2026-09-24T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        malformed = {
+            "databaseId": 91,
+            "body": "**Review scope changed:** missing the required hidden marker",
+            "createdAt": "2026-09-25T00:00:00Z",
+            "updatedAt": "2026-09-25T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        malformed_marker = {
+            "databaseId": 92,
+            "body": "<!-- firemud-review-scope-change -- >",
+            "createdAt": "2026-09-26T00:00:00Z",
+            "updatedAt": "2026-09-26T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(Path(directory), self._payload([valid, malformed, malformed_marker]))
+
+        markers = [item for item in history if item.get("scope_changed") is True]
+        self.assertEqual(len(markers), 3)
+        self.assertEqual(markers[0]["kind"], "scope_change")
+        self.assertFalse(markers[0]["scope_change_malformed"])
+        self.assertEqual(markers[0]["observed_at"], "2026-09-24T00:00:00Z")
+        self.assertEqual(markers[1]["kind"], "scope_change_malformed")
+        self.assertTrue(markers[1]["scope_change_malformed"])
+        self.assertEqual(markers[2]["kind"], "scope_change_malformed")
+        self.assertTrue(markers[2]["scope_change_malformed"])
+        for marker in markers:
+            self.assertFalse(marker["completed"])
+            self.assertFalse(marker["attributable"])
+            self.assertTrue(marker["non_counting"])
+            self.assertEqual((marker["accepted"], marker["raw"]), (0, 0))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
+
+    def test_history_skips_non_string_comment_bodies_during_scope_change_scan(self):
+        comment = {
+            "databaseId": 93,
+            "body": None,
+            "createdAt": "2026-09-26T00:00:00Z",
+            "updatedAt": "2026-09-26T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(Path(directory), self._payload([comment]))
+
+        self.assertFalse(any(item.get("scope_changed") is True for item in history))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
     def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1531,6 +1589,40 @@ class RuntimeTest(unittest.TestCase):
                 unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
         self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
 
+    def test_active_hosted_observation_exposes_its_durable_anchor(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=11,
+            state="active",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="CodeRabbit acknowledged that the full review is active",
+        )
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertEqual(observation["anchor"], record["anchor"])
+
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         response_at = "2026-09-23T00:03:00Z"
@@ -1946,8 +2038,9 @@ class RuntimeTest(unittest.TestCase):
             record_path.parent.mkdir(parents=True)
             record_path.write_text(json.dumps(self._trigger_record(created="2026-09-23T00:01:00Z")), encoding="utf-8")
             history = self._history(common, payload)
-        self.assertEqual([item["accepted"] for item in history], [1])
-        self.assertEqual([item["checkpoint"] for item in history], ["12"])
+        completed = [item for item in history if item.get("completed") is True]
+        self.assertEqual([item["accepted"] for item in completed], [1])
+        self.assertEqual([item["checkpoint"] for item in completed], ["12"])
 
     def test_legacy_posting_record_in_any_current_location_holds_runner(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)

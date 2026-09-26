@@ -141,7 +141,13 @@ final class AutomationPluginControlPlaneService {
                 request.getControlPlaneRequestId(),
                 request.getActorPrincipal(),
                 request.getReason()));
-    return DrainPluginResponse.newBuilder().setSuccess(success).build();
+    return success
+        ? DrainPluginResponse.newBuilder().setSuccess(true).build()
+        : DrainPluginResponse.newBuilder()
+            .setError(
+                AutomationControlPlaneSupport.failedPrecondition(
+                    "drain requires an ENABLED active plugin lifecycle"))
+            .build();
   }
 
   private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {

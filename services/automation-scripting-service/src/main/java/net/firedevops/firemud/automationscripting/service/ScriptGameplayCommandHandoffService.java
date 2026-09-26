@@ -5,6 +5,9 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 public interface ScriptGameplayCommandHandoffService {
   HandoffResult handoff(ScriptWorkItem workItem, EmittedCommand command);
 
+  /** Records a command that was fenced before any external handoff was attempted. */
+  void recordUnattempted(ScriptWorkItem workItem, EmittedCommand command, String fenceReason);
+
   /**
    * Begins the thread-local aggregate fan-out scope, deferring parent terminalization while the
    * evaluator attempts all emitted siblings. Callers must pair this call with {@link

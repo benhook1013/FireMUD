@@ -12,9 +12,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
+import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -29,6 +31,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -177,6 +180,639 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalReason()).isEqualTo("commands_handed_off");
   }
 
+  @ParameterizedTest
+  @CsvSource({"2, 1, plugin_activation_epoch_mismatch", "1, 2, plugin_binding_mismatch"})
+  void rejectsStalePluginActivationOrLifecycleFenceBeforeQuotaAndDsl(
+      long currentActivationEpoch, long currentLifecycleRevision, String reason) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(currentActivationEpoch, currentLifecycleRevision)));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            tenantBudgetService,
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo(reason);
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
+    verify(tenantBudgetService, Mockito.never()).tryReserve(Mockito.any(), Mockito.any());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "PLUGIN_STATE_DISABLED",
+        "PLUGIN_STATE_DRAINING",
+        "PLUGIN_STATE_RELOADING",
+        "PLUGIN_STATE_FAILED"
+      })
+  void rejectsNonEnabledPluginBeforeQuotaAndDsl(String pluginStateName) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
+    ScriptWorkItem item = pluginWorkItem();
+    PluginRuntimeState state = pluginState(1L, 1L);
+    state.setPluginState(pluginStateName);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(state));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            tenantBudgetService,
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_disabled");
+    verify(tenantBudgetService, Mockito.never()).tryReserve(Mockito.any(), Mockito.any());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void rechecksPluginFenceBeforeDefinitionLookupAndZeroCommandSuccess() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    PluginRuntimeState enabled = pluginState(1L, 1L);
+    PluginRuntimeState disabled = pluginState(1L, 1L);
+    disabled.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(enabled), Optional.of(disabled));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_disabled");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
+    verify(pluginRepository, Mockito.times(2))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void missingCurrentPluginAuthorityRequeuesAndContinuesWithSibling() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptWorkItem sibling = workItem();
+    sibling.setId(100L);
+    sibling.setScriptId("script-2");
+    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    siblingDefinition.setDefinition("{\"emitCommands\":[]}");
+    when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2"))
+        .thenReturn(Optional.of(siblingDefinition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.empty());
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(2);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(result.completedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(sibling.getStatus()).isEqualTo("HANDED_OFF");
+    verify(workItemRepository, Mockito.times(2)).save(Mockito.any());
+    verify(auditRepository, Mockito.never()).findByWorkItemId(99L);
+    verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2");
+    Mockito.verifyNoInteractions(handoffService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"0, 15", "1, 30", "2, 60"})
+  void retryablePluginFenceBeforeDefinitionLookupSchedulesBoundedRetry(
+      int priorRetryCount, int expectedDelaySeconds) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    item.setAuthorityUnavailableRetryCount(priorRetryCount);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.empty());
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    Instant startedAt = Instant.now();
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+    Instant completedAt = Instant.now();
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(priorRetryCount + 1);
+    assertThat(item.getNextEligibleAt())
+        .isBetween(
+            startedAt.plusSeconds(expectedDelaySeconds),
+            completedAt.plusSeconds(expectedDelaySeconds));
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2})
+  void successfulPluginFenceValidationResetsBudgetBeforeLaterAuthorityGap(int priorRetryCount) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    item.setAuthorityUnavailableRetryCount(priorRetryCount);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(1L, 1L)), Optional.empty());
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    Instant startedAt = Instant.now();
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+    Instant completedAt = Instant.now();
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    assertThat(item.getNextEligibleAt())
+        .isBetween(startedAt.plusSeconds(15), completedAt.plusSeconds(15));
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void authorityUnavailableExhaustionDeadLettersWithDurableReason() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    item.setAuthorityUnavailableRetryCount(3);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.empty());
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(3);
+    assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
+    assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
+    assertThat(audit.getFinalReason()).isEqualTo("authority_unavailable");
+    verify(workItemRepository).save(item);
+    verify(auditRepository).save(audit);
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = "NOT_A_PLUGIN_STATE")
+  void malformedCurrentPluginAuthorityRequeuesWithoutTerminalWrites(String pluginStateName) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    PluginRuntimeState malformed = pluginState(1L, 1L);
+    malformed.setPluginState(pluginStateName);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(malformed));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void invalidCurrentPluginEvidenceRequeuesWithoutTerminalWrites() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    PluginRuntimeState invalid = pluginState(1L, 1L);
+    invalid.setActivePluginVersionId("");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(invalid));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void missingInjectedPluginAuthorityRequeuesWithoutTerminalWrites() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    verify(workItemRepository).save(item);
+    verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
+    Mockito.verifyNoInteractions(definitionRepository, handoffService);
+  }
+
+  @Test
+  void rejectsMissingPluginEvidenceBeforeRepositoryQuotaAndDsl() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
+    ScriptWorkItem item = pluginWorkItem();
+    item.setPluginActivationEpoch(0L);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            tenantBudgetService,
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_lifecycle_evidence_unavailable");
+    verify(tenantBudgetService, Mockito.never()).tryReserve(Mockito.any(), Mockito.any());
+    Mockito.verifyNoInteractions(pluginRepository, definitionRepository, handoffService);
+  }
+
+  @Test
+  void evaluatesAndHandsOffPluginWithExactCurrentFence() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(1L, 1L)));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenReturn(
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", ""));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            tenantBudgetService,
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    verify(pluginRepository, Mockito.times(3))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+    verify(handoffService).handoff(Mockito.eq(item), Mockito.any());
+  }
+
+  @Test
+  void coreWorkDoesNotConsultPluginLifecycleFence() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    Mockito.verifyNoInteractions(pluginRepository);
+  }
+
+  @Test
+  void rejectsPluginStateChangedBetweenDslEvaluationAndHandoff() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    PluginRuntimeState current = pluginState(1L, 1L);
+    PluginRuntimeState changed = pluginState(2L, 1L);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(Optional.of(current), Optional.of(current), Optional.of(changed));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            tenantBudgetService,
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_activation_epoch_mismatch");
+    verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void rechecksPluginFenceBeforeEveryHandoff() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
+    PluginRuntimeState current = pluginState(1L, 1L);
+    PluginRuntimeState changed = pluginState(2L, 1L);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(current), Optional.of(current), Optional.of(current), Optional.of(changed));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenReturn(
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", ""));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_activation_epoch_mismatch");
+    verify(pluginRepository, Mockito.times(4))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+  }
+
   @Test
   void retryableHandoffRequeuesAndPublishesPointerAfterCommit() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -190,6 +826,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
     AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
     ScriptWorkItem item = workItem();
+    Instant eligibleAtBeforeRetry = item.getNextEligibleAt();
     ScriptDefinition definition = new ScriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\",\"targetEntityId\":\"entity-2\"}]}");
@@ -244,6 +881,8 @@ class ScriptWorkItemExecutionServiceImplTest {
 
       assertThat(result.failedCount()).isEqualTo(1);
       assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
+      assertThat(item.getNextEligibleAt()).isEqualTo(eligibleAtBeforeRetry);
       assertThat(operations).containsExactly("save:PENDING_EVALUATION", "refresh");
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
 
@@ -252,6 +891,265 @@ class ScriptWorkItemExecutionServiceImplTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  @Test
+  void retryablePluginFenceDuringFanoutRequeuesWorkAndContinuesWithSibling() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptWorkItem sibling = workItem();
+    sibling.setId(100L);
+    sibling.setScriptId("script-2");
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
+    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    siblingDefinition.setDefinition("{\"emitCommands\":[]}");
+    PluginRuntimeState current = pluginState(1L, 1L);
+    when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2"))
+        .thenReturn(Optional.of(siblingDefinition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(current), Optional.of(current), Optional.of(current), Optional.empty());
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenReturn(
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", ""));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(2);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(result.completedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(sibling.getStatus()).isEqualTo("HANDED_OFF");
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+    verify(handoffService).beginAggregateFanout(item);
+    verify(handoffService).endAggregateFanout(item);
+    verify(workItemRepository, Mockito.times(2)).save(Mockito.any());
+  }
+
+  @Test
+  void priorTerminalHandoffDispositionWinsOverRetryablePluginFenceDuringFanout() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptWorkItem sibling = workItem();
+    sibling.setId(100L);
+    sibling.setScriptId("script-2");
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
+    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    siblingDefinition.setDefinition("{\"emitCommands\":[]}");
+    PluginRuntimeState current = pluginState(1L, 1L);
+    when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2"))
+        .thenReturn(Optional.of(siblingDefinition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(current), Optional.of(current), Optional.of(current), Optional.empty());
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenReturn(
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                false, "RUNTIME_SCOPE_CHANGED", "", "", "", "RUNTIME_SCOPE_CHANGED"));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(2);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(result.completedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("runtime_scope_changed");
+    assertThat(sibling.getStatus()).isEqualTo("HANDED_OFF");
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+    verify(handoffService).beginAggregateFanout(item);
+    verify(handoffService).endAggregateFanout(item);
+  }
+
+  @Test
+  void priorTerminalHandoffDispositionWinsOverTerminalPluginFenceAndClosesFanout() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
+            + "{\"commandText\":\"SAY\"}]}");
+    PluginRuntimeState enabled = pluginState(1L, 1L);
+    PluginRuntimeState disabled = pluginState(1L, 1L);
+    disabled.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(enabled),
+            Optional.of(enabled),
+            Optional.of(enabled),
+            Optional.of(enabled),
+            Optional.of(disabled));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptGameplayCommandHandoffService.EmittedCommand command =
+                  invocation.getArgument(1);
+              if (command.ordinal() == 0) {
+                return new ScriptGameplayCommandHandoffService.HandoffResult(
+                    true, "ENQUEUED", "auto-1", "", "", "");
+              }
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  false, "REJECTED", "", "", "", "REMOTE_RESPONSE_INVALID");
+            });
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("remote_response_invalid");
+    assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
+    assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
+    assertThat(audit.getFinalReason()).isEqualTo("remote_response_invalid");
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> commandCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService, Mockito.times(2)).handoff(Mockito.eq(item), commandCaptor.capture());
+    assertThat(commandCaptor.getAllValues())
+        .extracting(ScriptGameplayCommandHandoffService.EmittedCommand::ordinal)
+        .containsExactly(0, 1);
+    verify(handoffService).beginAggregateFanout(item);
+    verify(handoffService).endAggregateFanout(item);
+  }
+
+  @Test
+  void recordsRemainingCommandsAsUnattemptedWhenPluginFenceChangesMidFanout() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
+            + "{\"commandText\":\"SAY\"}]}");
+    PluginRuntimeState enabled = pluginState(1L, 1L);
+    PluginRuntimeState disabled = pluginState(1L, 1L);
+    disabled.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(enabled),
+            Optional.of(enabled),
+            Optional.of(enabled),
+            Optional.of(disabled));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenReturn(
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", ""));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_disabled");
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> attemptedCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService).handoff(Mockito.eq(item), attemptedCaptor.capture());
+    assertThat(attemptedCaptor.getValue().ordinal()).isZero();
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> unattemptedCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService, Mockito.times(2))
+        .recordUnattempted(
+            Mockito.eq(item), unattemptedCaptor.capture(), Mockito.eq("plugin_disabled"));
+    assertThat(unattemptedCaptor.getAllValues())
+        .extracting(ScriptGameplayCommandHandoffService.EmittedCommand::ordinal)
+        .containsExactly(1, 2);
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+    verify(handoffService).beginAggregateFanout(item);
+    verify(handoffService).endAggregateFanout(item);
   }
 
   @ParameterizedTest(name = "accepts command metadata {0}")
@@ -2149,6 +3047,51 @@ class ScriptWorkItemExecutionServiceImplTest {
             meterRegistry);
     return new ExecutionFixture(
         item, audit, handoffService, meterRegistry, service.processPendingWorkItems(10));
+  }
+
+  private static ScriptWorkItemExecutionService pluginFenceService(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository definitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptTenantBudgetService tenantBudgetService,
+      PluginRuntimeStateRepository pluginRepository) {
+    return new ScriptWorkItemExecutionServiceImpl(
+        workItemService,
+        definitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+        new ScriptOutputProperties(),
+        tenantBudgetService,
+        allowingDryRunCapacityService(),
+        new ObjectMapper(),
+        new SimpleMeterRegistry(),
+        pluginRepository);
+  }
+
+  private static ScriptWorkItem pluginWorkItem() {
+    ScriptWorkItem item = workItem();
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-version-1");
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
+    return item;
+  }
+
+  private static PluginRuntimeState pluginState(
+      long pluginActivationEpoch, long lifecycleRevision) {
+    PluginRuntimeState state = new PluginRuntimeState();
+    state.setTenantId("1");
+    state.setGameInstanceId("7");
+    state.setPluginId("plugin-1");
+    state.setActivePluginVersionId("plugin-version-1");
+    state.setPluginActivationEpoch(pluginActivationEpoch);
+    state.setLifecycleRevision(lifecycleRevision);
+    state.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    return state;
   }
 
   private record ExecutionFixture(

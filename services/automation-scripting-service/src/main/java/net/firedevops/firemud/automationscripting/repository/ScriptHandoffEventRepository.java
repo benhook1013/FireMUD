@@ -138,8 +138,25 @@ public class ScriptHandoffEventRepository {
         .fetch(this::toEntity);
   }
 
+  /** Returns the durable logical child projection for one tenant-qualified command. */
+  public Optional<ScriptHandoffEvent> findByTenantIdAndWorkItemIdAndCommandOrdinal(
+      String tenantId, Long workItemId, int commandOrdinal) {
+    if (tenantId == null || tenantId.isBlank() || workItemId == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(
+            SCRIPT_HANDOFF_EVENTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(workItemId))
+                .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(commandOrdinal)))
+        .fetchOptional(this::toEntity);
+  }
+
   public ScriptHandoffEvent save(ScriptHandoffEvent entity) {
     requireCoherentPinTuple(entity);
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       ScriptHandoffEventsRecord record = dsl.newRecord(SCRIPT_HANDOFF_EVENTS);
       populate(record, entity);
@@ -254,6 +271,8 @@ public class ScriptHandoffEventRepository {
         && Objects.equals(
             blankToEmpty(existing.getPluginVersionId()),
             blankToEmpty(incoming.getPluginVersionId()))
+        && existing.getPluginActivationEpoch() == incoming.getPluginActivationEpoch()
+        && existing.getLifecycleRevision() == incoming.getLifecycleRevision()
         && Objects.equals(existing.getWorkItemId(), incoming.getWorkItemId())
         && existing.getCommandOrdinal() == incoming.getCommandOrdinal()
         && Objects.equals(existing.getAutomationDispatchId(), incoming.getAutomationDispatchId())
@@ -293,6 +312,8 @@ public class ScriptHandoffEventRepository {
         .and(
             SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID.isNotDistinctFrom(
                 blankToEmpty(entity.getPluginVersionId())))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH.eq(entity.getPluginActivationEpoch()))
+        .and(SCRIPT_HANDOFF_EVENTS.LIFECYCLE_REVISION.eq(entity.getLifecycleRevision()))
         .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(entity.getWorkItemId()))
         .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(entity.getCommandOrdinal()))
         .and(
@@ -334,6 +355,8 @@ public class ScriptHandoffEventRepository {
     record.setBindingId(entity.getBindingId());
     record.setPluginId(blankToEmpty(entity.getPluginId()));
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setWorkItemId(entity.getWorkItemId());
     record.setCommandOrdinal(entity.getCommandOrdinal());
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
@@ -371,6 +394,11 @@ public class ScriptHandoffEventRepository {
     }
   }
 
+  private static void requireCoherentPluginFence(ScriptHandoffEvent entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+  }
+
   private ScriptHandoffEvent toEntity(Record record) {
     ScriptHandoffEvent entity = new ScriptHandoffEvent();
     entity.setId(record.get(SCRIPT_HANDOFF_EVENTS.ID));
@@ -386,6 +414,10 @@ public class ScriptHandoffEventRepository {
     entity.setBindingId(record.get(SCRIPT_HANDOFF_EVENTS.BINDING_ID));
     entity.setPluginId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID)));
     entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID)));
+    Long pluginActivationEpoch = record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_HANDOFF_EVENTS.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setWorkItemId(record.get(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID));
     Integer commandOrdinal = record.get(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL);
     entity.setCommandOrdinal(commandOrdinal == null ? 0 : commandOrdinal);

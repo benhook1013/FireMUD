@@ -7,6 +7,9 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 public interface PluginRuntimeStateService {
   Optional<PluginRuntimeStatus> getStatus(String tenantId, String gameInstanceId, String pluginId);
 
+  Optional<PluginRuntimeStatus> getLocalLifecycleStatus(
+      String tenantId, String gameInstanceId, String pluginId);
+
   java.util.Map<String, String> getActivePluginVersions(
       String tenantId, String gameInstanceId, String runtimeRegionId, long runtimeRegionEpoch);
 
@@ -103,7 +106,9 @@ public interface PluginRuntimeStateService {
       String actorPrincipal,
       long lastPolicyCheckedAtMs,
       PluginPublicationLink activePublication,
-      PluginPublicationLink pendingPublication) {}
+      PluginPublicationLink pendingPublication,
+      long pluginActivationEpoch,
+      long lifecycleRevision) {}
 
   record PluginPublicationLink(
       String pluginVersionId,
