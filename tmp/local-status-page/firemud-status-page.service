@@ -1,0 +1,18 @@
+[Unit]
+Description=FireMUD local delivery status page
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ben
+Group=ben
+WorkingDirectory=/home/ben/src/FireMUD-project-direction/tmp/local-status-page
+Environment=HOME=/home/ben
+Environment=PATH=/home/ben/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /home/ben/src/FireMUD-project-direction/tmp/local-status-page/server.py --bind 0.0.0.0 --port 8877 --external-origin http://192.168.50.100:8877
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
