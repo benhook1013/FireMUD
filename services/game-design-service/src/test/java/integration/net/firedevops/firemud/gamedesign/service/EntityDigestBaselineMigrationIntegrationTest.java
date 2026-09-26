@@ -152,9 +152,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
     EntityDigestBaselineMigrationAudit audit =
         auditRepository.findByOperationId(command.operationId()).orElseThrow();
     RecordedParticipantDigest expectedMigrated =
-        replacement(target, command.operationId(), v2Digest(targetVersion.getId()));
-    expectedMigrated.setRecordedAt(audit.committedAt());
-    expectedMigrated.setLastVerifiedAt(audit.committedAt());
+        replacement(target, v2Digest(targetVersion.getId()));
     assertThat(migrated).usingRecursiveComparison().isEqualTo(expectedMigrated);
     EntityDigestBaselineMigrationAudit expectedAudit =
         audit(
@@ -170,10 +168,12 @@ class EntityDigestBaselineMigrationIntegrationTest {
     assertThat(migrated.getAppliedCommitId()).isEqualTo("version:" + targetVersion.getId());
     assertThat(migrated.getContentDigest()).isEqualTo(v2Digest(targetVersion.getId()));
     assertThat(migrated.getDigestSchemaVersion()).isEqualTo(2);
-    assertThat(migrated.getRecordedFromPublishWorkflowId()).isEqualTo(command.operationId());
-    assertThat(migrated.getLastVerifiedPublishWorkflowId()).isEqualTo(command.operationId());
-    assertThat(migrated.getRecordedAt()).isEqualTo(audit.committedAt());
-    assertThat(migrated.getLastVerifiedAt()).isEqualTo(audit.committedAt());
+    assertThat(migrated.getRecordedFromPublishWorkflowId())
+        .isEqualTo(target.getRecordedFromPublishWorkflowId());
+    assertThat(migrated.getLastVerifiedPublishWorkflowId())
+        .isEqualTo(target.getLastVerifiedPublishWorkflowId());
+    assertThat(migrated.getRecordedAt()).isEqualTo(target.getRecordedAt());
+    assertThat(migrated.getLastVerifiedAt()).isEqualTo(target.getLastVerifiedAt());
     assertThat(audit.id()).isEqualTo(result.auditId());
     assertThat(audit.recordedParticipantDigestId()).isEqualTo(target.getId());
     assertThat(audit.sourceContentDigest()).isEqualTo(target.getContentDigest());
@@ -231,8 +231,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
     changed.setContentDigest("changed-after-preflight");
     baselineRepository.save(changed);
 
-    RecordedParticipantDigest replacement =
-        replacement(expectedOld, "cas-test-operation", "v2-new");
+    RecordedParticipantDigest replacement = replacement(expectedOld, "v2-new");
 
     assertThat(
             baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(
@@ -258,7 +257,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
         baselineRepository.findById(secondSource.getId()).orElseThrow();
     LocalDateTime migrationTime = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
     RecordedParticipantDigest replacement =
-        replacement(expectedOld, firstCommand.operationId(), v2Digest(secondVersion.getId()));
+        replacement(expectedOld, v2Digest(secondVersion.getId()));
     replacement.setRecordedAt(migrationTime);
     replacement.setLastVerifiedAt(migrationTime);
     EntityDigestBaselineMigrationAudit duplicateAudit =
@@ -357,7 +356,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
   }
 
   private RecordedParticipantDigest replacement(
-      RecordedParticipantDigest source, String operationId, String contentDigest) {
+      RecordedParticipantDigest source, String contentDigest) {
     RecordedParticipantDigest replacement = new RecordedParticipantDigest();
     replacement.setId(source.getId());
     replacement.setTenantId(source.getTenantId());
@@ -368,10 +367,10 @@ class EntityDigestBaselineMigrationIntegrationTest {
     replacement.setAppliedCommitId(source.getAppliedCommitId());
     replacement.setContentDigest(contentDigest);
     replacement.setDigestSchemaVersion(2);
-    replacement.setRecordedFromPublishWorkflowId(operationId);
-    replacement.setRecordedAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
-    replacement.setLastVerifiedPublishWorkflowId(operationId);
-    replacement.setLastVerifiedAt(replacement.getRecordedAt());
+    replacement.setRecordedFromPublishWorkflowId(source.getRecordedFromPublishWorkflowId());
+    replacement.setRecordedAt(source.getRecordedAt());
+    replacement.setLastVerifiedPublishWorkflowId(source.getLastVerifiedPublishWorkflowId());
+    replacement.setLastVerifiedAt(source.getLastVerifiedAt());
     return replacement;
   }
 

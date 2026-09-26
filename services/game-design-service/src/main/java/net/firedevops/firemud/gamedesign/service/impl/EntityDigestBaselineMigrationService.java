@@ -172,8 +172,7 @@ public class EntityDigestBaselineMigrationService {
     validateObservedDigest(observed, command);
 
     LocalDateTime migrationTime = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
-    RecordedParticipantDigest replacement =
-        replacementFor(current, observed, command.operationId(), migrationTime);
+    RecordedParticipantDigest replacement = replacementFor(current, observed);
     EntityDigestBaselineMigrationAudit audit = auditFor(current, observed, command, migrationTime);
     try {
       writeService.commit(current, replacement, audit);
@@ -306,10 +305,7 @@ public class EntityDigestBaselineMigrationService {
   }
 
   private RecordedParticipantDigest replacementFor(
-      RecordedParticipantDigest current,
-      PublishParticipantDigestDto observed,
-      String operationId,
-      LocalDateTime migrationTime) {
+      RecordedParticipantDigest current, PublishParticipantDigestDto observed) {
     RecordedParticipantDigest replacement = new RecordedParticipantDigest();
     replacement.setId(current.getId());
     replacement.setTenantId(current.getTenantId());
@@ -320,10 +316,10 @@ public class EntityDigestBaselineMigrationService {
     replacement.setAppliedCommitId(observed.appliedCommitId());
     replacement.setContentDigest(observed.contentDigest());
     replacement.setDigestSchemaVersion(TARGET_SCHEMA_VERSION);
-    replacement.setRecordedFromPublishWorkflowId(operationId);
-    replacement.setRecordedAt(migrationTime);
-    replacement.setLastVerifiedPublishWorkflowId(operationId);
-    replacement.setLastVerifiedAt(migrationTime);
+    replacement.setRecordedFromPublishWorkflowId(current.getRecordedFromPublishWorkflowId());
+    replacement.setRecordedAt(current.getRecordedAt());
+    replacement.setLastVerifiedPublishWorkflowId(current.getLastVerifiedPublishWorkflowId());
+    replacement.setLastVerifiedAt(current.getLastVerifiedAt());
     return replacement;
   }
 
@@ -430,10 +426,15 @@ public class EntityDigestBaselineMigrationService {
         || !Objects.equals(actualBaseline.getContentDigest(), actualAudit.observedContentDigest())
         || !Objects.equals(
             actualBaseline.getDigestSchemaVersion(), actualAudit.observedDigestSchemaVersion())
-        || !Objects.equals(actualBaseline.getRecordedFromPublishWorkflowId(), command.operationId())
-        || !Objects.equals(actualBaseline.getRecordedAt(), actualAudit.committedAt())
-        || !Objects.equals(actualBaseline.getLastVerifiedPublishWorkflowId(), command.operationId())
-        || !Objects.equals(actualBaseline.getLastVerifiedAt(), actualAudit.committedAt())) {
+        || !Objects.equals(
+            actualBaseline.getRecordedFromPublishWorkflowId(),
+            actualAudit.sourceRecordedFromPublishWorkflowId())
+        || !Objects.equals(actualBaseline.getRecordedAt(), actualAudit.sourceRecordedAt())
+        || !Objects.equals(
+            actualBaseline.getLastVerifiedPublishWorkflowId(),
+            actualAudit.sourceLastVerifiedPublishWorkflowId())
+        || !Objects.equals(
+            actualBaseline.getLastVerifiedAt(), actualAudit.sourceLastVerifiedAt())) {
       throw rejected(
           "BASELINE_READBACK_MISMATCH", "persisted baseline does not exactly match its audit");
     }

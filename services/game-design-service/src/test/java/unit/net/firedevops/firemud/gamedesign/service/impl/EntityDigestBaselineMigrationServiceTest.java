@@ -174,15 +174,21 @@ class EntityDigestBaselineMigrationServiceTest {
     assertEquals("version:42", result.appliedCommitId());
     assertEquals("v2-content", result.contentDigest());
     assertEquals(2, result.digestSchemaVersion());
-    assertEquals(OPERATION_ID, persistedBaseline.get().getRecordedFromPublishWorkflowId());
-    assertEquals(OPERATION_ID, persistedBaseline.get().getLastVerifiedPublishWorkflowId());
+    assertEquals(
+        source.getRecordedFromPublishWorkflowId(),
+        persistedBaseline.get().getRecordedFromPublishWorkflowId());
+    assertEquals(source.getRecordedAt(), persistedBaseline.get().getRecordedAt());
+    assertEquals(
+        source.getLastVerifiedPublishWorkflowId(),
+        persistedBaseline.get().getLastVerifiedPublishWorkflowId());
+    assertEquals(source.getLastVerifiedAt(), persistedBaseline.get().getLastVerifiedAt());
     assertEquals(source.getContentDigest(), persistedAudit.get().sourceContentDigest());
     assertEquals("v2-content", persistedAudit.get().observedContentDigest());
   }
 
   @Test
   void exactRetryReturnsOnlyAfterBaselineAndAuditReadbackWithoutRecomputing() {
-    RecordedParticipantDigest migrated = migratedBaseline("v2-content", "version:42", auditTime());
+    RecordedParticipantDigest migrated = migratedBaseline("v2-content", "version:42");
     EntityDigestBaselineMigrationAudit audit = audit(source, migrated, AUDIT_ID, auditTime());
     when(auditRepository.findByOperationId(OPERATION_ID)).thenReturn(Optional.of(audit));
     when(baselineRepository.findById(BASELINE_ID)).thenReturn(Optional.of(migrated));
@@ -201,11 +207,7 @@ class EntityDigestBaselineMigrationServiceTest {
   @Test
   void operationIdReuseWithDifferentSourceIsRejected() {
     EntityDigestBaselineMigrationAudit conflicting =
-        audit(
-            source,
-            migratedBaseline("v2-content", "version:42", auditTime()),
-            AUDIT_ID,
-            auditTime());
+        audit(source, migratedBaseline("v2-content", "version:42"), AUDIT_ID, auditTime());
     conflicting = withSourceContentDigest(conflicting, "different-v1-digest");
     when(auditRepository.findByOperationId(OPERATION_ID)).thenReturn(Optional.of(conflicting));
 
@@ -433,16 +435,11 @@ class EntityDigestBaselineMigrationServiceTest {
         "ENTITY_MANAGEMENT", "42", null, appliedCommitId, digest, 2, null, null);
   }
 
-  private RecordedParticipantDigest migratedBaseline(
-      String digest, String appliedCommitId, LocalDateTime committedAt) {
+  private RecordedParticipantDigest migratedBaseline(String digest, String appliedCommitId) {
     RecordedParticipantDigest baseline = sourceBaseline();
     baseline.setAppliedCommitId(appliedCommitId);
     baseline.setContentDigest(digest);
     baseline.setDigestSchemaVersion(2);
-    baseline.setRecordedFromPublishWorkflowId(OPERATION_ID);
-    baseline.setRecordedAt(committedAt);
-    baseline.setLastVerifiedPublishWorkflowId(OPERATION_ID);
-    baseline.setLastVerifiedAt(committedAt);
     return baseline;
   }
 

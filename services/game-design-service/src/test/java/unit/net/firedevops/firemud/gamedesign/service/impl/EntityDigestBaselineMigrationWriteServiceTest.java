@@ -34,7 +34,7 @@ class EntityDigestBaselineMigrationWriteServiceTest {
     service = new EntityDigestBaselineMigrationWriteService(baselineRepository, auditRepository);
     LocalDateTime time = LocalDateTime.parse("2026-09-26T01:02:03.123456");
     source = baseline(1, "old", time.minusDays(1), "publish:old", "verify:old");
-    replacement = baseline(2, "new", time, "migration-op", "migration-op");
+    replacement = baseline(2, "new", time.minusDays(1), "publish:old", "verify:old");
     audit = audit(time);
   }
 
@@ -56,6 +56,16 @@ class EntityDigestBaselineMigrationWriteServiceTest {
 
     assertThrows(IllegalStateException.class, () -> service.commit(source, replacement, audit));
 
+    verify(auditRepository, never()).insert(any());
+  }
+
+  @Test
+  void maintenanceOperationCannotReplacePublishProvenance() {
+    replacement.setRecordedFromPublishWorkflowId("migration-op");
+
+    assertThrows(IllegalArgumentException.class, () -> service.commit(source, replacement, audit));
+
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
   }
 
