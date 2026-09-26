@@ -2,6 +2,7 @@ import http.client
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,6 +17,11 @@ SPEC.loader.exec_module(server_module)
 
 
 class LocalRefreshServerTest(unittest.TestCase):
+    def test_external_origin_must_be_an_http_origin_without_a_path(self):
+        for origin in ("https://192.168.50.100:8877", "http://192.168.50.100:8877/path", "http://user@192.168.50.100:8877"):
+            with self.subTest(origin=origin), self.assertRaises(ValueError):
+                server_module.StatusServer(("127.0.0.1", 0), Path("."), external_origin=origin)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.index = Path(self.directory.name) / "index.html"
@@ -31,6 +37,8 @@ class LocalRefreshServerTest(unittest.TestCase):
             self.publish_calls += 1
 
         self.server = server_module.StatusServer(("127.0.0.1", 0), Path(self.directory.name), render, publish)
+        self.server.external_origin = f"http://127.0.0.1:{self.server.server_port}"
+        self.server.external_host = f"127.0.0.1:{self.server.server_port}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
@@ -43,7 +51,7 @@ class LocalRefreshServerTest(unittest.TestCase):
     def request(self, method="POST", path="/refresh", *, origin=None, host=None, body=None):
         address = f"127.0.0.1:{self.server.server_port}"
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
-        headers = {"Origin": origin or f"http://{address}"}
+        headers = {"Origin": origin or self.server.external_origin}
         if host is not None:
             headers["Host"] = host
         connection.request(method, path, body=body, headers=headers)
@@ -176,6 +184,12 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.assertEqual((self.render_calls, self.publish_calls), (1, 0))
         self.assertEqual(self.phase(), "render_failed")
         self.assertEqual(self.index.read_text(), "old snapshot")
+        retry_status, _, retry_body = self.request()
+        self.assertEqual(retry_status, 503)
+        self.assertIn(b"Previous refresh failed", retry_body)
+        self.assertNotIn(b"Refresh recently completed", retry_body)
+        self.assertEqual((self.render_calls, self.publish_calls), (1, 0))
+        self.assertEqual(self.phase(), "render_failed")
 
     def test_publish_failure_reports_local_success_separately(self):
         def fail_publish():
@@ -189,6 +203,12 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
         self.assertEqual(self.phase(), "publish_failed")
         self.assertEqual(self.index.read_text(), "new snapshot")
+        retry_status, _, retry_body = self.request()
+        self.assertEqual(retry_status, 503)
+        self.assertIn(b"Previous refresh failed", retry_body)
+        self.assertNotIn(b"Refresh recently completed", retry_body)
+        self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
+        self.assertEqual(self.phase(), "publish_failed")
 
     def test_origin_host_and_body_safeguards_precede_both_jobs(self):
         self.assertEqual(self.request(origin="https://example.org")[0], 403)
@@ -224,17 +244,29 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
 
     @patch.object(server_module.subprocess, "run")
-    def test_fixed_wsl_scripts_are_used_for_both_stages(self, run):
+    def test_refresh_stages_run_python_scripts_in_the_current_wsl_instance(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, "", "")
         server_module.render_snapshot()
         server_module.publish_snapshot()
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
             [
-                ["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "python3", server_module.WSL_RENDER],
-                ["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "python3", server_module.WSL_PUBLISH],
+                [sys.executable, str(server_module.RENDER_SCRIPT)],
+                [sys.executable, str(server_module.PUBLISH_SCRIPT)],
             ],
         )
+        self.assertEqual([call.kwargs["cwd"] for call in run.call_args_list], [server_module.ROOT] * 2)
+        self.assertFalse(any("wsl.exe" in arg for call in run.call_args_list for arg in call.args[0]))
+
+    def test_refresh_uses_configured_external_origin_behind_port_forward(self):
+        self.server.external_origin = "http://192.168.50.100:8877"
+        self.server.external_host = "192.168.50.100:8877"
+        status, _, _ = self.request(
+            origin="http://192.168.50.100:8877",
+            host="192.168.50.100:8877",
+        )
+        self.assertEqual(status, 303)
+        self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
 
 
 if __name__ == "__main__":

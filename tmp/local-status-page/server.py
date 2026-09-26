@@ -8,24 +8,28 @@ import html
 import json
 import logging
 import subprocess
+import sys
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "output"
-WSL_RENDER = "/home/ben/src/FireMUD-project-direction/tmp/local-status-page/render.py"
-WSL_PUBLISH = "/home/ben/src/FireMUD-project-direction/tmp/local-status-page/publish-hetzner.py"
+DEFAULT_EXTERNAL_ORIGIN = "http://192.168.50.100:8877"
+RENDER_SCRIPT = ROOT / "render.py"
+PUBLISH_SCRIPT = ROOT / "publish-hetzner.py"
 REFRESH_COOLDOWN_SECONDS = 15
 AUTO_REFRESH_INTERVAL_SECONDS = 30 * 60
 LOG = logging.getLogger(__name__)
 
 
-def run_wsl_script(script: str, timeout: int) -> None:
+def run_local_script(script: Path, timeout: int) -> None:
     result = subprocess.run(
-        ["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "python3", script],
+        [sys.executable, str(script)],
+        cwd=ROOT,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -36,11 +40,11 @@ def run_wsl_script(script: str, timeout: int) -> None:
 
 
 def render_snapshot() -> None:
-    run_wsl_script(WSL_RENDER, 180)
+    run_local_script(RENDER_SCRIPT, 180)
 
 
 def publish_snapshot() -> None:
-    run_wsl_script(WSL_PUBLISH, 300)
+    run_local_script(PUBLISH_SCRIPT, 300)
 
 
 class StatusServer(ThreadingHTTPServer):
@@ -49,9 +53,17 @@ class StatusServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], directory: Path,
                  render: Callable[[], None] = render_snapshot,
                  publish: Callable[[], None] = publish_snapshot,
-                 auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS):
+                 auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS,
+                 external_origin: str = DEFAULT_EXTERNAL_ORIGIN):
+        parsed_origin = urlsplit(external_origin)
+        if (parsed_origin.scheme != "http" or not parsed_origin.netloc or parsed_origin.path
+                or parsed_origin.query or parsed_origin.fragment or parsed_origin.username
+                or parsed_origin.password):
+            raise ValueError("external origin must be an http origin without a path or credentials")
         self.render = render
         self.publish = publish
+        self.external_origin = external_origin.rstrip("/")
+        self.external_host = parsed_origin.netloc
         self.phase = "idle"
         self.refresh_lock = threading.Lock()
         self.next_refresh_at = 0.0
@@ -69,6 +81,8 @@ class StatusServer(ThreadingHTTPServer):
         started = False
         try:
             if time.monotonic() < self.next_refresh_at:
+                if self.phase in {"render_failed", "publish_failed"}:
+                    return "failure_backoff"
                 return "cooldown"
             started = True
             try:
@@ -104,7 +118,7 @@ class StatusServer(ThreadingHTTPServer):
             if self.scheduler_stop.is_set():
                 break
             result = self.refresh_once()
-            if result == "cooldown":
+            if result in {"cooldown", "failure_backoff"}:
                 self.next_auto_refresh_at = max(self.next_auto_refresh_at, self.next_refresh_at)
             elif result == "busy":
                 # The manual job will wake the scheduler when it finishes.
@@ -149,8 +163,8 @@ class StatusHandler(SimpleHTTPRequestHandler):
         if self.path != "/refresh":
             self._message(404, "Not found", "This server only refreshes the status page.")
             return
-        bound_host = f"{self.server.server_address[0]}:{self.server.server_address[1]}"
-        if self.headers.get("Host") != bound_host or self.headers.get("Origin") != f"http://{bound_host}":
+        if (self.headers.get("Host") != self.server.external_host
+                or self.headers.get("Origin") != self.server.external_origin):
             self._message(403, "Refresh refused", "Open the local status page and use its refresh button.")
             return
         if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
@@ -162,6 +176,9 @@ class StatusHandler(SimpleHTTPRequestHandler):
             return
         if result == "cooldown":
             self._message(429, "Refresh recently completed", "Wait a few seconds before trying again.")
+            return
+        if result == "failure_backoff":
+            self._message(503, "Previous refresh failed", "The last refresh failed. Wait briefly before retrying, and check the server log for details.")
             return
         if result == "render_failed":
             self._message(502, "Local refresh failed", "The previous local and public snapshots are still available. Check the server log.")
@@ -194,10 +211,11 @@ def main() -> None:
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8877)
     parser.add_argument("--directory", type=Path, default=OUTPUT)
+    parser.add_argument("--external-origin", default=DEFAULT_EXTERNAL_ORIGIN)
     args = parser.parse_args()
     if not (args.directory / "index.html").is_file():
         parser.error("rendered index.html is missing")
-    with StatusServer((args.bind, args.port), args.directory) as server:
+    with StatusServer((args.bind, args.port), args.directory, external_origin=args.external_origin) as server:
         print(f"FireMUD local status page at http://{args.bind}:{args.port}/", flush=True)
         server.serve_forever(poll_interval=0.25)
 

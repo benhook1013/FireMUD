@@ -24,6 +24,10 @@ REPO_URL = "https://github.com/benhook1013/FireMUD/pull/"
 REPO_HOME = "https://github.com/benhook1013/FireMUD"
 REPO = "benhook1013/FireMUD"
 LOCAL_TIMEZONE = ZoneInfo("Pacific/Auckland")
+ACTIVE_REVIEW_STATES = frozenset({"ACTIVE", "IN_PROGRESS", "REVIEWING", "RUNNING"})
+EXPLICIT_HUMAN_STOP_STATES = frozenset({
+    "HUMAN_STOP", "HUMAN_STOPPED", "MANUALLY_STOPPED", "OVERRIDE", "STOPPED_BY_HUMAN",
+})
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -31,7 +35,7 @@ REFRESH_SCRIPT = """(() => {
   const progress = form.querySelector('.refresh-progress');
   let stage = 'rendering';
   let statusPending = false;
-  const stageLabel = {rendering: 'Refreshing local review data', publishing: 'Publishing public status page'};
+  const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};
   const readStage = async () => {
     if (statusPending) return;
     statusPending = true;
@@ -208,6 +212,15 @@ def round_age(value: datetime, now: datetime) -> str:
     return f"{days}d" if days < 100 else "99d+"
 
 
+def lane_items(value: object) -> list[str]:
+    """Normalize a lane summary or optional detail into short display items."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return [item for item in value if item.strip()]
+    raise ValueError("lane summary fields must be text or lists of text")
+
+
 def round_completion(value: object, now: datetime) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -326,31 +339,23 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
     if len(set(stages)) != sum(1 for _ in groupby(stages)):
         raise ValueError("programme stages must be contiguous in stack order")
     github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
-    overview = []
-    for position, (stage, members) in enumerate(groupby(stack, key=lambda item: item["stage"]), 1):
-        members = list(members)
-        links = " · ".join(
-            f'<a href="{REPO_URL}{item["number"]}">#{item["number"]}</a>' for item in members
-        )
-        merged = github["available"] and all(github["lifecycle"].get(item["number"]) == "MERGED" for item in members)
-        row_class = ' class="merged"' if merged else ""
-        overview.append(
-            f'<li{row_class}><span class="stage-order">{position:02d}</span>'
-            f'<h3>{safe(stage)}</h3><p>{links}</p></li>'
-        )
     front_index = next((index for index, item in enumerate(stack) if item["number"] == data["review_front"]), None)
+    front_item = stack[front_index] if front_index is not None else None
     next_pr = (
         next((item["number"] for item in stack[front_index + 1:]
               if github["lifecycle"].get(item["number"]) == "OPEN"), None)
         if front_index is not None and github["available"] else None
     )
     rows = []
+    front_size_html = "Diff size unavailable"
+    front_controller_html = '<span class="front-controller-unavailable">Hosted/CLI states unavailable</span>'
+    front_activity_grid = ""
     for position, item in enumerate(stack, 1):
         number = item["number"]
         if type(number) is not int or number <= 0:
             raise ValueError("PR numbers must be positive integers")
-        lifecycle = github.get("lifecycle", {}).get(number)
-        stats = github.get("stats", {}).get(number)
+        lifecycle = github.get("lifecycle", {}).get(number) if github.get("available") else None
+        stats = github.get("stats", {}).get(number) if github.get("available") else None
         if stats:
             files_label = f'{stats["changedFiles"]} files'
             files_html = (
@@ -364,6 +369,22 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         else:
             size_html = "Diff size unavailable"
         queue_item = review.get("queue", {}).get(number) if review["available"] else None
+        channels = queue_item.get("channels", {}) if queue_item else {}
+        states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
+        named_states = [
+            f"{name} {state.replace('_', ' ').lower()}"
+            for name, state in zip(("Hosted", "CLI"), states)
+            if isinstance(state, str) and state
+        ]
+        has_controller_states = len(named_states) == 2
+        if has_controller_states:
+            controller_text = " · ".join(named_states)
+        elif named_states:
+            missing_channel = "CLI" if isinstance(states[0], str) and states[0] else "Hosted"
+            controller_text = f'{" · ".join(named_states)} · Review state unavailable ({missing_channel})'
+        else:
+            controller_text = "Review state unavailable"
+        controller_status_html = f'<span class="sub">{safe(controller_text)}</span>'
         if lifecycle == "MERGED":
             merged_at = github.get("merged_at", {}).get(number)
             merged_time = utc(merged_at) if merged_at else None
@@ -372,31 +393,41 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 f'title="{safe(local_time(merged_time))}">{relative_time(merged_time, now)}</time>'
                 if merged_time else "Merge time unavailable"
             )
-            status_html = f'<span class="sub"><strong>Merged</strong> {channel_html}</span>'
+            status_html = f'<span class="sub">{channel_html}</span>'
+            queue_badge_html = '<span class="queue-status queue-status-merged">MERGED</span>'
         elif lifecycle == "CLOSED":
-            status_html = '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+            status_html = (
+                '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+                f'{controller_status_html}'
+            )
+            queue_badge_html = '<span class="queue-status queue-status-closed">CLOSED</span>'
         elif queue_item:
-            channels = queue_item.get("channels", {})
-            states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
-            if (len(states) == 2 and all(isinstance(state, str) and state for state in states)
-                    and ("READY" in states or number in (data["review_front"], next_pr))):
-                labels = (f"{name} {state.replace('_', ' ').lower()}"
-                          for name, state in zip(("Hosted", "CLI"), states))
-                status_html = f'<span class="sub">{safe(" · ".join(labels))}</span>'
+            status_html = controller_status_html
+            if number == data["review_front"]:
+                badge_label, badge_class = "REVIEW FRONT", "front"
+            elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
+                badge_label, badge_class = "REVIEWING", "reviewing"
+            elif has_controller_states and all(state in EXPLICIT_HUMAN_STOP_STATES for state in states):
+                badge_label, badge_class = "REVIEW CLOSED", "review-closed"
+            elif number == next_pr:
+                badge_label, badge_class = "UP NEXT", "up-next"
             else:
-                status_html = ""
+                badge_label, badge_class = "QUEUED", "queued"
+            queue_badge_html = f'<span class="queue-status queue-status-{badge_class}">{badge_label}</span>'
         else:
-            status_html = ""
+            status_html = controller_status_html
+            queue_badge_html = (
+                '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
+                if number == data["review_front"] else
+                '<span class="queue-status queue-status-up-next">UP NEXT</span>'
+                if number == next_pr else
+                '<span class="queue-status queue-status-pending">PENDING</span>'
+            )
         if number == next_pr:
             status_html = (
                 '<span class="sub"><strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.</span>'
                 + status_html
             )
-            if not queue_item or not isinstance(queue_item.get("channels"), dict) or not all(
-                isinstance(queue_item["channels"].get(channel), str) and queue_item["channels"][channel]
-                for channel in ("hosted", "cli")
-            ):
-                status_html += '<span class="sub">Controller review states unavailable</span>'
         if queue_item and queue_item.get("detail_level") == "identity_only":
             evidence = queue_item.get("evidence_status")
             label = (
@@ -429,7 +460,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     completed = round_completion(result.get("completed_at"), now)
                     if completed is None:
                         completion_label = "Completion time unavailable"
-                        age_html = '<span class="round-age">?</span>'
+                        age_html = '<span class="round-age">age n/a</span>'
                     else:
                         completion_label = f"Completed {completed.astimezone(LOCAL_TIMEZONE).strftime('%d %b %Y %H:%M %Z')}"
                         age_html = (
@@ -454,7 +485,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 caption = "Recent, oldest to newest"
                 if notes:
                     caption += " · " + " · ".join(notes)
-                channel_name = "CLI" if channel == "cli" else "Hosted"
+                channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
                 activity_cards.append(
                     f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
                     f'<span>{safe(activity["total"])} completed</span></div>'
@@ -462,48 +493,87 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
                 )
         activity_grid = f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
-        row_class = ' class="merged"' if lifecycle == "MERGED" else ' class="closed"' if lifecycle == "CLOSED" else ""
-        rows.append(
-            f'<li{row_class}><span class="order">{position:02d}</span><div class="pr-main">'
-            f'<a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>'
+        if number == data["review_front"]:
+            front_size_html = size_html
+            if has_controller_states:
+                front_controller_html = f'<span class="front-controller-state">{safe(controller_text)}</span>'
+            front_activity_grid = activity_grid
+        row_classes = []
+        if lifecycle == "MERGED":
+            row_classes.append("merged")
+        elif lifecycle == "CLOSED":
+            row_classes.append("closed")
+        if number == data["review_front"]:
+            row_classes.append("front")
+        if number == next_pr:
+            row_classes.append("next")
+        row_class = f' class="{" ".join(row_classes)}"' if row_classes else ""
+        rows.append((item["stage"], position,
+            f'<li id="pr-{number}"{row_class}><span class="order" aria-label="Queue position {position}">{position:02d}</span><div class="pr-main">'
+            f'<div class="pr-title-line"><a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a>{queue_badge_html}</div>'
             f'<span class="sub">{size_html}</span>'
             f'{status_html}'
             f'{activity_grid}'
-            f'</div></li>'
+            f'</div></li>'))
+    train = []
+    for stage_position, (stage, grouped_rows) in enumerate(groupby(rows, key=lambda row: row[0]), 1):
+        grouped_rows = list(grouped_rows)
+        first_position = grouped_rows[0][1]
+        train.append(
+            f'<section class="queue-stage" aria-labelledby="queue-stage-{stage_position}">'
+            f'<h3 id="queue-stage-{stage_position}">{safe(stage)}</h3>'
+            f'<ol class="stack" start="{first_position}">{"".join(row[2] for row in grouped_rows)}</ol></section>'
+        )
+    front_html = ""
+    if front_item:
+        front_html = (
+            f'<section class="front-board" id="review-front" aria-labelledby="front-title">'
+            f'<div class="front-copy">'
+            f'<h2 id="front-title"><span class="front-number">#{front_item["number"]}</span>'
+            f'<a href="{REPO_URL}{front_item["number"]}">{safe(front_item["title"])}</a></h2>'
+            f'</div><div class="front-evidence">'
+            f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
+            f'<span class="sub front-fact-value">{front_size_html}</span></div>'
+            f'<div class="front-fact"><strong>Controller</strong>'
+            f'{front_controller_html}</div></div>'
+            f'{front_activity_grid or "<p>Review activity unavailable</p>"}</div>'
+            f'</section>'
         )
     cards = []
     for lane in lanes:
+        status = lane.get("status", "RUNNING")
+        if status not in ("RUNNING", "PAUSED"):
+            raise ValueError("lane status must be RUNNING or PAUSED")
+        details = [f'<li>{safe(item)}</li>' for item in lane_items(lane["task"])]
+        sections = []
+        for field, label, class_name in (
+            ("up_next", "Queued next", "lane-queued"),
+            ("blocker", "Blocker", "lane-blocker"),
+        ):
+            items = lane_items(lane[field]) if lane.get(field) is not None else []
+            if items:
+                sections.append(
+                    f'<div class="{class_name}"><h4>{label}</h4><ul>'
+                    f'{"".join(f"<li>{safe(item)}</li>" for item in items)}</ul></div>'
+                )
         cards.append(
-            f'<article class="card"><div class="card-top"><h3>{safe(lane["name"])}</h3>'
+            f'<article class="card"><div class="card-top"><div class="lane-topline">'
+            f'<h3>{safe(lane["name"])}</h3>'
+            f'<span class="lane-state lane-state-{status.lower()}" aria-label="{status}">'
+            f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
             f'<span class="fresh">{time_label(lane["verified_at"], now, "Lane note")}</span></div>'
-            f'<p class="task">{safe(lane["task"])}</p>'
-            f'<dl><dt>Next</dt><dd>{safe(lane["next_action"])}</dd>'
-            f'<dt>Blocker / gate</dt><dd>{safe(lane["blocker"])}</dd>'
-            f'</dl></article>'
+            f'<div class="lane-content"><ul class="lane-task">{"".join(details)}</ul>'
+            f'{"".join(sections)}</div></article>'
         )
     refreshed_at = (
         f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
         f'title="{safe(local_time(now))}">just now</time>'
     )
-    queue_time = (
-        f'Refreshed {refreshed_at}'
-        if review["available"] and github["available"]
-        else 'Review or PR details unavailable'
-    )
     header_time = (
         f'PR data refreshed {refreshed_at}'
         if review["available"] and github["available"]
-        else queue_time
+        else 'Review or PR details unavailable'
     )
-    if review["available"] and github["available"] and review.get("mode") == "windowed":
-        window = review.get("detail_window", {})
-        checked = window.get("deep_prs", []) if isinstance(window, dict) else []
-        checked_count = len(checked) if isinstance(checked, list) else 0
-        checked_unit = "PR" if checked_count == 1 else "PRs"
-        queue_time = (
-            f'PR identities refreshed {refreshed_at} · Review overview partial: '
-            f'detailed evidence checked for {checked_count} {checked_unit}; other entries are informational.'
-        )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     age_hash = base64.b64encode(hashlib.sha256(AGE_SCRIPT.encode()).digest()).decode()
     snapshot_hash = base64.b64encode(hashlib.sha256(SNAPSHOT_SCRIPT.encode()).digest()).decode()
@@ -521,8 +591,10 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }} heade
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
-.refresh-form button {{ border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-form {{ display: grid; grid-template-columns: 12.5rem minmax(0,1fr); gap: .65rem; align-items: center; min-height: 2.6rem; margin-top: 1rem; color: #f0e0e6; font-size: .78rem; }}
+.refresh-slot {{ display: flex; align-items: center; width: 12.5rem; min-height: 2.6rem; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 2.6rem; border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-time {{ line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
 .refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
@@ -552,19 +624,80 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .round-pill.unlinked {{ border-color: #b9945a; background: #f3e9d9; color: #79562b; }}
 .round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
 .fresh {{ color: #626b77; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
-.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; }} .card {{ overflow: hidden; }} .card-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; background: #8e2941; color: #f7f2f4; padding: .9rem 1.15rem; }} .card-top .fresh {{ color: #f0e0e6; }}
-.task {{ font-weight: 620; min-height: 3.1em; margin: 1rem 1.15rem; }} dl {{ display: grid; grid-template-columns: 5.5rem 1fr; gap: .55rem .4rem; margin: 0 1.15rem 1.15rem; font-size: .86rem; }} dt {{ color: #626b77; }} dd {{ margin: 0; line-height: 1.4; }}
+.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; min-width: 0; }} .card {{ min-width: 0; overflow: hidden; }} .card-top {{ display: flex; flex-direction: column; align-items: stretch; gap: .35rem; background: var(--smoke); color: #f7f8f9; padding: .85rem 1rem; }} .card-top .fresh {{ align-self: flex-end; color: #f1dce1; }}
+.lane-topline {{ display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; min-width: 0; }} .lane-topline h3 {{ min-width: 0; margin: 0; }}
+.lane-state {{ display: inline-flex; flex: 0 0 auto; align-items: center; gap: .35rem; padding: .26rem .42rem; border: 1px solid #777e87; border-radius: 4px; background: #454a51; color: #fff; font-size: .58rem; font-weight: 850; letter-spacing: .06em; line-height: 1.1; }}
+.lane-state-running {{ border-color: #f07865; }} .lane-state-running .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: #ff654d; box-shadow: 0 0 0 2px #754239; }}
+.lane-state-paused .lane-state-icon {{ width: .48rem; height: .48rem; border-left: 2px solid #dfe2e6; border-right: 2px solid #dfe2e6; }}
+.lane-content {{ padding: .8rem 1rem 1rem; }} .lane-content ul {{ margin: 0; padding-left: 1.1rem; }} .lane-task {{ font-size: .91rem; font-weight: 650; line-height: 1.45; }}
+.lane-content li + li {{ margin-top: .3rem; }} .lane-queued, .lane-blocker {{ margin-top: .75rem; padding-top: .65rem; border-top: 1px solid #d9dfe1; font-size: .8rem; line-height: 1.4; }}
+.lane-content h4 {{ margin: 0 0 .25rem; color: #515a63; font-size: .66rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }} .lane-blocker h4 {{ color: #9c2939; }}
 footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
+:root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
+body {{ background: var(--ash); color: var(--ink); }}
+header.mast {{ background: var(--smoke); padding: 1rem clamp(1rem,4vw,3.5rem) .8rem; }}
+.mast-inner {{ max-width: 1440px; margin: auto; }}
+.mast-top {{ display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; }}
+.brand {{ display: inline-block; align-self: flex-start; margin: 0; color: #fff; text-decoration: none; font-size: 1.25rem; font-weight: 850; letter-spacing: -.04em; }}
+.snapshot {{ color: #eadfe2; font-size: .75rem; text-align: right; }}
+main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
+.front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
+.front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
+.front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+.front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
+.front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
+.front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
+.front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: #fff; color: var(--ink); font-size: .8rem; }}
+.front-fact > strong {{ color: #62212f; font-size: .8rem; font-weight: 800; }}
+.front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
+.front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
+.front-fact-value .additions {{ color: #9de0bd; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #ffc390; }}
+.front-controller-unavailable {{ color: #f1dfe1; font-weight: 600; }}
+.front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
+.front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
+.front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
+.front-evidence .activity-top strong {{ color: #62212f; }}
+.front-evidence .activity-caption {{ color: #57636c; }}
+.front-evidence .round-pill {{ background: #fff; color: #423039; }}
+.front-evidence .round-pill.zero-accepted {{ background: #25212a; color: #fff; }}
+.section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
+.section-head h2 {{ margin: 0; font-size: clamp(1.8rem,3vw,2.8rem); letter-spacing: -.04em; }}
+.section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}
+.legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.1rem; padding: .7rem .9rem; margin-bottom: .8rem; border-left: 5px solid var(--fire); background: #fff; font-size: .76rem; }}
+.legend strong {{ color: #89182c; }} .legend-dash {{ display: inline-block; width: 1.2rem; margin-right: .3rem; border-top: 2px dashed #9b5760; vertical-align: middle; }}
+.review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
+.queue-stage {{ display: grid; grid-template-columns: minmax(150px,.4fr) minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem; border-top: 1px solid var(--line); }}
+.queue-stage:first-child {{ border-top: 0; }} .queue-stage > h3 {{ margin: .3rem 1rem 0 0; color: #723341; font-size: 1.05rem; font-weight: 850; line-height: 1.2; }}
+.queue-stage > .stack {{ border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }}
+.queue-stage > .stack li {{ position: relative; padding: 0; }} .queue-stage > .stack li:last-child {{ border: 0; }}
+.queue-stage > .stack .pr-main {{ padding: .55rem .7rem .55rem 0; }} .queue-stage > .stack .order {{ padding-top: .55rem; }}
+.queue-stage > .stack li.closed {{ background: #e8eaed; }}
+.queue-stage > .stack li.front {{ background: var(--blush); border-left: 0; box-shadow: inset 5px 0 var(--ember); }}
+.queue-stage > .stack li.front .order {{ background: var(--fire); }}
+.queue-stage > .stack li.merged {{ background: var(--plum-wash); border-left: 0; box-shadow: none; }}
+.queue-stage > .stack li.merged .order {{ background: var(--plum); }}
+.pr-title-line {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .55rem; }}
+.queue-status {{ display: inline-flex; align-items: center; padding: .16rem .38rem; border: 1px solid transparent; font-size: .59rem; font-weight: 900; letter-spacing: .045em; line-height: 1.2; white-space: nowrap; }}
+.queue-status-front {{ background: var(--fire); color: #fff; }}
+.queue-status-merged {{ background: var(--plum); color: #fff; }}
+.queue-status-reviewing {{ background: #d9edf4; border-color: #8bb8c8; color: #17495a; }}
+.queue-status-review-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
+.queue-status-up-next {{ background: #fff3db; border-color: #d0a95c; color: #6a4d17; }}
+.queue-status-queued, .queue-status-pending {{ background: #fff; border-color: #c7ccd4; color: #58616d; }}
+.queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
+.queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
+.cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
+a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
+@media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
+@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .snapshot {{ align-self: flex-start; text-align: left; }} .refresh-form {{ align-items: center; flex-direction: row; gap: .65rem; margin-left: 0; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
-<p>Worker lanes and the PR train.</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{header_time}</span></form></div></header>
-<main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
-<section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
-<ol class="overview">{"".join(overview)}</ol></section>
-<section><h2>Configured review queue</h2><p class="section-note">{queue_time}</p>
-<ol class="stack">{"".join(rows)}</ol></section>
+<header class="mast"><div class="mast-inner"><div class="mast-top"><a class="brand" href="{REPO_HOME}">FireMUD</a><span class="snapshot">Private local snapshot</span></div>
+<form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{header_time}</span></form></div></header>
+<main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
+<section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
+<div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
+<div class="review-train">{"".join(train)}</div></section>
 <footer>Stack and lane notes are maintained in status.json. The Refresh review data button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 

@@ -37,3 +37,11 @@ design/erd/
 
 # Repository-local scratch space
 /tmp/
+!/tmp/
+/tmp/*
+!/tmp/local-status-page/
+/tmp/local-status-page/*
+!/tmp/local-status-page/configure-portproxy.ps1
+!/tmp/local-status-page/start-wsl-status-page.ps1
+!/tmp/local-status-page/test-portproxy.ps1
+!/tmp/local-status-page/test-firewall.ps1

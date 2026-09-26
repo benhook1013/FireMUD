@@ -25,7 +25,10 @@ class StatusPageTest(unittest.TestCase):
             "review_front": 42,
             "stack": [{"number": 42, "title": "<unsafe> & status", "stage": "<stage> & purpose", "base": "develop", "head": HEAD, "verified_at": "2026-09-24T11:00:00Z"}],
             "lanes": [
-                {"name": name, "task": "<script>alert(1)</script>", "next_action": "Next & then", "blocker": "No <leak>", "brief": "general-local-status-page.md", "verified_at": "2026-09-24T11:00:00Z"}
+                {"name": name, "status": "RUNNING", "task": ["<script>alert(1)</script>"],
+                 "next_action": "Legacy next action must not render", "up_next": ["Next & then"],
+                 "blocker": ["No <leak>"], "brief": "general-local-status-page.md",
+                 "verified_at": "2026-09-24T11:00:00Z"}
                 for name in ("Gameplay", "Document", "General")
             ],
         }
@@ -35,12 +38,24 @@ class StatusPageTest(unittest.TestCase):
         result = page.render(self.fixture(), review, NOW)
         self.assertIn("&lt;unsafe&gt; &amp; status", result)
         self.assertIn("&lt;stage&gt; &amp; purpose", result)
-        self.assertIn("Stack at a glance", result)
+        self.assertNotIn("The review train", result)
+        self.assertNotIn("PR identities refreshed", result)
+        self.assertNotIn("Review overview partial", result)
+        self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
+        self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2></div>', result)
+        self.assertIn('id="review-front"', result)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", result)
+        self.assertIn("Next &amp; then", result)
+        self.assertIn("No &lt;leak&gt;", result)
+        self.assertNotIn("Legacy next action must not render", result)
         self.assertNotIn("<script>", result)
         self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42"', result)
         self.assertIn('href="https://github.com/benhook1013/FireMUD"', result)
         self.assertIn('<form class="refresh-form" action="/refresh" method="post">', result)
+        self.assertIn('<span class="refresh-slot"><button type="submit">Refresh review data</button></span>', result)
+        self.assertIn('grid-template-columns: 12.5rem minmax(0,1fr);', result)
+        self.assertIn('width: 12.5rem; min-height: 2.6rem;', result)
+        self.assertIn("const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};", result)
         self.assertIn("form-action 'self'", result)
         self.assertIn("connect-src 'self'", result)
         refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
@@ -57,8 +72,103 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn('href="../../task-briefs/', result)
         self.assertNotIn("Review eligibility unavailable", result)
         self.assertNotIn("Review front", result)
-        self.assertLess(result.index("<h2>Worker lanes</h2>"), result.index("<h2>Stack at a glance</h2>"))
-        self.assertLess(result.index("<h2>Stack at a glance</h2>"), result.index("<h2>Configured review queue</h2>"))
+        self.assertLess(result.index('id="review-front"'), result.index('<section id="workers"'))
+        self.assertLess(result.index('<section id="workers"'), result.index('<section id="train">'))
+        self.assertLess(result.index("<h2>Worker lanes</h2>"), result.index("<h2>Configured review queue</h2>"))
+        self.assertIn('<span class="lane-state lane-state-running" aria-label="RUNNING">', result)
+        self.assertIn('<span class="lane-state-icon" aria-hidden="true"></span>RUNNING', result)
+        self.assertIn('<div class="lane-topline"><h3>Gameplay</h3><span class="lane-state', result)
+        self.assertIn('justify-content: space-between; gap: .75rem; width: 100%; min-width: 0;', result)
+        self.assertIn('--smoke: #a51f27; --fire: #b71d35;', result)
+        self.assertIn('.lane-content { padding: .8rem 1rem 1rem;', result)
+        self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #723341; font-size: 1.05rem; font-weight: 850;', result)
+        self.assertIn('.cards { grid-template-columns: minmax(0,1fr); width: 100%; }', result)
+        self.assertIn('.card-top .fresh { max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }', result)
+        self.assertNotIn('border-bottom: 2px solid var(--fire)', result)
+        self.assertIn('<h4>Queued next</h4>', result)
+        self.assertIn('<h4>Blocker</h4>', result)
+
+    def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
+        data = self.fixture()
+        gameplay, document, general = data["lanes"]
+        gameplay.update({"task": ["Working through the merge queue."], "next_action": "ignored", "up_next": None, "blocker": None})
+        document.update({"status": "PAUSED", "task": ["Working on Unit 1B membership authority (#2873).", "Applying approved tenant mapping."], "up_next": ["Queued work & detail"], "blocker": None})
+        general.update({"task": "Working on #2875 migration test and proof repair.", "up_next": None, "blocker": None})
+        result = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
+        lanes = result.split('<section id="workers"', 1)[1].split('<section id="train"', 1)[0]
+        gameplay_html = lanes.split('<h3>Gameplay</h3>', 1)[1].split('</article>', 1)[0]
+        document_html = lanes.split('<h3>Document</h3>', 1)[1].split('</article>', 1)[0]
+        general_html = lanes.split('<h3>General</h3>', 1)[1].split('</article>', 1)[0]
+        self.assertIn("Working through the merge queue.", gameplay_html)
+        self.assertNotIn("Next", gameplay_html)
+        self.assertNotIn("Blocker", gameplay_html)
+        self.assertNotIn("#2827", gameplay_html)
+        self.assertIn('<span class="lane-state lane-state-paused" aria-label="PAUSED">', lanes)
+        self.assertIn("Queued work &amp; detail", document_html)
+        self.assertNotIn("Blocker", document_html)
+        self.assertIn("Working on #2875 migration test and proof repair.", general_html)
+        self.assertNotIn("Queued next", general_html)
+        self.assertNotIn("Blocker", general_html)
+
+    def test_lane_status_and_optional_detail_validation(self):
+        data = self.fixture()
+        data["lanes"][0]["status"] = "IDLE"
+        with self.assertRaisesRegex(ValueError, "RUNNING or PAUSED"):
+            page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
+        data = self.fixture()
+        data["lanes"][0]["up_next"] = {"job": "bad shape"}
+        with self.assertRaisesRegex(ValueError, "text or lists of text"):
+            page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
+
+    def test_front_panel_shows_diff_and_controller_states_without_shifting_queue_marker(self):
+        data = self.fixture()
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "READY", "cli": "HELD"}, "review_activity": {
+                "hosted": {"total": 12, "recent": []},
+                "cli": {"total": 8, "recent": []},
+            }},
+        }})
+        github = {"available": True, "states": {}, "lifecycle": {42: "OPEN"}, "merged_at": {},
+                  "stats": {42: {"changedFiles": 87, "additions": 5023, "deletions": 531}}}
+        result = page.render(data, review, NOW, github)
+        front = result.split('<section class="front-board"', 1)[1].split("</section>", 1)[0]
+        front_copy = front.split('<div class="front-copy">', 1)[1].split('<div class="front-evidence">', 1)[0]
+        front_evidence = front.split('<div class="front-evidence">', 1)[1]
+        self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span>/'
+                      '<span class="deletions">−531</span> lines</span>', front_evidence)
+        self.assertIn('<span class="front-controller-state">Hosted ready · CLI held</span>', front_evidence)
+        self.assertNotIn('front-fact', front_copy)
+        self.assertLess(front_evidence.index('<div class="front-facts">'), front_evidence.index('<div class="activity-grid">'))
+        self.assertNotIn('At the review front', front)
+        self.assertNotIn('Jump to the review front', front)
+        self.assertIn('<section class="front-board" id="review-front"', result)
+        self.assertIn('<li id="pr-42"', result)
+        self.assertIn('.front-evidence { background: var(--fire);', result)
+        self.assertIn('flex-direction: column; justify-content: center; align-items: stretch;', result)
+        self.assertIn('.refresh-form button {', result)
+        self.assertIn('min-height: 2.6rem;', result)
+        self.assertIn('line-height: 1.2; font-weight: 700;', result)
+        self.assertIn('.mast-top { display: flex; width: 100%;', result)
+        self.assertIn('.brand { display: inline-block; align-self: flex-start; margin: 0;', result)
+        self.assertIn('.refresh-form { display: grid; grid-template-columns: 12.5rem minmax(0,1fr);', result)
+        self.assertIn('.refresh-time { line-height: 1.2; }', result)
+        self.assertIn('.front-facts { grid-template-columns: 1fr; }', result)
+        self.assertIn('.queue-stage > .stack li.front { background: var(--blush); border-left: 0; '
+                      'box-shadow: inset 5px 0 var(--ember); }', result)
+        self.assertIn('.queue-stage { display: grid; grid-template-columns: minmax(150px,.4fr) '
+                      'minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem;', result)
+        self.assertIn('.queue-stage { padding: .55rem .8rem; }', result)
+
+        unavailable = page.render(
+            data,
+            page.review_snapshot(None, 42, HEAD, NOW),
+            NOW,
+            {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}},
+        )
+        unavailable_front = unavailable.split('<section class="front-board"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("Diff size unavailable", unavailable_front)
+        self.assertIn("Hosted/CLI states unavailable", unavailable_front)
 
     def test_stage_order_must_match_stack_order(self):
         data = self.fixture()
@@ -69,7 +179,7 @@ class StatusPageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contiguous"):
             page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
 
-    def test_overview_marks_only_fully_merged_groups(self):
+    def test_stage_grouped_queue_marks_merged_rows_with_badges(self):
         data = self.fixture()
         data["stack"].extend([
             {**data["stack"][0], "number": 43},
@@ -77,18 +187,72 @@ class StatusPageTest(unittest.TestCase):
             {**data["stack"][0], "number": 45, "stage": "mixed"},
         ])
         github = {"available": True, "states": {},
-                  "lifecycle": {42: "MERGED", 43: "MERGED", 44: "MERGED", 45: "OPEN"},
+                  "lifecycle": {42: "MERGED", 43: "MERGED", 44: "MERGED", 45: "CLOSED"},
                   "merged_at": {}, "stats": {}}
         review = page.review_snapshot(None, 42, HEAD, NOW)
         result = page.render(data, review, NOW, github)
-        overview = result.split('<ol class="overview">', 1)[1].split("</ol>", 1)[0]
-        self.assertIn('<li class="merged"><span class="stage-order">01</span>', overview)
-        self.assertIn('<li><span class="stage-order">02</span>', overview)
-        self.assertNotIn('<li class="merged"><span class="stage-order">02</span>', overview)
-        self.assertIn('.overview li.merged { background: #dbcbe2; }', result)
+        train = result.split('<div class="review-train">', 1)[1].split('</div></section>', 1)[0]
+        self.assertIn('<section class="queue-stage" aria-labelledby="queue-stage-1">', train)
+        self.assertIn('<li id="pr-42" class="merged front">', train)
+        self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/42">'
+                      '#42 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-merged">MERGED</span></div>', train)
+        self.assertIn('<section class="queue-stage" aria-labelledby="queue-stage-2">', train)
+        self.assertIn('<li id="pr-44" class="merged">', train)
+        self.assertNotIn('<li id="pr-45" class="merged">', train)
+        self.assertIn('<span class="queue-status queue-status-closed">CLOSED</span>', train)
+        self.assertIn('.queue-status-merged { background: var(--plum); color: #fff; }', result)
+        self.assertIn('.queue-stage > .stack li.merged { background: var(--plum-wash); border-left: 0; box-shadow: none; }', result)
+        self.assertIn('.queue-stage > .stack li { position: relative; padding: 0; }', result)
+        self.assertIn('.queue-stage > .stack li.merged .order { background: var(--plum); }', result)
+        self.assertLess(result.index('.queue-stage > .stack li.front { background: var(--blush);'),
+                        result.index('.queue-stage > .stack li.merged { background: var(--plum-wash);'))
+        self.assertLess(result.index('.queue-stage > .stack li.front .order { background: var(--fire);'),
+                        result.index('.queue-stage > .stack li.merged .order { background: var(--plum);'))
         github["available"] = False
         unavailable = page.render(data, review, NOW, github)
-        self.assertNotIn('<li class="merged"><span class="stage-order">01</span>', unavailable)
+        self.assertNotIn('class="queue-status queue-status-merged">MERGED', unavailable)
+
+    def test_queue_status_badges_require_explicit_controller_evidence(self):
+        data = self.fixture()
+        data["stack"].extend({**data["stack"][0], "number": number} for number in range(43, 47))
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "HELD", "cli": "HELD"}},
+            43: {"channels": {"hosted": "RUNNING", "cli": "HELD"}},
+            44: {"channels": {"hosted": "HUMAN_STOPPED", "cli": "READY"}},
+            45: {"channels": {"hosted": "HUMAN_STOPPED", "cli": "OVERRIDE"}},
+        }})
+        github = {"available": True, "states": {}, "lifecycle": {n: "OPEN" for n in range(42, 47)},
+                  "merged_at": {}, "stats": {}}
+        result = page.render(data, review, NOW, github)
+
+        def row(number):
+            return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
+
+        self.assertIn('queue-status-front">REVIEW FRONT', row(42))
+        self.assertIn('queue-status-reviewing">REVIEWING', row(43))
+        self.assertIn('queue-status-queued">QUEUED', row(44))
+        self.assertIn('Hosted human stopped · CLI ready', row(44))
+        self.assertIn('queue-status-review-closed">REVIEW CLOSED', row(45))
+        self.assertIn('Hosted human stopped · CLI override', row(45))
+        self.assertIn('queue-status-pending">PENDING', row(46))
+
+        review["queue"][43]["channels"] = {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}
+        no_active_evidence = page.render(data, review, NOW, github)
+        next_row = no_active_evidence.split('<li id="pr-43"', 1)[1].split("</li>", 1)[0]
+        self.assertIn('queue-status-up-next">UP NEXT', next_row)
+        self.assertNotIn('queue-status-queued">QUEUED', next_row)
+
+        unavailable = page.render(
+            data,
+            page.review_snapshot(None, 42, HEAD, NOW),
+            NOW,
+            github,
+        )
+        unavailable_train = unavailable.split('<div class="review-train">', 1)[1].split('</div></section>', 1)[0]
+        self.assertIn('queue-status-front">REVIEW FRONT', unavailable_train)
+        self.assertIn('queue-status-pending">PENDING', unavailable_train)
+        self.assertNotIn('queue-status-reviewing">REVIEWING', unavailable_train)
 
     def test_stale_and_future_timestamps_are_explicit(self):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
@@ -249,8 +413,8 @@ vm.runInNewContext(process.argv[1], {
 """
         run = subprocess.run(["node", "-e", javascript, page.REFRESH_SCRIPT], capture_output=True, text=True, check=True)
         result = json.loads(run.stdout)
-        self.assertEqual([True, "Refreshing local review data · 0s", "Refreshing local review data", 1], result["initial"])
-        self.assertEqual(["Publishing public status page · 18s", "Publishing public status page", 1], result["publishing"])
+        self.assertEqual([True, "Refreshing · 0s", "Refreshing local review data", 1], result["initial"])
+        self.assertEqual(["Publishing · 18s", "Publishing public status page", 1], result["publishing"])
         self.assertTrue(result["reloaded"])
 
     @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
@@ -326,7 +490,11 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                                               {"raw": 2, "accepted": 0, "attributable": False, "current_head": False, "non_counting": True},
                                           ]},
                                       }},
-                                 43: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}}},
+                                 43: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"},
+                                      "review_activity": {"hosted": {"total": 1, "recent": [
+                                          {"raw": 1, "accepted": 1, "attributable": True, "current_head": False,
+                                           "non_counting": False, "completed_at": (NOW - timedelta(hours=2)).isoformat()},
+                                      ]}}}},
                        "latest": {"Hosted": None, "CLI": None}, "threads": {"current": 0, "outdated": 0},
                        "ci": "PENDING", "merge": "BLOCKED", "verdict": "NOT READY"})
         github = {"available": True, "states": {42: True, 43: False},
@@ -335,23 +503,33 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
         self.assertIn('<span class="sub">Hosted held · CLI ready</span>', result)
-        self.assertIn('<li class="merged"><span class="order">02</span>', result)
-        self.assertIn('<strong>Merged</strong> <time class="relative-age" '
-                      'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time>', result)
+        self.assertIn('<li id="pr-43" class="merged"><span class="order" aria-label="Queue position 2">02</span>', result)
+        merged_row = result.split('<li id="pr-43"', 1)[1].split('</li>', 1)[0]
+        front_row = result.split('<li id="pr-42"', 1)[1].split('</li>', 1)[0]
+        self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/43">'
+                      '#43 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-merged">MERGED</span></div>', merged_row)
+        self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/42">'
+                      '#42 &lt;unsafe&gt; &amp; status</a><span class="queue-status queue-status-front">REVIEW FRONT</span></div>', front_row)
+        self.assertIn('<span class="sub"><time class="relative-age" '
+                      'datetime="2026-09-24T11:48:00+00:00" title="24 Sep 23:48 NZST">12m ago</time></span>', merged_row)
+        self.assertNotIn('Hosted parent moved', merged_row)
+        self.assertNotIn('CLI parent moved', merged_row)
+        self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
+        self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h</time>', merged_row)
         self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
-        self.assertIn('<strong>Hosted</strong><span>2 completed</span>', result)
+        self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '
                       'title="Completed 24 Sep 2026 23:46 NZST"><span>4/3</span>'
                       '<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time></span>', result)
-        self.assertIn('<strong>CLI</strong><span>1 completed</span>', result)
+        self.assertIn('<strong>CLI CodeRabbit</strong><span>1 completed</span>', result)
         self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads</span>', result)
         self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
                       '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
         self.assertNotIn('class="activity-note"', result)
-        age_markup = ('Refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
+        age_markup = ('PR data refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
                       'title="25 Sep 00:00 NZST">just now</time>')
         self.assertEqual(1, result.count(age_markup))
-        self.assertEqual(1, result.count('PR data refreshed ' + age_markup.split(' ', 1)[1]))
+        self.assertNotIn('Refreshed <time', result)
         self.assertNotIn("Stack record checked", result)
         self.assertNotIn("do not establish taper or merge readiness", result)
 
@@ -371,15 +549,14 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         result = page.render(data, review, NOW, github)
 
         def row(number):
-            queue = result.split('<ol class="stack">', 1)[1]
-            return queue.split(f'{page.REPO_URL}{number}">', 1)[1].split("</li>", 1)[0]
+            return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
         self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
         self.assertIn('<strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.', row(43))
         self.assertIn('<span class="sub">Hosted parent moved · CLI parent moved</span>', row(43))
         self.assertIn('<span class="sub">Hosted rate limited · CLI ready</span>', row(44))
         self.assertIn('<span class="sub">Hosted ready · CLI ready</span>', row(45))
-        self.assertEqual(1, row(46).count('class="sub"'))
+        self.assertEqual(2, row(46).count('class="sub"'))
         self.assertNotIn("Ready for review", result)
         self.assertNotIn("Review eligibility unavailable", result)
 
@@ -396,10 +573,8 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
                   "lifecycle": {42: "OPEN", 43: "MERGED", 44: "CLOSED", 45: "OPEN", 46: "OPEN"},
                   "merged_at": {}, "stats": {}}
         result = page.render(data, review, NOW, github)
-        queue = result.split('<ol class="stack">', 1)[1]
-
         def row(number):
-            return queue.split(f'{page.REPO_URL}{number}">', 1)[1].split("</li>", 1)[0]
+            return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
 
         self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(42))
         self.assertNotIn("Up next in queue", row(43))
@@ -407,14 +582,44 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertIn('<strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.', row(45))
         self.assertIn('<span class="sub">Hosted over ceiling · CLI parent moved</span>', row(45))
         self.assertNotIn("Up next in queue", row(46))
-        self.assertNotIn("Hosted held · CLI held", row(46))
+        self.assertIn('<span class="sub">Hosted held · CLI held</span>', row(46))
         self.assertEqual(1, result.count("Up next in queue"))
 
         review["queue"][45] = {"channels": {"hosted": "HELD"}}
         incomplete = page.render(data, review, NOW, github)
-        next_row = incomplete.split('<ol class="stack">', 1)[1].split(f'{page.REPO_URL}45">', 1)[1].split("</li>", 1)[0]
-        self.assertIn("Controller review states unavailable", next_row)
+        next_row = incomplete.split('<li id="pr-45"', 1)[1].split("</li>", 1)[0]
+        self.assertIn("Hosted held · Review state unavailable (CLI)", next_row)
         self.assertNotIn("CLI held", next_row)
+
+    def test_near_front_and_later_rows_show_available_controller_states(self):
+        data = self.fixture()
+        data["stack"].extend({**data["stack"][0], "number": number} for number in range(43, 49))
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "READY", "cli": "HELD"}},
+            43: {"detail_level": "deep", "channels": {"hosted": "HELD", "cli": "HELD"}},
+            44: {"detail_level": "deep", "channels": {"hosted": "HELD", "cli": "PARENT_MOVED"}},
+            45: {"detail_level": "deep", "channels": {"hosted": "HUMAN_STOPPED", "cli": "HELD"}},
+            46: {"detail_level": "identity_only", "evidence_status": "unknown",
+                 "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"}},
+            47: {"channels": {"hosted": "HELD"}},
+        }})
+        github = {"available": True, "states": {}, "lifecycle": {number: "OPEN" for number in range(42, 49)},
+                  "merged_at": {}, "stats": {}}
+        result = page.render(data, review, NOW, github)
+
+        def row(number):
+            return result.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
+
+        self.assertIn("Hosted ready · CLI held", row(42))
+        self.assertIn("Hosted held · CLI held", row(43))
+        self.assertIn("Hosted held · CLI parent moved", row(44))
+        self.assertIn("Hosted human stopped · CLI held", row(45))
+        self.assertIn("Hosted not checked · CLI not checked", row(46))
+        self.assertIn("Review evidence not checked in this refresh · identity only", row(46))
+        self.assertIn("Hosted held · Review state unavailable (CLI)", row(47))
+        self.assertIn("Review state unavailable", row(48))
+        self.assertNotIn("Ready for review", result)
 
     def test_pr_size_colors_only_warn_above_ninety_files(self):
         data = self.fixture()
@@ -439,12 +644,12 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
             ]}}}}})
         result = page.render(self.fixture(), review, NOW)
         self.assertIn('<span class="round-pill zero-accepted" aria-label="0/0, Completion time unavailable" '
-                      'title="Completion time unavailable"><span>0/0</span><span class="round-age">?</span></span>', result)
+                      'title="Completion time unavailable"><span>0/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('<span class="round-pill" aria-label="3/1, Completion time unavailable" '
-                      'title="Completion time unavailable"><span>3/1</span><span class="round-age">?</span></span>', result)
+                      'title="Completion time unavailable"><span>3/1</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('<span class="round-pill zero-accepted older unlinked" '
                       'aria-label="2/0 (older head, unlinked, non-counting), Completion time unavailable" '
-                      'title="Completion time unavailable"><span>2/0</span><span class="round-age">?</span></span>', result)
+                      'title="Completion time unavailable"><span>2/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
         self.assertNotIn('.round-pill.unlinked.zero-accepted', result)
         self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
@@ -517,7 +722,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         self.assertEqual({42, 43}, set(snapshot["queue"]))
         result = page.render(self.fixture(), snapshot, NOW)
         self.assertIn('<span class="sub">Hosted ready · CLI held</span>', result)
-        self.assertNotIn("raw /", result)
+        self.assertNotIn("raw /", result.split('<div class="review-train">', 1)[1])
         report["prs"][0]["head"] = "b" * 40
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
         moved = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
@@ -529,6 +734,21 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         missing = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
         self.assertFalse(missing["available"])
         self.assertIn("review front missing", missing["reason"])
+
+    @patch.object(page.subprocess, "run")
+    def test_controller_completion_timestamp_reaches_review_age(self, run):
+        round_result = {"raw": 3, "accepted": 2, "attributable": True,
+                        "current_head": True, "non_counting": False,
+                        "completed_at": (NOW - timedelta(minutes=31)).isoformat()}
+        report = {"prs": [{"pr": 42, "head": HEAD,
+                           "review_activity": {"hosted": {"total": 1, "recent": [round_result]}}}]}
+        run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
+        snapshot = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
+        self.assertEqual(round_result["completed_at"],
+                         snapshot["queue"][42]["review_activity"]["hosted"]["recent"][0]["completed_at"])
+        rendered = page.render(self.fixture(), snapshot, NOW)
+        self.assertIn('<time class="round-age" datetime="2026-09-24T11:29:00+00:00">31m</time>', rendered)
+        self.assertNotIn('age n/a', rendered)
 
     @patch.object(page.subprocess, "run")
     def test_windowed_overview_marks_identity_only_tail_as_informational(self, run):
@@ -554,12 +774,12 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         queue = result.split("<h2>Configured review queue</h2>", 1)[1]
         self.assertIn("PR data refreshed <time", header)
         self.assertNotIn("Review overview partial", header)
-        self.assertIn("PR identities refreshed <time", queue)
-        self.assertEqual(1, result.count("Review overview partial"))
-        self.assertIn("Review overview partial: detailed evidence checked for 1 PR", result)
+        self.assertNotIn("PR identities refreshed", queue)
+        self.assertNotIn("Review overview partial", result)
+        self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
         self.assertIn("Review evidence not checked in this refresh · identity only", result)
         self.assertIn("Review evidence stale after identity or parent movement · identity only", result)
-        self.assertNotIn("Hosted not checked", result)
+        self.assertIn("Hosted not checked · CLI not checked", result)
 
 
 if __name__ == "__main__":
