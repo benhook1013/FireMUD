@@ -162,21 +162,25 @@ class ScriptWorkItemServiceImplTest {
   @Test
   void replayDirectIdsNormalizesPaddedTenant() {
     ScriptWorkItem item = replayableRuntimeWorkItem(90L);
+    item.setAuthorityUnavailableRetryCount(4);
+    item.setNextEligibleAt(Instant.now().plusSeconds(3600));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     when(workItemRepository.findById(90L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     ScriptWorkItemService service = replayService(workItemRepository);
 
+    Instant replayStartedAt = Instant.now();
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
                 " 1 ", "", "", List.of("90"), "", 0L, 0L, 10, "", "", ""));
+    Instant replayFinishedAt = Instant.now();
 
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(result.rejectedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
-    assertThat(item.getNextEligibleAt()).isNotNull();
+    assertThat(item.getNextEligibleAt()).isBetween(replayStartedAt, replayFinishedAt);
     verify(workItemRepository).findById(90L);
   }
 
