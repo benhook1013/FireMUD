@@ -16,7 +16,7 @@ DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
 from pr_review import evidence, hosted
-from pr_review.cli import _render
+from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
     EffectiveParent,
@@ -43,6 +43,53 @@ CANDIDATE = "d" * 40
 CONTEXT = "f" * 40
 ADVANCED = "9" * 40
 OLDER_BASE = "e" * 40
+
+
+class BoundedAllocationCliParserTests(unittest.TestCase):
+    def test_bounded_allocation_grant_accepts_exact_checkpoint_and_positive_cap(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "2827",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD,
+                "--checkpoint",
+                "5846432587",
+                "--max-additional-completed",
+                "2",
+                "--reason",
+                "bounded additional reviews",
+            ]
+        )
+
+        self.assertEqual(args.action, "grant")
+        self.assertEqual(args.checkpoint, "5846432587")
+        self.assertEqual(args.max_additional_completed, 2)
+
+    def test_legacy_cancel_shape_needs_no_cap_replacement(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "allocation",
+                "cancel",
+                "--pr",
+                "2827",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD,
+                "--reason",
+                "cancel the explicit cap",
+            ]
+        )
+
+        self.assertIsNone(args.checkpoint)
+        self.assertIsNone(args.max_additional_completed)
 
 
 def _git(root, *args, input_text=None):

@@ -55,6 +55,9 @@ class Evidence:
     over_ceiling: bool = False
     parent_moved: bool = False
     non_counting: bool = False
+    streak_break_before: bool = False
+    lineage_proven_to_next: bool = False
+    current_candidate_descendant_proven: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -176,10 +179,17 @@ def taper_satisfied(
     allow_uncorrected_state: bool = False,
     retained_patch_id: str | None = None,
 ) -> bool:
-    """Return true only for a trailing run of completed, non-provisional zero-accepted reviews."""
+    """Return whether the required corrected, zero-accepted review streak is present.
+
+    Hosted taper stays on one reviewed head. CLI taper may span heads in a
+    coherent PR lineage and can persist on a proven descendant live candidate.
+    A transient lineage break includes the newer checkpoint, then stops the
+    streak from crossing into older history.
+    """
 
     if required < 0:
         raise ValueError("required taper must be non-negative")
+    selected = Channel(channel)
     if allow_uncorrected_state and not retained_patch_id:
         return False
     materialized = [Evidence.from_value(value) for value in history]
@@ -191,16 +201,23 @@ def taper_satisfied(
         return required == 0
     latest_head = values[-1].head
     for count, item in enumerate(reversed(values), start=1):
-        if item.head != latest_head:
+        if (selected == Channel.HOSTED or allow_uncorrected_state) and item.head != latest_head:
             break
         if allow_uncorrected_state and item.patch_id != retained_patch_id:
             break
-        if not _valid_complete(item, channel, require_corrected_state=not allow_uncorrected_state):
+        corrected_state_required = not allow_uncorrected_state
+        if selected == Channel.CLI and count == 1 and item.current_candidate_descendant_proven:
+            corrected_state_required = False
+        if selected == Channel.CLI and count > 1 and item.lineage_proven_to_next:
+            corrected_state_required = False
+        if not _valid_complete(item, channel, require_corrected_state=corrected_state_required):
             break
         if item.accepted != 0:
             break
         if count >= required:
             return True
+        if selected == Channel.CLI and item.streak_break_before:
+            break
     return required == 0
 
 
@@ -256,8 +273,13 @@ def completion_status(
     if _same_head_provisional_barrier(history, reviews):
         return ReviewStatus.READY
     latest = reviews[-1]
+    latest_judgment = _judgment(state, selected, latest)
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
-    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value:
+    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
+        selected == Channel.CLI and latest.current_candidate_descendant_proven
+    ):
+        return ReviewStatus.READY
+    if selected == Channel.CLI and latest_judgment is not None and latest_judgment.decision == "reopen":
         return ReviewStatus.READY
     if latest.anchored is not True:
         return ReviewStatus.READY
@@ -269,29 +291,45 @@ def completion_status(
             required = value
     retained_equivalent_history = False
     if reconciliation_value == ReconciliationStatus.EQUIVALENT_HISTORY.value:
-        judgment = _judgment(state, selected, latest)
-        if judgment is None:
+        if latest_judgment is None:
             return ReviewStatus.JUDGMENT_REQUIRED
-        if judgment.decision == "reopen":
+        if latest_judgment.decision == "reopen":
             return ReviewStatus.READY
         # A retain judgment explicitly binds the latest reviewed checkpoint to
         # the live, equivalent patch.  It may preserve a valid review streak
         # whose old-head evidence predates the corrected-state annotation; it
         # must not manufacture corrected evidence for unrelated histories.
-        retained_equivalent_history = judgment.decision == "retain"
-    if not latest.corrected_state and not retained_equivalent_history:
+        retained_equivalent_history = latest_judgment.decision == "retain"
+    if (
+        not latest.corrected_state
+        and not retained_equivalent_history
+        and not (selected == Channel.CLI and latest.current_candidate_descendant_proven)
+    ):
         return ReviewStatus.MISSING_EVIDENCE
-    if taper_satisfied(
+    taper_complete = taper_satisfied(
         selected,
         history,
         required,
         allow_uncorrected_state=retained_equivalent_history,
         retained_patch_id=latest.patch_id if retained_equivalent_history else None,
+    )
+    if (
+        not latest.corrected_state
+        and not retained_equivalent_history
+        and selected == Channel.CLI
+        and latest.current_candidate_descendant_proven
+        and not taper_complete
     ):
-        judgment = _judgment(state, selected, latest)
-        if judgment and judgment.decision == "reopen":
+        return ReviewStatus.MISSING_EVIDENCE
+    if taper_complete:
+        if latest_judgment and latest_judgment.decision == "reopen":
             return ReviewStatus.READY
-        if other_channel_head is not None and other_channel_head != latest.head and not judgment:
+        if (
+            other_channel_head is not None
+            and other_channel_head != latest.head
+            and not latest_judgment
+            and not (selected == Channel.CLI and latest.current_candidate_descendant_proven)
+        ):
             return ReviewStatus.JUDGMENT_REQUIRED
         return ReviewStatus.COMPLETE
     return ReviewStatus.READY
@@ -309,6 +347,7 @@ def select_review_target(
     human_stopped_prs: Iterable[int] = (),
     exhausted_prs: Iterable[int] = (),
     allocation_blocks: Mapping[int, str] | None = None,
+    allocation_holds: Mapping[int, str] | None = None,
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
@@ -319,6 +358,7 @@ def select_review_target(
     human_stopped = set(human_stopped_prs)
     exhausted = set(exhausted_prs)
     allocation_blocks = allocation_blocks or {}
+    allocation_holds = allocation_holds or {}
     encountered_human_stop = False
     for pr in live_prs:
         if pr in handed_off:
@@ -328,6 +368,8 @@ def select_review_target(
             continue
         if pr in allocation_blocks:
             return ChannelDecision(selected, pr, ReviewStatus.JUDGMENT_REQUIRED, allocation_blocks[pr])
+        if pr in allocation_holds:
+            return ChannelDecision(selected, pr, ReviewStatus.HELD, allocation_holds[pr])
         if pr in exhausted:
             return ChannelDecision(
                 selected, pr, ReviewStatus.ALLOCATION_EXHAUSTED,
