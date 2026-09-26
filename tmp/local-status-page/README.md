@@ -15,3 +15,10 @@ python3 publish-hetzner.py
 The publisher creates `output/public-index.html` without a refresh endpoint, then updates only the `overseer-status` namespace on the existing Hetzner k3s host. Its Traefik ingress uses the existing `letsencrypt-prod` issuer. The page is publicly readable and contains no credentials or private review records. Its footer links to the current Windows Wi-Fi address for refreshing at home; that link is updated on each publish. The public page updates after a scheduled or manual refresh succeeds. The Windows startup task only launches the Python server at sign-in, so automatic refreshes depend on that server and the PC staying awake.
 
 Source and tests are tracked on the local Overseer branch. `status.json`, generated HTML, PID, and logs remain private runtime files under ignored `tmp/local-status-page`.
+
+To back up source changes from the FireMUD worktree, commit the tracked files under `tmp/local-status-page`, then run this from the repository root. The subtree split includes only that folder's tracked history; it excludes the ignored runtime files and other Overseer notes.
+
+```bash
+SITE_SNAPSHOT=$(git subtree split --prefix=tmp/local-status-page codex/project-direction)
+git push https://github.com/benhook1013/FireMUD-status-page.git "$SITE_SNAPSHOT:refs/heads/main"
+```
