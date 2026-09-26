@@ -1031,6 +1031,86 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void preservesSettledWallClockTimerAcrossPartialReconciliationAndLifecycleRefresh() {
+    ScriptScheduleDefinition definition = pluginDefinition("town-crier", "town-crier-v3");
+    definition.setEventType("onTimerExpire");
+    definition.setScheduleKind("TIMER");
+    definition.setCadenceUnit("MILLISECONDS");
+    definition.setCadenceValue(5_000L);
+    definition.setScheduleSemanticsHash("hash-plugin-timer");
+    ScriptEventBinding timerBinding =
+        binding("plugin-town-crier", "onTimerExpire", "ENTITY", "guard-1", 1, false);
+    ScriptScheduleInstance settled = wallClockTimerInstance();
+    settled.setId(44L);
+    settled.setPluginId("town-crier");
+    settled.setPluginVersionId("town-crier-v3");
+    settled.setPluginActivationEpoch(1L);
+    settled.setLifecycleRevision(1L);
+    settled.setScheduleDefinitionId(definition.getScheduleDefinitionId());
+    settled.setScriptId(definition.getScriptId());
+    settled.setScheduleSemanticsHash(definition.getScheduleSemanticsHash());
+    settled.setBindingId(timerBinding.getBindingId());
+    settled.setBindingPriority(timerBinding.getPriority());
+    settled.setRequiresExclusiveEvent(timerBinding.isRequiresExclusiveEvent());
+    settled.setObservedRuntimeVersionId("");
+    settled.setLastObservedControlPlaneRequestId("req-1");
+    settled.setLastObservedTickId(130L);
+    settled.setNextDueAt(null);
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(definition));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(settled));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(timerBinding));
+    GameInstanceRuntimeState runtimeState =
+        runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+            .setScriptPatchPinnedAtMs(99_000L)
+            .build();
+
+    service.reconcileObservedRuntimeState(
+        "1", "game-1", runtimeState.toBuilder().clearCurrentAdmissionPointers().build());
+
+    assertThat(settled.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
+    assertThat(settled.getNextDueAt()).isNull();
+    assertThat(settled.getLastObservedTickId()).isEqualTo(130L);
+
+    PluginRuntimeState updatedPluginState =
+        enabledPluginRuntimeState("town-crier", "town-crier-v3");
+    updatedPluginState.setLifecycleRevision(2L);
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(updatedPluginState));
+
+    service.reconcileObservedRuntimeState("1", "game-1", runtimeState);
+
+    assertThat(settled.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(settled.getNextDueAt()).isNull();
+    assertThat(settled.getPluginActivationEpoch()).isEqualTo(1L);
+    assertThat(settled.getLifecycleRevision()).isEqualTo(2L);
+
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of());
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(settled));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult observationResult =
+        service.observeRuntimeTickProgress(observation(131L, 200_000L));
+
+    assertThat(observationResult.firedScheduleCount()).isZero();
+    assertThat(settled.getNextDueAt()).isNull();
+    verify(gameSessionControlPlaneClient, never()).getGameInstanceRuntimeState(any(), any());
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
   void reconcileObservedRuntimeStateResetsWallClockRowForNewPinGeneration() {
     ScriptScheduleDefinition definition = millisecondsDefinition();
     ScriptScheduleInstance settled = wallClockTimerInstance();

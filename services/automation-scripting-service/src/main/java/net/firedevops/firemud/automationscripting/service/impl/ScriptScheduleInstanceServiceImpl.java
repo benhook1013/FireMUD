@@ -810,7 +810,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         nonPinTransitionSeed == null
             && existingRow
             && UNIT_MILLISECONDS.equals(definition.getCadenceUnit())
-            && STATUS_READY.equals(instance.getMaterializationStatus())
+            && (STATUS_READY.equals(instance.getMaterializationStatus())
+                || (STATUS_PENDING_RUNTIME_PROGRESS.equals(instance.getMaterializationStatus())
+                    && hasRetainedMaterializationEvidence(instance)))
             && previousNextDueAt == null
             && instance.getLastObservedTickId() != null
             && !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
