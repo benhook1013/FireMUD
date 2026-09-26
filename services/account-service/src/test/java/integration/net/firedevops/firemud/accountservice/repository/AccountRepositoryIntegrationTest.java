@@ -1048,7 +1048,7 @@ class AccountRepositoryIntegrationTest {
                     UUID.randomUUID(),
                     firstAccountId))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("accounts_identity_immutable");
+        .hasStackTraceContaining("Account identity cannot be reassigned");
     assertThat(
             dsl.resultQuery(
                     "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?", firstAccountId)
