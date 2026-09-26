@@ -2870,6 +2870,43 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
             controller.resolve_cli_target()
 
+    def test_consumed_cli_allocation_uses_hosted_reservation_projection_for_selection(self):
+        evidence = {(1, "cli"): [self.allocation_evidence(completed=False)]}
+        controller = self.make({1: pr(1, HEAD_1)}, evidence)
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant", pr=1, channel="cli", head=HEAD_1, reason="one CLI review"
+        )
+        evidence[(1, "cli")].append(self.allocation_evidence(checkpoint="consumed"))
+        evidence[(1, "hosted")] = [
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "trigger:123",
+                "held": True,
+            }
+        ]
+        allocation = controller.store.load().allocations["1:cli"]
+        handed_off = dataclasses.replace(
+            allocation,
+            handoff_checkpoint="consumed",
+            handoff_head=HEAD_1,
+            handoff_validation="operator-validated legacy handoff",
+        )
+        controller.store.update(
+            lambda state: dataclasses.replace(
+                state, allocations={**state.allocations, "1:cli": handed_off}
+            )
+        )
+
+        report_target = controller.status()["review_targets"]["cli"]
+        selected_target = controller.select_target("cli")
+
+        self.assertEqual(report_target["pr"], 1)
+        self.assertEqual(report_target["status"], "ALLOCATION_EXHAUSTED")
+        self.assertEqual(selected_target["pr"], report_target["pr"])
+        self.assertEqual(selected_target["status"], report_target["status"])
+
     def test_same_head_attributable_active_hosted_review_allows_cli_status_and_target(self):
         active = {
             "pr": 1,

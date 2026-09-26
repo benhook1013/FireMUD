@@ -2866,7 +2866,6 @@ class ReviewController:
             pr: self._policy_history(state, pr, selected, reconciliation)
             for pr in state.ordered_prs
         }
-        allocations = self._allocation_views(state, live, reconciliation, selected, history)
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
         other_history = {
             pr: self._policy_history(state, pr, other, reconciliation)
@@ -2883,6 +2882,7 @@ class ReviewController:
                 )
                 for pr in state.ordered_prs
             }
+        allocations = self._allocation_views(state, live, reconciliation, selected, history)
         decision = self._select_review_decision(
             state,
             selected,
