@@ -616,6 +616,68 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void recordsUnattemptedFenceDispositionWithoutExternalHandoff() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("WAIT", "target-entity-1", "7", "region-1", 12L, 34L, 2);
+
+    service.recordUnattempted(item, command, "plugin_disabled");
+
+    verifyNoInteractions(gameSessionClient);
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getEventId()).isEqualTo("she-work-item-99-command-2");
+    assertThat(handoffCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#2");
+    assertThat(handoffCaptor.getValue().getCommandOrdinal()).isEqualTo(2);
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("unattempted");
+    assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("plugin_disabled");
+  }
+
+  @Test
+  void preservesPriorAttemptedChildWhenLaterFanoutIsFenced() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent acceptedEvent = new ScriptHandoffEvent();
+    acceptedEvent.setHandoffOutcome("accepted");
+    acceptedEvent.setHandoffReason("game_session_accepted");
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 2))
+        .thenReturn(Optional.of(acceptedEvent));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    service.recordUnattempted(
+        workItem(),
+        emittedCommand("WAIT", "target-entity-1", "7", "region-1", 12L, 34L, 2),
+        "plugin_disabled");
+
+    verifyNoInteractions(gameSessionClient);
+    verify(handoffEventRepository, never()).save(Mockito.any());
+    assertThat(acceptedEvent.getHandoffOutcome()).isEqualTo("accepted");
+    assertThat(acceptedEvent.getHandoffReason()).isEqualTo("game_session_accepted");
+  }
+
+  @Test
   void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

@@ -313,6 +313,36 @@ public class ScriptGameplayCommandHandoffServiceImpl
     return result;
   }
 
+  @Override
+  @Transactional
+  public void recordUnattempted(
+      ScriptWorkItem workItem, EmittedCommand command, String fenceReason) {
+    requireWorkItem(workItem);
+    requireCommand(command);
+    String reason = normalize(fenceReason).trim();
+    if (reason.isBlank()) {
+      throw new IllegalArgumentException("fenceReason must not be blank");
+    }
+    ScriptHandoffEvent existing =
+        handoffEventRepository
+            .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                workItem.getTenantId(), workItem.getId(), command.ordinal())
+            .orElse(null);
+    if (existing != null
+        && !"unattempted".equalsIgnoreCase(normalize(existing.getHandoffOutcome()))) {
+      // A retry can revisit a sibling already attempted by an earlier fan-out. Preserve that
+      // durable attempt result instead of replacing it with later fence evidence.
+      return;
+    }
+    appendHandoffEvent(
+        workItem,
+        command,
+        dispatchId(workItem, command.ordinal()),
+        new HandoffResult(false, "unattempted", "", "", "", ""),
+        reason,
+        Instant.now());
+  }
+
   private static ScopeValidationResult validateRemoteHandoffScope(
       ScriptWorkItem workItem, EmittedCommand command) {
     if (!requiresRemoteHandoff(workItem, command)) {
@@ -806,8 +836,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       HandoffResult result,
       Instant now) {
+    appendHandoffEvent(workItem, command, dispatchId, result, handoffReason(result), now);
+  }
+
+  private void appendHandoffEvent(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffResult result,
+      String reason,
+      Instant now) {
     String outcome = result.outcome().toLowerCase(Locale.ROOT);
-    String reason = handoffReason(result);
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());

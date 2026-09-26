@@ -474,13 +474,20 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     PluginFenceValidation terminalFanoutFence = null;
     handoffService.beginAggregateFanout(workItem);
     try {
-      for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
+      for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
+        ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
         PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
         if (handoffPluginFence != null) {
           if (handoffPluginFence.retryable()) {
             retryableFanoutFence = handoffPluginFence;
           } else {
             terminalFanoutFence = handoffPluginFence;
+          }
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), handoffPluginFence.reason());
           }
           break;
         }
