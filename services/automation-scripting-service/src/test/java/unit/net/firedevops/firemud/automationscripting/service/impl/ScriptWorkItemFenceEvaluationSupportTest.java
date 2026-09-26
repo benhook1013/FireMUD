@@ -118,6 +118,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
   }
 
   @Test
+  void rejectsPredecessorEnabledRevisionWhenCurrentPluginIsDraining() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setPluginId("plugin-1");
+    workItem.setPluginVersionId("plugin-v1");
+    workItem.setPluginActivationEpoch(4L);
+    workItem.setLifecycleRevision(8L);
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+                workItem, "plugin-v1", PluginState.PLUGIN_STATE_DRAINING, 4L, 9L))
+        .isEqualTo("plugin_disabled");
+  }
+
+  @Test
   void rejectsUnspecifiedCurrentPluginStateWithoutPluginVersion() {
     ScriptWorkItem workItem = runtimeWorkItem();
 

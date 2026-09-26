@@ -30,6 +30,8 @@ final class ScriptWorkItemFenceEvaluationSupport {
       PluginState pluginState,
       long pluginActivationEpoch,
       long lifecycleRevision) {
+    // A predecessor revision alone cannot authorize DRAINING without durable winning-admission
+    // and barrier-order proof, which this local fence evaluation does not receive.
     if (pluginState != PluginState.PLUGIN_STATE_ENABLED) {
       return "plugin_disabled";
     }
