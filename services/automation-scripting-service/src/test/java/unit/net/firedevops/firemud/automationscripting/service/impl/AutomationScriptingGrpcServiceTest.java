@@ -126,9 +126,10 @@ class AutomationScriptingGrpcServiceTest {
 
   @Test
   void invalidConfiguredWorkloadNamespaceFailsConstruction() {
-    assertDoesNotThrow(() -> configuredService(null));
-    assertDoesNotThrow(() -> configuredService(" "));
+    assertThrows(IllegalArgumentException.class, () -> configuredService(null));
+    assertThrows(IllegalArgumentException.class, () -> configuredService(" "));
     assertThrows(IllegalArgumentException.class, () -> configuredService("not a namespace"));
+    assertDoesNotThrow(() -> configuredService(TEST_NAMESPACE));
   }
 
   @Test

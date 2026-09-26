@@ -1,7 +1,9 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
+import net.firedevops.firemud.entitymanagement.service.EntityTemplateReferenceService;
 import net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
@@ -80,6 +83,34 @@ import tools.jackson.databind.ObjectMapper;
 
 class EntityManagementGrpcServiceTest {
   private static final String TEST_NAMESPACE = "test";
+
+  private EntityManagementGrpcService configuredService(String workloadNamespace) {
+    return new EntityManagementGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(CharacterService.class),
+        Mockito.mock(ActorStateService.class),
+        Mockito.mock(ActorConditionMutationService.class),
+        Mockito.mock(EntityDraftDesignDigestService.class),
+        Mockito.mock(EquipmentService.class),
+        Mockito.mock(InventoryService.class),
+        Mockito.mock(ContainerService.class),
+        Mockito.mock(RoomEntityService.class),
+        effectReplayService(),
+        Mockito.mock(EntityUpgradeValidationService.class),
+        Mockito.mock(EntityTemplateReferenceService.class),
+        attestationService(),
+        new SimpleMeterRegistry(),
+        Mockito.mock(EffectPayloadParser.class),
+        workloadNamespace);
+  }
+
+  @Test
+  void invalidConfiguredWorkloadNamespaceFailsConstruction() {
+    assertThrows(IllegalArgumentException.class, () -> configuredService(null));
+    assertThrows(IllegalArgumentException.class, () -> configuredService(" "));
+    assertThrows(IllegalArgumentException.class, () -> configuredService("not a namespace"));
+    assertDoesNotThrow(() -> configuredService(TEST_NAMESPACE));
+  }
 
   private static PublicationReadGuard publicationReadGuard() {
     return new PublicationReadGuard(TEST_NAMESPACE);

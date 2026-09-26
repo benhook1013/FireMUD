@@ -242,6 +242,8 @@ class WorldManagementGrpcServiceTest {
   @Test
   void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
       WorldManagementGrpcService service =
           new WorldManagementGrpcService(
@@ -258,7 +260,10 @@ class WorldManagementGrpcServiceTest {
 
       assertEquals(
           "PERMISSION_DENIED",
-          invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+          invokeDigestWithPeer(
+                  service, fullDigestRequest("1", "7"), peer("game-design-service"))
+              .getError()
+              .getCode());
     }
     Mockito.verifyNoInteractions(digestService);
   }

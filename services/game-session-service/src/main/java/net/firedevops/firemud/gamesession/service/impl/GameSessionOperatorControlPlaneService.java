@@ -438,13 +438,18 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
+    Long runtimeVersionId = RuntimeVersionIdResolver.resolve(instance);
+    if (runtimeVersionId == null) {
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+    }
+
     GetPublishedScriptPatchVersionResponse publicationResponse;
     try {
       publicationResponse =
           gameDesignClient == null
               ? null
               : gameDesignClient.getPublishedScriptPatchVersion(
-                  tenantId, targetScriptPatchVersion, RuntimeVersionIdResolver.resolve(instance));
+                  tenantId, targetScriptPatchVersion, runtimeVersionId);
     } catch (RuntimeException ex) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
@@ -503,10 +508,6 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
-    Long runtimeVersionId = RuntimeVersionIdResolver.resolve(instance);
-    if (runtimeVersionId == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-    }
     if (!runtimeVersionId.equals(published.getBaseVersionId())) {
       return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
     }

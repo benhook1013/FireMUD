@@ -512,9 +512,6 @@ public class AutomationScriptingGrpcService
   }
 
   private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
     return new PublicationReadGuard(workloadNamespace);
   }
 

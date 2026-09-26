@@ -397,6 +397,40 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void nonPositiveVersionIdDoesNotFallBackBeforePublicationLookup() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setVersionId(0L);
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    verifyNoInteractions(gameDesign, automation);
+    verifyNoScriptPinMutation(repository);
+  }
+
+  @Test
   void missingRuntimeVersionIsClassifiedAsUnavailableAuthority() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);

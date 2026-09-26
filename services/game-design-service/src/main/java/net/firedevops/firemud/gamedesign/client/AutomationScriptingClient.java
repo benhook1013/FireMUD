@@ -91,12 +91,8 @@ public class AutomationScriptingClient
     if (mismatch != null) {
       return new PublishParticipantDigestDto(
           "AUTOMATION_SCRIPTING",
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? binding.versionId()
-              : binding.scriptPatchVersion(),
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? null
-              : Long.valueOf(binding.baseVersionId()),
+          binding.scriptPatchVersion(),
+          Long.valueOf(binding.baseVersionId()),
           null,
           null,
           null,
@@ -105,8 +101,8 @@ public class AutomationScriptingClient
     }
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
-        response.hasVersionId() ? response.getVersionId() : response.getScriptPatchVersion(),
-        response.hasVersionId() ? null : Long.valueOf(binding.baseVersionId()),
+        binding.scriptPatchVersion(),
+        Long.valueOf(binding.baseVersionId()),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),

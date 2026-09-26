@@ -225,6 +225,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", ex.failureCode().name(), ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      String errorCode = publishAttemptErrorCode(ex);
+      builder.setError(
+          errorCode == null
+              ? GrpcAppErrors.internal(meterRegistry, logger, "PublishVersion", ex)
+              : GrpcAppErrors.error(
+                  meterRegistry, logger, "PublishVersion", errorCode, ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "PublishVersion", ex));
     }
@@ -276,6 +283,17 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "PublishScriptPatchVersion",
               ex.failureCode().name(),
               ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      String errorCode = publishAttemptErrorCode(ex);
+      builder.setError(
+          errorCode == null
+              ? GrpcAppErrors.internal(meterRegistry, logger, "PublishScriptPatchVersion", ex)
+              : GrpcAppErrors.error(
+                  meterRegistry,
+                  logger,
+                  "PublishScriptPatchVersion",
+                  errorCode,
+                  ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "PublishScriptPatchVersion", ex));
@@ -1977,6 +1995,29 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       }
     }
     return "INVALID_ARGUMENT";
+  }
+
+  private String publishAttemptErrorCode(IllegalStateException failure) {
+    if (failure instanceof VersionPublishCommandServiceImpl.PendingReconciliationException) {
+      return "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED";
+    }
+    String message = failure.getMessage();
+    if (message == null || message.isBlank()) {
+      return null;
+    }
+    int detailSeparator = message.indexOf(':');
+    String candidate =
+        detailSeparator < 0 ? message.trim() : message.substring(0, detailSeparator).trim();
+    return switch (candidate) {
+      case "PUBLISH_ATTEMPT_ARTIFACT_SCOPE_MISMATCH",
+          "PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH",
+          "PUBLISH_ATTEMPT_IDENTITY_CONFLICT",
+          "PUBLISH_ATTEMPT_INCOMPLETE",
+          "PUBLISH_ATTEMPT_INCONSISTENT",
+          "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
+          "PUBLISH_ATTEMPT_SCOPE_MISMATCH" -> candidate;
+      default -> null;
+    };
   }
 
   private void requireLaunchAttestationReadAccess() {

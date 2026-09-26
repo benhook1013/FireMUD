@@ -56,6 +56,8 @@ import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
@@ -272,6 +274,118 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsKnownPublishAttemptStateFailures() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalStateException(
+                "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_SCOPE_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsKnownPublishAttemptStateFailures() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: finalization pending"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_INCONSISTENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsPendingReconciliationToStableCode() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.PendingReconciliationException(
+                "release evidence needs readback"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals(
+        "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("unexpected internal state"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("unexpected internal state"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 
   @Test

@@ -314,13 +314,15 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
         meterRegistry,
-        new EffectPayloadParser(new ObjectMapper()),
-        "");
+        new EffectPayloadParser(new ObjectMapper()));
   }
 
   @Override
@@ -413,14 +415,7 @@ public class EntityManagementGrpcService
   }
 
   private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+    return new PublicationReadGuard(workloadNamespace);
   }
 
   @Override
