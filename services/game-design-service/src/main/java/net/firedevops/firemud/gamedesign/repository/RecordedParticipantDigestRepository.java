@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -289,9 +290,23 @@ public class RecordedParticipantDigestRepository {
     digest.setContentDigest(record.get(CONTENT_DIGEST));
     digest.setDigestSchemaVersion(record.get(DIGEST_SCHEMA_VERSION));
     digest.setRecordedFromPublishWorkflowId(record.get(RECORDED_FROM_PUBLISH_WORKFLOW_ID));
-    digest.setRecordedAt(record.get(RECORDED_AT));
+    digest.setRecordedAt(toLocalDateTime(record, RECORDED_AT));
     digest.setLastVerifiedPublishWorkflowId(record.get(LAST_VERIFIED_PUBLISH_WORKFLOW_ID));
-    digest.setLastVerifiedAt(record.get(LAST_VERIFIED_AT));
+    digest.setLastVerifiedAt(toLocalDateTime(record, LAST_VERIFIED_AT));
     return digest;
+  }
+
+  private LocalDateTime toLocalDateTime(Record record, Field<LocalDateTime> field) {
+    Object value = record.get(field);
+    if (value == null) {
+      return null;
+    }
+    if (value instanceof LocalDateTime localDateTime) {
+      return localDateTime;
+    }
+    if (value instanceof Timestamp timestamp) {
+      return timestamp.toLocalDateTime();
+    }
+    throw new IllegalStateException("unexpected timestamp type for " + field.getName());
   }
 }

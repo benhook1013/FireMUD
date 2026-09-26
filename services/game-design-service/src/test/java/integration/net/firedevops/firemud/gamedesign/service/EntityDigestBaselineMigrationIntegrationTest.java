@@ -120,6 +120,8 @@ class EntityDigestBaselineMigrationIntegrationTest {
     assertThat(inserted.getScopeValue()).isEqualTo(Long.toString(version.getId()));
     assertThat(inserted.getContentDigest()).isEqualTo("entity-v1-" + version.getId());
     assertThat(inserted.getDigestSchemaVersion()).isEqualTo(1);
+    assertThat(inserted.getRecordedAt()).isEqualTo(SOURCE_RECORDED_AT);
+    assertThat(inserted.getLastVerifiedAt()).isEqualTo(SOURCE_LAST_VERIFIED_AT);
   }
 
   @Test
