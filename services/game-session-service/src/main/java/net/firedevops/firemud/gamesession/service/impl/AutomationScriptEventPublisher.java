@@ -191,29 +191,29 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
               || previousRoomId.equals(currentRoomId)) {
             return;
           }
-          publishLifecycleEvent(
-              scope,
-              "onLeaveRegion",
-              effectId + ":leave",
-              "game-session:onLeaveRegion:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + effectId,
-              regionTransitionPayload(previousRoomId, currentRoomId));
-          publishLifecycleEvent(
-              scope,
-              "onEnterRegion",
-              effectId + ":enter",
-              "game-session:onEnterRegion:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + effectId,
-              regionTransitionPayload(previousRoomId, currentRoomId));
+          String payload = regionTransitionPayload(previousRoomId, currentRoomId);
+          publishRegionTransitionEvent(scope, effectId, "leave", "onLeaveRegion", payload);
+          publishRegionTransitionEvent(scope, effectId, "enter", "onEnterRegion", payload);
         });
+  }
+
+  private void publishRegionTransitionEvent(
+      PublishingScope scope, String effectId, String transition, String eventType, String payload) {
+    runBestEffort(
+        () ->
+            publishLifecycleEvent(
+                scope,
+                eventType,
+                effectId + ":" + transition,
+                "game-session:"
+                    + eventType
+                    + ":"
+                    + scope.gameInstanceId()
+                    + ":"
+                    + scope.regionEpoch()
+                    + ":"
+                    + effectId,
+                payload));
   }
 
   @Override
@@ -376,23 +376,24 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private void submitBestEffort(Runnable publishAction) {
     try {
-      scriptEventExecutor.execute(
-          () -> {
-            try {
-              publishAction.run();
-            } catch (StatusRuntimeException ex) {
-              Status.Code code = ex.getStatus().getCode();
-              if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
-                LOG.warn("Script event publish terminally rejected status={}", code);
-              } else {
-                LOG.warn("Script event publish task failed", ex);
-              }
-            } catch (RuntimeException ex) {
-              LOG.warn("Script event publish task failed", ex);
-            }
-          });
+      scriptEventExecutor.execute(() -> runBestEffort(publishAction));
     } catch (RuntimeException ex) {
       LOG.warn("Script event publish submission failed", ex);
+    }
+  }
+
+  private void runBestEffort(Runnable publishAction) {
+    try {
+      publishAction.run();
+    } catch (StatusRuntimeException ex) {
+      Status.Code code = ex.getStatus().getCode();
+      if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
+        LOG.warn("Script event publish terminally rejected status={}", code);
+      } else {
+        LOG.warn("Script event publish task failed", ex);
+      }
+    } catch (RuntimeException ex) {
+      LOG.warn("Script event publish task failed", ex);
     }
   }
 
