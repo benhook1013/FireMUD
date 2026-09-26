@@ -16,7 +16,7 @@ Terminal cleanup disposes aged child audit and handoff evidence before deleting 
 
 The `xmax = 0` insert discriminator used by the `ScriptWorkItem` and `ScriptEventAudit` repositories remains without PostgreSQL integration proof; current unit/mock evidence does not establish INSERT-versus-conflict-update behavior against PostgreSQL.
 
-Bootstrap/dev `UpdateScript` now uses one PostgreSQL upsert for the durable `(tenantId, scriptPatchVersion, scriptId)` definition identity, preserving explicit-ID CAS for internal callers and replacing bindings within the service transaction. Focused repository unit proof executes; PostgreSQL cases for one-statement persistence, concurrent definition identity, complete binding replacement, and rollback are compiled but skipped without Docker. They are not executed database proof. This bounded upload path does not satisfy the separate production publication/readiness contract.
+Bootstrap/dev `UpdateScript` now uses one PostgreSQL upsert for the durable `(tenantId, version, name)` definition identity enforced by the `scripts` table/RPC, distinct from the runtime patch/script identity `(tenantId, scriptPatchVersion, scriptId)`, preserving explicit-ID CAS for internal callers and replacing bindings within the service transaction. Focused repository unit proof executes; PostgreSQL cases for one-statement persistence, concurrent definition identity, complete binding replacement, and rollback are compiled but skipped without Docker. They are not executed database proof. This bounded upload path does not satisfy the separate production publication/readiness contract.
 
 ### Script-transition reconciliation
 
