@@ -747,6 +747,23 @@ class HostedEvidenceTests(unittest.TestCase):
             with self.subTest(summary=summary):
                 self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
 
+    def test_file_processing_noncoverage_is_explicit_without_review_wording(self):
+        for summary in (
+            "Files not processed: 2.",
+            "Files excluded due to moderation.",
+            "Files encountered processing errors.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_zero_file_processing_noncoverage_is_not_incomplete(self):
+        for summary in (
+            "Files not processed: 0.",
+            "Files encountered processing errors: 0.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+
     def test_zero_skipped_or_omitted_files_are_not_explicit_incomplete_coverage(self):
         for summary in (
             "Files skipped: 0.",

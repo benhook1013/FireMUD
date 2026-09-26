@@ -1804,21 +1804,11 @@ assert manager_kubeconfig_jobs == {
     "deploy-runtime", "publish-preview-proof", "destroy-runtime"
 }
 assert "Set up Helm" not in deploy_by_name
-preview_migration_gates = [
-    step
-    for step in deploy_steps
-    if "migration" in step.get("name", "").lower()
-]
-assert len(preview_migration_gates) == 1, preview_migration_gates
-preview_migration_gate = preview_migration_gates[0]
-assert preview_migration_gate["name"] == "Block unproven PR schema migration activation"
-assert deploy_steps[0] == preview_migration_gate
-assert preview_migration_gate["if"] == (
-    "${{ needs.validate-target.outputs.v2_schema_migration_change == 'true' }}"
+assert not any(
+    "migration" in step.get("name", "").lower() for step in deploy_steps
 )
-assert "Stop before pruning, reclaiming preview capacity, or recreating the namespace" in preview_migration_gate[
-    "run"
-]
+assert jobs["deploy-runtime"]["needs"] == ["validate-target", "prepare-runtime"]
+assert "needs.prepare-runtime.result == 'success'" in jobs["deploy-runtime"]["if"]
 prune_stale_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1840,8 +1830,7 @@ requested_step_index = next(
     if step.get("name") == "Create and annotate exact preview runtime namespace"
 )
 assert (
-    deploy_steps.index(preview_migration_gate)
-    < prune_stale_step_index
+    prune_stale_step_index
     < capacity_reclaim_step_index
     < clean_delete_step_index
     < requested_step_index
