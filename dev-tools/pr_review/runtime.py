@@ -225,10 +225,11 @@ class LiveEvidence:
     def _comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]:
+            body = item.get("body")
             values.append(
                 {
                     "id": github.immutable_database_id(item),
-                    "body": item.get("body"),
+                    "body": body if isinstance(body, str) else "",
                     "created_at": item.get("createdAt"),
                     "updated_at": item.get("updatedAt"),
                     "author_login": ((item.get("author") or {}).get("login")),
@@ -1633,6 +1634,8 @@ class LiveEvidence:
         scope_marker_token = evidence.SCOPE_MARKER.replace("<!--", "").replace("-->", "").strip()
         for comment in comments:
             body = comment["body"]
+            if not isinstance(body, str):
+                continue
             lines = body.splitlines()
             first = next((line for line in lines if line.strip() and not line[0].isspace()), None)
             scope_heading = evidence.SCOPE_CHANGE.fullmatch(first or "")

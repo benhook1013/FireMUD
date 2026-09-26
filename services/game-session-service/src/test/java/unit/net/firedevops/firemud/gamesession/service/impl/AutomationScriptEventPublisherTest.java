@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -62,11 +63,16 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
-  void logsTransientTriggerFailureAsTaskFailureAndKeepsPublisherBestEffort(CapturedOutput output) {
+  void logsTransientTriggerFailureResponseWithoutAdmittingEvent(CapturedOutput output) {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
-    when(client.triggerScriptEvent(Mockito.any()))
-        .thenThrow(
-            new StatusRuntimeException(Status.UNAVAILABLE.withDescription("temporarily down")));
+    TriggerScriptEventResponse unavailableResponse =
+        TriggerScriptEventResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTOMATION_SCRIPTING_UNAVAILABLE")
+                    .setMessage("Automation & Scripting service unavailable"))
+            .build();
+    when(client.triggerScriptEvent(Mockito.any())).thenReturn(unavailableResponse);
     ScriptEventPublisher publisher = publisherForTriggerTest(client);
 
     assertThatCode(
@@ -75,9 +81,15 @@ class AutomationScriptEventPublisherTest {
                     sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
         .doesNotThrowAnyException();
 
+    assertThat(unavailableResponse.getAdmitted()).isFalse();
     String capturedOutput = output.getOut() + output.getErr();
-    assertThat(capturedOutput).contains("Script event publish task failed");
-    assertThat(capturedOutput).doesNotContain("Script event publish terminally rejected");
+    assertThat(capturedOutput)
+        .contains("Script onCommand event was not admitted")
+        .contains("AUTOMATION_SCRIPTING_UNAVAILABLE");
+    assertThat(capturedOutput)
+        .doesNotContain("Script event publish task failed")
+        .doesNotContain("Script event publish terminally rejected");
+    verify(client).triggerScriptEvent(Mockito.any());
   }
 
   @Test
@@ -539,6 +551,49 @@ class AutomationScriptEventPublisherTest {
               assertThat(payload).contains("\"fromRegionId\":\"R-101\"");
               assertThat(payload).contains("\"toRegionId\":\"R-102\"");
             });
+  }
+
+  @Test
+  void submitsEnterRegionEventAfterTerminalLeaveRejection(CapturedOutput output) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenThrow(new StatusRuntimeException(Status.INVALID_ARGUMENT.withDescription("rejected")))
+        .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishRegionTransitionEvents(
+        sharedGameplayContext("R-101"), sharedGameplayContext("R-102"), "effect-1");
+
+    ArgumentCaptor<TriggerScriptEventRequest> captor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(client, Mockito.times(2)).triggerScriptEvent(captor.capture());
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getEventType)
+        .containsExactly("onLeaveRegion", "onEnterRegion");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptEventId)
+        .containsExactly("effect-1:leave", "effect-1:enter");
+    assertThat(output.getOut() + output.getErr())
+        .contains("Script event publish terminally rejected status=INVALID_ARGUMENT");
   }
 
   @Test

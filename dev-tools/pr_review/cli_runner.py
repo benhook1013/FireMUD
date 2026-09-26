@@ -458,6 +458,11 @@ def _assert_no_active_hosted_review(
 ) -> None:
     """Allow overlap only for an active Hosted request on the exact same anchor."""
 
+    def hold(state: str, count: int = 1) -> ReviewRunnerError:
+        return ReviewRunnerError(
+            f"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count={count}"
+        )
+
     def same_sha(value: Any, expected: str) -> bool:
         return (
             isinstance(value, str)
@@ -490,7 +495,7 @@ def _assert_no_active_hosted_review(
     if not records:
         return
     if len(records) > 1:
-        raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+        raise hold("multiple_current_reservations", len(records))
 
     try:
         payload = github_api.fetch_pull_request(repo, pr_number)
@@ -532,11 +537,11 @@ def _assert_no_active_hosted_review(
                 )
                 if immutable_active_identity:
                     continue
-                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+                raise hold("active_unverified")
             if state.state == "awaiting_response":
-                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+                raise hold("awaiting_response")
             if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
-                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+                raise hold(state.state)
             if terminal_attribution_ambiguity:
                 continue
             if state.state not in {
@@ -546,7 +551,7 @@ def _assert_no_active_hosted_review(
                 "retired",
                 "rate_limited",
             }:
-                raise ReviewRunnerError(HOSTED_CLI_OVERLAP_HOLD_REASON)
+                raise hold(state.state)
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:

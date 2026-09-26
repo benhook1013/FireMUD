@@ -965,7 +965,10 @@ class CliReviewRunnerTests(unittest.TestCase):
                         "pr_review.cli_runner.github_api.fetch_pull_request",
                         return_value=hosted_payload("Full review triggered"),
                     ),
-                    self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
+                    self.assertRaisesRegex(
+                        ReviewRunnerError,
+                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; reservation_count=1",
+                    ),
                 ):
                     run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
                 self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
@@ -983,7 +986,10 @@ class CliReviewRunnerTests(unittest.TestCase):
                     "pr_review.cli_runner.github_api.fetch_pull_request",
                     return_value=hosted_payload(include_response=False),
                 ),
-                self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=awaiting_response; reservation_count=1",
+                ),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
@@ -1053,7 +1059,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                     patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=payload),
                     self.assertRaisesRegex(
                         ReviewRunnerError,
-                        HOSTED_CLI_OVERLAP_HOLD_REASON,
+                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count=1",
                     ),
                 ):
                     run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
@@ -1089,10 +1095,34 @@ class CliReviewRunnerTests(unittest.TestCase):
             commands = FakeCommands(root)
             with (
                 patch("pr_review.cli_runner.github_api.fetch_pull_request") as fetch,
-                self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=multiple_current_reservations; reservation_count=2",
+                ),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             fetch.assert_not_called()
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_unknown_hosted_reservation_state_holds_cli_with_classified_details(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir)
+            commands = FakeCommands(root)
+            with (
+                patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(),
+                ),
+                patch("pr_review.cli_runner.hosted.trigger_state", return_value=Mock(state="future_state")),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=future_state; reservation_count=1",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_hosted_posting_lock_blocks_cli_before_live_lookup(self):

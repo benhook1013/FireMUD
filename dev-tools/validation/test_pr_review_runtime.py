@@ -1115,6 +1115,20 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual((marker["accepted"], marker["raw"]), (0, 0))
         self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
+    def test_history_skips_non_string_comment_bodies_during_scope_change_scan(self):
+        comment = {
+            "databaseId": 93,
+            "body": None,
+            "createdAt": "2026-09-26T00:00:00Z",
+            "updatedAt": "2026-09-26T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(Path(directory), self._payload([comment]))
+
+        self.assertFalse(any(item.get("scope_changed") is True for item in history))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
+
     def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
