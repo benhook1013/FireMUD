@@ -64,6 +64,9 @@ class AccountAuthorityGenerationRepositoryTest {
         AccountAuthorityGenerationRepository.class.getMethod(
             "initializeIssuerIfAbsent", String.class));
     assertMandatory(
+        AccountAuthorityGenerationRepository.class.getMethod(
+            "initializeTenantIfAbsent", UUID.class));
+    assertMandatory(
         AccountAuthorityGenerationRepository.class.getMethod("read", AuthorityScope.class));
     assertMandatory(
         AccountAuthorityGenerationRepository.class.getMethod(
@@ -95,6 +98,14 @@ class AccountAuthorityGenerationRepositoryTest {
   @Test
   void issuerEnrollmentRejectsBlankIssuerBeforeStorageAccess() {
     assertThatThrownBy(() -> repository.initializeIssuerIfAbsent("  "))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void tenantEnrollmentRejectsMissingCanonicalTenantIdentityBeforeStorageAccess() {
+    assertThatThrownBy(() -> repository.initializeTenantIfAbsent(null))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(dsl);

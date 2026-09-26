@@ -80,6 +80,31 @@ public class AccountAuthorityGenerationRepository {
     return readScopeState(scope, true);
   }
 
+  /**
+   * Enrolls one exact canonical tenant scope once, preserving any existing durable generation.
+   *
+   * <p>This is used only after Account has stored and exactly read back its approved tenant
+   * identity association in the caller's transaction. Numeric retained tenant keys are not accepted
+   * by this method.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ScopeState initializeTenantIfAbsent(UUID canonicalTenantId) {
+    AuthorityScope scope = AuthorityScope.tenant(canonicalTenantId);
+    validateScope(scope);
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + GENERATION_TABLE
+                + " (scope_kind, issuer_id, account_uuid, tenant_uuid, generation, source_version) "
+                + "VALUES ('TENANT', NULL, NULL, ?, 1, 1) "
+                + "ON CONFLICT (tenant_uuid) WHERE scope_kind = 'TENANT' DO NOTHING",
+            canonicalTenantId);
+    if (inserted < 0 || inserted > 1) {
+      throw new IllegalStateException("Account tenant authority enrollment was ambiguous");
+    }
+    return readScopeState(scope, true);
+  }
+
   /** Reads one initialized exact scope and fails closed for absent or malformed state. */
   @Transactional(propagation = Propagation.MANDATORY)
   public ScopeState read(AuthorityScope scope) {

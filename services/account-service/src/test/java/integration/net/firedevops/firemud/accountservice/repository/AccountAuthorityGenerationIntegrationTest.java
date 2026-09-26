@@ -130,7 +130,10 @@ class AccountAuthorityGenerationIntegrationTest {
             transaction,
             () ->
                 repository.readCompositeSnapshot(
-                    "Issuer-A", accountA, List.of(TENANT_B, TENANT_A), List.of(TENANT_A)));
+                    issuerScope.issuerId(),
+                    accountA,
+                    List.of(TENANT_B, TENANT_A),
+                    List.of(TENANT_A)));
     assertThat(snapshot.issuer().scope()).isEqualTo(issuerScope);
     assertThat(snapshot.account().scope()).isEqualTo(accountScopeA);
     assertThat(snapshot.tenants())
