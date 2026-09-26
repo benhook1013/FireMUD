@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
 import java.sql.Statement;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -247,6 +248,7 @@ class GameTenantIdentityRepositoryIntegrationTest {
             .schemas(SERVICE_SCHEMA)
             .defaultSchema(SERVICE_SCHEMA)
             .table(FLYWAY_TABLE)
+            .placeholders(Map.of("serviceSchema", SERVICE_SCHEMA))
             .locations("classpath:db/migration");
     if (target != null) {
       configuration.target(target);

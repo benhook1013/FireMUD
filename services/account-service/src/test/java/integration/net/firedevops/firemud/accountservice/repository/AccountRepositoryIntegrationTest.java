@@ -799,12 +799,12 @@ class AccountRepositoryIntegrationTest {
         firstAccountId,
         41L);
     dsl.execute(
-        "UPDATE "
+        "INSERT INTO "
             + schema
-            + ".account_tenant_membership SET gameplay_admission_allowed = TRUE, "
-            + "lifecycle_state = 'ACTIVE', membership_version = 2, "
-            + "membership_authority_generation = 3, authority_provenance = 'EXPLICIT_JOIN' "
-            + "WHERE account_id = ? AND tenant_id = 42",
+            + ".account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, 42, TRUE, 'ACTIVE', 2, 3, 'EXPLICIT_JOIN')",
         secondAccountId);
     long secondMembershipId =
         Objects.requireNonNull(
