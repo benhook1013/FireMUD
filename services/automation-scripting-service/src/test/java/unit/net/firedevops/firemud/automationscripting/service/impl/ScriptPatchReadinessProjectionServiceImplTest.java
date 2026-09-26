@@ -509,6 +509,36 @@ class ScriptPatchReadinessProjectionServiceImplTest {
   }
 
   @Test
+  void keepsPatchOnLoadRunningWhileGameplayHandoffIsInFlight() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    projection.setStatusReason("tenant_readiness_running");
+    ScriptWorkItem handoffInFlightOnLoad = new ScriptWorkItem();
+    handoffInFlightOnLoad.setTenantId("1");
+    handoffInFlightOnLoad.setScriptPatchVersion("patch-1");
+    handoffInFlightOnLoad.setEventType("onLoad");
+    handoffInFlightOnLoad.setStatus("HANDOFF_IN_FLIGHT");
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(handoffInFlightOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
+    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_running");
+    verify(repository).save(projection);
+  }
+
+  @Test
   void failsPatchWhenCapacityDeniedSiblingHasActiveOnLoadWork() {
     ScriptPatchReadinessProjectionRepository repository =
         Mockito.mock(ScriptPatchReadinessProjectionRepository.class);

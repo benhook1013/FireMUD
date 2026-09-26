@@ -92,6 +92,11 @@ INCOMPLETE_FILE_COVERAGE = re.compile(
     r"unable\s+to\s+review|moderation|processing\s+errors?)\b",
     re.IGNORECASE | re.DOTALL,
 )
+FILE_PROCESSING_NONCOVERAGE = re.compile(
+    r"\bfiles?\b.{0,100}\b(?:not\s+processed|moderation|processing\s+errors?)\b"
+    r"(?:\s*(?::|=|\()\s*(\d+)\s*\)?)?",
+    re.IGNORECASE | re.DOTALL,
+)
 EXPLICIT_FILE_OMISSION = re.compile(
     r"\b(?:(\d+)\s+)?files?\b(?:\s*\(\s*(\d+)\s*\))?\s+"
     r"(?:(?:were|are)\s+)?(?:skipped|omitted)\b(?:\s*[:=]\s*(\d+))?",
@@ -838,15 +843,22 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
     return any(
         _has_explicit_file_omission(sentence)
-        or (
-            INCOMPLETE_FILE_COVERAGE.search(_without_explicit_zero_file_omissions(sentence))
-            and re.search(
-                r"\breview(?:ed|ing)?\b",
-                _without_explicit_zero_file_omissions(sentence),
-                re.IGNORECASE,
-            )
-        )
+        or _has_explicit_incomplete_file_coverage(sentence)
         for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
+    )
+
+
+def _has_explicit_incomplete_file_coverage(sentence: str) -> bool:
+    coverage_text = _without_explicit_zero_file_omissions(sentence)
+    return bool(
+        INCOMPLETE_FILE_COVERAGE.search(coverage_text)
+        and (
+            any(
+                match.group(1) is None or int(match.group(1)) > 0
+                for match in FILE_PROCESSING_NONCOVERAGE.finditer(coverage_text)
+            )
+            or re.search(r"\breview(?:ed|ing)?\b", coverage_text, re.IGNORECASE)
+        )
     )
 
 
