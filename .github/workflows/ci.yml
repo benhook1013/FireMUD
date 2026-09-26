@@ -640,6 +640,9 @@ jobs:
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
 
+      - name: 🧪 Validate opt-in tenant migration Jobs
+        run: bash ./dev-tools/tests/helm-tenant-association-migration-contract.sh
+
       - name: 🧪 Validate hosted Telnet TLS contract
         run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Base64;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
@@ -41,6 +42,7 @@ class LegacyTenantAssociationImportIntegrationTest {
         .dataSource(dataSource)
         .schemas(SCHEMA)
         .defaultSchema(SCHEMA)
+        .placeholders(Map.of("serviceSchema", SCHEMA))
         .locations("classpath:db/migration")
         .target("25")
         .load()
@@ -66,6 +68,7 @@ class LegacyTenantAssociationImportIntegrationTest {
         .dataSource(dataSource)
         .schemas(SCHEMA)
         .defaultSchema(SCHEMA)
+        .placeholders(Map.of("serviceSchema", SCHEMA))
         .locations("classpath:db/migration")
         .load()
         .migrate();

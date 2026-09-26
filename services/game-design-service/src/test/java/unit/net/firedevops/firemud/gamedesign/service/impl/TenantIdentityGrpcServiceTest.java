@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 
 class TenantIdentityGrpcServiceTest {
   private static final String ACCOUNT_PEER = "spiffe://firemud/ns/test/sa/account-service";
+  private static final String ACCOUNT_MIGRATOR_PEER =
+      "spiffe://firemud/ns/test/sa/account-tenant-migrator";
   private static final String WRONG_PEER = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("87426bb3-a733-43f0-9c8e-2e379cbdf7ec");
@@ -43,7 +45,7 @@ class TenantIdentityGrpcServiceTest {
     when(associationService.findByLegacyAccountTenantId(41L))
         .thenReturn(Optional.of(approvedAssociation()));
 
-    AssociationObserver observer = associationCall(41L, ACCOUNT_PEER);
+    AssociationObserver observer = associationCall(41L, ACCOUNT_MIGRATOR_PEER);
 
     assertNull(observer.errorCode);
     assertTrue(observer.completed);
@@ -66,7 +68,10 @@ class TenantIdentityGrpcServiceTest {
     assertEquals(
         Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, WRONG_PEER)));
     assertEquals(
-        Status.Code.INVALID_ARGUMENT, associationStatus(associationCall(0L, ACCOUNT_PEER)));
+        Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, ACCOUNT_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        associationStatus(associationCall(0L, ACCOUNT_MIGRATOR_PEER)));
     verifyNoInteractions(associationService);
   }
 
@@ -75,9 +80,11 @@ class TenantIdentityGrpcServiceTest {
     when(associationService.findByLegacyAccountTenantId(41L)).thenReturn(Optional.empty());
     when(associationService.findByLegacyAccountTenantId(42L))
         .thenThrow(new IllegalStateException("corrupt operation"));
-    assertEquals(Status.Code.NOT_FOUND, associationStatus(associationCall(41L, ACCOUNT_PEER)));
     assertEquals(
-        Status.Code.FAILED_PRECONDITION, associationStatus(associationCall(42L, ACCOUNT_PEER)));
+        Status.Code.NOT_FOUND, associationStatus(associationCall(41L, ACCOUNT_MIGRATOR_PEER)));
+    assertEquals(
+        Status.Code.FAILED_PRECONDITION,
+        associationStatus(associationCall(42L, ACCOUNT_MIGRATOR_PEER)));
   }
 
   @Test
@@ -106,6 +113,8 @@ class TenantIdentityGrpcServiceTest {
   void wrongOrMissingPeerNeverReadsOwnerRows() {
     assertEquals(Status.Code.PERMISSION_DENIED, status(call("legacy-game-7", WRONG_PEER)));
     assertEquals(Status.Code.PERMISSION_DENIED, status(call("legacy-game-7", null)));
+    assertEquals(
+        Status.Code.PERMISSION_DENIED, status(call("legacy-game-7", ACCOUNT_MIGRATOR_PEER)));
     verifyNoInteractions(repository);
   }
 

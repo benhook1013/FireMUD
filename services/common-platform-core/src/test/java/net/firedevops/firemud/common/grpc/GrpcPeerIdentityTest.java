@@ -40,6 +40,19 @@ class GrpcPeerIdentityTest {
   }
 
   @Test
+  void extractsOnlyTheTwoDedicatedTenantMigratorIdentityNames() throws Exception {
+    for (String service : List.of("account-tenant-migrator", "game-design-tenant-migrator")) {
+      String uri = "spiffe://firemud/ns/firemud/sa/" + service;
+      assertThat(GrpcPeerIdentity.fromSslSession(sessionWithUriSans(uri)))
+          .get()
+          .extracting(GrpcPeerIdentity::uri, GrpcPeerIdentity::namespace, GrpcPeerIdentity::service)
+          .containsExactly(uri, "firemud", service);
+    }
+    assertThat(GrpcPeerIdentity.parseUri("spiffe://firemud/ns/firemud/sa/tenant-migrator"))
+        .isEmpty();
+  }
+
+  @Test
   void normalizesCanonicalEquivalentUriSanBeforeValidatingWorkloadIdentity() {
     assertThat(GrpcPeerIdentity.parseUri("spiffe://FIREMUD/ns/%66iremud/sa/game-%64esign-service"))
         .get()

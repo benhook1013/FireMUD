@@ -1372,6 +1372,8 @@ for workload in publication_workloads:
         f"object.metadata.name == 'firemud-grpc-{workload}' && "
         f"object.metadata.labels['firemud.dev/role'] == 'grpc-publication-{workload}'"
     ) in controller_grants
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    assert f"firemud-grpc-{migrator_identity}" not in controller_grants
 
 
 def publication_projection_is_allowed(operation, namespace, name, role=None):
@@ -1433,6 +1435,10 @@ assert "object.metadata.name == 'dev-grpc-game-session-service'" in cert_manager
 assert cert_manager_expression.count(
     "request.name == 'firemud-grpc-game-design-baseline-migrator'"
 ) == 1, "migrator Secret admission match must be a single exact branch"
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    assert cert_manager_expression.count(
+        f"request.name == 'firemud-grpc-{migrator_identity}'"
+    ) == 1, f"{migrator_identity} Secret admission match must be a single exact branch"
 for migration_secret_gate in (
     "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
     "object.metadata.name == 'firemud-grpc-game-design-baseline-migrator'",
@@ -1444,6 +1450,34 @@ for migration_secret_gate in (
     "ref.name == request.namespace + '-grpc-game-design-baseline-migrator'",
 ):
     assert migration_secret_gate in cert_manager_expression, migration_secret_gate
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    for migration_secret_gate in (
+        f"object.metadata.name == 'firemud-grpc-{migrator_identity}'",
+        "object.metadata.labels['firemud.dev/managed-by'] == 'tenant-association-migration'",
+        f"object.metadata.labels['firemud.dev/role'] == 'grpc-{migrator_identity}'",
+        "object.metadata.labels['firemud.dev/retention'] == 'ephemeral'",
+        f"object.metadata.annotations['cert-manager.io/certificate-name'] == request.namespace + '-grpc-{migrator_identity}'",
+        "object.metadata.annotations['cert-manager.io/issuer-name'] == 'firemud-ca-issuer'",
+        f"ref.name == request.namespace + '-grpc-{migrator_identity}'",
+    ):
+        assert migration_secret_gate in cert_manager_expression, migration_secret_gate
+    assert cert_manager_expression.count(
+        f"object.metadata.name == 'firemud-grpc-{migrator_identity}'"
+    ) == 1
+    other_identity = (
+        "account-tenant-migrator"
+        if migrator_identity == "game-design-tenant-migrator"
+        else "game-design-tenant-migrator"
+    )
+    assert (
+        f"object.metadata.name == 'firemud-grpc-{migrator_identity}' && "
+        f"object.spec.secretName == 'firemud-grpc-{other_identity}'"
+    ) not in cert_manager_expression
+    assert (
+        f"object.metadata.name == 'firemud-grpc-{migrator_identity}' && "
+        "object.metadata.annotations['cert-manager.io/certificate-name'] == "
+        f"request.namespace + '-grpc-{other_identity}'"
+    ) not in cert_manager_expression
 assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" not in (
     cert_manager_expression.split(
         "object.metadata.name == 'firemud-grpc-game-design-baseline-migrator'", 1
@@ -1474,6 +1508,10 @@ assert "request.operation == 'DELETE'" in certificate_namespace_match
 assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "request.name.startsWith(" in certificate_namespace_match
 assert "request.name == request.namespace + '-grpc-game-design-baseline-migrator'" in certificate_namespace_match
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    assert (
+        f"request.name == request.namespace + '-grpc-{migrator_identity}'"
+    ) in certificate_namespace_match
 assert "request.operation != 'DELETE'" in certificate_namespace_match
 assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "object.metadata.name.startsWith(" in certificate_namespace_match
@@ -1510,6 +1548,10 @@ assert "grpc-account-service" in certificate_match
 assert "grpc-game-session-service" in certificate_match
 assert "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer" in certificate_match
 assert "object.spec.secretName == 'firemud-grpc-game-design-baseline-migrator'" in certificate_match
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    assert (
+        f"object.spec.secretName == 'firemud-grpc-{migrator_identity}'"
+    ) in certificate_match
 assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
 
 certificate_expressions = [
@@ -1526,6 +1568,8 @@ assert "firemud-grpc-tls" not in controller_non_delete_expression
 assert "'grpc'" not in controller_non_delete_expression
 assert "grpc-publication-" in controller_non_delete_expression
 assert "grpc-account-service" in controller_non_delete_expression
+for migrator_identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+    assert f"{migrator_identity}" not in controller_certificate_expression
 assert "has(object.spec.isCA)" in controller_non_delete_expression
 assert "object.spec.isCA == false" in controller_non_delete_expression
 assert "(!has(object.spec.commonName) || object.spec.commonName == '')" in controller_non_delete_expression

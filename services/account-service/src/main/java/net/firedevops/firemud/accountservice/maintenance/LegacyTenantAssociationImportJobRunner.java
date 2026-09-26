@@ -44,15 +44,12 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
     String podNamespace = required("firemud.account-tenant-migration.pod-namespace");
     String targetNamespace = required("firemud.account-tenant-migration.target-namespace");
     if (!podNamespace.equals(targetNamespace)
-        || !"account-service"
+        || !"account-tenant-migrator"
             .equals(required("firemud.account-tenant-migration.pod-service-account"))) {
       throw new IllegalStateException("Account tenant migration Job has the wrong workload scope");
     }
     GrpcPeerIdentity identity = verifiedWorkloadIdentity();
-    if (!identity.isService("account-service") || !identity.isInNamespace(podNamespace)) {
-      throw new IllegalStateException(
-          "Account tenant migration certificate has the wrong identity");
-    }
+    requireJobIdentity(podNamespace, identity);
     long legacyTenantId =
         Long.parseLong(required("firemud.account-tenant-migration.legacy-tenant-id"));
     if (legacyTenantId <= 0) {
@@ -77,6 +74,15 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
           targetNamespace);
     } else {
       throw new IllegalArgumentException("unsupported Account tenant migration Job mode");
+    }
+  }
+
+  static void requireJobIdentity(String podNamespace, GrpcPeerIdentity identity) {
+    if (identity == null
+        || !identity.isService("account-tenant-migrator")
+        || !identity.isInNamespace(podNamespace)) {
+      throw new IllegalStateException(
+          "Account tenant migration certificate has the wrong identity");
     }
   }
 

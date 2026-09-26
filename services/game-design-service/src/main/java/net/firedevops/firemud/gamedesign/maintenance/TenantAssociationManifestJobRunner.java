@@ -4,9 +4,13 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.Map;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.maintenance.TenantAssociationManifest.Signed;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService;
 import org.slf4j.Logger;
@@ -56,6 +60,7 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
             required("firemud.tenant-association-migration.pod-service-account"))) {
       throw new IllegalStateException("tenant migration Job has the wrong workload scope");
     }
+    requireJobIdentity(podNamespace, verifiedWorkloadIdentity());
     Path manifestPath =
         Path.of(required("firemud.tenant-association-migration.signed-manifest-path"));
     Path publicKeysPath =
@@ -92,6 +97,25 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
     } else {
       throw new IllegalArgumentException("unsupported tenant migration Job mode");
     }
+  }
+
+  static void requireJobIdentity(String podNamespace, GrpcPeerIdentity identity) {
+    if (identity == null
+        || !identity.isService(MIGRATOR_SERVICE_ACCOUNT)
+        || !identity.isInNamespace(podNamespace)) {
+      throw new IllegalStateException("tenant migration certificate has the wrong identity");
+    }
+  }
+
+  private GrpcPeerIdentity verifiedWorkloadIdentity() throws Exception {
+    Path certificatePath = Path.of(required("FIREMUD_GRPC_CERT_CHAIN_PATH"));
+    X509Certificate leaf;
+    try (InputStream input = Files.newInputStream(certificatePath)) {
+      leaf = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+    }
+    return GrpcPeerIdentity.fromCertificate(leaf)
+        .orElseThrow(
+            () -> new IllegalStateException("tenant migration certificate lacks a valid URI SAN"));
   }
 
   private String required(String property) {

@@ -1,0 +1,210 @@
+{{- $migration := .Values.previewStack.tenantAssociationMigration | default (dict) -}}
+{{- $job := $migration.gameDesign | default (dict) -}}
+{{- if ($job.enabled | default false) -}}
+{{- if not .Values.previewStack.enabled -}}
+{{- fail "Game Design tenant association migration requires previewStack.enabled=true" -}}
+{{- end -}}
+{{- $networkPolicies := .Values.previewStack.networkPolicies | default (dict) -}}
+{{- if not ($networkPolicies.enabled | default false) -}}
+{{- fail "Game Design tenant association migration requires previewStack.networkPolicies.enabled=true" -}}
+{{- end -}}
+{{- $namespace := required "Game Design tenant association migration requires targetNamespace" $job.targetNamespace -}}
+{{- if ne $namespace .Release.Namespace -}}
+{{- fail "Game Design tenant association targetNamespace must match the Helm release namespace" -}}
+{{- end -}}
+{{- $mode := required "Game Design tenant association migration requires mode" $job.mode -}}
+{{- if not (has $mode (list "preflight" "apply")) -}}
+{{- fail "Game Design tenant association mode must be preflight or apply" -}}
+{{- end -}}
+{{- $runId := required "Game Design tenant association migration requires runId" $job.runId -}}
+{{- if or (gt (len $runId) 32) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $runId)) -}}
+{{- fail "Game Design tenant association runId must be a DNS label of at most 32 characters" -}}
+{{- end -}}
+{{- $image := required "Game Design tenant association migration requires an immutable image" $job.image -}}
+{{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" $image) -}}
+{{- fail "Game Design tenant association image must end in @sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- $manifestSecret := required "Game Design tenant association migration requires signedManifestSecretName" $job.signedManifestSecretName -}}
+{{- $keysSecret := required "Game Design tenant association migration requires trustedKeysSecretName" $job.trustedKeysSecretName -}}
+{{- if or (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $manifestSecret)) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $keysSecret)) -}}
+{{- fail "Game Design tenant association evidence Secret names must be DNS names" -}}
+{{- end -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: game-design-tenant-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "game-design-tenant-%s-%s" $mode $runId | quote }}
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+  annotations:
+    firemud.dev/migration-mode: {{ $mode | quote }}
+    firemud.dev/migration-run-id: {{ $runId | quote }}
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: game-design-tenant-migrator
+        firemud.dev/workload: game-design-tenant-migrator
+    spec:
+      serviceAccountName: game-design-tenant-migrator
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.previewStack.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $secret := . }}
+        {{- if kindIs "string" $secret }}
+        - name: {{ $secret }}
+        {{- else }}
+{{ toYaml (list $secret) | indent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: migration
+          image: {{ $image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [java]
+          args:
+            - -jar
+            - /app/app.jar
+            - --spring.main.web-application-type=none
+            - --spring.grpc.server.enabled=false
+            - --firemud.tenant-association-migration.enabled=true
+          env:
+            - name: SPRING_FLYWAY_TABLE
+              value: flyway_schema_history_game_design_service
+            - name: SERVICE_SCHEMA
+              value: game_design_service
+            - name: FIREMUD_POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_HOST
+            - name: FIREMUD_POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_PORT
+            - name: FIREMUD_POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FIREMUD_POSTGRES_DB
+            - name: FIREMUD_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_USER
+            - name: FIREMUD_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_PASSWORD
+            - name: FIREMUD_REDIS_ENABLED
+              value: "false"
+            - name: FIREMUD_TEMPORAL_ENABLED
+              value: "false"
+            - name: FIREMUD_TEMPORAL_WORKERS_ENABLED
+              value: "false"
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_ENABLED
+              value: "true"
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_MODE
+              value: {{ $mode | quote }}
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_TARGET_NAMESPACE
+              value: {{ $namespace | quote }}
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_SIGNED_MANIFEST_PATH
+              value: /migration/manifest.json
+            - name: FIREMUD_TENANT_ASSOCIATION_MIGRATION_OWNER_PUBLIC_KEYS_PATH
+              value: /migration-keys/owner-public-keys.json
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 768Mi
+          volumeMounts:
+            - name: grpc-identity
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+            - name: signed-manifest
+              mountPath: /migration
+              readOnly: true
+            - name: trusted-keys
+              mountPath: /migration-keys
+              readOnly: true
+            - name: migration-tmp
+              mountPath: /tmp
+      volumes:
+        - name: grpc-identity
+          secret:
+            secretName: firemud-grpc-game-design-tenant-migrator
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: signed-manifest
+          secret:
+            secretName: {{ $manifestSecret | quote }}
+            items:
+              - key: manifest.json
+                path: manifest.json
+        - name: trusted-keys
+          secret:
+            secretName: {{ $keysSecret | quote }}
+            items:
+              - key: owner-public-keys.json
+                path: owner-public-keys.json
+        - name: migration-tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- end -}}

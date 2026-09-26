@@ -20,6 +20,24 @@ previewStack:
     # A dedicated identity Secret must be provisioned by the environment's
     # trust owner. The chart never falls back to a service certificate.
     grpcIdentitySecretName: firemud-grpc-game-design-baseline-migrator
+  tenantAssociationMigration:
+    # Operator-invoked Jobs only; ordinary chart releases never run them.
+    # Evidence Secrets and immutable images are supplied by the operator.
+    gameDesign:
+      enabled: false
+      mode: ""
+      targetNamespace: ""
+      runId: ""
+      image: ""
+      signedManifestSecretName: ""
+      trustedKeysSecretName: ""
+    account:
+      enabled: false
+      mode: ""
+      targetNamespace: ""
+      runId: ""
+      image: ""
+      legacyTenantId: ""
   # Hosted environments use the HostedEnvironmentIdentity controller for
   # certificate identity. Local installs retain standalone cert-manager mode.
   certificateIdentity:

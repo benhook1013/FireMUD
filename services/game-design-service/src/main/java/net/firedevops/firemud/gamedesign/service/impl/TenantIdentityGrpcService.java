@@ -98,10 +98,10 @@ public class TenantIdentityGrpcService
   public void resolveLegacyAccountTenantAssociation(
       ResolveLegacyAccountTenantAssociationRequest request,
       StreamObserver<ResolveLegacyAccountTenantAssociationResponse> responseObserver) {
-    if (!isAccountPeer()) {
+    if (!isAccountTenantMigratorPeer()) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
-              .withDescription("Verified Account workload identity is required")
+              .withDescription("Verified Account tenant migrator identity is required")
               .asRuntimeException());
       return;
     }
@@ -175,6 +175,15 @@ public class TenantIdentityGrpcService
         && workloadNamespace != null
         && !workloadNamespace.isBlank()
         && peer.uri().equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service");
+  }
+
+  private boolean isAccountTenantMigratorPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return peer != null
+        && workloadNamespace != null
+        && !workloadNamespace.isBlank()
+        && peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-tenant-migrator");
   }
 
   private static boolean validSignature(String value) {

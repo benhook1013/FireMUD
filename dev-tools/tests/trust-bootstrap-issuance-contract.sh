@@ -119,6 +119,16 @@ def check_contract(items: list[dict]) -> None:
         "object.spec == oldObject.spec",
     ):
         require(request, needle, "CertificateRequest boundary")
+    for identity in (
+        "game-design-baseline-migrator",
+        "game-design-tenant-migrator",
+        "account-tenant-migrator",
+    ):
+        require(
+            request,
+            f"owner.name == request.namespace + '-grpc-{identity}'",
+            f"CertificateRequest {identity} ownership",
+        )
     owner_validation = actual_policies["firemud-trust-bootstrap-certificaterequest"]["spec"][
         "validations"
     ][1]["expression"].rstrip()
@@ -134,6 +144,16 @@ def check_contract(items: list[dict]) -> None:
         "owner.kind == 'Certificate'",
     ):
         require(request_subresources, needle, "CertificateRequest subresource boundary")
+    for identity in (
+        "game-design-baseline-migrator",
+        "game-design-tenant-migrator",
+        "account-tenant-migrator",
+    ):
+        require(
+            request_subresources,
+            f"owner.name == request.namespace + '-grpc-{identity}'",
+            f"CertificateRequest subresource {identity} ownership",
+        )
     subresource_rules = actual_policies["firemud-trust-bootstrap-certificaterequest-subresources"][
         "spec"
     ]["matchConstraints"]["resourceRules"]
@@ -209,7 +229,7 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|game-design-baseline-migrator))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|game-design-baseline-migrator|game-design-tenant-migrator|account-tenant-migrator))$",
         "standalone Certificate validation",
     )
     for needle in (
@@ -247,6 +267,42 @@ def check_contract(items: list[dict]) -> None:
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
         "standalone Certificate validation",
     )
+    for identity in ("game-design-tenant-migrator", "account-tenant-migrator"):
+        require(
+            certificate_validation,
+            f"object.metadata.name.endsWith('-grpc-{identity}')",
+            f"standalone {identity} Certificate name",
+        )
+        require(
+            certificate_validation,
+            f"object.spec.secretName == 'firemud-grpc-{identity}'",
+            f"standalone {identity} Certificate Secret",
+        )
+        require(
+            certificate_validation,
+            "object.spec.issuerRef.name == 'firemud-ca-issuer'",
+            f"standalone {identity} Certificate issuer",
+        )
+        require(
+            certificate_validation,
+            f"'firemud.dev/managed-by': 'tenant-association-migration'",
+            f"standalone {identity} Secret manager",
+        )
+        require(
+            certificate_validation,
+            f"'firemud.dev/role': 'grpc-{identity}'",
+            f"standalone {identity} Secret role",
+        )
+        require(
+            certificate_validation,
+            f"object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/{identity}']",
+            f"standalone {identity} Certificate URI",
+        )
+        require(
+            certificate_validation,
+            "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
+            f"standalone {identity} Certificate usages",
+        )
 
     issuer = expressions(actual_policies["firemud-trust-bootstrap-ca-issuers"])
     issuer_match = actual_policies["firemud-trust-bootstrap-ca-issuers"]["spec"][
@@ -329,6 +385,50 @@ except AssertionError:
     pass
 else:
     fail("negative mutation changing the CA issuer binding from Deny was accepted")
+
+for identity, other_identity in (
+    ("game-design-tenant-migrator", "account-tenant-migrator"),
+    ("account-tenant-migrator", "game-design-tenant-migrator"),
+):
+    mutation = copy.deepcopy(documents)
+    mutation_policy = next(
+        item
+        for item in mutation
+        if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificate"
+    )
+    mutation_policy["spec"]["validations"][0]["expression"] = mutation_policy["spec"][
+        "validations"
+    ][0]["expression"].replace(
+        f"object.spec.secretName == 'firemud-grpc-{identity}'",
+        f"object.spec.secretName == 'firemud-grpc-{other_identity}'",
+        1,
+    )
+    try:
+        check_contract(mutation)
+    except AssertionError:
+        pass
+    else:
+        fail(f"negative mutation swapping the {identity} Secret was accepted")
+
+    mutation = copy.deepcopy(documents)
+    mutation_policy = next(
+        item
+        for item in mutation
+        if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificate"
+    )
+    mutation_policy["spec"]["validations"][0]["expression"] = mutation_policy["spec"][
+        "validations"
+    ][0]["expression"].replace(
+        f"object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/{identity}']",
+        f"object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/{other_identity}']",
+        1,
+    )
+    try:
+        check_contract(mutation)
+    except AssertionError:
+        pass
+    else:
+        fail(f"negative mutation swapping the {identity} URI was accepted")
 
 print(f"trust-bootstrap issuance contract: {len(documents)} documents, fail-closed bindings verified")
 PY
