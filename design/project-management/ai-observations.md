@@ -99,3 +99,8 @@ Entry format:
   - Context: a Game Session correction rejected unowned or ambiguous `PLAY` actors, while a shared Docker-backed WebSocket integration fixture still returned actor rows with protobuf-default playable scope.
   - Observation: local integration tests skipped without Docker, but CI executed them and many otherwise unrelated scenarios failed at the first `PLAY` with `PLAY_IDENTITY_UNAVAILABLE`; the fixture's missing scope and bare selection obscured the intended assertions.
   - Expected pattern: when actor-entry validation changes, update shared fixtures with complete tenant, account, actor, and playable-scope evidence; use explicit selection for success cases and retain a separate ambiguity-denial case. Treat compiled/skipped local tests as unproved until the composed CI cases execute.
+
+- `2026-09-26`: One-shot certificate issuance and readback require separate proof
+  - Context: the Entity baseline migrator needs a short-lived dedicated client identity without giving its certificate writer general Secret-read or deletion privileges.
+  - Observation: a leaf verifying against the CA bundled in the same Secret is only self-consistent; it does not show that the namespace trusts that CA, and static issuance tests do not show the live Entity server accepts the identity.
+  - Expected pattern: keep issuance opt-in and narrowly admitted, verify the projected leaf and chain against the namespace's independent trust projection under a separately authorized reader, then report live served-mTLS acceptance and later identity retirement as distinct proof.

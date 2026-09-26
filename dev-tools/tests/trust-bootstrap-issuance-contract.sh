@@ -175,6 +175,10 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.privateKey.rotationPolicy == 'Always'",
         "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']",
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
+        "object.spec.secretName == 'firemud-grpc-game-design-baseline-migrator'",
+        "object.spec.secretTemplate.metadata.labels == {",
+        "object.spec.secretTemplate.metadata.annotations == {",
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-design-baseline-migrator']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
         "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')",
@@ -205,7 +209,7 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|game-design-baseline-migrator))$",
         "standalone Certificate validation",
     )
     for needle in (

@@ -26,6 +26,7 @@
 {{- if $gatewayWsTls.enabled }}
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
 {{- end }}
+{{- $entityDigestBaselineMigration := .Values.previewStack.entityDigestBaselineMigration | default (dict) }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -383,5 +384,50 @@ spec:
       ports:
         - protocol: TCP
           port: 9200
+{{- end }}
+{{- if $entityDigestBaselineMigration.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: game-design-baseline-migrator
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: game-design-baseline-migrator
+      firemud.dev/workload: game-design-baseline-migrator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: entity-management-service
+      ports:
+        - protocol: TCP
+          port: 6565
 {{- end }}
 {{- end }}

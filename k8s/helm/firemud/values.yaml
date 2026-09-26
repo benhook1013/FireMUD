@@ -1,5 +1,25 @@
 previewStack:
   enabled: false
+  entityDigestBaselineMigration:
+    # This is an operator-invoked protected maintenance Job. Keep it disabled
+    # in ordinary chart releases; no Helm hook is used to trigger execution.
+    enabled: false
+    mode: ""
+    targetNamespace: ""
+    operationId: ""
+    tenantId: ""
+    versionId: ""
+    afterBaselineId: "0"
+    limit: 100
+    actorIdentity: ""
+    image: ""
+    expectedSource:
+      kind: ""
+      name: ""
+      key: expected-source.json
+    # A dedicated identity Secret must be provisioned by the environment's
+    # trust owner. The chart never falls back to a service certificate.
+    grpcIdentitySecretName: firemud-grpc-game-design-baseline-migrator
   # Hosted environments use the HostedEnvironmentIdentity controller for
   # certificate identity. Local installs retain standalone cert-manager mode.
   certificateIdentity:

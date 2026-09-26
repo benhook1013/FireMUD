@@ -32,6 +32,7 @@ public final class PublicationReadGuard {
           AUTOMATION_SCRIPTING_DIGEST_METHOD);
 
   private static final String GAME_DESIGN_SERVICE = "game-design-service";
+  private static final String ENTITY_BASELINE_MIGRATOR = "game-design-baseline-migrator";
   private final String trustedNamespace;
 
   public PublicationReadGuard(String trustedNamespace) {
@@ -59,6 +60,14 @@ public final class PublicationReadGuard {
    */
   public void requirePublicationRead(String fullMethodName) {
     if (protects(fullMethodName)) {
+      GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
+      if (ENTITY_MANAGEMENT_DIGEST_METHOD.equals(fullMethodName)
+          && peerIdentity != null
+          && peerIdentity.isService(ENTITY_BASELINE_MIGRATOR)
+          && peerIdentity.isInNamespace(trustedNamespace)
+          && !SessionContext.hasAuthenticatedCallerContext()) {
+        return;
+      }
       requireGameDesignWorkload();
     }
   }
