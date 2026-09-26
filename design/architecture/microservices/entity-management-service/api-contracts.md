@@ -81,7 +81,7 @@ Implementation Notes:
 
 - The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
 - Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
-- The current item projection omits `equipmentSlotGroupKey`, although runtime equipment admission consumes that authored value when checking an item against an equipment slot definition. A change to the slot-group constraint can therefore leave the Entity participant digest unchanged. The target manifest includes the normalized optional field and bumps `digestSchemaVersion` (from `1` to `2`); proof must show cross-version slot-group changes alter the digest and are caught by the publish gate.
+- The current item projection includes optional `equipmentSlotGroupKey`, normalized like runtime equipment admission (null/blank to empty; otherwise trim and uppercase), and reports `digestSchemaVersion=2`. Focused producer proof covers normalized equivalents, distinct slot-group constraints, and tenant/version-scoped reads; Game Design's publish gate accepts Entity v2 and rejects v1 or unsupported evidence. Previously recorded v1 evidence still requires affected-scope replay or recomputation, re-recording, and readback before publish; this code change does not perform a live-data migration.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
