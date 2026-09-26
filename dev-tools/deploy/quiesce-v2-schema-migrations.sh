@@ -104,7 +104,11 @@ if ! pods_json="$(kubectl -n "$namespace" get pods -o json)"; then
   fail "cannot inspect namespace Pods before closing Service selectors"
 fi
 if ! sentinel_pod_count="$(jq -er --arg selector "$closed_selector" '
-  if .kind != "PodList" or ((.items | type) != "array") then
+  def valid_pod_list:
+    (.kind == "PodList" or .kind == "List")
+    and ((.items | type) == "array")
+    and (.kind != "List" or all(.items[]?; type == "object" and .kind == "Pod"));
+  if valid_pod_list | not then
     error("invalid PodList")
   else
     [.items[]? | select(.metadata.labels.app == $selector)] | length
@@ -135,7 +139,11 @@ for service in "${services[@]}"; do
   while :; do
     endpoint_json="$(read_endpoint_slices "$service")"
     if ! endpoint_count="$(jq -er --arg service "$service" '
-      if .kind != "EndpointSliceList" or ((.items | type) != "array") then
+      def valid_endpoint_slice_list:
+        (.kind == "EndpointSliceList" or .kind == "List")
+        and ((.items | type) == "array")
+        and (.kind != "List" or all(.items[]?; type == "object" and .kind == "EndpointSlice"));
+      if valid_endpoint_slice_list | not then
         error("invalid EndpointSliceList")
       elif any(.items[]?; (.metadata.labels["kubernetes.io/service-name"] // "") != $service) then
         error("EndpointSlice service label mismatch")
@@ -181,16 +189,24 @@ for service in "${services[@]}"; do
       fail "cannot verify pods for Deployment/$service"
     fi
     if ! pod_count="$(jq -er --arg service "$service" '
-      [
-        .items[]?
-        | select(
-            (.metadata.labels.app == $service)
-            or any(.spec.containers[]?;
-              .name == $service
-              or ((.image // "") | split("@")[0] | split(":")[0] | split("/")[-1]) == $service
+      def valid_pod_list:
+        (.kind == "PodList" or .kind == "List")
+        and ((.items | type) == "array")
+        and (.kind != "List" or all(.items[]?; type == "object" and .kind == "Pod"));
+      if valid_pod_list | not then
+        error("invalid PodList")
+      else
+        [
+          .items[]?
+          | select(
+              (.metadata.labels.app == $service)
+              or any(.spec.containers[]?;
+                .name == $service
+                or ((.image // "") | split("@")[0] | split(":")[0] | split("/")[-1]) == $service
+              )
             )
-          )
-      ] | length
+        ] | length
+      end
     ' <<<"$pods_json")"; then
       fail "cannot parse pods for Deployment/$service"
     fi

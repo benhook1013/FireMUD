@@ -18,6 +18,12 @@ cat >"$fake_bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$QUIESCE_CALLS"
+pod_list_kind='List'
+endpoint_slice_list_kind='List'
+if [[ "${QUIESCE_MODE:-}" == typed-lists ]]; then
+  pod_list_kind='PodList'
+  endpoint_slice_list_kind='EndpointSliceList'
+fi
 case "$*" in
   "-n contract get service account-service --ignore-not-found -o json"|\
   "-n contract get service game-session-service --ignore-not-found -o json"|\
@@ -59,7 +65,11 @@ case "$*" in
       exit 1
     }
     service="${6#*=}"
-    printf '{"kind":"EndpointSliceList","items":[{"metadata":{"labels":{"kubernetes.io/service-name":"%s"}},"endpoints":[]}]}\n' "$service"
+    case "${QUIESCE_MODE:-}" in
+      malformed-endpoint-item) printf '%s\n' '{"kind":"List","items":[{}]}' ;;
+      wrong-kind-endpoint-item) printf '{"kind":"List","items":[{"kind":"Pod","metadata":{"labels":{"kubernetes.io/service-name":"%s"}},"endpoints":[]}]}\n' "$service" ;;
+      *) printf '{"kind":"%s","items":[{"kind":"EndpointSlice","metadata":{"labels":{"kubernetes.io/service-name":"%s"}},"endpoints":[]}]}\n' "$endpoint_slice_list_kind" "$service" ;;
+    esac
     ;;
   "-n contract get hpa -o json")
     case "${QUIESCE_MODE:-}" in
@@ -105,9 +115,17 @@ case "$*" in
     fi
     if [[ "${QUIESCE_MODE:-}" == preexisting-closed-pod ]] &&
       ! grep -q 'firemud-v2-migration-quiesced' "$QUIESCE_CALLS"; then
-      printf '%s\n' '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"firemud-v2-migration-quiesced"}}}]}'
+      printf '{"kind":"%s","items":[{"kind":"Pod","metadata":{"labels":{"app":"firemud-v2-migration-quiesced"}}}]}\n' "$pod_list_kind"
+    elif [[ "${QUIESCE_MODE:-}" == malformed-pod-item || "${QUIESCE_MODE:-}" == wrong-kind-pod-item ]]; then
+      if [[ "${QUIESCE_MODE:-}" == malformed-pod-item ]]; then
+        printf '%s\n' '{"kind":"List","items":[{"metadata":{"labels":{"app":"account-service"}}}]}'
+      else
+        printf '%s\n' '{"kind":"List","items":[{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
+      fi
+    elif [[ "${QUIESCE_MODE:-}" == mixed-pod-items ]]; then
+      printf '%s\n' '{"kind":"List","items":[{"kind":"Pod","metadata":{"labels":{"app":"other-service"}}},{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
     else
-      printf '%s\n' '{"kind":"PodList","items":[]}'
+      printf '{"kind":"%s","items":[]}\n' "$pod_list_kind"
     fi
     ;;
   *)
@@ -125,6 +143,7 @@ run_quiesce() {
 }
 
 run_quiesce success >/dev/null
+run_quiesce typed-lists >/dev/null
 calls="$fixture_dir/calls-success"
 first_endpoint_line="$(grep -nF -- 'get endpointslices.discovery.k8s.io' "$calls" | head -n1 | cut -d: -f1)"
 last_close_line="$(grep -nF -- 'firemud-v2-migration-quiesced' "$calls" | grep 'patch service' | tail -n1 | cut -d: -f1)"
@@ -152,19 +171,19 @@ for service in account-service game-session-service automation-scripting-service
   }
 done
 
-for failure_mode in account-hpa bad-account-selector pod-api-denied preexisting-closed-pod hpa hpa-denied bad-selector endpoint-denied account-scale-failure writer-pod-api-denied restore-failure scale-failure; do
+for failure_mode in account-hpa bad-account-selector malformed-pod-item wrong-kind-pod-item mixed-pod-items pod-api-denied preexisting-closed-pod hpa hpa-denied bad-selector endpoint-denied malformed-endpoint-item wrong-kind-endpoint-item account-scale-failure writer-pod-api-denied restore-failure scale-failure; do
   if run_quiesce "$failure_mode" >"$fixture_dir/${failure_mode}.out" 2>&1; then
     echo "quiesce helper unexpectedly succeeded for ${failure_mode}" >&2
     exit 1
   fi
-  if [[ "$failure_mode" == account-hpa || "$failure_mode" == bad-account-selector || "$failure_mode" == pod-api-denied || "$failure_mode" == preexisting-closed-pod || "$failure_mode" == hpa || "$failure_mode" == hpa-denied || "$failure_mode" == bad-selector ]]; then
+  if [[ "$failure_mode" == account-hpa || "$failure_mode" == bad-account-selector || "$failure_mode" == malformed-pod-item || "$failure_mode" == wrong-kind-pod-item || "$failure_mode" == mixed-pod-items || "$failure_mode" == pod-api-denied || "$failure_mode" == preexisting-closed-pod || "$failure_mode" == hpa || "$failure_mode" == hpa-denied || "$failure_mode" == bad-selector ]]; then
     if grep -q ' scale deployment/' "$fixture_dir/calls-$failure_mode" ||
       grep -q ' patch service ' "$fixture_dir/calls-$failure_mode"; then
       echo "quiesce helper mutated workloads after ${failure_mode} preflight failure" >&2
       exit 1
     fi
   fi
-  if [[ "$failure_mode" == endpoint-denied || "$failure_mode" == account-scale-failure || "$failure_mode" == writer-pod-api-denied || "$failure_mode" == restore-failure || "$failure_mode" == scale-failure ]]; then
+  if [[ "$failure_mode" == endpoint-denied || "$failure_mode" == malformed-endpoint-item || "$failure_mode" == wrong-kind-endpoint-item || "$failure_mode" == account-scale-failure || "$failure_mode" == writer-pod-api-denied || "$failure_mode" == restore-failure || "$failure_mode" == scale-failure ]]; then
     for service in account-service game-session-service automation-scripting-service; do
       [[ "$(<"$fixture_dir/state-$failure_mode/$service")" == firemud-v2-migration-quiesced ]] || {
         echo "Service/$service admission must remain closed after ${failure_mode}" >&2
