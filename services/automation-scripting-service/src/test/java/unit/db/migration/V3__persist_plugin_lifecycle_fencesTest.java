@@ -76,6 +76,15 @@ class V3__persist_plugin_lifecycle_fencesTest {
             "CONSTRAINT ck_script_work_items_authority_unavailable_retry_count CHECK ( authority_unavailable_retry_count BETWEEN 0 AND 3 )");
   }
 
+  @Test
+  void pendingWorkClaimsHaveStatusEligibilityAndFifoIndexKeys() throws IOException {
+    String normalized = readMigration().replaceAll("\\s+", " ").trim();
+
+    assertThat(normalized)
+        .contains(
+            "CREATE INDEX idx_script_work_items_status_eligible_created ON script_work_items(status, next_eligible_at, created_at, id)");
+  }
+
   private String readMigration() throws IOException {
     try (var stream =
         getClass()

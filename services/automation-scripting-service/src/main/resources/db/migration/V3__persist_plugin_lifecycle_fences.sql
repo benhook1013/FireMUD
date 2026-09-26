@@ -15,6 +15,13 @@ ALTER TABLE script_work_items
         authority_unavailable_retry_count BETWEEN 0 AND 3
     );
 
+-- Claim reads filter by status and due time, then retain their repository-owned
+-- created_at/id FIFO order. Put the eligibility range before those ordering
+-- keys so delayed retries can be excluded from the candidate range; the query's
+-- ORDER BY remains authoritative for FIFO claims within that eligible set.
+CREATE INDEX idx_script_work_items_status_eligible_created
+    ON script_work_items(status, next_eligible_at, created_at, id);
+
 ALTER TABLE plugin_runtime_states
     ADD COLUMN plugin_activation_epoch BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 0,
