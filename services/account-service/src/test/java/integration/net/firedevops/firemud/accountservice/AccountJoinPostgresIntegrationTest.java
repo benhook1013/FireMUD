@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
@@ -101,6 +102,7 @@ class AccountJoinPostgresIntegrationTest {
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
   @Autowired private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
+  @Autowired private AccountAuthorityOutboxRepository authorityOutboxRepository;
   @Autowired private PlatformTransactionManager transactionManager;
 
   @Autowired
@@ -1629,13 +1631,20 @@ class AccountJoinPostgresIntegrationTest {
         payload.replace(
             exactMembershipVersionJson, "\"membershipVersion\":" + malformedMembershipVersionJson);
     assertThat(malformedPayload).isNotEqualTo(payload);
-    assertThat(
-            dsl.execute(
-                "UPDATE account_authority_outbox_events SET payload = ? "
-                    + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
-                malformedPayload.getBytes(StandardCharsets.UTF_8),
-                authorityStreamKey(fixture)))
-        .isEqualTo(1);
+    // V33 events are immutable; append a malformed newer event through the opaque storage boundary.
+    String malformedRequestId = "malformed-version-" + UUID.randomUUID();
+    var malformedEvent =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    authorityOutboxRepository.append(
+                        authorityStreamKey(fixture),
+                        malformedRequestId,
+                        malformedRequestId + "-event",
+                        row.get("event_digest", String.class),
+                        malformedPayload.getBytes(StandardCharsets.UTF_8)));
+    assertThat(malformedEvent).isNotNull();
+    assertThat(malformedEvent.outboxSequence()).isEqualTo(2L);
 
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(fixture))
         .isInstanceOf(IllegalStateException.class)
