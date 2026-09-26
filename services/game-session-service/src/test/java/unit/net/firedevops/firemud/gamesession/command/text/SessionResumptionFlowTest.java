@@ -170,6 +170,7 @@ class SessionResumptionFlowTest {
                 .setAccountId("77")
                 .setTenantId("22")
                 .setMembershipExists(true)
+                .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -462,6 +463,7 @@ class SessionResumptionFlowTest {
                 .setAccountId("77")
                 .setTenantId("22")
                 .setMembershipExists(true)
+                .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
                 .setEvaluatedAt("2026-03-30T00:01:00Z")
@@ -471,7 +473,7 @@ class SessionResumptionFlowTest {
     assertTrue(secondLogin.commandResult().accepted());
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
-    assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
+    assertEquals("WORLD_ACCESS_DENIED", deniedPlay.commandResult().errorCode());
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
