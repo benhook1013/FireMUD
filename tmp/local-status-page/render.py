@@ -29,15 +29,39 @@ REFRESH_SCRIPT = """(() => {
   if (!form) return;
   const button = form.querySelector('button');
   const progress = form.querySelector('.refresh-progress');
+  let stage = 'rendering';
+  let statusPending = false;
+  const stageLabel = {rendering: 'Refreshing local review data', publishing: 'Publishing public status page'};
+  const readStage = async () => {
+    if (statusPending) return;
+    statusPending = true;
+    try {
+      const response = await fetch('/refresh-status', {credentials: 'same-origin'});
+      if (!response.ok) return;
+      const status = await response.json();
+      if (status.phase === 'publishing') {
+        stage = 'publishing';
+        progress.textContent = 'Publishing public status page';
+      }
+    } catch {
+      // A missed progress update does not interrupt the refresh request.
+    } finally {
+      statusPending = false;
+    }
+  };
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (button.disabled) return;
     button.disabled = true;
+    stage = 'rendering';
     form.classList.remove('failed');
-    progress.textContent = 'Refresh in progress';
+    progress.textContent = 'Refreshing local review data';
     form.classList.add('loading');
     const started = Date.now();
-    const update = () => { button.textContent = `Refreshing · ${Math.floor((Date.now() - started) / 1000)}s`; };
+    const update = () => {
+      button.textContent = `${stageLabel[stage]} · ${Math.floor((Date.now() - started) / 1000)}s`;
+      void readStage();
+    };
     update();
     const timer = setInterval(update, 1000);
     try {
@@ -46,13 +70,20 @@ REFRESH_SCRIPT = """(() => {
         form.classList.add('failed');
         progress.textContent = response.status === 409
           ? 'Another refresh is already running. Try again when it finishes.'
+          : response.status === 429
+          ? 'Refresh recently completed. Try again shortly.'
+          : response.status === 502
+          ? 'Local refresh failed. The previous local and public pages are still available.'
+          : response.status === 503
+          ? 'Local page updated, but public publishing failed. Try again shortly.'
           : `Refresh failed (${response.status}). Try again shortly.`;
         return;
       }
+      progress.textContent = 'Local and public status pages updated';
       window.location.reload();
     } catch {
       form.classList.add('failed');
-      progress.textContent = 'Refresh connection failed. Try again shortly.';
+      progress.textContent = 'Refresh connection failed. Check both pages before trying again.';
     } finally {
       clearInterval(timer);
       form.classList.remove('loading');
@@ -61,8 +92,19 @@ REFRESH_SCRIPT = """(() => {
     }
   });
 })();"""
+
 AGE_SCRIPT = """(() => {
   const labels = document.querySelectorAll('.relative-age');
+  const rounds = document.querySelectorAll('.round-age[datetime]');
+  const roundAge = (timestamp, now) => {
+    if (!Number.isFinite(timestamp) || timestamp > now) return '?';
+    const minutes = Math.floor((now - timestamp) / 60000);
+    if (minutes === 0) return '<1m';
+    if (minutes < 100) return `${minutes}m`;
+    if (minutes < 6000) return `${Math.floor(minutes / 60)}h`;
+    const days = Math.floor(minutes / 1440);
+    return days < 100 ? `${days}d` : '99d+';
+  };
   const update = () => {
     const now = Date.now();
     for (const label of labels) {
@@ -74,9 +116,54 @@ AGE_SCRIPT = """(() => {
         : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
         : `${Math.floor(minutes / 1440)}d ago`;
     }
+    for (const round of rounds) {
+      round.textContent = roundAge(Date.parse(round.dateTime), now);
+    }
   };
   update();
   setInterval(update, 30000);
+})();"""
+
+SNAPSHOT_SCRIPT = """(() => {
+  const version = document.querySelector('meta[name="status-snapshot"]')?.content;
+  if (!version) return;
+  const scrollKey = 'firemud-status-scroll-y';
+  try {
+    const saved = sessionStorage.getItem(scrollKey);
+    if (saved !== null) {
+      sessionStorage.removeItem(scrollKey);
+      requestAnimationFrame(() => window.scrollTo(0, Number(saved) || 0));
+    }
+  } catch {
+    // The page still updates when browser storage is unavailable.
+  }
+  let checking = false;
+  const check = async () => {
+    if (checking || document.visibilityState === 'hidden'
+        || document.querySelector('.refresh-form.loading')) return;
+    checking = true;
+    try {
+      const response = await fetch(window.location.pathname || '/', {cache: 'no-store'});
+      if (!response.ok) return;
+      const source = await response.text();
+      const next = source.match(/<meta name="status-snapshot" content="([^"]+)">/)?.[1];
+      if (!next || !(Date.parse(next) > Date.parse(version))) return;
+      try {
+        sessionStorage.setItem(scrollKey, String(window.scrollY));
+      } catch {
+        // Reload without restoring scroll when browser storage is unavailable.
+      }
+      window.location.reload();
+    } catch {
+      // A missed snapshot check is retried on the next interval.
+    } finally {
+      checking = false;
+    }
+  };
+  setInterval(check, 120000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void check();
+  });
 })();"""
 
 
@@ -105,6 +192,30 @@ def relative_time(value: datetime, now: datetime) -> str:
     if minutes < 24 * 60:
         return f"{minutes // 60}h {minutes % 60}m ago"
     return f"{minutes // (24 * 60)}d ago"
+
+
+def round_age(value: datetime, now: datetime) -> str:
+    if value > now:
+        return "?"
+    minutes = int((now - value).total_seconds() // 60)
+    if minutes == 0:
+        return "<1m"
+    if minutes < 100:
+        return f"{minutes}m"
+    if minutes < 6000:
+        return f"{minutes // 60}h"
+    days = minutes // 1440
+    return f"{days}d" if days < 100 else "99d+"
+
+
+def round_completion(value: object, now: datetime) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        completed = utc(value)
+    except (ValueError, OverflowError):
+        return None
+    return completed if completed <= now else None
 
 
 def time_label(value: str, now: datetime, subject: str = "Manual status") -> str:
@@ -159,6 +270,9 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
             "as_of": now.isoformat(),
             "head": live_head,
             "saved_head_stale": live_head != expected_head,
+            "mode": report.get("mode"),
+            "controller_status": report.get("status"),
+            "detail_window": report.get("detail_window", {}),
             "queue": queue,
         }
     except (ValueError, KeyError, TypeError, AttributeError):
@@ -224,6 +338,12 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<li{row_class}><span class="stage-order">{position:02d}</span>'
             f'<h3>{safe(stage)}</h3><p>{links}</p></li>'
         )
+    front_index = next((index for index, item in enumerate(stack) if item["number"] == data["review_front"]), None)
+    next_pr = (
+        next((item["number"] for item in stack[front_index + 1:]
+              if github["lifecycle"].get(item["number"]) == "OPEN"), None)
+        if front_index is not None and github["available"] else None
+    )
     rows = []
     for position, item in enumerate(stack, 1):
         number = item["number"]
@@ -259,7 +379,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             channels = queue_item.get("channels", {})
             states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
             if (len(states) == 2 and all(isinstance(state, str) and state for state in states)
-                    and ("READY" in states or number == data["review_front"])):
+                    and ("READY" in states or number in (data["review_front"], next_pr))):
                 labels = (f"{name} {state.replace('_', ' ').lower()}"
                           for name, state in zip(("Hosted", "CLI"), states))
                 status_html = f'<span class="sub">{safe(" · ".join(labels))}</span>'
@@ -267,6 +387,25 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 status_html = ""
         else:
             status_html = ""
+        if number == next_pr:
+            status_html = (
+                '<span class="sub"><strong>Up next in queue</strong> · Queue position alone does not establish review eligibility.</span>'
+                + status_html
+            )
+            if not queue_item or not isinstance(queue_item.get("channels"), dict) or not all(
+                isinstance(queue_item["channels"].get(channel), str) and queue_item["channels"][channel]
+                for channel in ("hosted", "cli")
+            ):
+                status_html += '<span class="sub">Controller review states unavailable</span>'
+        if queue_item and queue_item.get("detail_level") == "identity_only":
+            evidence = queue_item.get("evidence_status")
+            label = (
+                "Review evidence stale after identity or parent movement"
+                if evidence == "stale" else "Review evidence not checked in this refresh"
+            )
+            status_html += f'<span class="sub">{label} · identity only</span>'
+        elif queue_item and queue_item.get("detail_level") == "unknown":
+            status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
         activity_cards = []
         if queue_item and isinstance(queue_item.get("review_activity"), dict):
             for channel in ("hosted", "cli"):
@@ -287,9 +426,20 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     if description:
                         pill_label += f" ({description})"
                     pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" older" if older else "") + (" unlinked" if unlinked else "")
+                    completed = round_completion(result.get("completed_at"), now)
+                    if completed is None:
+                        completion_label = "Completion time unavailable"
+                        age_html = '<span class="round-age">?</span>'
+                    else:
+                        completion_label = f"Completed {completed.astimezone(LOCAL_TIMEZONE).strftime('%d %b %Y %H:%M %Z')}"
+                        age_html = (
+                            f'<time class="round-age" datetime="{safe(completed.isoformat())}">'
+                            f'{safe(round_age(completed, now))}</time>'
+                        )
                     pills.append(
-                        f'<span class="{pill_class}" aria-label="{safe(pill_label)}">'
-                        f'{safe(result["raw"])}/{safe(result["accepted"])}</span>'
+                        f'<span class="{pill_class}" aria-label="{safe(pill_label + ", " + completion_label)}" '
+                        f'title="{safe(completion_label)}">'
+                        f'<span>{safe(result["raw"])}/{safe(result["accepted"])}</span>{age_html}</span>'
                     )
                 older_count = sum(not result["current_head"] for result in recent)
                 unlinked_count = sum(not result["attributable"] for result in recent)
@@ -340,11 +490,27 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         if review["available"] and github["available"]
         else 'Review or PR details unavailable'
     )
+    header_time = (
+        f'PR data refreshed {refreshed_at}'
+        if review["available"] and github["available"]
+        else queue_time
+    )
+    if review["available"] and github["available"] and review.get("mode") == "windowed":
+        window = review.get("detail_window", {})
+        checked = window.get("deep_prs", []) if isinstance(window, dict) else []
+        checked_count = len(checked) if isinstance(checked, list) else 0
+        checked_unit = "PR" if checked_count == 1 else "PRs"
+        queue_time = (
+            f'PR identities refreshed {refreshed_at} · Review overview partial: '
+            f'detailed evidence checked for {checked_count} {checked_unit}; other entries are informational.'
+        )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     age_hash = base64.b64encode(hashlib.sha256(AGE_SCRIPT.encode()).digest()).decode()
+    snapshot_hash = base64.b64encode(hashlib.sha256(SNAPSHOT_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="status-snapshot" content="{safe(now.isoformat())}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <title>FireMUD · local delivery status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
@@ -380,7 +546,8 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .activity-top {{ display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }}
 .activity-caption {{ display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }}
 .round-pills {{ display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }}
-.round-pill {{ border: 1px solid #adb4be; border-radius: 999px; padding: .12rem .43rem; background: #e4e8ed; font-weight: 650; }}
+.round-pill {{ display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 2.8rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; line-height: 1.15; white-space: nowrap; }}
+.round-age {{ display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }}
 .round-pill.older {{ border-style: dashed; background: #f1f2f4; color: #626b77; }}
 .round-pill.unlinked {{ border-color: #b9945a; background: #f3e9d9; color: #79562b; }}
 .round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
@@ -392,13 +559,13 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 </style></head><body>
 <header><div><div class="topline"><span class="eyebrow">Private local snapshot</span><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><h1>FireMUD delivery status</h1>
 <p>Worker lanes and the PR train.</p>
-<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{queue_time}</span></form></div></header>
+<form class="refresh-form" action="/refresh" method="post"><button type="submit">Refresh review data</button><span class="refresh-progress" role="status" aria-live="polite"></span><span class="refresh-time">{header_time}</span></form></div></header>
 <main><section><h2>Worker lanes</h2><p class="section-note">Task state is maintained by hand. Check its verified time before acting.</p><div class="cards">{"".join(cards)}</div></section>
 <section><h2>Stack at a glance</h2><p class="section-note">The single published review train, grouped by what the PRs are meant to deliver. Position in the train is not merge readiness.</p>
 <ol class="overview">{"".join(overview)}</ol></section>
 <section><h2>Configured review queue</h2><p class="section-note">{queue_time}</p>
 <ol class="stack">{"".join(rows)}</ol></section>
-<footer>To refresh: edit status.json for stack or lane changes, then run the local renderer. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script></body></html>"""
+<footer>Stack and lane notes are maintained in status.json. The Refresh review data button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:

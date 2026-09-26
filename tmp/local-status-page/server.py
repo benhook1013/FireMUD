@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Serve the local snapshot and refresh its read-only review data on demand."""
+"""Serve the local snapshot and refresh its read-only review data periodically."""
 
 from __future__ import annotations
 
 import argparse
 import html
+import json
+import logging
 import subprocess
 import threading
 import time
@@ -15,29 +17,114 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "output"
 WSL_RENDER = "/home/ben/src/FireMUD-project-direction/tmp/local-status-page/render.py"
+WSL_PUBLISH = "/home/ben/src/FireMUD-project-direction/tmp/local-status-page/publish-hetzner.py"
 REFRESH_COOLDOWN_SECONDS = 15
+AUTO_REFRESH_INTERVAL_SECONDS = 30 * 60
+LOG = logging.getLogger(__name__)
 
 
-def refresh_snapshot() -> None:
+def run_wsl_script(script: str, timeout: int) -> None:
     result = subprocess.run(
-        ["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "python3", WSL_RENDER],
+        ["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "python3", script],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=timeout,
         check=False,
     )
     if result.returncode:
-        raise RuntimeError(f"render exited {result.returncode}: {result.stderr[-1200:]}")
+        raise RuntimeError(f"{Path(script).name} exited {result.returncode}: {result.stderr[-1200:]}")
+
+
+def render_snapshot() -> None:
+    run_wsl_script(WSL_RENDER, 180)
+
+
+def publish_snapshot() -> None:
+    run_wsl_script(WSL_PUBLISH, 300)
 
 
 class StatusServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], directory: Path, refresh: Callable[[], None] = refresh_snapshot):
-        self.refresh = refresh
+    def __init__(self, address: tuple[str, int], directory: Path,
+                 render: Callable[[], None] = render_snapshot,
+                 publish: Callable[[], None] = publish_snapshot,
+                 auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS):
+        self.render = render
+        self.publish = publish
+        self.phase = "idle"
         self.refresh_lock = threading.Lock()
         self.next_refresh_at = 0.0
+        self.auto_refresh_interval = auto_refresh_interval
+        self.next_auto_refresh_at = time.monotonic() + auto_refresh_interval
+        self.scheduler_wakeup = threading.Event()
+        self.scheduler_stop = threading.Event()
+        self.scheduler_thread: threading.Thread | None = None
         super().__init__(address, lambda *args, **kwargs: StatusHandler(*args, directory=str(directory), **kwargs))
+
+    def refresh_once(self) -> str:
+        """Run one non-overlapping refresh, returning its result for the caller."""
+        if not self.refresh_lock.acquire(blocking=False):
+            return "busy"
+        started = False
+        try:
+            if time.monotonic() < self.next_refresh_at:
+                return "cooldown"
+            started = True
+            try:
+                self.phase = "rendering"
+                self.render()
+            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                self.phase = "render_failed"
+                LOG.error("status render failed: %s", error)
+                return self.phase
+            try:
+                self.phase = "publishing"
+                self.publish()
+            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                self.phase = "publish_failed"
+                LOG.error("status publish failed: %s", error)
+                return self.phase
+            self.phase = "complete"
+            return self.phase
+        finally:
+            if started:
+                finished_at = time.monotonic()
+                self.next_refresh_at = finished_at + REFRESH_COOLDOWN_SECONDS
+                self.next_auto_refresh_at = finished_at + self.auto_refresh_interval
+                self.scheduler_wakeup.set()
+            self.refresh_lock.release()
+
+    def _auto_refresh_loop(self) -> None:
+        while not self.scheduler_stop.is_set():
+            remaining = max(0.0, self.next_auto_refresh_at - time.monotonic())
+            if self.scheduler_wakeup.wait(remaining):
+                self.scheduler_wakeup.clear()
+                continue
+            if self.scheduler_stop.is_set():
+                break
+            result = self.refresh_once()
+            if result == "cooldown":
+                self.next_auto_refresh_at = max(self.next_auto_refresh_at, self.next_refresh_at)
+            elif result == "busy":
+                # The manual job will wake the scheduler when it finishes.
+                self.scheduler_wakeup.wait()
+                self.scheduler_wakeup.clear()
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        self.scheduler_thread = threading.Thread(target=self._auto_refresh_loop, name="status-auto-refresh", daemon=True)
+        self.scheduler_thread.start()
+        try:
+            super().serve_forever(poll_interval=poll_interval)
+        finally:
+            self.scheduler_stop.set()
+            self.scheduler_wakeup.set()
+            self.scheduler_thread.join(timeout=1)
+
+    def shutdown(self) -> None:
+        self.scheduler_stop.set()
+        self.scheduler_wakeup.set()
+        super().shutdown()
 
 
 class StatusHandler(SimpleHTTPRequestHandler):
@@ -69,28 +156,33 @@ class StatusHandler(SimpleHTTPRequestHandler):
         if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
             self._message(400, "Refresh refused", "The refresh request must have no body.")
             return
-        if not self.server.refresh_lock.acquire(blocking=False):
+        result = self.server.refresh_once()
+        if result == "busy":
             self._message(409, "Refresh in progress", "Another refresh is already running.")
             return
-        try:
-            if time.monotonic() < self.server.next_refresh_at:
-                self._message(429, "Refresh recently completed", "Wait a few seconds before trying again.")
-                return
-            try:
-                self.server.refresh()
-            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
-                self.log_error("status refresh failed: %s", error)
-                self._message(502, "Refresh failed", "The old snapshot is still available. Check the server log.")
-                return
-            self.send_response(303)
-            self.send_header("Location", "/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        finally:
-            self.server.next_refresh_at = time.monotonic() + REFRESH_COOLDOWN_SECONDS
-            self.server.refresh_lock.release()
+        if result == "cooldown":
+            self._message(429, "Refresh recently completed", "Wait a few seconds before trying again.")
+            return
+        if result == "render_failed":
+            self._message(502, "Local refresh failed", "The previous local and public snapshots are still available. Check the server log.")
+            return
+        if result == "publish_failed":
+            self._message(503, "Public publish failed", "The local page was updated, but the public page was not confirmed. Check the server log.")
+            return
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
+        if self.path == "/refresh-status":
+            body = json.dumps({"phase": self.server.phase}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/refresh":
             self._message(405, "Use the refresh button", "The refresh endpoint accepts only the page's form.")
             return

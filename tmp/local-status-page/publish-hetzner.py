@@ -25,6 +25,7 @@ REFRESH_FORM = re.compile(r'<form class="refresh-form"[^>]*>.*?</form>', re.DOTA
 REFRESH_TIME = re.compile(r'<span class="refresh-time">.*?</span>', re.DOTALL)
 REFRESH_SCRIPT = re.compile(r'<script id="local-refresh-progress">.*?</script>', re.DOTALL)
 AGE_SCRIPT = re.compile(r'<script id="relative-age-updates">(.*?)</script>', re.DOTALL)
+SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re.DOTALL)
 
 
 def local_wifi_url() -> str:
@@ -61,11 +62,14 @@ def public_html(source: str, local_url: str) -> str:
     age_script = AGE_SCRIPT.search(result)
     if age_script is None:
         raise ValueError("the published page needs its read-only relative-time script")
+    snapshot_script = SNAPSHOT_SCRIPT.search(result)
+    if snapshot_script is None:
+        raise ValueError("the published page needs its read-only snapshot script")
     age_hash = base64.b64encode(hashlib.sha256(age_script.group(1).encode()).digest()).decode()
+    snapshot_hash = base64.b64encode(hashlib.sha256(snapshot_script.group(1).encode()).digest()).decode()
     result = result.replace("form-action 'self'", "form-action 'none'")
-    result = result.replace("connect-src 'self'", "connect-src 'none'")
     result, policy_count = re.subn(
-        r"script-src(?: 'sha256-[^']+')+", f"script-src 'sha256-{age_hash}'", result, count=1
+        r"script-src(?: 'sha256-[^']+')+", f"script-src 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result, count=1
     )
     if policy_count != 1:
         raise ValueError("the published page needs a matching script policy")
