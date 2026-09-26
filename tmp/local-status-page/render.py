@@ -624,7 +624,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
 * {{ box-sizing: border-box; }} body {{ margin: 0; overflow-x: hidden; }} main {{ max-width: 1160px; margin: auto; padding: 2rem 1.25rem 4rem; }}
-header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }} header div {{ max-width: 1160px; margin: auto; }}
+header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
 .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem; }}
 .repo-link {{ color: #f7dce4; font-size: .86rem; font-weight: 650; white-space: nowrap; }} .repo-link:hover {{ color: #fff; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
@@ -679,7 +679,7 @@ header.mast {{ background: var(--smoke); padding: 1rem clamp(1rem,4vw,3.5rem) .8
 .mast-inner {{ display: grid; grid-template-columns: 8.5rem minmax(0,1fr); column-gap: .75rem; max-width: 1440px; margin: auto; }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
 .refresh-space {{ display: flex; align-items: center; }}
-.mast-top {{ display: flex; width: 100%; min-height: 2.6rem; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; }}
+.mast-top {{ display: flex; width: 100%; min-height: 2.6rem; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; margin: 0; max-width: none; }}
 .brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
 .mast-top > .repo-link {{ flex: 0 0 auto; color: #fff; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
