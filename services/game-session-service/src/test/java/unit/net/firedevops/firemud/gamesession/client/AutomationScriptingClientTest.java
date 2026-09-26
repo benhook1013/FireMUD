@@ -3,19 +3,21 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -81,15 +83,11 @@ class AutomationScriptingClientTest {
 
   private static AutomationScriptingClient newClient(
       AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub) throws Exception {
-    AutomationScriptingClient client =
-        new AutomationScriptingClient(
-            new ServiceEndpointsProperties(),
-            new CommonGrpcClientProperties(),
-            mock(GrpcChannelFactory.class),
-            BlockingGrpcStubCustomizer.noop());
-    Field field = AbstractBlockingGrpcClient.class.getDeclaredField("stub");
-    field.setAccessible(true);
-    field.set(client, stub);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    TestAutomationScriptingClient client = new TestAutomationScriptingClient(channelFactory, stub);
+    client.initForTest();
     return client;
   }
 
@@ -99,5 +97,30 @@ class AutomationScriptingClientTest {
     when(stub.withDeadlineAfter(250L, TimeUnit.MILLISECONDS)).thenReturn(stub);
     when(stub.triggerScriptEvent(any())).thenThrow(failure);
     return stub;
+  }
+
+  private static final class TestAutomationScriptingClient extends AutomationScriptingClient {
+    private final AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub testStub;
+
+    private TestAutomationScriptingClient(
+        GrpcChannelFactory channelFactory,
+        AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub testStub) {
+      super(
+          new ServiceEndpointsProperties(),
+          new CommonGrpcClientProperties(),
+          channelFactory,
+          BlockingGrpcStubCustomizer.noop());
+      this.testStub = testStub;
+    }
+
+    private void initForTest() throws Exception {
+      init();
+    }
+
+    @Override
+    protected AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub buildStub(
+        ManagedChannel channel) {
+      return testStub;
+    }
   }
 }

@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
 
@@ -1417,6 +1418,8 @@ class PluginRuntimeStateServiceImplTest {
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
         Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
     when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
         .thenReturn(List.of(active));
@@ -1433,7 +1436,7 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             eventRepository,
             gameDesignClient,
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.PolicyReconciliationResult result =
@@ -1447,6 +1450,88 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(active.getActorPrincipal()).isEqualTo("automation-scripting-policy-reconciler");
     Mockito.verify(repository).save(active);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+  }
+
+  @Test
+  void policyReconciliationChecksWholeBatchBeforeOrderedLifecycleMutations() {
+    PluginRuntimeState pluginB = activePluginState();
+    pluginB.setPluginId("plugin-b");
+    PluginRuntimeState pluginA = activePluginState();
+    pluginA.setPluginId("plugin-a");
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    GameInstanceRuntimeState runtimeState =
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-7")
+            .setRegionEpoch(12L)
+            .build();
+    GetGameInstanceRuntimeStateResponse runtimeResponse =
+        GetGameInstanceRuntimeStateResponse.newBuilder().setRuntimeState(runtimeState).build();
+    when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
+        .thenReturn(List.of(pluginB, pluginA));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-a"))
+        .thenReturn(Optional.of(pluginA));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-b"))
+        .thenReturn(Optional.of(pluginB));
+    when(repository.save(Mockito.any(PluginRuntimeState.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameDesignClient.getPublishedPluginVersion(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, true));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeResponse);
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleInstanceService);
+
+    PluginRuntimeStateService.PolicyReconciliationResult result =
+        service.reconcileActivePluginPolicy(10);
+
+    assertThat(result.inspectedCount()).isEqualTo(2);
+    assertThat(result.disabledCount()).isEqualTo(2);
+    InOrder order = Mockito.inOrder(gameDesignClient, gameSessionClient, repository);
+    order.verify(gameDesignClient).getPublishedPluginVersion("1", "plugin-b", "plugin-v1");
+    order.verify(gameDesignClient).getPublishedPluginVersion("1", "plugin-a", "plugin-v1");
+    order
+        .verify(gameSessionClient, Mockito.times(2))
+        .getGameInstanceRuntimeState("1", "game-1", "region-7");
+    order.verify(repository).lockLifecycleScope("1", "game-1", "plugin-a");
+    order.verify(repository).findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-a");
+    order.verify(repository).save(pluginA);
+    order.verify(repository).lockLifecycleScope("1", "game-1", "plugin-b");
+    order.verify(repository).findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-b");
+    order.verify(repository).save(pluginB);
+    Mockito.verifyNoMoreInteractions(gameDesignClient);
+    Mockito.verifyNoMoreInteractions(gameSessionClient);
+    Mockito.verify(scheduleInstanceService)
+        .reconcileObservedRuntimeState(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.eq(runtimeState),
+            Mockito.any(Instant.class),
+            Mockito.eq("plugin-a"));
+    Mockito.verify(scheduleInstanceService)
+        .reconcileObservedRuntimeState(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.eq(runtimeState),
+            Mockito.any(Instant.class),
+            Mockito.eq("plugin-b"));
   }
 
   @Test

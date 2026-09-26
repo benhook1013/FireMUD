@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -362,17 +363,45 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     List<PluginRuntimeState> activeStates =
         repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit));
+    List<PolicyDecision> policyDecisions =
+        activeStates.stream()
+            .map(
+                state ->
+                    new PolicyDecision(
+                        state,
+                        disableReasonForCurrentPolicy(
+                            gameDesignControlPlaneClient.getPublishedPluginVersion(
+                                state.getTenantId(),
+                                state.getPluginId(),
+                                normalize(state.getActivePluginVersionId())))))
+            .toList();
+    List<PolicyDecision> decisions =
+        policyDecisions.stream()
+            .map(
+                decision -> {
+                  GetGameInstanceRuntimeStateResponse runtime =
+                      decision.disableReason().isEmpty()
+                          ? null
+                          : gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                              decision.snapshot().getTenantId(),
+                              decision.snapshot().getGameInstanceId(),
+                              normalize(decision.snapshot().getRuntimeRegionId()));
+                  return new PolicyDecision(decision.snapshot(), decision.disableReason(), runtime);
+                })
+            .toList();
     Instant now = Instant.now();
     int disabledCount = 0;
-    for (PluginRuntimeState state : activeStates) {
-      Optional<String> disableReason =
-          disableReasonForCurrentPolicy(
-              gameDesignControlPlaneClient.getPublishedPluginVersion(
-                  state.getTenantId(),
-                  state.getPluginId(),
-                  normalize(state.getActivePluginVersionId())));
-      if (disableReason.isPresent()) {
-        if (disableForPolicy(state, disableReason.get(), now)) {
+    for (PolicyDecision decision :
+        decisions.stream()
+            .sorted(
+                Comparator.comparing((PolicyDecision decision) -> decision.snapshot().getTenantId())
+                    .thenComparing(decision -> decision.snapshot().getGameInstanceId())
+                    .thenComparing(decision -> decision.snapshot().getPluginId()))
+            .toList()) {
+      PluginRuntimeState state = decision.snapshot();
+      if (decision.disableReason().isPresent()) {
+        if (disableForPolicy(
+            state, decision.disableReason().orElseThrow(), decision.runtimeState(), now)) {
           disabledCount++;
         }
       } else {
@@ -380,6 +409,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
+  }
+
+  private record PolicyDecision(
+      PluginRuntimeState snapshot,
+      Optional<String> disableReason,
+      GetGameInstanceRuntimeStateResponse runtimeState) {
+    private PolicyDecision(PluginRuntimeState snapshot, Optional<String> disableReason) {
+      this(snapshot, disableReason, null);
+    }
   }
 
   @Override
@@ -466,7 +504,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     };
   }
 
-  private boolean disableForPolicy(PluginRuntimeState snapshot, String reason, Instant now) {
+  private boolean disableForPolicy(
+      PluginRuntimeState snapshot,
+      String reason,
+      GetGameInstanceRuntimeStateResponse runtime,
+      Instant now) {
     repository.lockLifecycleScope(
         snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
     PluginRuntimeState state =
@@ -476,7 +518,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             .orElse(null);
     if (state == null
         || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
-        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()) {
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
       return false;
     }
     String previous = normalize(state.getActivePluginVersionId());
@@ -525,7 +569,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestId()),
         normalize(saved.getActorPrincipal()),
         now);
-    reconcileSchedules(saved);
+    reconcileSchedules(saved, runtime);
     return true;
   }
 
@@ -663,6 +707,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
             state.getTenantId(), state.getGameInstanceId(), normalize(state.getRuntimeRegionId()));
+    reconcileSchedules(state, runtime);
+  }
+
+  private void reconcileSchedules(
+      PluginRuntimeState state, GetGameInstanceRuntimeStateResponse runtime) {
     if (runtime == null) {
       logger.warn(
           "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state client returned null",
