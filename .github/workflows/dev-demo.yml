@@ -422,7 +422,8 @@ jobs:
         continue-on-error: true
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
-        run: bash ./dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh \
+        run: |
+          bash ./dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh \
           "${{ needs.dev-demo-plan.outputs.namespace }}" \
           "${{ needs.dev-demo-plan.outputs.release_name }}" \
           /tmp/dev-demo-values.yaml

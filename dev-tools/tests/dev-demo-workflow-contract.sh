@@ -838,6 +838,8 @@ workflow_deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
 staged_rollout_script = repository_root / "dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh"
 deploy_run = staged_rollout_script.read_text(encoding="utf-8")
 quiesced_upgrade = '--set "previewStack.services[${game_design_service_index}].replicaCount=0"'
+if workflow_deploy_run.count("\\\n") != 3:
+    raise SystemExit("dev-demo staged rollout arguments must retain Bash line continuations after YAML parsing")
 if (
     "deploy-staged-dev-demo.sh" not in workflow_deploy_run
     or "${{ needs.dev-demo-plan.outputs.namespace }}" not in workflow_deploy_run
