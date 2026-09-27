@@ -138,7 +138,10 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setRegionEpoch(runtimeStatus.getRegionEpoch())
         .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -381,13 +384,13 @@ final class GameSessionRuntimeControlPlaneReadService {
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
+                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)
