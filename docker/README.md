@@ -34,7 +34,9 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.ym
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down
 ```
 
-For ordinary local development, prefer `./gradlew devUp` and `./gradlew devDown`. The Gradle task builds the base image, application images, and `pg-dump-cron` image, generates development certificates, synchronizes the local Compose environment, and waits for the requested services to become ready. The raw source-built commands above are useful when iterating directly on the Compose build path; the certificate helper prepares the mounted local material, while the local override still selects plaintext internal gRPC for this development stack.
+For ordinary local development, prefer `./gradlew devUp` and `./gradlew devDown`. The Gradle task builds the base image, application images, and `pg-dump-cron` image, ensures development certificates and workload identities, synchronizes the local Compose environment, and waits for the requested services to become ready. The raw source-built commands above are useful when iterating directly on the Compose build path.
+
+Both local Compose lanes use internal gRPC mTLS. `ensure-dev-certs.sh` creates local-only Account, Game Session, and Social Groups workload leaves signed by the local development CA, and prepares the ignored `dev-tools/certs/local-runtime/` bind-mount projection. That projection contains runtime certificates and keys but not the CA private key; it is not a hosted certificate source. The local overrides point the protected callers at their own leaf, set the `local` workload namespace for Account and Logging & Admin peer checks, and keep Gateway/TCP Proxy HTTP and WebSocket routing unchanged. Do not copy these local settings or certificates into preview, dev-demo, or production deployments.
 
 Canonical smoke/bootstrap proof:
 
@@ -76,6 +78,6 @@ Gradle-managed local prebuilt-image stack:
 ## Local Runtime Notes
 
 - Compose service discovery uses Docker DNS plus the defaults in service `application.yml` files and the local Compose env overrides; it does not depend on a separate Spring `dev` profile lane.
-- The local override files intentionally relax internal gRPC/TLS settings for the Docker development stack.
+- The local override files keep internal gRPC mTLS enabled for the Docker development stack and replace the base certificate-directory mount with the CA-key-free local runtime projection.
 - The Compose stack also runs `pg-dump-cron`, which writes rotated PostgreSQL dumps under `docker/backups/`.
 - The scripted smoke clients require Python 3 and the `websocket-client` package; see [Smoke Tests for Login + PLAY + LOOK](../design/developer-workflows/login-session-smoke-tests.md#requirements) for the client prerequisites and transport-specific controls.

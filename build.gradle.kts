@@ -511,7 +511,7 @@ tasks.register("buildDockerImagesSmoke") {
 }
 
 tasks.register<Exec>("generateDevCerts") {
-    commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
+    commandLine("bash", "dev-tools/certs/ensure-dev-certs.sh")
 }
 
 tasks.register<Exec>("ensureLocalComposeEnv") {
