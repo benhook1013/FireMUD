@@ -4079,7 +4079,7 @@ class ControllerTests(unittest.TestCase):
         cli_history = [
             review(HEAD_1, "cli-one"),
             review(HEAD_1, "cli-two"),
-            review(HEAD_1, "cli-three", proven=True),
+            review(HEAD_1, "cli-three"),
         ]
         histories = {
             Channel.HOSTED: {1: hosted_history, 2: []},
@@ -4106,37 +4106,22 @@ class ControllerTests(unittest.TestCase):
                 "_policy_history",
                 side_effect=lambda _state, pr_number, channel, *_args, **_kwargs: histories[channel][pr_number],
             ),
-            patch.object(
-                controller,
-                "_project_cli_hosted_reservations",
-                side_effect=lambda cli_history, *_args, **_kwargs: cli_history,
-            ),
-            patch.object(
-                controller,
-                "_project_cli_streak_lineage",
-                side_effect=lambda cli_history, *_args, **_kwargs: cli_history,
-            ),
         ):
             report = controller._status_from_state(
                 state,
                 review_target_prs=state.ordered_prs,
                 review_target_selection_complete=True,
             )
+            selected = controller.select_target("hosted")
         self.assertEqual(report["prs"][0]["channels"]["hosted"], "COMPLETE")
         self.assertEqual(
             (report["review_targets"]["hosted"]["pr"], report["review_targets"]["hosted"]["status"]),
             (2, "MISSING_EVIDENCE"),
         )
-        decision = ReviewController._select_review_decision(
-            state,
-            Channel.HOSTED,
-            live,
-            reconciliation,
-            histories,
-            {},
-            [1, 2],
+        self.assertEqual(
+            (selected["pr"], selected["status"]),
+            (report["review_targets"]["hosted"]["pr"], report["review_targets"]["hosted"]["status"]),
         )
-        self.assertEqual((decision.target, decision.status.value), (2, "MISSING_EVIDENCE"))
 
         unproven_histories = {
             Channel.HOSTED: {1: hosted_history, 2: []},

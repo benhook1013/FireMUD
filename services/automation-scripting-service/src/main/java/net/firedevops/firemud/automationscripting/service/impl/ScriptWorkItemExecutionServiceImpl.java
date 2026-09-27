@@ -559,7 +559,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
     workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
     workItem.setNextEligibleAt(retryAt.plus(delay));
-    requeueAfterRetryableFailure(workItem);
+    persistDelayedRetry(workItem);
+  }
+
+  private void persistDelayedRetry(ScriptWorkItem workItem) {
+    workItem.setStatus("PENDING_EVALUATION");
+    workItem.setUpdatedAt(Instant.now());
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
   }
 
   private static long requireWorkItemId(ScriptWorkItem workItem) {

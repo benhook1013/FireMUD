@@ -3654,22 +3654,27 @@ class ReviewController:
             pr: self._policy_history(state, pr, other, reconciliation)
             for pr in state.ordered_prs
         }
-        if selected == policy.Channel.CLI:
-            history = {
-                pr: self._project_cli_streak_lineage(
-                    self._project_cli_hosted_reservations(
-                        history[pr],
-                        other_history[pr],
-                        pr,
-                        live[pr].head,
-                        self._reconciled_anchor(pr, live[pr], reconciliation),
-                    ),
+        cli_history = history if selected == policy.Channel.CLI else other_history
+        hosted_history = other_history if selected == policy.Channel.CLI else history
+        projected_cli_history = {
+            pr: self._project_cli_streak_lineage(
+                self._project_cli_hosted_reservations(
+                    cli_history[pr],
+                    hosted_history[pr],
                     pr,
-                    state,
+                    live[pr].head,
                     self._reconciled_anchor(pr, live[pr], reconciliation),
-                )
-                for pr in state.ordered_prs
-            }
+                ),
+                pr,
+                state,
+                self._reconciled_anchor(pr, live[pr], reconciliation),
+            )
+            for pr in state.ordered_prs
+        }
+        if selected == policy.Channel.CLI:
+            history = projected_cli_history
+        else:
+            other_history = projected_cli_history
         allocations = self._allocation_views(state, live, reconciliation, selected, history)
         decision = self._select_review_decision(
             state,
