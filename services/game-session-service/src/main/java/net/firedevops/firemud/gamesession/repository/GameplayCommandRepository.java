@@ -402,8 +402,7 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.REGION_EPOCH, entity.getRegionEpoch())
             .set(GAMEPLAY_COMMAND.DUE_TICK_ID, entity.getDueTickId())
             .set(
-                GAMEPLAY_COMMAND.SCRIPT_PATCH_BASE_VERSION_ID,
-                entity.getScriptPatchBaseVersionId())
+                GAMEPLAY_COMMAND.SCRIPT_PATCH_BASE_VERSION_ID, entity.getScriptPatchBaseVersionId())
             .where(GAMEPLAY_COMMAND.ID.eq(entity.getId()))
             .execute();
     if (updated != 1) {
