@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -164,17 +163,14 @@ class TextCommandInterpreterTest {
                 .setAccountId("123")
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setMembershipLifecycleState("ACTIVE")
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build());
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .active(123L, 22L, "1"),
+                        invocation.getArgument(0)));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),

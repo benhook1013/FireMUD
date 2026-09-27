@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -299,6 +300,64 @@ public class AccountMembershipAuthorityEventProducer {
           "Current Account membership differs from its durable pair authority");
     }
     return positive;
+  }
+
+  /**
+   * Reads one same-fence runtime membership result from the proved active-positive or never-joined
+   * sequence-zero path.
+   *
+   * <p>This deliberately has no inactive, unpaired, or synthesized fallback. The caller owns the
+   * Account transaction and the RPC remains unavailable until its consumer validates this whole
+   * evidence bundle.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      long accountId, long legacyTenantId) {
+    if (accountId <= 0L || legacyTenantId <= 0L) {
+      throw new IllegalArgumentException("Account and retained tenant identities must be positive");
+    }
+    joinOperationRepository.lockAccount(accountId);
+    if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
+      PositiveMembershipSnapshot positive =
+          readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
+      return new RuntimeMembershipSnapshotDto(
+          accountId,
+          legacyTenantId,
+          positive.accountId(),
+          positive.tenantId(),
+          positive.membershipExists(),
+          positive.gameplayAdmissionAllowed(),
+          new RuntimeMembershipSnapshotDto.MembershipBaseline(
+              positive.membershipLifecycleState(),
+              positive.membershipVersion(),
+              positive.membershipAuthorityGeneration()),
+          positive.roles(),
+          positive.authorityTuple(),
+          positive.issuanceFence(),
+          positive.evaluatedAt(),
+          positive.outboxCheckpoints(),
+          positive.outboxSourceEvidence());
+    }
+
+    NeverJoinedMembershipSnapshot absent =
+        readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
+    return new RuntimeMembershipSnapshotDto(
+        accountId,
+        legacyTenantId,
+        absent.accountId(),
+        absent.tenantId(),
+        absent.membershipExists(),
+        absent.gameplayAdmissionAllowed(),
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            absent.membershipLifecycleState(),
+            absent.membershipVersion(),
+            absent.membershipAuthorityGeneration()),
+        absent.roles(),
+        absent.authorityTuple(),
+        absent.issuanceFence(),
+        absent.evaluatedAt(),
+        absent.outboxCheckpoints(),
+        absent.outboxSourceEvidence());
   }
 
   /**

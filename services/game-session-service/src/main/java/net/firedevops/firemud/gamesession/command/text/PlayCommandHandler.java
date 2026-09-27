@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,6 +37,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -56,6 +58,8 @@ public class PlayCommandHandler {
   private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
   private static final String FRESH_ENTRY_FALLBACK_METRIC =
       "gamesession.session.fresh_entry_fallback";
+  private static final String ACCOUNT_AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
+  private static final String ACCOUNT_AUTHORITY_ISSUER = "firemud-account-service";
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -650,7 +654,7 @@ public class PlayCommandHandler {
 
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            Long.toString(context.accountId()), Long.toString(selectedRealm.tenantId()), requestId);
+            membershipPlayerContext(context, selectedRealm, requestedCharacterId, requestId));
     return validateMembershipResponse(
         membershipResponse,
         context,
@@ -709,7 +713,7 @@ public class PlayCommandHandler {
           authorityUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
-    if (!isSafeMembershipAuthorityResponse(response, context, selectedRealm)) {
+    if (!isSafeMembershipAuthorityResponse(response, context, selectedRealm, requestId)) {
       return Optional.of(
           authorityUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
@@ -781,15 +785,175 @@ public class PlayCommandHandler {
 
   private boolean isValidMembershipLifecycleEvidence(
       GetTenantMembershipForRuntimeResponse response) {
+    if (!hasCompleteMembershipAuthorityCarrier(response)) {
+      return false;
+    }
     return switch (response.getMembershipLifecycleState()) {
-      case "MISSING" -> !response.getMembershipExists() && !response.getGameplayAdmissionAllowed();
-      case "INACTIVE" ->
+      case "MISSING" ->
+          !response.getMembershipExists()
+              && !response.getGameplayAdmissionAllowed()
+              && response.getRolesCount() == 0;
+      case "ACTIVE" ->
           response.getMembershipExists()
-              && response.getMembershipVersion() > 0L
-              && !response.getGameplayAdmissionAllowed();
-      case "ACTIVE" -> response.getMembershipExists() && response.getMembershipVersion() > 0L;
+              && response.getGameplayAdmissionAllowed()
+              && response.getRolesList().contains("player")
+              && hasPositiveMembershipVersion(response);
       default -> false;
     };
+  }
+
+  private static boolean hasPositiveMembershipVersion(
+      GetTenantMembershipForRuntimeResponse response) {
+    if (response.getMembershipVersionCount() != 1) {
+      return false;
+    }
+    Map.Entry<String, String> version =
+        response.getMembershipVersionMap().entrySet().iterator().next();
+    return isCanonicalUuid(response.getTenantId())
+        && version.getKey().equals(response.getTenantId())
+        && isPositiveCanonicalDecimal(version.getValue());
+  }
+
+  private static boolean hasCompleteMembershipAuthorityCarrier(
+      GetTenantMembershipForRuntimeResponse response) {
+    if (!response.hasMembershipBaseline() || !response.hasAuthorityTuple()) {
+      return false;
+    }
+    if (!isCanonicalUuid(response.getAccountId()) || !isCanonicalUuid(response.getTenantId())) {
+      return false;
+    }
+    if (!response
+        .getMembershipBaseline()
+        .equals(
+            net.firedevops.firemud.account.v1.RuntimeMembershipBaseline.newBuilder()
+                .setMembershipLifecycleState(response.getMembershipLifecycleState())
+                .putAllMembershipVersion(response.getMembershipVersionMap())
+                .setMembershipAuthorityGeneration(response.getMembershipAuthorityGeneration())
+                .build())) {
+      return false;
+    }
+    if (!isPositiveCanonicalDecimal(response.getIssuanceFence())) {
+      return false;
+    }
+
+    var tuple = response.getAuthorityTuple();
+    String tenantId = response.getTenantId();
+    if (!"1".equals(tuple.getIssuerAuthGeneration())
+        || !"1".equals(tuple.getAccountAuthorityGeneration())
+        || !tuple.getTenantAuthorityGenerationMap().keySet().equals(java.util.Set.of(tenantId))
+        || !tuple.getMembershipAuthorityGenerationMap().keySet().equals(java.util.Set.of(tenantId))
+        || !"1".equals(tuple.getTenantAuthorityGenerationMap().get(tenantId))
+        || !isPositiveCanonicalDecimal(tuple.getMembershipAuthorityGenerationMap().get(tenantId))
+        || !tuple
+            .getMembershipAuthorityGenerationMap()
+            .get(tenantId)
+            .equals(response.getMembershipAuthorityGeneration())
+        || tuple.getPrivateRealmGrantVersionsCount() != 0
+        || tuple.hasAccountSecurityCutoff()
+        || tuple.hasTenantBillingCutoff()) {
+      return false;
+    }
+
+    String membershipStream =
+        ACCOUNT_AUTHORITY_STREAM_PREFIX + "membership/" + response.getAccountId() + "/" + tenantId;
+    String accountStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + response.getAccountId();
+    String issuerStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "issuer/" + ACCOUNT_AUTHORITY_ISSUER;
+    String tenantStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "tenant/" + tenantId;
+    List<String> expectedStreamKeys =
+        new ArrayList<>(List.of(accountStream, issuerStream, membershipStream, tenantStream));
+    expectedStreamKeys.sort(String::compareTo);
+    if (response.getOutboxCheckpointsCount() != expectedStreamKeys.size()) {
+      return false;
+    }
+    List<String> actualStreamKeys = new ArrayList<>();
+    Map<String, String> checkpointSequences = new java.util.HashMap<>();
+    for (var checkpoint : response.getOutboxCheckpointsList()) {
+      if (!checkpoint.getUnknownFields().asMap().isEmpty()
+          || !isCanonicalNonNegativeDecimal(checkpoint.getOutboxSequence())
+          || checkpointSequences.putIfAbsent(
+                  checkpoint.getOutboxStreamKey(), checkpoint.getOutboxSequence())
+              != null) {
+        return false;
+      }
+      actualStreamKeys.add(checkpoint.getOutboxStreamKey());
+    }
+    if (!actualStreamKeys.equals(expectedStreamKeys)) {
+      return false;
+    }
+    boolean positive = "ACTIVE".equals(response.getMembershipLifecycleState());
+    for (String streamKey : expectedStreamKeys) {
+      String sequence = checkpointSequences.get(streamKey);
+      if (streamKey.equals(membershipStream)) {
+        if (positive != isPositiveCanonicalDecimal(sequence)) {
+          return false;
+        }
+      } else if (!"0".equals(sequence)) {
+        return false;
+      }
+    }
+    if (!positive) {
+      return "MISSING".equals(response.getMembershipLifecycleState())
+          && !response.getMembershipExists()
+          && !response.getGameplayAdmissionAllowed()
+          && response.getOutboxSourceEvidenceCount() == 0
+          && "1".equals(response.getMembershipVersionMap().get(tenantId))
+          && "1".equals(response.getMembershipAuthorityGeneration())
+          && "1".equals(tuple.getIssuerAuthGeneration())
+          && "1".equals(tuple.getAccountAuthorityGeneration())
+          && "1".equals(tuple.getTenantAuthorityGenerationMap().get(tenantId))
+          && response.getMembershipVersionCount() == 1;
+    }
+
+    if (response.getOutboxSourceEvidenceCount() != 1
+        || !response.getMembershipExists()
+        || !response.getGameplayAdmissionAllowed()
+        || response.getMembershipVersionCount() != 1
+        || !hasPositiveMembershipVersion(response)) {
+      return false;
+    }
+    var source = response.getOutboxSourceEvidence(0);
+    return source.getUnknownFields().asMap().isEmpty()
+        && source.getOutboxStreamKey().equals(membershipStream)
+        && source.getOutboxSequence().equals(checkpointSequences.get(membershipStream))
+        && isCanonicalUuid(source.getEventId())
+        && source.getEventDigest().matches("sha256:[0-9a-f]{64}");
+  }
+
+  private static boolean isPositiveCanonicalDecimal(String value) {
+    return value != null && value.matches("[1-9][0-9]*");
+  }
+
+  private static boolean isCanonicalNonNegativeDecimal(String value) {
+    return value != null && value.matches("(?:0|[1-9][0-9]*)");
+  }
+
+  private static boolean isCanonicalUuid(String value) {
+    if (!StringUtils.hasText(value)) {
+      return false;
+    }
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
+  private static PlayerExecutionContext membershipPlayerContext(
+      SessionContext caller,
+      GameplayWorldCatalog.RealmView target,
+      long characterId,
+      String requestId) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId(Long.toString(caller.accountId()))
+        .setTenantId(Long.toString(target.tenantId()))
+        .setRealmId(Objects.toString(target.realmId(), ""))
+        .setPlayableStateNamespaceId(Objects.toString(target.playableStateNamespaceId(), ""))
+        .setPlayableStateScope(Objects.toString(target.stateScope(), ""))
+        .setGameInstanceId(Long.toString(target.gameInstanceId()))
+        .setCharacterId(characterId > 0L ? Long.toString(characterId) : "")
+        .setSessionId(Long.toString(caller.sessionId()))
+        .setRequestId(requestId)
+        .build();
   }
 
   private PlayCommandHandlingResult worldAccessDeniedFailure(
@@ -1016,19 +1180,21 @@ public class PlayCommandHandler {
   private boolean isSafeMembershipAuthorityResponse(
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
-      GameplayWorldCatalog.RealmView selectedRealm) {
+      GameplayWorldCatalog.RealmView selectedRealm,
+      String requestId) {
     if (!StringUtils.hasText(response.getAccountId())
         || !StringUtils.hasText(response.getTenantId())
-        || !StringUtils.hasText(response.getEvaluatedAt())) {
+        || !StringUtils.hasText(response.getEvaluatedAt())
+        || !isCanonicalUuid(response.getAccountId())
+        || !isCanonicalUuid(response.getTenantId())
+        || !response.getRequestAccountId().equals(Long.toString(context.accountId()))
+        || !response.getRequestTenantId().equals(Long.toString(selectedRealm.tenantId()))
+        || !response.getRequestId().equals(requestId)) {
       return false;
     }
     try {
       Instant.parse(response.getEvaluatedAt());
-      if (Long.parseLong(response.getAccountId()) != context.accountId()
-          || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
-        return false;
-      }
-    } catch (DateTimeParseException | NumberFormatException ex) {
+    } catch (DateTimeParseException ex) {
       return false;
     }
     return true;

@@ -17,7 +17,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -164,17 +163,14 @@ class SessionResumptionFlowTest {
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
     when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("77")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setMembershipLifecycleState("ACTIVE")
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build());
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .active(77L, 22L, "1"),
+                        invocation.getArgument(0)));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -457,17 +453,15 @@ class SessionResumptionFlowTest {
     assertTrue(firstLook.commandResult().accepted());
 
     when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("77")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setMembershipLifecycleState("ACTIVE")
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:01:00Z")
-                .build());
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .incomplete(
+                                77L, 22L, true, "ACTIVE", false, "2", "2026-03-30T00:01:00Z"),
+                        invocation.getArgument(0)));
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());

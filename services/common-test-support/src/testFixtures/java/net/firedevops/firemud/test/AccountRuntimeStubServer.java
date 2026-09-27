@@ -5,7 +5,9 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +32,10 @@ import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.RuntimeAuthorityTuple;
+import net.firedevops.firemud.account.v1.RuntimeMembershipBaseline;
+import net.firedevops.firemud.account.v1.RuntimeOutboxCheckpoint;
+import net.firedevops.firemud.account.v1.RuntimeOutboxSourceEvidence;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.EmailCanonicalization;
@@ -41,6 +47,8 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
   private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
+  private static final String AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
+  private static final String ACCOUNT_ISSUER = "firemud-account-service";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -169,17 +177,107 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
     boolean exists = membershipExists.get();
-    responseObserver.onNext(
-        GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId(request.getAccountId())
-            .setTenantId(request.getTenantId())
-            .setMembershipExists(exists)
-            .setMembershipLifecycleState(membershipLifecycleState.get())
-            .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
-            .setMembershipVersion(exists ? 1L : 0L)
-            .setEvaluatedAt(EVALUATED_AT)
-            .build());
+    String accountSelector = request.getPlayerContext().getAccountId();
+    String tenantSelector = request.getPlayerContext().getTenantId();
+    String lifecycle = membershipLifecycleState.get();
+    boolean admitted = gameplayAdmissionAllowed.get();
+    GetTenantMembershipForRuntimeResponse response;
+    if (exists && admitted && "ACTIVE".equals(lifecycle)) {
+      response =
+          completeMembershipSnapshot(
+              accountSelector, tenantSelector, request.getPlayerContext().getRequestId(), true);
+    } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
+      response =
+          completeMembershipSnapshot(
+              accountSelector, tenantSelector, request.getPlayerContext().getRequestId(), false);
+    } else {
+      response =
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setAccountId(canonicalUuid(accountSelector))
+              .setTenantId(canonicalUuid(tenantSelector))
+              .setRequestAccountId(accountSelector)
+              .setRequestTenantId(tenantSelector)
+              .setRequestId(request.getPlayerContext().getRequestId())
+              .setMembershipExists(exists)
+              .setMembershipLifecycleState(lifecycle)
+              .setGameplayAdmissionAllowed(admitted)
+              .setEvaluatedAt(EVALUATED_AT)
+              .build();
+    }
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
+      String accountSelector, String tenantSelector, String requestId, boolean exists) {
+    String accountUuid = canonicalUuid(accountSelector);
+    String tenantUuid = canonicalUuid(tenantSelector);
+    String membershipStream =
+        AUTHORITY_STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
+    List<RuntimeOutboxCheckpoint> checkpoints =
+        new ArrayList<>(
+            List.of(
+                checkpoint(AUTHORITY_STREAM_PREFIX + "account/" + accountUuid, "0"),
+                checkpoint(AUTHORITY_STREAM_PREFIX + "issuer/" + ACCOUNT_ISSUER, "0"),
+                checkpoint(membershipStream, exists ? "1" : "0"),
+                checkpoint(AUTHORITY_STREAM_PREFIX + "tenant/" + tenantUuid, "0")));
+    checkpoints.sort(
+        (first, second) -> first.getOutboxStreamKey().compareTo(second.getOutboxStreamKey()));
+    RuntimeAuthorityTuple tuple =
+        RuntimeAuthorityTuple.newBuilder()
+            .setIssuerAuthGeneration("1")
+            .setAccountAuthorityGeneration("1")
+            .putTenantAuthorityGeneration(tenantUuid, "1")
+            .putMembershipAuthorityGeneration(tenantUuid, "1")
+            .build();
+    RuntimeMembershipBaseline baseline =
+        RuntimeMembershipBaseline.newBuilder()
+            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
+            .putMembershipVersion(tenantUuid, "1")
+            .setMembershipAuthorityGeneration("1")
+            .build();
+    GetTenantMembershipForRuntimeResponse.Builder response =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId(accountUuid)
+            .setTenantId(tenantUuid)
+            .setRequestAccountId(accountSelector)
+            .setRequestTenantId(tenantSelector)
+            .setRequestId(requestId)
+            .setMembershipExists(exists)
+            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
+            .setGameplayAdmissionAllowed(exists)
+            .putMembershipVersion(tenantUuid, "1")
+            .setMembershipAuthorityGeneration("1")
+            .setMembershipBaseline(baseline)
+            .setAuthorityTuple(tuple)
+            .setIssuanceFence("1")
+            .addAllOutboxCheckpoints(checkpoints)
+            .setEvaluatedAt(EVALUATED_AT);
+    if (exists) {
+      response.addRoles("player");
+      response.addOutboxSourceEvidence(
+          RuntimeOutboxSourceEvidence.newBuilder()
+              .setOutboxStreamKey(membershipStream)
+              .setOutboxSequence("1")
+              .setEventId("00000000-0000-0000-0000-000000000099")
+              .setEventDigest("sha256:" + "0".repeat(64)));
+    }
+    return response.build();
+  }
+
+  private static RuntimeOutboxCheckpoint checkpoint(String streamKey, String sequence) {
+    return RuntimeOutboxCheckpoint.newBuilder()
+        .setOutboxStreamKey(streamKey)
+        .setOutboxSequence(sequence)
+        .build();
+  }
+
+  private static String canonicalUuid(String selector) {
+    long value = Long.parseLong(selector);
+    if (value <= 0L || !Long.toString(value).equals(selector)) {
+      throw new IllegalArgumentException("runtime membership fixture selector must be canonical");
+    }
+    return "00000000-0000-0000-0000-" + String.format(Locale.ROOT, "%012d", value);
   }
 
   @Override
