@@ -792,6 +792,24 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<span class="activity-caption">Recent, oldest to newest</span>', without_notes)
         self.assertNotIn('Recent, oldest to newest ·</span>', without_notes)
 
+    def test_routed_review_count_uses_three_numbers_without_changing_legacy_pills(self):
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {42: {
+            "review_activity": {"hosted": {"total": 2, "recent": [
+                {"raw": 3, "accepted": 0, "routed": 2, "current_head": True,
+                 "attributable": True, "non_counting": False},
+                {"raw": 1, "accepted": 1, "current_head": False,
+                 "attributable": True, "non_counting": False},
+            ]}}}}})
+        result = page.render(self.fixture(), review, NOW)
+        self.assertIn('aria-label="3/0/2 (found / accepted here / routed), Completion time unavailable"', result)
+        self.assertIn('<span>3/0/2</span>', result)
+        self.assertIn('<span>1/1</span>', result)
+        self.assertIn('3 numbers: found / accepted here / routed', result)
+        review["queue"][42]["review_activity"]["hosted"]["recent"][0]["routed"] = 4
+        with self.assertRaisesRegex(ValueError, "review routed count is invalid"):
+            page.render(self.fixture(), review, NOW)
+
     def test_badge_timestamp_is_escaped_and_invalid_values_stay_unknown(self):
         review = page.review_snapshot(None, 42, HEAD, NOW)
         review.update({"available": True, "queue": {42: {

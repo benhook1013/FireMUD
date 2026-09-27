@@ -589,6 +589,11 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 recent = activity.get("recent", [])
                 pills = []
                 for result in recent:
+                    routed = result.get("routed")
+                    if routed is not None and (
+                        type(routed) is not int or routed < 0 or routed + result["accepted"] > result["raw"]
+                    ):
+                        raise ValueError("review routed count is invalid")
                     older = not result["current_head"]
                     unlinked = not result["attributable"]
                     non_counting = result["non_counting"]
@@ -597,6 +602,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                         (("older head", older), ("unlinked", unlinked), ("non-counting", non_counting)) if selected
                     )
                     pill_label = f'{result["raw"]}/{result["accepted"]}'
+                    if routed is not None:
+                        pill_label += f"/{routed} (found / accepted here / routed)"
                     if description:
                         pill_label += f" ({description})"
                     pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" older" if older else "") + (" unlinked" if unlinked else "")
@@ -613,7 +620,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     pills.append(
                         f'<span class="{pill_class}" aria-label="{safe(pill_label + ", " + completion_label)}" '
                         f'title="{safe(completion_label)}">'
-                        f'<span>{safe(result["raw"])}/{safe(result["accepted"])}</span>{age_html}</span>'
+                        f'<span>{safe(result["raw"])}/{safe(result["accepted"])}'
+                        f'{"/" + safe(routed) if routed is not None else ""}</span>{age_html}</span>'
                     )
                 older_count = sum(not result["current_head"] for result in recent)
                 unlinked_count = sum(not result["attributable"] for result in recent)
@@ -626,6 +634,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 if non_counting_count:
                     notes.append(f"{non_counting_count} excluded from taper")
                 caption = "Recent, oldest to newest"
+                if any(result.get("routed") is not None for result in recent):
+                    caption += " · 3 numbers: found / accepted here / routed"
                 if notes:
                     caption += " · " + " · ".join(notes)
                 channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
