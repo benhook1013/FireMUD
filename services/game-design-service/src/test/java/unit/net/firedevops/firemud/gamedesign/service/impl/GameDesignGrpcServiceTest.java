@@ -680,6 +680,53 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getPublishedPluginVersionReturnsHistoricalTerminalStates() {
+    for (VersionLifecycleState state :
+        List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
+      Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
+          .thenReturn(
+              new PublishedPluginVersionDto(
+                  15L,
+                  "tenant-1",
+                  "plugin-1",
+                  "plugin-v1",
+                  7L,
+                  state,
+                  "ability-1",
+                  "bundle-1",
+                  1,
+                  "dist-hash",
+                  "dist-path",
+                  "signer-1",
+                  false,
+                  "ALLOWED",
+                  "notes",
+                  "reason",
+                  LocalDateTime.parse("2026-04-22T12:00:00")));
+
+      AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
+      try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+        service.getPublishedPluginVersion(
+            GetPublishedPluginVersionRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .build(),
+            observerFor(ref));
+      }
+
+      assertEquals("", ref.get().getError().getCode());
+      assertEquals(
+          state == VersionLifecycleState.SUPERSEDED
+              ? net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                  .VERSION_LIFECYCLE_STATE_SUPERSEDED
+              : net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                  .VERSION_LIFECYCLE_STATE_REVOKED_DESIGN,
+          ref.get().getPluginVersion().getPublicationState());
+    }
+  }
+
+  @Test
   void revokePluginVersionReturnsPublicationId() {
     Mockito.when(versionService.revokePluginVersion("tenant-1", "plugin-1", "plugin-v1", "reason"))
         .thenReturn(

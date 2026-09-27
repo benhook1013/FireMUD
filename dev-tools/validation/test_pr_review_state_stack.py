@@ -21,6 +21,7 @@ from pr_review.policy import (
 )
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
 from pr_review.state import (
+    FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
     PolicyOverride,
@@ -50,6 +51,25 @@ def _append_prs(path: str, prs: tuple[int, ...]) -> None:
 
 
 class ReviewStateStackTest(unittest.TestCase):
+    def test_routes_round_trip_with_stable_identity_and_old_state_defaults_empty_routes(self):
+        route = FindingRoute(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="review-901",
+            source_finding="thread-77",
+            observations=("parent-owned observation",),
+            target_pr=2879,
+        )
+        state = ReviewState(routes=(route,))
+
+        restored = ReviewState.from_dict(state.to_dict())
+
+        self.assertEqual(restored, state)
+        self.assertEqual(restored.routes[0].route_id, route.route_id)
+        old_state = state.to_dict()
+        del old_state["routes"]
+        self.assertEqual(ReviewState.from_dict(old_state).routes, ())
+
     def test_review_allocation_round_trips_and_is_keyed_by_pr_and_channel(self):
         allocation = ReviewAllocation(
             pr=2849,
@@ -433,6 +453,56 @@ class ReviewStateStackTest(unittest.TestCase):
         remaining, matched = adjudicate_summary_findings(2838, head, later_summary, (rejected,))
         self.assertEqual(remaining, later_summary["findings"])
         self.assertEqual(matched, [])
+
+    def test_routed_summary_bucket_links_to_one_durable_route_and_clears_source_hold(self):
+        head = "a" * 40
+        routes = (
+            FindingRoute(
+                source_pr=2838,
+                source_channel="hosted",
+                source_review="summary:review:42",
+                source_finding="outside_diff:2:workitem-base",
+                observations=("WorkItem base observation",),
+                target_pr=2879,
+            ),
+            FindingRoute(
+                source_pr=2838,
+                source_channel="hosted",
+                source_review="summary:review:42",
+                source_finding="outside_diff:2:timer-audit-base",
+                observations=("timer-audit base observation",),
+                target_pr=2879,
+            ),
+        )
+        disposition = SummaryFindingDisposition(
+            2838,
+            head,
+            "review",
+            42,
+            "outside_diff",
+            2,
+            "routed",
+            "outside-diff observations belong to PR #2879",
+            route_ids=tuple(route.route_id for route in routes),
+        )
+        state = ReviewState(routes=routes, summary_dispositions=(disposition,))
+        summary = {
+            "status": "current",
+            "head_sha": head,
+            "source": "review",
+            "identity": 42,
+            "findings": [{"kind": "outside_diff", "count": 2}],
+        }
+
+        remaining, matched = adjudicate_summary_findings(2838, head, summary, (disposition,))
+
+        self.assertEqual(remaining, [])
+        self.assertEqual(matched, [disposition.to_dict()])
+        self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
+        with self.assertRaisesRegex(StateError, "link to a durable route"):
+            ReviewState(summary_dispositions=(disposition,))
+        self.assertEqual(len(state.routes), 2)
+        self.assertNotEqual(state.routes[0].route_id, state.routes[1].route_id)
 
     def test_accepted_fixed_disposition_cannot_clear_current_head_summary(self):
         head = "a" * 40

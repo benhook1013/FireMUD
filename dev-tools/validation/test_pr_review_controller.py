@@ -317,6 +317,51 @@ class ControllerTests(unittest.TestCase):
             "patch_id": anchor.patch_id,
         }
 
+    def test_route_identity_reuses_observations_and_target_disposition_moves_open_work(self):
+        controller = self.make({})
+        first = controller.record_route(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="901",
+            source_finding="thread-77",
+            observation="child-owned behavior",
+            target_pr=2879,
+        )["route"]
+        repeated = controller.record_route(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="901",
+            source_finding="thread-77",
+            observation="same finding observed again",
+            target_pr=2879,
+        )["route"]
+
+        self.assertEqual(first["route_id"], repeated["route_id"])
+        self.assertEqual(len(repeated["observations"]), 2)
+        self.assertEqual(controller.list_routes(target_pr=2879)["count"], 1)
+        self.assertEqual(controller.list_routes(unassigned=True)["count"], 0)
+        # A source PR need not remain in the live stack for its route to stay queryable.
+        self.assertEqual(controller.status_for_pr(2828)["routes_out"][0]["route_id"], first["route_id"])
+
+        moved = controller.decide_route(
+            route_id=first["route_id"],
+            decision="retargeted",
+            target_pr=2880,
+            reason="the observed code now belongs to the shared transport PR",
+        )["route"]
+        self.assertEqual(moved["status"], "open")
+        self.assertEqual(moved["target_history"], [2879])
+        self.assertEqual(controller.list_routes(target_pr=2879)["count"], 0)
+        self.assertEqual(controller.list_routes(target_pr=2880)["count"], 1)
+
+        resolved = controller.decide_route(
+            route_id=first["route_id"],
+            decision="accepted-fixed",
+            proof="verified in commit " + "a" * 40,
+        )["route"]
+        self.assertEqual(resolved["status"], "accepted_fixed")
+        self.assertEqual(controller.list_routes(target_pr=2880)["count"], 0)
+
     def test_stop_uses_the_hosted_request_runner_lock_path(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -3577,8 +3622,9 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(
             set(result["review_activity"]["hosted"]["recent"][0]),
-            {"raw", "accepted", "completed_at", "attributable", "current_head", "non_counting"},
+            {"raw", "accepted", "routed", "completed_at", "attributable", "current_head", "non_counting"},
         )
+        self.assertIsNone(result["review_activity"]["hosted"]["recent"][0]["routed"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][0]["current_head"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
         self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])

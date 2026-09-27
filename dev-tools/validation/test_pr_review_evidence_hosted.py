@@ -313,6 +313,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "<!-- firemud-hosted-review: 11 -->\n<!-- firemud-review-duration-seconds: 4087 -->",
                 "created_at": "2026-09-23T00:02:00Z",
             },
+            {
+                "id": 4,
+                "body": "CLI: 3 found / 1 accepted / 1 routed · `abcdef1` · 3 files · 9s\n"
+                "<!-- firemud-cli-run: run.A2 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
         self.assertEqual(unparsed, 0)
@@ -320,6 +326,10 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[1].duration_seconds, 9)
         self.assertEqual(parsed[2].duration_seconds, 4087)
         self.assertEqual(parsed[2].as_json()["duration_display"], "1h 08m 07s")
+        self.assertIsNone(parsed[0].routed)
+        self.assertEqual(parsed[3].routed, 1)
+        self.assertEqual(parsed[3].as_json()["routed"], 1)
+        self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
 
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
@@ -440,6 +450,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         decision_text: str | None,
         rejection_text: str | None = None,
         accepted: int = 0,
+        routed: int | None = None,
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -461,7 +472,18 @@ class GithubAndEvidenceTests(unittest.TestCase):
         if rejection_text is not None:
             (run / "rejections.tsv").write_text(rejection_text, encoding="utf-8")
         checkpoint = evidence.Checkpoint(
-            1, "2026-09-23T00:00:00Z", "CLI", 1, accepted, HEAD[:12], 1, False, None, run_id, None
+            1,
+            "2026-09-23T00:00:00Z",
+            "CLI",
+            1,
+            accepted,
+            HEAD[:12],
+            1,
+            False,
+            None,
+            run_id,
+            None,
+            routed=routed,
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
@@ -521,6 +543,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            capture = self._cli_capture(
+                common,
+                decision_text="1\trouted\towner PR #2879\n",
+                routed=1,
+            )
+            self.assertEqual(capture.decisions, {1: ("routed", "owner PR #2879")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "routed count"):
+                self._cli_capture(
+                    common,
+                    decision_text="1\trouted\towner PR #2879\n",
+                    routed=0,
+                )
 
     def test_uncheckpointed_raw_positive_capture_is_discovered_without_decision_validation(self):
         with tempfile.TemporaryDirectory() as directory:
