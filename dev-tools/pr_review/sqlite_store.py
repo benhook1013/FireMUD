@@ -7,22 +7,86 @@ operator-controlled migration.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import fcntl
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .state import ReviewState, StateError
+from .state import ReviewState, StateError, _locked
 
 SQLITE_SCHEMA_VERSION = 1
 WRITER_BUILD = 1
 _METADATA_TABLE = "controller_metadata"
 _STATE_TABLE = "review_state"
+
+
+def _atomic_exchange(first: Path, second: Path) -> None:
+    """Atomically exchange two sibling directory entries on Linux."""
+
+    if sys.platform != "linux":
+        raise StateError("atomic SQLite cutover requires Linux renameat2 support")
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except AttributeError as exc:
+        raise StateError("atomic SQLite cutover requires Linux renameat2 support") from exc
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    result = renameat2(-100, os.fsencode(first), -100, os.fsencode(second), 2)
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.ENOSYS, errno.EINVAL, getattr(errno, "EOPNOTSUPP", errno.EINVAL)}:
+        raise StateError("filesystem does not support atomic SQLite cutover")
+    raise OSError(error_number, os.strerror(error_number), str(first), str(second))
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _remove_created_database(path: Path, identity: tuple[int, int] | None) -> None:
+    if identity is None:
+        return
+    try:
+        current = path.stat(follow_symlinks=False)
+        if (current.st_dev, current.st_ino) == identity and path.is_file() and not path.is_symlink():
+            path.unlink()
+    except OSError:
+        # Preserve uncertain state rather than risk removing a replacement.
+        return
+
+
+def _remove_staged_cutover(
+    directory: Path,
+    identity: tuple[int, int] | None,
+    marker: Path | None,
+    marker_bytes: bytes | None,
+) -> None:
+    if identity is None or marker is None or marker_bytes is None:
+        return
+    try:
+        current = directory.stat(follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != identity or not directory.is_dir() or directory.is_symlink():
+            return
+        if marker.read_bytes() != marker_bytes:
+            return
+        marker.unlink()
+        directory.rmdir()
+    except OSError:
+        # Keep unexpected files or replacements for inspection.
+        return
 
 
 class SqliteStateStore:
@@ -227,6 +291,159 @@ class SqliteStateStore:
         finally:
             temporary.unlink(missing_ok=True)
             temporary.with_name(f".{temporary.name}.lock").unlink(missing_ok=True)
+
+    @classmethod
+    def migrate_legacy_json(
+        cls,
+        legacy_path: str | os.PathLike[str],
+        database_path: str | os.PathLike[str],
+        *,
+        writer_build: int = WRITER_BUILD,
+    ) -> SqliteStateStore:
+        """Validate, import, and atomically fence one legacy JSON state file.
+
+        The source is retained at ``<legacy_path>.migrated``. Its former path
+        becomes a directory with a cutover marker. That path shape makes the
+        old JSON loader fail closed and makes its atomic ``os.replace`` writer
+        unable to replace the directory. The exchange is Linux-only and
+        requires ``renameat2(RENAME_EXCHANGE)``; unsupported filesystems fail
+        before cutover rather than using a non-atomic two-rename fallback.
+        """
+
+        source_input = Path(legacy_path).expanduser().absolute()
+        target_input = Path(database_path).expanduser().absolute()
+        source = source_input.parent.resolve() / source_input.name
+        target = target_input.parent.resolve() / target_input.name
+        retained_source = source.with_name(f"{source.name}.migrated")
+        if (
+            target == source
+            or target == retained_source
+            or source in target.parents
+            or retained_source in target.parents
+        ):
+            raise StateError("SQLite migration target must be separate from the legacy state path")
+        if not source.parent.is_dir():
+            raise StateError("legacy review-state directory does not exist")
+
+        database_identity: tuple[int, int] | None = None
+        staging_identity: tuple[int, int] | None = None
+        marker_bytes: bytes | None = None
+        exchanged = False
+        marker_path: Path | None = None
+
+        # StateStore.save/update use this same fixed per-directory lock. Keep
+        # cooperating legacy writers out until the JSON path has been fenced.
+        with _locked(source.with_name(".pr-review-stack.lock")):
+            if source.is_symlink() or not source.is_file():
+                raise StateError("legacy review-state path must be an existing regular JSON file")
+            if os.path.lexists(target):
+                raise StateError(f"SQLite migration target already exists: {target}")
+            if os.path.lexists(retained_source):
+                raise StateError(f"legacy state retention path already exists: {retained_source}")
+
+            original_stat = source.stat(follow_symlinks=False)
+            original_identity = (original_stat.st_dev, original_stat.st_ino)
+            try:
+                original_bytes = source.read_bytes()
+                document = json.loads(original_bytes.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise StateError("cannot read legacy review-state JSON for migration") from exc
+            if not isinstance(document, Mapping):
+                raise StateError("legacy review-state JSON must contain an object")
+            imported = ReviewState.from_dict(document)
+
+            store = cls.import_legacy_json(source, target, writer_build=writer_build)
+            try:
+                database_stat = target.stat(follow_symlinks=False)
+                database_identity = (database_stat.st_dev, database_stat.st_ino)
+
+                readback = store.load()
+                if readback.to_dict() != imported.to_dict():
+                    raise StateError("SQLite migration preflight readback differs from legacy state")
+                status = store.status()
+                minimum_build = status.get("min_writer_build") if isinstance(status, Mapping) else None
+                running_build = status.get("running_writer_build") if isinstance(status, Mapping) else None
+                sqlite_schema = status.get("schema_version") if isinstance(status, Mapping) else None
+                state_schema = status.get("data_model_version") if isinstance(status, Mapping) else None
+                if (
+                    not isinstance(status, Mapping)
+                    or status.get("compatible") is not True
+                    or isinstance(sqlite_schema, bool)
+                    or not isinstance(sqlite_schema, int)
+                    or sqlite_schema != SQLITE_SCHEMA_VERSION
+                    or isinstance(state_schema, bool)
+                    or not isinstance(state_schema, int)
+                    or state_schema != imported.schema_version
+                    or isinstance(minimum_build, bool)
+                    or not isinstance(minimum_build, int)
+                    or minimum_build <= 0
+                    or isinstance(running_build, bool)
+                    or not isinstance(running_build, int)
+                    or running_build <= 0
+                    or running_build < minimum_build
+                ):
+                    reason = status.get("reason") if isinstance(status, Mapping) else "invalid compatibility status"
+                    raise StateError(f"SQLite migration compatibility preflight failed: {reason}")
+
+                current_stat = source.stat(follow_symlinks=False)
+                if (
+                    (current_stat.st_dev, current_stat.st_ino) != original_identity
+                    or source.read_bytes() != original_bytes
+                ):
+                    raise StateError("legacy review-state JSON changed during migration preflight")
+
+                retained_source.mkdir(mode=0o700)
+                staging_stat = retained_source.stat(follow_symlinks=False)
+                staging_identity = (staging_stat.st_dev, staging_stat.st_ino)
+                marker_path = retained_source / "sqlite-cutover.json"
+                marker = {
+                    "format": "firemud-pr-review-sqlite-cutover",
+                    "database": str(target),
+                    "sqlite_schema_version": SQLITE_SCHEMA_VERSION,
+                    "state_schema_version": imported.schema_version,
+                    "min_writer_build": minimum_build,
+                }
+                marker_bytes = (
+                    json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n"
+                ).encode("utf-8")
+                with marker_path.open("xb") as handle:
+                    handle.write(marker_bytes)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                _fsync_directory(retained_source)
+                _fsync_directory(source.parent)
+                current_stat = source.stat(follow_symlinks=False)
+                if (
+                    (current_stat.st_dev, current_stat.st_ino) != original_identity
+                    or source.read_bytes() != original_bytes
+                ):
+                    raise StateError("legacy review-state JSON changed before cutover")
+                _atomic_exchange(source, retained_source)
+                exchanged = True
+                cutover_stat = source.stat(follow_symlinks=False)
+                retained_stat = retained_source.stat(follow_symlinks=False)
+                if (
+                    (cutover_stat.st_dev, cutover_stat.st_ino) != staging_identity
+                    or (retained_stat.st_dev, retained_stat.st_ino) != original_identity
+                    or not source.is_dir()
+                    or not retained_source.is_file()
+                    or (source / "sqlite-cutover.json").read_bytes() != marker_bytes
+                    or retained_source.read_bytes() != original_bytes
+                ):
+                    raise StateError("SQLite migration cutover postflight did not match its preflight")
+                try:
+                    _fsync_directory(source.parent)
+                except OSError as exc:
+                    raise StateError(
+                        "SQLite migration cutover is installed but directory durability could not be confirmed"
+                    ) from exc
+            except BaseException:
+                if not exchanged:
+                    _remove_staged_cutover(retained_source, staging_identity, marker_path, marker_bytes)
+                    _remove_created_database(target, database_identity)
+                raise
+
+            return cls(target, writer_build=writer_build)
 
     @property
     def _lock_path(self) -> Path:

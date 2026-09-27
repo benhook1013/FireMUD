@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
@@ -20,6 +21,7 @@ from pr_review.state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateStore,
     SummaryFindingDisposition,
 )
 
@@ -139,6 +141,93 @@ class SqliteStateStoreTest(unittest.TestCase):
         self.assertTrue(target.exists())
         self.assertTrue(imported_store.status()["compatible"])
         self.assertEqual(imported_store.status()["schema_version"], SQLITE_SCHEMA_VERSION)
+
+    def test_migration_round_trips_state_and_fences_legacy_json_readers_and_writers(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "sqlite" / "review-state.sqlite3"
+        old_store = StateStore(source)
+
+        migrated_store = SqliteStateStore.migrate_legacy_json(source, target)
+
+        self.assertEqual(migrated_store.load().to_dict(), original.to_dict())
+        self.assertTrue(migrated_store.status()["compatible"])
+        self.assertTrue(source.is_dir())
+        self.assertTrue((source / "sqlite-cutover.json").is_file())
+        retained_source = source.with_name(f"{source.name}.migrated")
+        self.assertEqual(retained_source.read_bytes(), source_bytes)
+
+        attempts = (
+            ("load", lambda: old_store.load()),
+            ("update", lambda: old_store.update(lambda _: ReviewState(ordered_prs=(9999,)))),
+            ("save", lambda: old_store.save(ReviewState(ordered_prs=(9999,)))),
+        )
+        for operation, attempt in attempts:
+            with self.subTest(operation=operation), self.assertRaises(StateError):
+                attempt()
+
+        # This invokes the old atomic-replace primitive directly, bypassing the
+        # new StateStore guard. A regular file cannot replace the cutover directory.
+        with self.assertRaises(OSError):
+            old_store._save_unlocked(ReviewState(ordered_prs=(9999,)))
+        self.assertTrue(source.is_dir())
+        self.assertEqual(retained_source.read_bytes(), source_bytes)
+        self.assertEqual(migrated_store.load().to_dict(), original.to_dict())
+        with self.assertRaisesRegex(StateError, "regular JSON file"):
+            SqliteStateStore.migrate_legacy_json(source, target)
+
+    def test_migration_rejects_incompatible_sqlite_preflight_without_cutover(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "review-state.sqlite3"
+
+        with (
+            patch.object(
+                SqliteStateStore,
+                "status",
+                return_value={
+                    "compatible": False,
+                    "schema_version": SQLITE_SCHEMA_VERSION,
+                    "data_model_version": original.schema_version,
+                    "min_writer_build": 2,
+                    "running_writer_build": 1,
+                    "reason": "database requires writer build 2",
+                },
+            ),
+            self.assertRaisesRegex(StateError, "compatibility preflight failed"),
+        ):
+            SqliteStateStore.migrate_legacy_json(source, target)
+
+        self.assertTrue(source.is_file())
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertFalse(target.exists())
+        self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
+
+    def test_migration_fails_before_cutover_when_atomic_exchange_is_unsupported(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "review-state.sqlite3"
+
+        with (
+            patch(
+                "pr_review.sqlite_store._atomic_exchange",
+                side_effect=StateError("filesystem does not support atomic SQLite cutover"),
+            ),
+            self.assertRaisesRegex(StateError, "filesystem does not support atomic SQLite cutover"),
+        ):
+            SqliteStateStore.migrate_legacy_json(source, target)
+
+        self.assertTrue(source.is_file())
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(StateStore(source).load().to_dict(), original.to_dict())
+        self.assertFalse(target.exists())
+        self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
 
     def test_import_refuses_existing_target_without_changing_it(self) -> None:
         source = self.root / "legacy.json"

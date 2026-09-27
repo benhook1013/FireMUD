@@ -1145,6 +1145,20 @@ class StateStore:
     def load(self) -> ReviewState:
         if not self.path.exists():
             return ReviewState()
+        if self.path.is_dir():
+            marker = self.path / "sqlite-cutover.json"
+            try:
+                with marker.open("r", encoding="utf-8") as handle:
+                    cutover = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                cutover = None
+            if isinstance(cutover, dict) and cutover.get("format") == "firemud-pr-review-sqlite-cutover":
+                database = cutover.get("database")
+                raise StateError(
+                    "review-stack JSON was migrated to SQLite"
+                    + (f": {database}" if isinstance(database, str) else "")
+                )
+            raise StateError("review-stack state path is a directory")
         try:
             with self.path.open("r", encoding="utf-8") as handle:
                 value = json.load(handle)
@@ -1158,6 +1172,8 @@ class StateStore:
         if not isinstance(state, ReviewState):
             raise TypeError("save expects ReviewState")
         with _locked(self.lock_path):
+            if self.path.is_dir():
+                raise StateError("cannot save review-stack JSON after SQLite cutover")
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: ReviewState) -> None:
