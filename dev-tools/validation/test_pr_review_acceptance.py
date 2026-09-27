@@ -137,6 +137,63 @@ class AcceptanceCliTest(unittest.TestCase):
                  "--reason", "legacy handoff"]
             )
 
+    def test_structured_routes_are_queryable_and_dispositions_close_target_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
+            common = [
+                "decide", "route", "open", "--source-pr", "2828", "--channel", "hosted",
+                "--review", "901", "--finding", "thread-77", "--target-pr", "2879", "--json",
+            ]
+            first = self.run_cli(
+                fixture,
+                isolated,
+                *common[:-1],
+                "--observation",
+                "shared behavior belongs to the child",
+                "--json",
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            route = json.loads(first.stdout)["route"]
+            repeat = self.run_cli(
+                fixture,
+                isolated,
+                *common[:-1],
+                "--observation",
+                "same finding observed again",
+                "--json",
+            )
+            self.assertEqual(repeat.returncode, 0, repeat.stderr)
+            repeated_route = json.loads(repeat.stdout)["route"]
+            self.assertEqual(repeated_route["route_id"], route["route_id"])
+            self.assertEqual(len(repeated_route["observations"]), 2)
+
+            incoming = self.run_cli(fixture, isolated, "routes", "--target-pr", "2879", "--json")
+            self.assertEqual(incoming.returncode, 0, incoming.stderr)
+            self.assertEqual(json.loads(incoming.stdout)["count"], 1)
+            unassigned = self.run_cli(fixture, isolated, "routes", "--unassigned", "--json")
+            self.assertEqual(unassigned.returncode, 0, unassigned.stderr)
+            self.assertEqual(json.loads(unassigned.stdout)["count"], 0)
+
+            resolved = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "route",
+                "accepted-fixed",
+                "--route-id",
+                route["route_id"],
+                "--proof",
+                "verified at " + HEAD_2,
+                "--json",
+            )
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+            self.assertEqual(json.loads(resolved.stdout)["route"]["status"], "accepted_fixed")
+            after = self.run_cli(fixture, isolated, "routes", "--target-pr", "2879", "--json")
+            self.assertEqual(json.loads(after.stdout)["count"], 0)
+
     def test_live_status_never_calls_an_exhausted_allocation_merge_ready(self):
         report = {
             "pull_request": {"headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE},
