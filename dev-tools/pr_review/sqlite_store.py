@@ -7,12 +7,13 @@ operator-controlled migration.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
 import tempfile
-from collections.abc import Callable, Mapping
-from contextlib import closing
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -69,13 +70,18 @@ class SqliteStateStore:
         if not callable(mutate):
             raise TypeError("mutate must be callable")
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        created = self._create_empty_file_exclusively()
+        with self._exclusive_update_lock():
+            return self._update_locked(mutate)
+
+    def _update_locked(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+        created_identity = self._create_empty_file_exclusively()
         connection: sqlite3.Connection | None = None
+        committed = False
         try:
             connection = sqlite3.connect(self.path, timeout=self.timeout, isolation_level=None)
             connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
             connection.execute("BEGIN IMMEDIATE")
-            if created:
+            if created_identity is not None:
                 self._initialize(connection, self.writer_build)
             else:
                 self._require_compatible(connection)
@@ -95,10 +101,16 @@ class SqliteStateStore:
                 (payload,),
             )
             connection.commit()
+            committed = True
             return updated
-        except Exception:
+        except BaseException:
             if connection is not None and connection.in_transaction:
                 connection.rollback()
+            if connection is not None:
+                connection.close()
+                connection = None
+            if not committed and created_identity is not None:
+                self._unlink_created_database(created_identity)
             raise
         finally:
             if connection is not None:
@@ -214,16 +226,43 @@ class SqliteStateStore:
             return cls(target, writer_build=writer_build)
         finally:
             temporary.unlink(missing_ok=True)
+            temporary.with_name(f".{temporary.name}.lock").unlink(missing_ok=True)
 
-    def _create_empty_file_exclusively(self) -> bool:
+    @property
+    def _lock_path(self) -> Path:
+        return self.path.with_name(f".{self.path.name}.lock")
+
+    @contextmanager
+    def _exclusive_update_lock(self) -> Iterator[None]:
+        descriptor = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    def _create_empty_file_exclusively(self) -> tuple[int, int] | None:
         if self.path.is_symlink():
             raise StateError("SQLite review-state path must not be a symlink")
         try:
             descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
         except FileExistsError:
-            return False
+            return None
+        identity = os.fstat(descriptor)
         os.close(descriptor)
-        return True
+        return (identity.st_dev, identity.st_ino)
+
+    def _unlink_created_database(self, identity: tuple[int, int]) -> None:
+        try:
+            current = self.path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if (current.st_dev, current.st_ino) == identity and not self.path.is_symlink():
+            self.path.unlink()
 
     def _connect_read_only(self) -> sqlite3.Connection:
         if self.path.is_symlink():

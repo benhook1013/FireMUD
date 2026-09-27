@@ -164,6 +164,28 @@ class SqliteStateStoreTest(unittest.TestCase):
 
         self.assertEqual(store.load(), initial)
 
+    def test_failed_first_update_removes_unusable_database_path(self) -> None:
+        def fail_mutator(_: ReviewState) -> ReviewState:
+            raise RuntimeError("failed before commit")
+
+        failures = (
+            ("mutator", RuntimeError, fail_mutator),
+            ("validation", TypeError, lambda _: "not a ReviewState"),
+        )
+        for name, exception, mutate in failures:
+            with self.subTest(failure=name):
+                database = self.root / f"first-{name}.sqlite3"
+                store = SqliteStateStore(database)
+
+                with self.assertRaises(exception):
+                    store.update(mutate)
+
+                self.assertFalse(database.exists())
+                self.assertEqual(store.status()["format"], "missing")
+
+                recovered = store.update(lambda _: dataclasses.replace(ReviewState(), ordered_prs=(2828,)))
+                self.assertEqual(recovered.ordered_prs, (2828,))
+
     def test_too_old_writer_is_refused_without_database_change(self) -> None:
         database = self.root / "state.sqlite3"
         newer_store = SqliteStateStore(database, writer_build=2)
