@@ -127,3 +127,8 @@ Entry format:
   - Context: the Account response-envelope Secret materializer emitted canonical UTC timestamps with trailing fractional zeroes removed. A broad developer-tool run intermittently failed its CLI readback although focused tests using whole-second timestamps passed.
   - Observation: this runner's Python `datetime.fromisoformat` rejected a valid five-digit fractional-second timestamp such as `.00101Z` after offset normalization. A timestamp round-trip sweep reproduced the defect, and the parser was changed to accept the contract's one-to-six fractional digits explicitly; the full 112-test developer-tool suite then passed.
   - Expected pattern: test exact writer-to-reader timestamp round trips across fractional precisions, including live-clock output, before treating a source-generation/freshness readback as reliable.
+
+- `2026-09-27`: Proto-touching Gradle proof may need configuration cache disabled
+  - Context: a combined Account and Game Session focused check regenerated protobuf sources after a membership wire change.
+  - Observation: Gradle 9.5.1 reached Java/test work but failed while storing its configuration cache because the protobuf plugin's `GenerateProtoTask` captured unsupported project and source-directory objects. The same canonical tasks passed with `--no-configuration-cache`; the first failed exit was not valid test proof even though some tasks had run.
+  - Expected pattern: for proto-affecting validation, pass `--no-configuration-cache` when this plugin error appears, retain the canonical task paths and service locks, and report the successful rerun rather than treating partial task output as a green gate.
