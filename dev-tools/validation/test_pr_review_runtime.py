@@ -1303,8 +1303,8 @@ class RuntimeTest(unittest.TestCase):
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
-            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
-            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
         )
         now = datetime.now(timezone.utc).replace(microsecond=0)
         created = (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
@@ -1504,7 +1504,7 @@ class RuntimeTest(unittest.TestCase):
 
         wrong_duration = {
             **checkpoint,
-            "body": checkpoint["body"].replace("120s", "121s").replace("seconds: 120", "seconds: 121"),
+            "body": checkpoint["body"].replace("2m 00s", "2m 01s").replace("seconds: 120", "seconds: 121"),
         }
         wrong_duration_history = history_for([trigger, summary, reply, wrong_duration])
         self.assertFalse(
@@ -2566,8 +2566,8 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
-            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=101)
-            cli_history = self._history(Path(directory), payload, "cli", changed_files=101)
+            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=301)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=301)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -2619,20 +2619,26 @@ class RuntimeTest(unittest.TestCase):
             stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
             stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=100)
+            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=300)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             stale_over_ceiling_history = self._history(
-                Path(directory), stale_over_ceiling_payload, "cli", changed_files=101
+                Path(directory), stale_over_ceiling_payload, "cli", changed_files=301
             )
             self.assertFalse(any(item.get("over_ceiling") for item in stale_over_ceiling_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            current_history = self._history(Path(directory), current_payload, "cli", changed_files=101)
+            for changed_files in (101, 300):
+                within_ceiling_history = self._history(
+                    Path(directory), current_payload, "cli", changed_files=changed_files
+                )
+                self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_history))
+
+            current_history = self._history(Path(directory), current_payload, "cli", changed_files=301)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
             later_completion = {
@@ -2646,7 +2652,7 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
+            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=301)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
 
     def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:

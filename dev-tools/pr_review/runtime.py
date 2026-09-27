@@ -32,7 +32,7 @@ _PLAN_CEILING_PATTERN = re.compile(
     r"|(?:plan|review).{0,120}(?:file|files).{0,120}"
     r"(?:limit|ceiling|maximum|cap).{0,120}(?:exceed\w*|too many|over|reject\w*|skip\w*))"
 )
-_CODERABBIT_FILE_CEILING = 100
+_CODERABBIT_FILE_CEILING = 300
 _PREPOST_ABANDONED_PATTERN = re.compile(r"^prepost-abandoned-[0-9a-f]{20}\.json$")
 
 

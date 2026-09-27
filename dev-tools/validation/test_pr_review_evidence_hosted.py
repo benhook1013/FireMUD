@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted
+from pr_review.cli_runner import ReviewResult
 
 REPO = "owner/repo"
 PR = 42
@@ -75,6 +76,27 @@ def trigger_record(head: str = HEAD):
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_cli_result_exposes_human_duration_without_changing_seconds_or_marker(self):
+        result = ReviewResult(
+            run_id="run.A1",
+            pull_request=PR,
+            candidate_sha=HEAD,
+            parent_sha=BASE,
+            merge_base=BASE,
+            published_files=3,
+            candidate_files=3,
+            published_status="current",
+            provisional=False,
+            duration_seconds=487,
+            exit_status=0,
+            capture_dir=Path("/tmp/review-capture"),
+        )
+
+        rendered = result.as_dict()
+        self.assertEqual(rendered["duration_seconds"], 487)
+        self.assertEqual(rendered["duration_display"], "8m 07s")
+        self.assertEqual(rendered["duration_marker"], "<!-- firemud-review-duration-seconds: 487 -->")
+
     def test_summary_counts_require_anchored_canonical_lines(self):
         body = (
             "The review discusses Outside diff range comments and Duplicate comments in prose.\n"
@@ -285,11 +307,19 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "body": "CLI: 1 found / 1 accepted · `abcdef1` · 3 files · 9s\n<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
                 "created_at": "2026-09-23T00:01:00Z",
             },
+            {
+                "id": 3,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 3 files · 1h 08m 07s\n"
+                "<!-- firemud-hosted-review: 11 -->\n<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:02:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
         self.assertEqual(unparsed, 0)
         self.assertIsNone(parsed[0].duration_seconds)
         self.assertEqual(parsed[1].duration_seconds, 9)
+        self.assertEqual(parsed[2].duration_seconds, 4087)
+        self.assertEqual(parsed[2].as_json()["duration_display"], "1h 08m 07s")
 
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
@@ -347,6 +377,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "<!-- firemud-review-duration-seconds: 4 -->",
                 "created_at": "2026-09-23T00:06:00Z",
             },
+            {
+                "id": 8,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 487 -->",
+                "created_at": "2026-09-23T00:07:00Z",
+            },
+            {
+                "id": 9,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 1h 08m 07s\n"
+                "<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:08:00Z",
+            },
+            {
+                "id": 10,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 486 -->",
+                "created_at": "2026-09-23T00:09:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
 
@@ -356,13 +404,19 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[1].duration_seconds, 4)
         self.assertEqual(parsed[2].duration_seconds, 4)
         self.assertFalse(parsed[2].duration_invalid)
-        self.assertTrue(all(item.duration_invalid for item in parsed[3:]))
+        self.assertTrue(all(item.duration_invalid for item in parsed[3:7]))
+        self.assertEqual(parsed[7].duration_seconds, 487)
+        self.assertEqual(parsed[8].duration_seconds, 4087)
+        self.assertIsNone(parsed[9].duration_seconds)
+        self.assertTrue(parsed[9].duration_invalid)
+        self.assertEqual(evidence.format_duration_seconds(487), "8m 07s")
+        self.assertEqual(evidence.format_duration_seconds(4087), "1h 08m 07s")
         self.assertTrue(evidence.hosted_checkpoint_evidence(parsed[5], [], HEAD)["status"] == "missing")
         report = evidence.collect_evidence(comments)
         self.assertEqual(report["duration_audit"]["malformed_count"], 1)
         self.assertEqual(report["duration_audit"]["duplicate_count"], 1)
         self.assertEqual(report["duration_audit"]["missing_count"], 2)
-        self.assertEqual(report["duration_audit"]["mismatch_count"], 1)
+        self.assertEqual(report["duration_audit"]["mismatch_count"], 2)
 
     def test_malformed_private_capture_fails_closed(self):
         checkpoint = evidence.Checkpoint(
