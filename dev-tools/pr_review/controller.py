@@ -4990,9 +4990,20 @@ class ReviewController:
             for number in eligible_prs
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         ):
+            status_state = state
+            selected_indexes = [
+                index for index, number in enumerate(state.ordered_prs) if number in eligible_prs
+            ]
+            if selected_indexes and len(eligible_prs) != len(state.ordered_prs):
+                # A selected evidence read still needs the selected PR's complete
+                # ancestor identity chain, but it must not ask _live_snapshots
+                # to reconcile unrelated tail PRs without their batched IDs.
+                status_state = dataclasses.replace(
+                    state,
+                    ordered_prs=state.ordered_prs[: max(selected_indexes) + 1],
+                )
             status = self._status_from_state(
-                state,
-                evidence_prs=set(eligible_prs),
+                status_state,
                 history_cache=history_cache,
             )
             canonical_allocations = {

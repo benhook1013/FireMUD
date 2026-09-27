@@ -858,6 +858,66 @@ class ControllerTests(unittest.TestCase):
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
+    def test_selected_evidence_allocation_uses_only_selected_pr_ancestor_scope(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+            3: pr(3, HEAD_3, "feature-2", HEAD_2),
+        }
+        zero_result = self.allocation_evidence(
+            number=2,
+            head=HEAD_2,
+            checkpoint="hosted-zero-before-allocation",
+            accepted=0,
+            raw=0,
+            parent_identity="1",
+            parent_head=HEAD_1,
+            patch_id=f"patch-{HEAD_2[:4]}",
+        )
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    number=1,
+                    head=HEAD_1,
+                    checkpoint="hosted-prior-complete",
+                    accepted=0,
+                    raw=0,
+                )
+            ],
+            (2, "hosted"): [zero_result],
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="hosted-zero-before-allocation",
+            cap=1,
+            minimum=1,
+            evidence=evidence,
+            values=values,
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2, "feature-3": HEAD_3},
+            pr_number=2,
+        )
+        pull_requests = []
+        original_pull_request = controller.github.pull_request
+
+        def record_pull_request(number):
+            pull_requests.append(number)
+            return original_pull_request(number)
+
+        controller.github.pull_request = record_pull_request
+
+        row = controller.evidence(2)["2"]
+
+        self.assertEqual(pull_requests, [1, 2])
+        zero_history = [
+            item for item in row["hosted"] if item["checkpoint"] == "hosted-zero-before-allocation"
+        ]
+        self.assertEqual(len(zero_history), 1)
+        self.assertEqual(zero_history[0]["accepted"], 0)
+        self.assertTrue(zero_history[0]["completed"])
+        allocation = row["allocations"]["hosted"]
+        self.assertEqual(allocation["baseline_checkpoint"], "hosted-zero-before-allocation")
+        self.assertEqual(allocation["minimum_additional_completed"], 1)
+        self.assertEqual(allocation["completed_count"], 0)
+
     def test_bounded_allocation_can_be_granted_before_first_review(self):
         evidence = {(1, "hosted"): []}
         controller = self.grant_bounded_allocation(
