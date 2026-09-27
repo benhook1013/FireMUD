@@ -3,12 +3,13 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
-import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
@@ -82,7 +83,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
-  @Autowired private TemplateRemapSetService templateRemapSetService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
@@ -180,7 +180,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.PENDING);
     attempt.setVersionId(savedVersion.getId());
     attempt.setVersionNumber(savedVersion.getVersionNumber());
-    PublishAttempt savedAttempt = publishAttemptRepository.save(attempt);
+    publishAttemptRepository.save(attempt);
+    PublishAttempt savedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
 
     PublishAttempt backfilled =
         publishAttemptRepository
@@ -295,6 +297,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     long sourceVersionId = sourceVersion.getId();
     AtomicReference<Long> candidateVersionId = new AtomicReference<>();
     AtomicReference<String> remapSetId = new AtomicReference<>();
+    AtomicBoolean exportCompleted = new AtomicBoolean();
+    AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -305,16 +309,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
             invocation -> {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
-              TemplateRemapSetDto draftRemapSet =
-                  templateRemapSetService.createTemplateRemapSet(
-                      tenantId,
-                      sourceVersionId,
-                      candidate.id(),
-                      "approved remap references publication candidate",
-                      List.of());
-              remapSetId.set(draftRemapSet.remapSetId());
-              templateRemapSetService.approveTemplateRemapSet(
-                  tenantId, draftRemapSet.remapSetId(), "approved for replacement launch");
               return List.of(
                   new PublishParticipantDigestDto(
                       "GAME_DESIGN_CONTROL_PLANE",
@@ -327,8 +321,28 @@ class PublishAttemptServiceTransactionIntegrationTest {
             });
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
-    Mockito.when(assetExportService.exportAssets(tenantId, 2)).thenReturn(exportedManifest);
-    Mockito.doThrow(new IllegalStateException("forced finalization failure"))
+    Mockito.when(assetExportService.exportAssets(tenantId, 2))
+        .thenAnswer(
+            invocation -> {
+              VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
+              approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
+              approvedRemapSet.setTenantId(tenantId);
+              approvedRemapSet.setSourceVersionId(sourceVersionId);
+              approvedRemapSet.setTargetVersionId(candidateVersionId.get());
+              approvedRemapSet.setStatus(TemplateRemapSetStatus.APPROVED);
+              approvedRemapSet.setCreatedReason("approved remap references publication candidate");
+              approvedRemapSet.setApprovalReason("approved for replacement launch");
+              approvedRemapSet.setApprovedAt(LocalDateTime.now());
+              templateRemapSetRepository.save(approvedRemapSet);
+              remapSetId.set(approvedRemapSet.getRemapSetId());
+              exportCompleted.set(true);
+              return exportedManifest;
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              finalizationFailureInjected.set(true);
+              throw new IllegalStateException("forced finalization failure");
+            })
         .when(versionAssetArtifactService)
         .markPublished(
             Mockito.eq(tenantId),
@@ -343,10 +357,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
                     tenantId, "failed remap proof", publishRequestId, publishWorkflowId))
         .isInstanceOf(RuntimeException.class);
 
-    Mockito.verify(assetExportService).exportAssets(tenantId, 2);
+    assertThat(exportCompleted.get()).isTrue();
+    assertThat(finalizationFailureInjected.get()).isTrue();
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
     assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
@@ -364,6 +380,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
             .orElseThrow();
     assertThat(retainedRemapSet.getStatus()).isEqualTo(TemplateRemapSetStatus.APPROVED);
+    assertThat(retainedRemapSet.getApprovedAt()).isNotNull();
     assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
     assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
   }

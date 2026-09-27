@@ -5061,8 +5061,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setScriptPatchVersion("patch-1");
     RemoteCommandCoordinatorRepository coordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
-    Mockito.when(
-            coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-foreign-origin"))
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-foreign-origin"))
         .thenReturn(Optional.of(coordinator));
     RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     GameInstance foreignOrigin = runningGameInstance();
