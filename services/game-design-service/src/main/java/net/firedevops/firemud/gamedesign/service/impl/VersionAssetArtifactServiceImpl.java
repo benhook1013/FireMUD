@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetDeletionEligibilityDto;
@@ -68,10 +69,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   @Override
   @Transactional(readOnly = true)
   public VersionAssetArtifactStateDto getState(String tenantId, long versionId) {
-    return repository
-        .findByTenantIdAndVersionId(tenantId, versionId)
-        .map(this::toDto)
+    return findState(tenantId, versionId)
         .orElseThrow(() -> new IllegalArgumentException("version asset artifact state not found"));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<VersionAssetArtifactStateDto> findState(String tenantId, long versionId) {
+    return repository.findByTenantIdAndVersionId(tenantId, versionId).map(this::toDto);
   }
 
   @Override
