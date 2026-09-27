@@ -151,6 +151,7 @@ final class GameSessionOperatorControlPlaneService {
               request.getActorPrincipal(),
               request.getReason(),
               expected,
+              validation.validatedBaseVersionId(),
               validation.errorCode()));
     }
     ScriptPinMutationResult result =
@@ -195,6 +196,7 @@ final class GameSessionOperatorControlPlaneService {
               request.getActorPrincipal(),
               request.getReason(),
               expected,
+              validation.validatedBaseVersionId(),
               validation.errorCode()));
     }
     ScriptPinMutationResult result =
@@ -410,7 +412,24 @@ final class GameSessionOperatorControlPlaneService {
       String actorPrincipal,
       String reason,
       ExpectedCurrentPin expected,
+      Long validatedBaseVersionId,
       String errorCode) {
+    if (validatedBaseVersionId != null) {
+      return gameInstanceRepository.recordScriptPinFailure(
+          tenantId,
+          gameInstanceId,
+          operationKind,
+          targetScriptPatchVersion,
+          controlPlaneRequestId,
+          actorPrincipal,
+          reason,
+          canonicalExpectedPinKind(expected),
+          expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
+              ? expected.getScriptPinEpoch()
+              : null,
+          validatedBaseVersionId,
+          errorCode);
+    }
     return gameInstanceRepository.recordScriptPinFailure(
         tenantId,
         gameInstanceId,

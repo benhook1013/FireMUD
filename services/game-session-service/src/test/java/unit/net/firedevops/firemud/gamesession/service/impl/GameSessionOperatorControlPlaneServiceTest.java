@@ -334,6 +334,7 @@ class GameSessionOperatorControlPlaneServiceTest {
             "pin",
             "EXPECT_UNPINNED",
             null,
+            100L,
             "SCRIPT_PATCH_NOT_READY"))
         .thenReturn(
             new ScriptPinMutationResult(
@@ -410,6 +411,7 @@ class GameSessionOperatorControlPlaneServiceTest {
             "pin",
             "EXPECT_UNPINNED",
             null,
+            999L,
             "SCRIPT_PATCH_BASE_VERSION_MISMATCH"))
         .thenReturn(
             new ScriptPinMutationResult(

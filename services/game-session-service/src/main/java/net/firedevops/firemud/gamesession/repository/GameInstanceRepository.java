@@ -264,8 +264,7 @@ public class GameInstanceRepository {
                   actorPrincipal,
                   reason,
                   expectedPinKind,
-                  expectedScriptPinEpoch,
-                  validatedBaseVersionId);
+                  expectedScriptPinEpoch);
 
           Long lockedRuntimeVersionId =
               RuntimeVersionIdResolver.resolve(
@@ -515,8 +514,7 @@ public class GameInstanceRepository {
                   actorPrincipal,
                   reason,
                   expectedPinKind,
-                  expectedScriptPinEpoch,
-                  validatedBaseVersionId);
+                  expectedScriptPinEpoch);
           ScriptPinMutationResult result =
               new ScriptPinMutationResult(
                   previousPatch,
@@ -595,8 +593,7 @@ public class GameInstanceRepository {
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch,
-            validatedBaseVersionId),
+            expectedScriptPinEpoch),
         mutationDigest(
             tenantId,
             gameInstanceId,
@@ -605,8 +602,7 @@ public class GameInstanceRepository {
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch,
-            validatedBaseVersionId),
+            expectedScriptPinEpoch),
         canDeriveRepin(operationKind));
   }
 
@@ -799,8 +795,9 @@ public class GameInstanceRepository {
       String actorPrincipal,
       String reason,
       String expectedPinKind,
-      Long expectedScriptPinEpoch,
-      Long validatedBaseVersionId) {
+      Long expectedScriptPinEpoch) {
+    // Digest only normalized caller inputs; the resolved publication base is mutable authority
+    // evidence and remains persisted separately on the operation row and committed result.
     String normalized =
         String.join(
             "|",
@@ -811,8 +808,7 @@ public class GameInstanceRepository {
             canonical(actorPrincipal),
             canonical(reason),
             canonical(expectedPinKind),
-            canonical(expectedScriptPinEpoch),
-            canonical(validatedBaseVersionId));
+            canonical(expectedScriptPinEpoch));
     try {
       byte[] digest =
           MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(StandardCharsets.UTF_8));
