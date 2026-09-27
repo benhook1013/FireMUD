@@ -276,5 +276,35 @@ public interface ScriptWorkItemService {
     }
   }
 
-  record ReplayResult(long replayedCount, long rejectedCount) {}
+  record ReplayItemResult(
+      String workItemId,
+      String outcome,
+      String rejectionReason,
+      String failureReason,
+      long failureGeneration) {
+    public ReplayItemResult(
+        String workItemId, String outcome, String rejectionReason, long failureGeneration) {
+      this(workItemId, outcome, rejectionReason, "", failureGeneration);
+    }
+
+    public ReplayItemResult(String workItemId, String outcome, String rejectionReason) {
+      this(workItemId, outcome, rejectionReason, "", 0L);
+    }
+  }
+
+  record ReplayResult(
+      long replayedCount,
+      long rejectedCount,
+      List<ReplayItemResult> results,
+      String requestFingerprint) {
+    public ReplayResult {
+      results = results == null ? List.of() : List.copyOf(results);
+      requestFingerprint = requestFingerprint == null ? "" : requestFingerprint;
+    }
+
+    /** Compatibility constructor for callers that consume only aggregate counts. */
+    public ReplayResult(long replayedCount, long rejectedCount) {
+      this(replayedCount, rejectedCount, List.of(), "");
+    }
+  }
 }
