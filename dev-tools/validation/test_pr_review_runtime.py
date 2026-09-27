@@ -73,6 +73,12 @@ class RuntimeTest(unittest.TestCase):
             "body": "Full review triggered. I am reviewing the pull request now.",
             "createdAt": "2026-09-24T00:00:00Z",
         }
+        provider_skip = {
+            "databaseId": 75,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review skipped: 121 files exceed the limit of 100.",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
         ambiguous_comment = {
             "databaseId": 73,
             "body": "**Actionable comments posted:** 1",
@@ -80,6 +86,7 @@ class RuntimeTest(unittest.TestCase):
         }
         self.assertEqual(LiveEvidence._public_response_state(review, "submittedAt", {}), "completed")
         self.assertEqual(LiveEvidence._public_response_state(active_comment, "createdAt", {}), "active")
+        self.assertEqual(LiveEvidence._public_response_state(provider_skip, "createdAt", {}), "failed")
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
 
@@ -693,7 +700,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(completed[0]["accepted"], 0)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 100)
         target = ReviewTarget(
             snapshot,
             EffectiveParent("develop", BASE),
@@ -751,6 +758,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
             self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 101)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                self.assertRaisesRegex(ControllerError, "at most 100 changed files"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            self.assertFalse(path.exists())
 
     def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -1303,8 +1331,8 @@ class RuntimeTest(unittest.TestCase):
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
-            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
-            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
         )
         now = datetime.now(timezone.utc).replace(microsecond=0)
         created = (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
@@ -1504,7 +1532,7 @@ class RuntimeTest(unittest.TestCase):
 
         wrong_duration = {
             **checkpoint,
-            "body": checkpoint["body"].replace("120s", "121s").replace("seconds: 120", "seconds: 121"),
+            "body": checkpoint["body"].replace("2m 00s", "2m 01s").replace("seconds: 120", "seconds: 121"),
         }
         wrong_duration_history = history_for([trigger, summary, reply, wrong_duration])
         self.assertFalse(
@@ -2538,7 +2566,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(pending[0]["held"])
             self.assertIn("older head", pending[0]["reason"])
 
-    def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
+    def test_hosted_findings_and_provider_skip_hold_hosted_but_not_cli(self) -> None:
         comments = [
             {
                 "databaseId": 20,
@@ -2566,8 +2594,8 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
-            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=101)
-            cli_history = self._history(Path(directory), payload, "cli", changed_files=101)
+            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=100)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=111)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -2583,7 +2611,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(any(item.get("checkpoint", "").startswith("review-threads:") for item in cli_history))
         self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
-        self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
 
     def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
         old_head = "d" * 40
@@ -2619,20 +2647,26 @@ class RuntimeTest(unittest.TestCase):
             stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
             stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=100)
+            stale_history = self._history(Path(directory), stale_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             stale_over_ceiling_history = self._history(
-                Path(directory), stale_over_ceiling_payload, "cli", changed_files=101
+                Path(directory), stale_over_ceiling_payload, "hosted", changed_files=121
             )
             self.assertFalse(any(item.get("over_ceiling") for item in stale_over_ceiling_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            current_history = self._history(Path(directory), current_payload, "cli", changed_files=101)
+            for changed_files in (100, 111):
+                within_ceiling_history = self._history(
+                    Path(directory), current_payload, "cli", changed_files=changed_files
+                )
+                self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_history))
+
+            current_history = self._history(Path(directory), current_payload, "hosted", changed_files=121)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
             later_completion = {
@@ -2646,8 +2680,40 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
+            completed_history = self._history(Path(directory), completed_payload, "hosted", changed_files=121)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
+
+    def test_provider_ceiling_skip_is_hosted_only_and_ignores_docstring_skips(self) -> None:
+        provider_skip = {
+            "databaseId": 40,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+                "<details><summary>⚠️ Action not completed</summary>\n\n"
+                "Review skipped: 121 files exceed the limit of 100.\n\n</details>"
+            ),
+            "createdAt": "2026-09-23T00:04:00Z",
+        }
+        docstring_skip = {
+            **provider_skip,
+            "databaseId": 41,
+            "body": "Docstring Coverage: 31 skipped files over the file limit.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            hosted_history = self._history(
+                Path(directory), self._payload([provider_skip]), "hosted", changed_files=121
+            )
+            cli_history = self._history(
+                Path(directory), self._payload([provider_skip]), "cli", changed_files=121
+            )
+            docstring_history = self._history(
+                Path(directory), self._payload([docstring_skip]), "hosted", changed_files=121
+            )
+
+        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in docstring_history))
 
     def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:
         first = {
@@ -2789,6 +2855,111 @@ class RuntimeTest(unittest.TestCase):
                 self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
             ):
                 review_cli._dispatch(args)
+            self.assertEqual(len(store.load().summary_dispositions), 1)
+
+    def test_routed_summary_disposition_accepts_exact_prior_head_after_live_head_advances(self) -> None:
+        live_head = "e" * 40
+        review = {
+            "databaseId": 77,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Duplicate comments (1)"
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[review], head=live_head)
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            controller = SimpleNamespace(repository="owner/repo", store=store)
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "routed",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "77",
+                    "--kind",
+                    "duplicate",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "observation belongs to the Automation child PR",
+                    "--target-pr",
+                    "2879",
+                    "--route-finding",
+                    "automation-base-observation",
+                    "--route-observation",
+                    "WorkItem base observation belongs to Automation",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "recorded")
+            state = store.load()
+            self.assertEqual(state.summary_dispositions[0].head, HEAD)
+            self.assertEqual(state.summary_dispositions[0].decision, "routed")
+            self.assertEqual(state.routes[0].target_pr, 2879)
+            self.assertEqual(state.routes[0].source_review, "summary:review:77")
+
+            # A wrong summary identity or head remains non-attributable.
+            args.summary_id = 78
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
+            ):
+                review_cli._dispatch(args)
+            args.summary_id = 77
+            args.head = "f" * 40
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
+            ):
+                review_cli._dispatch(args)
+
+            # The old-head exception applies only to routing, not adjudication.
+            rejected_args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "rejected",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "77",
+                    "--kind",
+                    "duplicate",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "not a source-lane finding",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "require the live PR head"),
+            ):
+                review_cli._dispatch(rejected_args)
             self.assertEqual(len(store.load().summary_dispositions), 1)
 
     def test_accepted_fixed_summary_disposition_uses_hyphenated_cli_choice(self) -> None:

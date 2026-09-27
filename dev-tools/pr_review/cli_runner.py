@@ -26,8 +26,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from . import evidence, hosted
 from . import github as github_api
-from . import hosted
 from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
 
@@ -222,6 +222,7 @@ class ReviewResult:
             "published_status": self.published_status,
             "provisional": self.provisional,
             "duration_seconds": self.duration_seconds,
+            "duration_display": evidence.format_duration_seconds(self.duration_seconds),
             "exit_status": self.exit_status,
             "capture_dir": str(self.capture_dir),
             "checkpoint_marker": f"<!-- firemud-cli-run: {self.run_id} -->",
