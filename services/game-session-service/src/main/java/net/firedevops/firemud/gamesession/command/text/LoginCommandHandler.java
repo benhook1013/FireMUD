@@ -337,6 +337,9 @@ public final class LoginCommandHandler {
                 existing.playableStateScope(),
                 existing.connectScopeId(),
                 existing.connectRequestId());
+    if (!sameAuthenticatedAccount && existing != null) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    }
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",

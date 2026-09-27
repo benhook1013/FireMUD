@@ -159,7 +159,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             request ->
                 request.getEmail().equals(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL)
                     && request.getPassword().equals(GameplayTelnetScenarios.DEMO_PASSWORD)
-                    && request.getTenantId().equals(String.valueOf(TENANT_ID)));
+                    && request.getDescriptorForType().findFieldByName("tenant_id") == null);
   }
 
   @Test
