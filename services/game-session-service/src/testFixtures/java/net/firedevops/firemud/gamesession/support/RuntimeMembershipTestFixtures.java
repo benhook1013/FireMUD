@@ -29,6 +29,11 @@ public final class RuntimeMembershipTestFixtures {
     return complete(accountId, tenantId, false, "MISSING", false, "1");
   }
 
+  public static GetTenantMembershipForRuntimeResponse inactive(
+      long accountId, long tenantId, String membershipVersion) {
+    return complete(accountId, tenantId, true, "INACTIVE", false, membershipVersion);
+  }
+
   public static GetTenantMembershipForRuntimeResponse echoRequestId(
       GetTenantMembershipForRuntimeResponse response, PlayerExecutionContext request) {
     return response.toBuilder().setRequestId(request.getRequestId()).build();
@@ -118,8 +123,10 @@ public final class RuntimeMembershipTestFixtures {
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
             .setEvaluatedAt(EVALUATED_AT);
-    if (exists) {
+    if (admitted) {
       response.addRoles("player");
+    }
+    if (exists) {
       response.addOutboxSourceEvidence(
           RuntimeOutboxSourceEvidence.newBuilder()
               .setOutboxStreamKey(membershipStream)

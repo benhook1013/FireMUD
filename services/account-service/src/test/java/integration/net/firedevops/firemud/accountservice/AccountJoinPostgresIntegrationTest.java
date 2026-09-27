@@ -1054,6 +1054,78 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
+  void runtimeMembershipSnapshotKeepsAbsenceAndFirstJoinEvidenceInOneFencedResult() {
+    JoinFixture fixture = fixture("active");
+    preparePairAuthorityBaseline(fixture);
+
+    var absent = readRuntimeMembershipSnapshot(fixture);
+    assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
+    assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+    assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
+    assertThat(absent.membershipExists()).isFalse();
+    assertThat(absent.gameplayAdmissionAllowed()).isFalse();
+    assertThat(absent.membershipBaseline().membershipLifecycleState()).isEqualTo("MISSING");
+    assertThat(absent.membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+    assertThat(absent.membershipBaseline().membershipAuthorityGeneration())
+        .isEqualTo(
+            absent
+                .authorityTuple()
+                .membershipAuthorityGeneration()
+                .get(fixture.tenantUuid().toString()));
+    assertThat(absent.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "0"));
+    assertThat(absent.outboxSourceEvidence()).isEmpty();
+    assertThat(absent.roles()).isEmpty();
+    assertThat(absent.issuanceFence()).matches("[1-9][0-9]*");
+
+    assertThat(join(fixture).success()).isTrue();
+    var active = readRuntimeMembershipSnapshot(fixture);
+    var event = readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent();
+    assertThat(active.membershipExists()).isTrue();
+    assertThat(active.gameplayAdmissionAllowed()).isTrue();
+    assertThat(active.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(active.membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(active.membershipBaseline().membershipAuthorityGeneration())
+        .isEqualTo(
+            active
+                .authorityTuple()
+                .membershipAuthorityGeneration()
+                .get(fixture.tenantUuid().toString()));
+    assertThat(active.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "1"));
+    assertThat(active.outboxSourceEvidence())
+        .containsExactly(
+            new OutboxSourceEvidence(
+                authorityStreamKey(fixture), "1", event.eventId(), event.eventDigest()));
+    assertThat(active.roles()).contains("player");
+    assertThat(active.issuanceFence()).matches("[1-9][0-9]*");
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsUnprovedPairAndContradictoryGeneration() {
+    JoinFixture missingPair = fixture("active");
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(missingPair))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Never-joined pair baseline is absent");
+
+    JoinFixture contradictoryPair = fixture("active");
+    preparePairAuthorityBaseline(contradictoryPair);
+    dsl.execute(
+        "UPDATE account_authority_generations SET generation = generation + 1, "
+            + "source_version = source_version + 1 WHERE scope_kind = 'MEMBERSHIP' "
+            + "AND account_uuid = ? AND tenant_uuid = ?",
+        contradictoryPair.accountUuid(),
+        contradictoryPair.tenantUuid());
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(contradictoryPair))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "membership authority generation cannot prove its sequence-zero baseline");
+  }
+
+  @Test
   void neverJoinedSnapshotRejectsMissingPairAndAbsentMembershipWithRetainedHistory() {
     JoinFixture missingPair = fixture("active");
     assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(missingPair))
@@ -1151,6 +1223,15 @@ class AccountJoinPostgresIntegrationTest {
         .execute(
             status ->
                 membershipAuthorityEventProducer.readNeverJoinedMembershipSnapshot(
+                    fixture.accountId(), fixture.tenantId()));
+  }
+
+  private net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto
+      readRuntimeMembershipSnapshot(JoinFixture fixture) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status ->
+                membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
                     fixture.accountId(), fixture.tenantId()));
   }
 
