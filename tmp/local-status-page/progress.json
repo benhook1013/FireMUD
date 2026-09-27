@@ -1,7 +1,7 @@
 {
   "reviewed_at": "2026-09-27T03:05:00Z",
   "headline": "Building a playable FireMUD",
-  "orientation": "Follow the main workstreams here and see when paused work should resume. Open PR Delivery for current reviews and merges; follow the linked domain trackers for detailed implementation and proof status.",
+  "orientation": "Track the main workstreams, return points, and rough implementation and proof by domain here. Open PR Delivery for current reviews and merges; each domain card links to its detailed tracker.",
   "tracks": [
     {
       "id": "decision-foundation",

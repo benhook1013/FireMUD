@@ -89,7 +89,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42"', result)
         self.assertIn('href="https://github.com/benhook1013/FireMUD"', result)
         self.assertIn('<form class="refresh-form" action="/refresh" method="post">', result)
-        self.assertIn('<span class="refresh-slot"><button type="submit">Refresh review data</button></span>', result)
+        self.assertIn('<span class="refresh-slot"><button type="submit">Refresh</button></span>', result)
         self.assertIn('<link rel="icon" type="image/svg+xml" href="/flame-ember.svg">', result)
         self.assertNotIn('href="/icon-options.html">Icon options</a>', result)
         self.assertIn('class="mast-inner"><div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt=""><h1 class="brand">FireMUD Delivery Status</h1>', result)
@@ -99,7 +99,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo";', result)
         self.assertIn('grid-template-areas: "title repo" "refresh refresh";', result)
         self.assertIn('width: 100%; height: 100%;', result)
-        self.assertIn("const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};", result)
+        self.assertIn("const stageLabel = {rendering: 'Loading', publishing: 'Saving'};", result)
         self.assertIn("form-action 'self'", result)
         self.assertIn("connect-src 'self'", result)
         refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
@@ -123,7 +123,9 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<span class="lane-state-icon" aria-hidden="true"></span>RUNNING', result)
         self.assertIn('<div class="lane-topline"><h3>Gameplay</h3><span class="lane-state', result)
         self.assertIn('justify-content: space-between; gap: .75rem; width: 100%; min-width: 0;', result)
-        self.assertIn('--smoke: #a51f27; --fire: #b71d35;', result)
+        self.assertIn(page.SHARED_CSS, result)
+        self.assertIn('--smoke: #a51f27;', result)
+        self.assertIn('--fire: #b71d35;', result)
         self.assertIn('.lane-content { padding: .8rem 1rem 1rem;', result)
         self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #37414a; font-size: 1.05rem; font-weight: 850;', result)
         self.assertIn('.cards { grid-template-columns: minmax(0,1fr); width: 100%; }', result)
@@ -193,9 +195,12 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('.refresh-form button {', result)
         self.assertIn('height: 2.1rem;', result)
         self.assertIn('line-height: 1.2; font-weight: 700;', result)
-        self.assertIn('header.mast { position: sticky; top: 0; z-index: 20;', result)
-        self.assertIn('.brand { display: block; min-width: 0; margin: 0;', result)
-        self.assertIn('.refresh-form { width: 10rem; height: 2.1rem;', result)
+        self.assertIn('header.mast {\n  position: sticky;', result)
+        self.assertIn('.brand, .mast-brand strong {', result)
+        self.assertIn('.refresh-form { position: absolute; right: calc(100% + .7rem);', result)
+        self.assertIn('width: 4.25rem; height: 2.1rem;', result)
+        self.assertIn('width: 100%; height: 1.65rem;', result)
+        self.assertIn('padding: .1rem .375rem;', result)
         self.assertIn('.refresh-space .refresh-time { margin: 0; white-space: nowrap; }', result)
         self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #37414a;', result)
         self.assertIn('.front-facts { grid-template-columns: 1fr; }', result)
@@ -462,7 +467,7 @@ let postCount = 0;
 let statusPhase = 'rendering';
 let resolvePost;
 const pending = new Promise(resolve => { resolvePost = resolve; });
-const button = {disabled: false, textContent: 'Refresh review data'};
+const button = {disabled: false, textContent: 'Refresh'};
 const progress = {textContent: ''};
 const form = {
   action: '/refresh', classList: {add() {}, remove() {}},
@@ -497,8 +502,8 @@ vm.runInNewContext(process.argv[1], {
 """
         run = subprocess.run(["node", "-e", javascript, page.REFRESH_SCRIPT], capture_output=True, text=True, check=True)
         result = json.loads(run.stdout)
-        self.assertEqual([True, "Refreshing · 0s", "Refreshing local review data", 1], result["initial"])
-        self.assertEqual(["Publishing · 18s", "Publishing public status page", 1], result["publishing"])
+        self.assertEqual([True, "Loading\n0s", "Refreshing local review data", 1], result["initial"])
+        self.assertEqual(["Saving\n18s", "Publishing public status page", 1], result["publishing"])
         self.assertTrue(result["reloaded"])
 
     @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
@@ -507,7 +512,7 @@ vm.runInNewContext(process.argv[1], {
 const vm = require('node:vm');
 async function failure(status) {
   let submit;
-  const button = {disabled: false, textContent: 'Refresh review data'};
+  const button = {disabled: false, textContent: 'Refresh'};
   const progress = {textContent: ''};
   const classes = {add() {}, remove() {}};
   const form = {
@@ -544,7 +549,7 @@ let tick;
 let phase = 'rendering';
 let posts = 0;
 let reloaded = false;
-const button = {disabled: false, textContent: 'Refresh review data'};
+const button = {disabled: false, textContent: 'Refresh'};
 const progress = {textContent: ''};
 const form = {
   action: '/refresh', classList: {add() {}, remove() {}},

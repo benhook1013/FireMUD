@@ -1,0 +1,82 @@
+/* Shared design language for the delivery and project-map snapshots. */
+:root {
+  color-scheme: light;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  --ash: #e9eef0;
+  --paper: #f9faf9;
+  --ink: #242832;
+  --muted: #57636c;
+  --line: #bfccd0;
+  --smoke: #a51f27;
+  --fire: #b71d35;
+  --ember: #e85137;
+  --blush: #fff0eb;
+  --plum: #7042a0;
+  --plum-wash: #f2ebf8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ash); color: var(--ink); }
+header.mast {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 3.75rem;
+  padding: .75rem clamp(1rem, 4vw, 3.5rem);
+  background: var(--smoke);
+  color: #fff;
+  border-bottom: 1px solid #671820;
+  box-shadow: 0 3px 10px #252b3933;
+}
+.mast-content, .mast-brand {
+  display: flex;
+  align-items: flex-end;
+  gap: .1rem;
+  min-width: 0;
+}
+.mast-icon, .mast-brand img {
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: none;
+  transform: translateY(-.25rem);
+}
+.brand, .mast-brand strong {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1rem, 2.2vw, 1.4rem);
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+.refresh-time, .mast-meta {
+  color: #f0e0e6;
+  font-size: .78rem;
+  line-height: 1.2;
+}
+.mast .repo-links a, .mast nav a {
+  color: #fff;
+  font-size: .86rem;
+  font-weight: 700;
+}
+.mast .nav-short { display: none; }
+main {
+  width: 100%;
+  max-width: 1440px;
+  margin: auto;
+  padding: 1rem clamp(1rem, 4vw, 3.5rem) 4rem;
+}
+.section-head h2, main section > h2 {
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+  letter-spacing: -.04em;
+}
+a:focus-visible, button:focus-visible {
+  outline: 3px solid #f6aa61;
+  outline-offset: 3px;
+}
+@media (max-width: 780px) {
+  .mast .nav-full { display: none; }
+  .mast .nav-short { display: inline; }
+  .mast .repo-links a, .mast nav a { font-size: .73rem; }
+}

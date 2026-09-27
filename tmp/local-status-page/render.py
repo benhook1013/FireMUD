@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from render_progress import render_current as render_project_map
 
 ROOT = Path(__file__).resolve().parent
+SHARED_CSS = (ROOT / "shared.css").read_text(encoding="utf-8")
 DEFAULT_INPUT = ROOT / "status.json"
 DEFAULT_OUTPUT = ROOT / "output" / "index.html"
 ASSET_FILES = (
@@ -43,7 +44,7 @@ REFRESH_SCRIPT = """(() => {
   let statusPending = false;
   let waitingForOther = false;
   let finishOther;
-  const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};
+  const stageLabel = {rendering: 'Loading', publishing: 'Saving'};
   const readStage = async () => {
     if (statusPending) return;
     statusPending = true;
@@ -79,7 +80,7 @@ REFRESH_SCRIPT = """(() => {
     form.classList.add('loading');
     const started = Date.now();
     const update = () => {
-      button.textContent = `${waitingForOther ? 'Waiting' : stageLabel[stage]} · ${Math.floor((Date.now() - started) / 1000)}s`;
+      button.textContent = `${waitingForOther ? 'Waiting' : stageLabel[stage]}\n${Math.floor((Date.now() - started) / 1000)}s`;
       void readStage();
     };
     update();
@@ -125,7 +126,7 @@ REFRESH_SCRIPT = """(() => {
       clearInterval(timer);
       form.classList.remove('loading');
       button.disabled = false;
-      button.textContent = 'Refresh review data';
+      button.textContent = 'Refresh';
     }
   });
 })();"""
@@ -723,7 +724,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
 <meta name="status-snapshot" content="{safe(now.isoformat())}">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <link rel="icon" type="image/svg+xml" href="/flame-ember.svg">
-<title>FireMUD · local delivery status</title>
+<title>FireMUD Delivery Status</title>
 <style>
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
 * {{ box-sizing: border-box; }} body {{ margin: 0; overflow-x: hidden; }} main {{ max-width: 1160px; margin: auto; padding: 2rem 1.25rem 4rem; }}
@@ -733,9 +734,10 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ width: 10rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+.refresh-form {{ position: absolute; right: calc(100% + .7rem); top: 50%; transform: translateY(-50%); width: 4.25rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
 .refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
-.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .2rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 1.65rem; border: 1px solid #f0e0e6; border-radius: 7px; padding: .1rem .375rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: pre-line; text-align: center; }}
+.refresh-form.loading button {{ height: 2.1rem; }}
 .refresh-time {{ display: block; margin-top: .55rem; color: #f0e0e6; font-size: .78rem; line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
@@ -776,20 +778,14 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .lane-content h4 {{ margin: 0 0 .25rem; color: #515a63; font-size: .66rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }} .lane-blocker h4 {{ color: #9c2939; }}
 footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
-:root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
-body {{ background: var(--ash); color: var(--ink); }}
-header.mast {{ position: sticky; top: 0; z-index: 20; min-height: 3.75rem; background: var(--smoke); padding: .75rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
+{SHARED_CSS}
 .mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo"; align-items: center; column-gap: 1rem; min-height: calc(3.75rem - 1.5rem - 1px); }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
-.refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: center; gap: .7rem; }}
-.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .1rem; text-align: left; }}
-.mast-icon {{ width: 1.7rem; height: 1.7rem; flex: none; transform: translateY(-.25rem); }}
-.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 600; line-height: normal; letter-spacing: -.01em; overflow-wrap: anywhere; }}
+.refresh-space {{ grid-area: refresh; position: relative; display: flex; align-items: center; justify-self: center; min-height: 2.1rem; }}
+.mast-content {{ grid-area: title; text-align: left; }}
 .refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
 .mast-inner > .repo-links {{ grid-area: repo; justify-self: end; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .3rem 1rem; }}
-.repo-links a {{ color: #fff; font-size: .86rem; font-weight: 700; white-space: nowrap; }}
-.nav-short {{ display: none; }}
-main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
+.repo-links a {{ white-space: nowrap; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
 .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
@@ -797,7 +793,7 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
 .front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
 .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: #fff; color: var(--ink); font-size: .8rem; }}
-.front-fact > strong {{ color: #62212f; font-size: .8rem; font-weight: 700; }}
+.front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
 .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 .front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
 .front-fact-value .additions {{ color: #9de0bd; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #ffc390; }}
@@ -805,12 +801,12 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
 .front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
-.front-evidence .activity-top strong {{ color: #62212f; }}
+.front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
 .front-evidence .round-pill {{ background: #fff; color: #423039; }}
 .front-evidence .round-pill.zero-accepted {{ background: #25212a; color: #fff; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
-.section-head h2 {{ margin: 0; font-size: clamp(1.8rem,3vw,2.8rem); letter-spacing: -.04em; }}
+.section-head h2 {{ margin: 0; }}
 .section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}
 .legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.1rem; padding: .7rem .9rem; margin-bottom: .8rem; border-left: 5px solid var(--fire); background: #fff; font-size: .76rem; }}
 .legend strong {{ color: #89182c; }} .legend-dash {{ display: inline-block; width: 1.2rem; margin-right: .3rem; border-top: 2px dashed #9b5760; vertical-align: middle; }}
@@ -839,17 +835,16 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
 .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
-a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 900px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "title repo" "refresh refresh"; gap: .45rem .8rem; }} .refresh-space {{ justify-self: start; }} }}
-@media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .repo-links a {{ font-size: .73rem; }} .repo-links .nav-full {{ display: none; }} .repo-links .nav-short {{ display: inline; }} .refresh-space {{ flex-wrap: wrap; gap: .35rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 900px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "title repo" "refresh refresh"; gap: .45rem .8rem; }} .mast-inner > .refresh-space {{ justify-self: start; margin-left: 4.95rem; }} }}
+@media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .refresh-space {{ flex-wrap: wrap; gap: .35rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt=""><h1 class="brand">FireMUD Delivery Status</h1></div><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form><span class="refresh-time">{header_time}</span></div><nav class="repo-links"><a href="/progress.html"><span class="nav-full">Project Map ↗</span><span class="nav-short">Map ↗</span></a><a class="repo-link" href="{REPO_HOME}"><span class="nav-full">FireMUD on GitHub ↗</span><span class="nav-short">GitHub ↗</span></a></nav></div></header>
+<header class="mast"><div class="mast-inner"><div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt=""><h1 class="brand">FireMUD Delivery Status</h1></div><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form><span class="refresh-time">{header_time}</span></div><nav class="repo-links"><a href="/progress.html"><span class="nav-full">Project Map ↗</span><span class="nav-short">Map ↗</span></a><a class="repo-link" href="{REPO_HOME}"><span class="nav-full">FireMUD on GitHub ↗</span><span class="nav-short">GitHub ↗</span></a></nav></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
 <div class="review-train">{"".join(train)}</div></section>
-<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh review data button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
+<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:
