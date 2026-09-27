@@ -3,8 +3,15 @@ package integration.net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeIdentity;
@@ -142,6 +149,87 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
                     () -> context.repository().claim(pendingIdentity, digest)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not committed");
+  }
+
+  @Test
+  void concurrentExactExchangeClaimsHaveOneTerminalFirstWriter() throws Exception {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(70);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Callable<AccountBareLoginExchangeRepository.ClaimResult> exchange =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Exchange claim race did not start together");
+            }
+            return inTransaction(
+                context.transaction(),
+                () -> {
+                  var claim = context.repository().claim(identity, requestDigest);
+                  if (claim.disposition()
+                      == AccountBareLoginExchangeRepository.ClaimDisposition.CLAIMED) {
+                    AccountEnvelopeBinding binding =
+                        binding(claim.operation().operationId(), identity, requestDigest, 71);
+                    context
+                        .repository()
+                        .recordPendingEvidence(
+                            claim,
+                            requestDigest,
+                            "delegation-jti-race",
+                            digest(80),
+                            binding.contextEvidenceDigest(),
+                            binding.authorityTupleDigest(),
+                            binding.issuanceFenceDigest(),
+                            binding.postconditionDigest());
+                    context
+                        .repository()
+                        .completeWithEnvelope(
+                            claim,
+                            requestDigest,
+                            "delegation-jti-race",
+                            digest(80),
+                            binding,
+                            encryptedEnvelope(AccountEnvelopePurpose.BARE_LOGIN_RESPONSE));
+                  }
+                  return claim;
+                });
+          };
+      Future<AccountBareLoginExchangeRepository.ClaimResult> first = executor.submit(exchange);
+      Future<AccountBareLoginExchangeRepository.ClaimResult> second = executor.submit(exchange);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      var results = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
+      assertThat(results)
+          .extracting(AccountBareLoginExchangeRepository.ClaimResult::disposition)
+          .containsExactlyInAnyOrder(
+              AccountBareLoginExchangeRepository.ClaimDisposition.CLAIMED,
+              AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
+      assertThat(results.get(0).operation().operationId())
+          .isEqualTo(results.get(1).operation().operationId());
+      assertThat(
+              inTransaction(
+                      context.transaction(),
+                      () -> context.repository().find(identity, requestDigest).orElseThrow())
+                  .lifecycle())
+          .isEqualTo(Lifecycle.COMMITTED);
+      AccountEnvelopeBinding binding =
+          binding(results.get(0).operation().operationId(), identity, requestDigest, 71);
+      assertThat(
+              inTransaction(
+                  context.transaction(),
+                  () ->
+                      context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+          .isPresent();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test
