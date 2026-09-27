@@ -132,3 +132,8 @@ Entry format:
   - Context: Unit 1B Account integration tests skipped locally without Docker. Hosted runs executed the integration task and passed on corrected code, but the uploaded artifact contained JaCoCo output without JUnit XML for the named PostgreSQL case.
   - Observation: task-level execution and success are useful composed evidence, but they do not independently identify which newly corrected database methods ran or whether any were skipped.
   - Expected pattern: retain and upload the exact integration JUnit XML alongside coverage artifacts when individual database regressions are needed as proof; until then report task-level success separately from per-case execution.
+
+- `2026-09-27`: Proto-touching Gradle proof may need configuration cache disabled
+  - Context: a combined Account and Game Session focused check regenerated protobuf sources after a membership wire change.
+  - Observation: Gradle 9.5.1 reached Java/test work but failed while storing its configuration cache because the protobuf plugin's `GenerateProtoTask` captured unsupported project and source-directory objects. The same canonical tasks passed with `--no-configuration-cache`; the first failed exit was not valid test proof even though some tasks had run.
+  - Expected pattern: for proto-affecting validation, pass `--no-configuration-cache` when this plugin error appears, retain the canonical task paths and service locks, and report the successful rerun rather than treating partial task output as a green gate.

@@ -35,9 +35,11 @@ class AccountRuntimeStubServerTest {
 
         var request =
             GetTenantMembershipForRuntimeRequest.newBuilder()
-                .setAccountId("7")
-                .setTenantId("1")
-                .setRequestId("request-1")
+                .setPlayerContext(
+                    net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                        .setAccountId("7")
+                        .setTenantId("1")
+                        .setRequestId("request-1"))
                 .build();
         assertThat(stub.getTenantMembershipForRuntime(request).getMembershipLifecycleState())
             .isEqualTo("ACTIVE");

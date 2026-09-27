@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -260,21 +259,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setAuthToken("stub-token")
                 .setAccountId("123")
                 .build());
-    org.mockito.Mockito.doReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setMembershipLifecycleState("ACTIVE")
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build())
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .active(123L, 22L, "1"),
+                        invocation.getArgument(0)))
         .when(accountClient)
         .getTenantMembershipForRuntime(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.nullable(String.class));
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
     org.mockito.Mockito.doReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setTenantId("22")
@@ -822,7 +817,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
         .getTenantMembershipForRuntime(
-            eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
+            argThat(
+                playerContext ->
+                    "123".equals(playerContext.getAccountId())
+                        && "22".equals(playerContext.getTenantId())
+                        && !playerContext.getRequestId().isBlank()));
     verify(accountClient)
         .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L))
