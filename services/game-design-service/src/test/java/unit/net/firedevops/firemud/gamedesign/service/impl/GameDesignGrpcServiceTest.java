@@ -590,6 +590,51 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishPluginVersionMapsImmutableTerminalConflictToTypedError() {
+    Mockito.doThrow(
+            new IllegalArgumentException(
+                "PLUGIN_VERSION_IMMUTABLE: terminal plugin version cannot be republished; create a new plugin version"))
+        .when(versionService)
+        .publishPluginVersion(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v1",
+            7L,
+            "ability-1",
+            "bundle-1",
+            1,
+            "dist-hash",
+            "dist-path",
+            "signer-1",
+            false,
+            "ALLOWED",
+            "notes");
+
+    AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishPluginVersion(
+          PublishPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setBaseVersionId(7L)
+              .setAbilitySchemaDigest("ability-1")
+              .setBundleDigest("bundle-1")
+              .setManifestSchemaVersion(1)
+              .setDistributionManifestHash("dist-hash")
+              .setDistributionManifestPath("dist-path")
+              .setSignerKeyId("signer-1")
+              .setComponentPolicyDecision(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PLUGIN_VERSION_IMMUTABLE", ref.get().getError().getCode());
+  }
+
+  @Test
   void getPublishedPluginVersionReturnsPublicationReadModel() {
     Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(

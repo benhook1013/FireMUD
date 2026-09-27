@@ -933,6 +933,7 @@ class VersionServiceImplTest {
                       "ALLOWED",
                       "notes"));
 
+      assertTrue(thrown.getMessage().startsWith("PLUGIN_VERSION_IMMUTABLE:"));
       assertTrue(thrown.getMessage().contains("terminal plugin version"));
       assertEquals(terminalState, terminal.getPublicationState());
     }

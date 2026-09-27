@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -103,6 +106,53 @@ class V26__bind_participant_digest_patch_scopeTest {
     }
   }
 
+  @Test
+  void predeployDiagnosticListsUnscopedNonfailedAttemptParticipantEvidence()
+      throws IOException, SQLException {
+    String diagnostic = extractAttemptPredeployDiagnostic(readMigrationDoc());
+
+    try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:v26_attempt_predeploy")) {
+      try (Statement statement = connection.createStatement()) {
+        statement.execute(
+            "CREATE TABLE publish_attempt (id BIGINT, tenant_id VARCHAR(36), publish_type VARCHAR(32), "
+                + "status VARCHAR(16), version_id BIGINT, script_patch_version VARCHAR(100), base_version_id BIGINT)");
+        statement.execute(
+            "CREATE TABLE publish_attempt_participant_digest (id BIGINT, publish_attempt_id BIGINT, "
+                + "participant_key VARCHAR(64), scope_value VARCHAR(128))");
+        statement.execute(
+            "CREATE TABLE version (id BIGINT, tenant_id VARCHAR(36), is_script_only BOOLEAN, "
+                + "script_patch_version VARCHAR(100), base_version_id BIGINT)");
+        statement.execute(
+            "INSERT INTO publish_attempt VALUES (1, 'tenant-a', 'SCRIPT_PATCH', 'PENDING', 11, 'patch-a', NULL), "
+                + "(2, 'tenant-a', 'SCRIPT_PATCH', 'FAILED', 12, 'patch-b', NULL)");
+        statement.execute(
+            "INSERT INTO publish_attempt_participant_digest VALUES (21, 1, 'AUTOMATION_SCRIPTING', 'patch-a'), "
+                + "(22, 2, 'AUTOMATION_SCRIPTING', 'patch-b')");
+        statement.execute(
+            "INSERT INTO version VALUES (11, 'tenant-a', TRUE, 'patch-a', 7), "
+                + "(12, 'tenant-a', TRUE, 'patch-b', 8)");
+
+        try (ResultSet result = statement.executeQuery(diagnostic)) {
+          assertThat(result.next()).isTrue();
+          assertThat(result.getLong("publish_attempt_id")).isEqualTo(1L);
+          assertThat(result.getLong("participant_digest_id")).isEqualTo(21L);
+          assertThat(result.getLong("candidate_base_version_id")).isEqualTo(7L);
+          assertThat(result.next()).isFalse();
+        }
+      }
+    }
+  }
+
+  private String extractAttemptPredeployDiagnostic(String documentation) {
+    Matcher matcher =
+        Pattern.compile(
+                "List unresolved V26 script-patch attempt participant evidence\\..*?```sql\\s*(.*?)```",
+                Pattern.DOTALL)
+            .matcher(documentation);
+    assertThat(matcher.find()).isTrue();
+    return matcher.group(1).trim();
+  }
+
   private String extractAttemptScopeGuard(String migration) {
     String marker = "THEN 'V26 unresolved SCRIPT_PATCH attempt participant evidence'";
     int markerIndex = migration.indexOf(marker);
@@ -142,5 +192,11 @@ class V26__bind_participant_digest_patch_scopeTest {
       assertThat(stream).isNotNull();
       return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
+  }
+
+  private String readMigrationDoc() throws IOException {
+    return Files.readString(
+        Path.of("..", "..", "design", "architecture", "system-architecture-database-migrations.md"),
+        StandardCharsets.UTF_8);
   }
 }

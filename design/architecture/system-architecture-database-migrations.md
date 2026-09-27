@@ -157,6 +157,36 @@ ORDER BY recorded.tenant_id, recorded.id;
 
 For every returned row, the Game Design data owner must adjudicate the exact recorded digest against authoritative retained publication evidence and identify the one correct positive base. Zero candidates or multiple candidates remain unresolved until that owner records a justified disposition; do not infer a base from lifecycle state or choose among candidates automatically. Resolve the retained evidence under owner authority before retrying V26, then rerun the diagnostic and require zero rows. Do not rewrite either migration to bypass unresolved history.
 
+List unresolved V26 script-patch attempt participant evidence. V25 may leave a nonfailed attempt without a positive base when its exact version identity could not be recovered; V26 then cannot scope its participant evidence from the parent attempt. This query lists each affected participant row, the attempt's stored identity, and any exact retained version candidate for owner adjudication:
+
+```sql
+SELECT attempt.id AS publish_attempt_id,
+       attempt.tenant_id,
+       attempt.status AS attempt_status,
+       attempt.version_id AS attempt_version_id,
+       attempt.script_patch_version AS attempt_script_patch_version,
+       attempt.base_version_id AS attempt_base_version_id,
+       participant.id AS participant_digest_id,
+       participant.participant_key,
+       participant.scope_value,
+       candidate.id AS candidate_version_id,
+       candidate.base_version_id AS candidate_base_version_id
+FROM publish_attempt_participant_digest AS participant
+JOIN publish_attempt AS attempt
+  ON attempt.id = participant.publish_attempt_id
+LEFT JOIN version AS candidate
+  ON candidate.id = attempt.version_id
+ AND candidate.tenant_id = attempt.tenant_id
+ AND candidate.is_script_only = TRUE
+ AND candidate.script_patch_version = attempt.script_patch_version
+WHERE attempt.publish_type = 'SCRIPT_PATCH'
+  AND attempt.status <> 'FAILED'
+  AND (attempt.base_version_id IS NULL OR attempt.base_version_id <= 0)
+ORDER BY attempt.tenant_id, attempt.id, participant.id;
+```
+
+For every returned participant row, the Game Design data owner must compare the attempt and candidate identities with authoritative retained publication evidence and determine whether one exact positive base is justified. A missing candidate, mismatched candidate identity, or candidate with a null/nonpositive base remains unresolved; do not infer identity from another tenant-wide patch row or lifecycle state. Resolve or quarantine the retained attempt only under the owner's documented disposition, preserve its participant evidence, and rerun the diagnostic before retrying V26. Failed attempts are excluded because the V26 guard intentionally excludes their participant evidence. The attempt's exact version identifier is unique, so this lookup has no candidate-group ambiguity to adjudicate; the recorded-digest query above separately reports its potentially ambiguous patch-to-base mapping.
+
 List incomplete identities with their lifecycle state:
 
 ```sql
