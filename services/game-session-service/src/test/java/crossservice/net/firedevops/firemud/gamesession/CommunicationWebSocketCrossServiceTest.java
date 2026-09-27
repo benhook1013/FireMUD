@@ -497,6 +497,27 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartyBareLoginFailsClosedBeforeGameplayAdmission() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyClient("bare-login-unavailable")) {
+      client.send("LOGIN");
+      JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
+      GameplayStructuredCommandAssertions.requireStructuredCommand(
+          login, "LOGIN", "login", "META", "SESSION");
+      assertThat(login.path("accepted").asBoolean()).isFalse();
+      assertThat(login.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
+
+      int baseline = client.responses().size();
+      client.send("PLAY demo");
+      JsonNode play = awaitStructuredCommand(client, baseline, "PLAY");
+      assertThat(play.path("accepted").asBoolean()).isFalse();
+      assertThat(play.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
+    }
+  }
+
+  @Test
   void websocketFirstPartySayUsesStructuredCommunicationMetadata() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
