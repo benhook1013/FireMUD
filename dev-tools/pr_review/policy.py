@@ -58,6 +58,8 @@ class Evidence:
     streak_break_before: bool = False
     lineage_proven_to_next: bool = False
     current_candidate_descendant_proven: bool = False
+    scope_timeline: bool = False
+    scope_timeline_complete: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -375,10 +377,15 @@ def completion_status(
         return ReviewStatus.MISSING_EVIDENCE
     history = [item for item in all_items if not item.correction and not item.non_counting]
     if not history:
-        if all_items and any(item.non_counting for item in all_items):
+        if all_items:
             reconciliation_blocker = _blocked(Evidence(all_items[0].pr, "", ""), reconciliation)
             if reconciliation_blocker:
                 return reconciliation_blocker
+        if all_items and all(
+            item.non_counting and item.scope_timeline and item.scope_timeline_complete for item in all_items
+        ):
+            return ReviewStatus.MISSING_EVIDENCE
+        if all_items and any(item.non_counting for item in all_items):
             return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:

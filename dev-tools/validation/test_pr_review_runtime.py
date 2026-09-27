@@ -1158,12 +1158,14 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual((marker["accepted"], marker["raw"]), (0, 0))
         self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
-    def test_empty_history_does_not_synthesize_scope_timeline(self):
+    def test_empty_history_includes_complete_scope_timeline(self):
         with tempfile.TemporaryDirectory() as directory:
             history = self._history(Path(directory), self._payload([]))
 
-        self.assertEqual(history, [])
-        self.assertFalse(any(item.get("scope_timeline_complete") is True for item in history))
+        self.assertEqual(len(history), 1)
+        self.assertTrue(history[0]["scope_timeline"])
+        self.assertTrue(history[0]["scope_timeline_complete"])
+        self.assertTrue(history[0]["non_counting"])
 
     def test_history_skips_non_string_comment_bodies_during_scope_change_scan(self):
         comment = {
@@ -1177,7 +1179,7 @@ class RuntimeTest(unittest.TestCase):
             history = self._history(Path(directory), self._payload([comment]))
 
         self.assertFalse(any(item.get("scope_changed") is True for item in history))
-        self.assertFalse(any(item.get("scope_timeline_complete") is True for item in history))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
     def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

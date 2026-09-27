@@ -617,6 +617,27 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(completion_status(state, Channel.CLI, cli_rounds[:2]), ReviewStatus.READY)
         self.assertEqual(completion_status(state, Channel.CLI, cli_rounds), ReviewStatus.COMPLETE)
 
+    def test_empty_scope_timeline_is_missing_evidence_but_preserves_real_blockers(self):
+        state = ReviewState(ordered_prs=(1,))
+        timeline = {
+            "pr": 1,
+            "head": "h",
+            "checkpoint": "scope-timeline:complete",
+            "scope_timeline": True,
+            "scope_timeline_complete": True,
+            "non_counting": True,
+        }
+
+        self.assertEqual(completion_status(state, Channel.HOSTED, (timeline,)), ReviewStatus.MISSING_EVIDENCE)
+        target = select_review_target(state, Channel.HOSTED, (1,), {1: (timeline,)})
+        self.assertEqual((target.target, target.status), (1, ReviewStatus.MISSING_EVIDENCE))
+
+        held = {**timeline, "scope_timeline": False, "non_counting": False, "held": True}
+        self.assertEqual(
+            completion_status(state, Channel.HOSTED, (timeline, held)),
+            ReviewStatus.HELD,
+        )
+
     def test_merged_predecessors_collapse_to_nearest_unmerged_or_default(self):
         snapshots = {
             1: PRSnapshot(1, "a", "develop", "d", merged=True, head_ref="feature-1"),

@@ -545,6 +545,27 @@ class ControllerTests(unittest.TestCase):
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
+    def test_bounded_allocation_can_be_granted_before_first_review(self):
+        evidence = {(1, "hosted"): []}
+        controller = self.grant_bounded_allocation(
+            checkpoint=None,
+            cap=2,
+            minimum=1,
+            evidence=evidence,
+        )
+
+        result = controller.status()["prs"][0]
+        allocation = result["allocations"]["hosted"]
+
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertIsNone(allocation["baseline_checkpoint"])
+        self.assertEqual(allocation["completed_count"], 0)
+        self.assertEqual(result["channels"]["hosted"], "MISSING_EVIDENCE")
+        self.assertEqual(
+            [row["kind"] for row in evidence[(1, "hosted")]],
+            ["scope_timeline"],
+        )
+
     def test_bounded_allocation_counts_supplied_post_baseline_result_and_holds_pending_findings(self):
         baseline = self.allocation_evidence(
             checkpoint="5846432587", accepted=0, channel="hosted"
@@ -1893,7 +1914,7 @@ class ControllerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ControllerError,
-            "active review or reservation|unretained terminal ambiguity|exact fingerprints|every current terminal",
+            "review stop is blocked by unretained terminal ambiguity",
         ):
             controller.decide_stop(pr=1, channel="hosted", reason="human stop")
         with self.assertRaisesRegex(ControllerError, "unretained terminal ambiguity"):
