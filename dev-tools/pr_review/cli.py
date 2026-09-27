@@ -117,13 +117,19 @@ def _parser() -> argparse.ArgumentParser:
     allocation.add_argument("--head", required=True, type=_exact_sha)
     allocation.add_argument(
         "--checkpoint",
-        help="completed attributable checkpoint that starts a bounded additional-review budget",
+        help="optional completed attributable checkpoint to pin the allocation decision",
+    )
+    allocation.add_argument(
+        "--min-additional-completed",
+        type=_nonnegative_int,
+        metavar="N",
+        help="minimum additional completed attributable results after the decision (max-only defaults to 0)",
     )
     allocation.add_argument(
         "--max-additional-completed",
         type=_positive_int,
         metavar="N",
-        help="maximum completed attributable results after --checkpoint",
+        help="maximum additional completed attributable results after the decision",
     )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
@@ -486,6 +492,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 head=args.head,
                 reason=args.reason,
                 checkpoint=args.checkpoint,
+                min_additional_completed=args.min_additional_completed,
                 max_additional_completed=args.max_additional_completed,
             ), 0
         if args.decide_command == "stop":

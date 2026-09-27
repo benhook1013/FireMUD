@@ -1022,22 +1022,32 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     PluginRuntimeStateRepository pluginRepository =
         Mockito.mock(PluginRuntimeStateRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
     ScriptWorkItem item = pluginWorkItem();
     item.setAuthorityUnavailableRetryCount(priorRetryCount);
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(automationQueueService.drainIndexedWorkItemPointers(2, 1)).thenReturn(List.of());
     when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
         .thenReturn(Optional.empty());
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
     ScriptWorkItemExecutionService service =
-        pluginFenceService(
+        new ScriptWorkItemExecutionServiceImpl(
+            automationQueueService,
             workItemService,
             definitionRepository,
             handoffService,
             workItemRepository,
             auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
             allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            null,
+            null,
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
             pluginRepository);
 
     Instant startedAt = Instant.now();
@@ -1052,6 +1062,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             startedAt.plusSeconds(expectedDelaySeconds),
             completedAt.plusSeconds(expectedDelaySeconds));
     verify(workItemRepository).save(item);
+    verify(automationQueueService, Mockito.never()).enqueueWorkItem(Mockito.any());
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
     Mockito.verifyNoInteractions(definitionRepository, handoffService);
   }
@@ -1268,6 +1279,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
     ScriptWorkItem item = pluginWorkItem();
     item.setPluginActivationEpoch(0L);
+    item.setLifecycleRevision(0L);
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
