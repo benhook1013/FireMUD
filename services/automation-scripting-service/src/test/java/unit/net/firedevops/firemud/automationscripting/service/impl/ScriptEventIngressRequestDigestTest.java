@@ -55,6 +55,18 @@ class ScriptEventIngressRequestDigestTest {
   }
 
   @Test
+  void bindsExactScriptPatchBaseToTheIngressRetryFingerprint() {
+    TriggerScriptEventRequest original = request("{\"a\":1}");
+    TriggerScriptEventRequest changedBase =
+        original.toBuilder().setScriptPatchBaseVersionId(2L).build();
+
+    assertThat(original.getScriptEventId()).isEqualTo(changedBase.getScriptEventId());
+    assertThat(ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"))
+        .isNotEqualTo(
+            ScriptEventIngressRequestDigest.compute(changedBase, "v1", "game-session-service"));
+  }
+
+  @Test
   void bindsEventSchemaVersionSoChangingOnlySchemaCannotReplayTheClaim() {
     TriggerScriptEventRequest original = request("{\"a\":1}");
 
@@ -152,6 +164,7 @@ class ScriptEventIngressRequestDigestTest {
         .setEntityId("entity-1")
         .setEventType("onCommand")
         .setScriptPatchVersion("patch-1")
+        .setScriptPatchBaseVersionId(1L)
         .setScriptPinEpoch(1L)
         .setScriptPinControlPlaneRequestId("pin-request-1")
         .setScriptEventId("event-1")

@@ -1,13 +1,16 @@
 -- Durable execution/replay substrate for the Automation owner. V1 is the
 -- direct schema baseline, V2 owns readiness, and V3 owns plugin lifecycle
--- fences; this migration adds only the execution failure, replay, retry, and
--- retention evidence that those schemas do not already provide.
+-- fences and the retry eligibility column/index. This migration adds execution
+-- failure, replay, and retention evidence, and makes V3's eligibility timestamp
+-- nullable so an unset retry delay remains immediately eligible.
 
 ALTER TABLE script_work_items
     ADD COLUMN failure_generation BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN authority_unavailable_since TIMESTAMP,
-    ADD COLUMN authority_unavailable_count INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN next_eligible_at TIMESTAMP;
+    ADD COLUMN authority_unavailable_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE script_work_items
+    ALTER COLUMN next_eligible_at DROP NOT NULL;
 
 -- New work starts before its first dead-letter transition. Existing dead letters
 -- already represent one completed failure generation and retain that evidence.
@@ -20,9 +23,6 @@ CREATE INDEX idx_script_work_items_execution_fences
     ON script_work_items (tenant_id, game_instance_id, script_patch_version,
                           script_pin_epoch, plugin_id, plugin_activation_epoch,
                           lifecycle_revision, status);
-
-CREATE INDEX idx_script_work_items_retry_eligibility
-    ON script_work_items (status, next_eligible_at, created_at, id);
 
 -- A replay request is immutable idempotency evidence.  The tenant-qualified
 -- keys keep owner scope explicit even where a surrogate row id is globally

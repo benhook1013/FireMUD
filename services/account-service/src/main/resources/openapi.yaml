@@ -678,12 +678,6 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateAccountLoginAuthModesRequest'
       responses:
-        '200':
-          description: Updated allowed login mechanisms
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccountLoginAuthModesDto'
         '400':
           description: Invalid account ID, login mechanism set, or unverified email-OTP selection
         '403':
