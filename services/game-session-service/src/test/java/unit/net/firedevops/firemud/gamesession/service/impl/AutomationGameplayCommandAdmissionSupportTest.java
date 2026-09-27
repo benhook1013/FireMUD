@@ -683,6 +683,46 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void keepsExistingAcceptedCommandRetryableWhenOwnershipReadFails() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    AdmissionRequest request = automationRequest();
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, request);
+    existing.setCommandId("auto-owner-read-failed");
+    existing.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenThrow(new IllegalStateException("database connection failed"));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("RETRY_QUEUED", result.admissionOutcome());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("auto-owner-read-failed", result.commandId());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
   void doesNotRedriveExistingAcceptedRemoteCommandAfterOwnershipEpochAdvances() {
     GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
