@@ -4102,6 +4102,8 @@ class ReviewController:
 
         self.store.update(mutate)
         assert selected is not None
+        if decision == "retargeted":
+            return {"status": "recorded", "decision": decision, "route": selected.to_dict()}
         return {"status": selected.status, "route": selected.to_dict()}
 
     def _status_from_state(
