@@ -456,6 +456,18 @@ class GameSessionOperatorControlPlaneServiceTest {
     assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
     verifyNoInteractions(gameDesign, automation);
     verifyNoScriptPinMutation(repository);
+    verify(repository)
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
   }
 
   @Test

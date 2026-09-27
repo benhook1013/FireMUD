@@ -56,6 +56,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.data.domain.Pageable;
@@ -1032,21 +1033,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void getDesignControlPlaneDigestForScriptPatchRejectsNonScriptVersion() {
-    when(versionRepository
-            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
-                "tenant-1", 3L, "patch-2"))
-        .thenReturn(List.of());
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L));
-    verify(controlPlaneDigestService, org.mockito.Mockito.never())
-        .getDigestForScriptPatch(any(VersionDto.class));
-  }
-
-  @Test
-  void getDesignControlPlaneDigestForScriptPatchRejectsUnpublishedVersion() {
+  void getDesignControlPlaneDigestForScriptPatchRejectsMissingPublishedScope() {
     when(versionRepository
             .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
                 "tenant-1", 3L, "patch-2"))
@@ -1109,8 +1096,12 @@ class VersionServiceImplTest {
     service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L);
     service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 4L);
 
-    org.mockito.Mockito.verify(controlPlaneDigestService, org.mockito.Mockito.times(2))
-        .getDigestForScriptPatch(any(VersionDto.class));
+    ArgumentCaptor<VersionDto> versionCaptor = ArgumentCaptor.forClass(VersionDto.class);
+    verify(controlPlaneDigestService, times(2)).getDigestForScriptPatch(versionCaptor.capture());
+    assertEquals(11L, versionCaptor.getAllValues().get(0).id());
+    assertEquals(3L, versionCaptor.getAllValues().get(0).baseVersionId());
+    assertEquals(12L, versionCaptor.getAllValues().get(1).id());
+    assertEquals(4L, versionCaptor.getAllValues().get(1).baseVersionId());
   }
 
   @Test

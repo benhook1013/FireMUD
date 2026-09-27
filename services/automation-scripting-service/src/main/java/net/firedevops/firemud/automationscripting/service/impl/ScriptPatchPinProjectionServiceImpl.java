@@ -68,6 +68,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
               "RUNTIME_SCOPE_MISMATCH",
               "GetAutomationPinConvergence failed: runtime_scope_mismatch");
         }
+        if (isSemanticUnpinned(runtimeState)) {
+          scheduleInstanceService.reconcileObservedRuntimeState(
+              tenantId, gameInstanceId, runtimeState);
+          return new PinConvergenceLookup(
+              Optional.of(toUnpinnedSummary(tenantId, gameInstanceId, runtimeState, now)), "", "");
+        }
         if (!acceptObservation(existing.orElse(null), runtimeState)) {
           return existing
               .map(value -> new PinConvergenceLookup(Optional.of(toSummary(value, now)), "", ""))
@@ -119,6 +125,11 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
+    if (isSemanticUnpinned(runtimeState)) {
+      scheduleInstanceService.reconcileObservedRuntimeState(
+          tenantId, gameInstanceId, runtimeState);
+      return;
+    }
     if (!hasPositiveScriptPinEpoch(runtimeState)) {
       return;
     }
@@ -146,6 +157,14 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
 
   private static boolean hasPositiveScriptPinEpoch(GameInstanceRuntimeState runtimeState) {
     return runtimeState != null && runtimeState.getScriptPinEpoch() > 0;
+  }
+
+  private static boolean isSemanticUnpinned(GameInstanceRuntimeState runtimeState) {
+    return runtimeState != null
+        && runtimeState.getScriptPinEpoch() == 0
+        && runtimeState.getPinnedScriptPatchVersion().isBlank()
+        && runtimeState.getScriptPatchPinnedControlPlaneRequestId().isBlank()
+        && runtimeState.getPinnedScriptPatchBaseVersionId() == 0L;
   }
 
   /**

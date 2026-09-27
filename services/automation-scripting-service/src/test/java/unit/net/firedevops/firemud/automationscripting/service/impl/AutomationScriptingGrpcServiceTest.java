@@ -264,6 +264,22 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestRejectsInactiveBaseVersionForFullScope() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    GetDraftDesignDigestRequest request =
+        fullDigestRequest("1", "7").toBuilder().setBaseVersionId("6").build();
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(() -> ref.set(invokeDigest(service, request)));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
   void getDraftDesignDigestRejectsJwtOnlyCaller() {
     ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
     AutomationScriptingGrpcService service =

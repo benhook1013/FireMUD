@@ -17,8 +17,7 @@ class GameLogicDraftDesignDigestServiceImplTest {
             () -> service.getDraftDesignDigest("tenant-1", "7"));
 
     assertEquals(
-        "Game Logic owner-local manifest and provenance are unavailable",
-        thrown.getMessage());
+        "Game Logic owner-local manifest and provenance are unavailable", thrown.getMessage());
   }
 
   @Test

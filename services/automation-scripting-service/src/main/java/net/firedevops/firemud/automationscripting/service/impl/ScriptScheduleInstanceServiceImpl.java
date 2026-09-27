@@ -176,7 +176,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return;
     }
     if (runtimeState.getPinnedScriptPatchVersion().isBlank()) {
-      if (runtimeState.getScriptPinEpoch() <= 0
+      if (runtimeState.getScriptPinEpoch() == 0
+          && runtimeState.getPinnedScriptPatchBaseVersionId() == 0L
           && blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()).isBlank()) {
         scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
       } else {
