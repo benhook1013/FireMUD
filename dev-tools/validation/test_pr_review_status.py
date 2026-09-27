@@ -239,8 +239,10 @@ class StatusTest(unittest.TestCase):
         self.assertFalse(target["ready"])
         self.assertIn("target-owner disposition", target["reasons"][-1])
         self.assertEqual(target["incoming_routes"], [route])
+        self.assertEqual(target["routes_out"], [])
         self.assertTrue(source["ready"])
         self.assertEqual(source["routes_out"], [route])
+        self.assertEqual(source["incoming_routes"], [])
 
     def _ready_report(self, payload: dict, **kwargs) -> dict:
         with patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}):
