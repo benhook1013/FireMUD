@@ -363,11 +363,19 @@ class PublishAttemptServiceTransactionIntegrationTest {
                     tenantId, "failed remap proof", publishRequestId, publishWorkflowId));
 
     assertThat(publishFailure).isInstanceOf(RuntimeException.class);
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
         "publish failed before export/finalization (candidateVersionId="
             + candidateVersionId.get()
             + ", candidateVersionNumber="
             + candidateVersionNumber.get()
+            + ", attemptStatus="
+            + attempt.getStatus()
+            + ", attemptFailureCode="
+            + attempt.getFailureCode()
+            + ", attemptFailureMessage="
+            + attempt.getFailureMessage()
             + ", failure="
             + publishFailure.getClass().getName()
             + ": "
@@ -378,8 +386,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(exportedVersionNumber.get())
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
-    PublishAttempt attempt =
-        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
     assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
     Version retainedCandidate =
