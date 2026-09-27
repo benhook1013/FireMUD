@@ -255,6 +255,11 @@ def _parser() -> argparse.ArgumentParser:
         metavar="N",
         help="maximum additional completed attributable results after the decision",
     )
+    allocation.add_argument(
+        "--fresh-taper",
+        action="store_true",
+        help="start a new taper streak at the allocation decision; prior results remain historical",
+    )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
     stop = decide_commands.add_parser(
@@ -1096,6 +1101,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 min_additional_completed=args.min_additional_completed,
                 max_additional_completed=args.max_additional_completed,
+                fresh_taper=args.fresh_taper,
             ), 0
         if args.decide_command == "stop":
             return controller.decide_stop(

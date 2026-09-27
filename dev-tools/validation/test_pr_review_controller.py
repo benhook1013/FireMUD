@@ -36,7 +36,14 @@ from pr_review.controller import (
 )
 from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
-from pr_review.policy import Channel, Evidence, completion_status, taper_satisfied
+from pr_review.policy import (
+    Channel,
+    Evidence,
+    completion_status,
+    fresh_taper_history,
+    required_taper,
+    taper_satisfied,
+)
 from pr_review.runtime import LiveEvidence
 from pr_review.state import (
     Judgment,
@@ -634,6 +641,7 @@ class ControllerTests(unittest.TestCase):
         values=None,
         heads=None,
         pr_number=1,
+        fresh_taper=False,
     ):
         values = values or {pr_number: pr(pr_number, HEAD_1)}
         evidence = evidence or {
@@ -669,6 +677,7 @@ class ControllerTests(unittest.TestCase):
             checkpoint=checkpoint,
             min_additional_completed=minimum,
             max_additional_completed=cap,
+            fresh_taper=fresh_taper,
             reason="bounded additional review allowance",
         )
         return controller
@@ -718,6 +727,7 @@ class ControllerTests(unittest.TestCase):
             reason="one more hosted review after the corrected head",
             min_additional_completed=1,
             max_additional_completed=1,
+            fresh_taper=True,
         )
 
     def test_bounded_hosted_allocation_reopens_judgment_required_after_full_stop_audit(self):
@@ -1068,6 +1078,112 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(allocation["taper_complete"])
         self.assertEqual(after["review_targets"]["cli"]["pr"], 2)
 
+    def test_one_off_hosted_allocation_preserves_history_and_normal_taper_until_extra_result(self):
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    checkpoint="hosted-earlier-zero",
+                    channel="hosted",
+                    raw=0,
+                    accepted=0,
+                ),
+                self.allocation_evidence(
+                    checkpoint="hosted-zero",
+                    channel="hosted",
+                    raw=0,
+                    accepted=0,
+                ),
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="hosted-zero",
+            cap=1,
+            minimum=1,
+            evidence=evidence,
+        )
+
+        before_result = controller.status()
+        allocation = before_result["prs"][0]["allocations"]["hosted"]
+        activity = before_result["prs"][0]["review_activity"]["hosted"]
+        self.assertEqual(activity["total"], 2)
+        self.assertEqual([item["raw"] for item in activity["recent"]], [0, 0])
+        self.assertTrue(allocation["historical_taper_complete"])
+        self.assertTrue(allocation["taper_complete"])
+        self.assertFalse(allocation["reopens_taper"])
+        self.assertEqual(allocation["completed_count"], 0)
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertEqual(before_result["review_targets"]["hosted"]["pr"], 1)
+
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="hosted-extra-zero",
+                channel="hosted",
+                raw=0,
+                accepted=0,
+            )
+        )
+
+        after_result = controller.status()
+        allocation = after_result["prs"][0]["allocations"]["hosted"]
+        activity = after_result["prs"][0]["review_activity"]["hosted"]
+        self.assertEqual(activity["total"], 3)
+        self.assertEqual([item["raw"] for item in activity["recent"]], [0, 0, 0])
+        self.assertEqual(allocation["completed_count"], 1)
+        self.assertTrue(allocation["taper_complete"])
+        self.assertTrue(allocation["historical_taper_complete"])
+
+    def test_accepted_allocated_result_resets_active_taper_without_hiding_history(self):
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    checkpoint="hosted-before-allocation",
+                    channel="hosted",
+                    raw=0,
+                    accepted=0,
+                )
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="hosted-before-allocation",
+            cap=2,
+            minimum=1,
+            evidence=evidence,
+        )
+        allocation = controller._state().allocations["1:hosted"]
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="hosted-accepted-after-allocation",
+                channel="hosted",
+                raw=1,
+                accepted=1,
+            )
+        )
+        snapshot = controller._bounded_allocation_evidence(allocation, evidence[(1, "hosted")])
+        taper_baseline = controller._bounded_allocation_taper_baseline(allocation, snapshot)
+        active_history = fresh_taper_history(
+            controller._state(),
+            Channel.HOSTED,
+            evidence[(1, "hosted")],
+            baseline_checkpoints=taper_baseline,
+        )
+
+        self.assertEqual([item.checkpoint for item in active_history], [])
+        self.assertFalse(
+            taper_satisfied(
+                Channel.HOSTED,
+                active_history,
+                required_taper(controller._state(), Channel.HOSTED, active_history),
+            )
+        )
+        self.assertEqual(
+            [
+                item["checkpoint"]
+                for item in evidence[(1, "hosted")]
+                if item.get("non_counting") is not True
+            ],
+            ["hosted-before-allocation", "hosted-accepted-after-allocation"],
+        )
+
     def test_minimum_and_maximum_after_taper_count_only_the_fresh_streak(self):
         dry_history = [
             self.allocation_evidence(checkpoint=f"cli-dry-{index}", channel="cli")
@@ -1080,6 +1196,7 @@ class ControllerTests(unittest.TestCase):
             cap=3,
             minimum=2,
             evidence=evidence,
+            fresh_taper=True,
         )
 
         allocation = controller.status()["prs"][0]["allocations"]["cli"]
@@ -1157,6 +1274,7 @@ class ControllerTests(unittest.TestCase):
             cap=2,
             minimum=None,
             evidence=evidence,
+            fresh_taper=True,
         )
 
         allocation = controller.status()["prs"][0]["allocations"]["cli"]
@@ -1185,6 +1303,7 @@ class ControllerTests(unittest.TestCase):
             cap=3,
             minimum=None,
             evidence=evidence,
+            fresh_taper=True,
         )
 
         before_new_result = controller.status()["prs"][0]["allocations"]["hosted"]
@@ -1723,6 +1842,7 @@ class ControllerTests(unittest.TestCase):
             checkpoint="allocated-dry",
             min_additional_completed=1,
             max_additional_completed=3,
+            fresh_taper=True,
             reason="explicitly open a fresh bounded review tranche",
         )
 

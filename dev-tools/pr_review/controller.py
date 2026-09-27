@@ -3140,6 +3140,27 @@ class ReviewController:
             "error": None,
         }
 
+    @staticmethod
+    def _bounded_allocation_taper_baseline(
+        allocation: ReviewAllocation, snapshot: Mapping[str, Any]
+    ) -> tuple[str, ...]:
+        """Start an active streak at explicit reopen or after an accepted tranche result."""
+
+        if allocation.reopens_taper:
+            return allocation.baseline_checkpoints
+        results = snapshot.get("results", ())
+        last_accepted = max(
+            (index for index, result in enumerate(results) if result["accepted"] > 0),
+            default=-1,
+        )
+        if last_accepted < 0:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                (*allocation.baseline_checkpoints, *(item["checkpoint"] for item in results[: last_accepted + 1]))
+            )
+        )
+
     def _bounded_allocation_progress(
         self,
         allocation: ReviewAllocation,
@@ -3164,9 +3185,7 @@ class ReviewController:
             state,
             allocation.channel,
             history,
-            baseline_checkpoints=(
-                allocation.baseline_checkpoints if allocation.reopens_taper else ()
-            ),
+            baseline_checkpoints=self._bounded_allocation_taper_baseline(allocation, snapshot),
         )
 
         def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
@@ -3615,13 +3634,12 @@ class ReviewController:
                 histories[pr],
                 policy.required_taper(state, channel, histories[pr]),
             )
+            taper_snapshot = self._bounded_allocation_evidence(allocation, histories[pr])
             taper_values = policy.fresh_taper_history(
                 state,
                 channel,
                 histories[pr],
-                baseline_checkpoints=(
-                    allocation.baseline_checkpoints if allocation.reopens_taper else ()
-                ),
+                baseline_checkpoints=self._bounded_allocation_taper_baseline(allocation, taper_snapshot),
             )
             view["taper_complete"] = policy.taper_satisfied(
                 channel,
@@ -3670,11 +3688,26 @@ class ReviewController:
                 state,
                 channel,
                 histories[channel].get(pr, ()),
-                baseline_checkpoints=state.allocations[f"{pr}:{channel.value}"].baseline_checkpoints,
+                baseline_checkpoints=ReviewController._bounded_allocation_taper_baseline(
+                    state.allocations[f"{pr}:{channel.value}"],
+                    ReviewController._bounded_allocation_evidence(
+                        state.allocations[f"{pr}:{channel.value}"],
+                        histories[channel].get(pr, ()),
+                    ),
+                ),
             )
             for pr, view in channel_allocations.items()
-            if view.get("reopens_taper") is True
-            and f"{pr}:{channel.value}" in state.allocations
+            if f"{pr}:{channel.value}" in state.allocations
+            and (
+                view.get("reopens_taper") is True
+                or any(
+                    result["accepted"] > 0
+                    for result in ReviewController._bounded_allocation_evidence(
+                        state.allocations[f"{pr}:{channel.value}"],
+                        histories[channel].get(pr, ()),
+                    )["results"]
+                )
+            )
         }
         decision = policy.select_review_target(
             state,
@@ -3722,6 +3755,12 @@ class ReviewController:
                 if (
                     view["status"] == "CAP_ACTIVE"
                     and view.get("selection_control") == "minimum"
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
+                or (
+                    view["status"] == "CAP_ACTIVE"
+                    and view.get("selection_control") == "taper"
+                    and view.get("completed_count", 0) > 0
                     and (view.get("remaining") is None or view.get("remaining", 0) > 0)
                 )
                 or (
@@ -5070,6 +5109,7 @@ class ReviewController:
         checkpoint: str | None = None,
         min_additional_completed: int | None = None,
         max_additional_completed: int | None = None,
+        fresh_taper: bool = False,
     ) -> dict[str, Any]:
         """Grant, replace, or cancel a one-result or bounded review allocation."""
 
@@ -5081,6 +5121,8 @@ class ReviewController:
             raise ControllerError("allocation channel must be hosted or cli") from exc
         if not isinstance(reason, str) or not reason.strip():
             raise ControllerError("review allocation decisions require a reason")
+        if not isinstance(fresh_taper, bool):
+            raise ControllerError("fresh taper selection must be boolean")
         if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
             raise ControllerError("allocation baseline checkpoint must be a non-empty immutable identity")
         if min_additional_completed is not None and (
@@ -5104,7 +5146,7 @@ class ReviewController:
         bounded_replacement = min_additional_completed is not None or max_additional_completed is not None
         if checkpoint is not None and not bounded_replacement:
             raise ControllerError("--checkpoint requires a minimum or maximum allocation")
-        if action == "cancel" and (checkpoint is not None or bounded_replacement):
+        if action == "cancel" and (checkpoint is not None or bounded_replacement or fresh_taper):
             raise ControllerError("cancel removes the existing allocation without a replacement policy")
         normalized_head = _sha(head, "allocation head")
         state = self._state()
@@ -5149,17 +5191,7 @@ class ReviewController:
         current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
         policy_history = self._policy_history(state, pr, selected, reconciliation)
-        prior_taper_baseline = (
-            previous.baseline_checkpoints
-            if previous is not None and previous.reopens_taper
-            else ()
-        )
-        reopens_taper = policy.taper_satisfied_for_state(
-            state,
-            selected,
-            policy_history,
-            baseline_checkpoints=prior_taper_baseline,
-        )
+        reopens_taper = fresh_taper
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
             return (

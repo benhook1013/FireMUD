@@ -109,6 +109,8 @@ grep -Eq -- '--checkpoint' <<<"$allocation_help" \
   || fail 'allocation help does not expose an explicit review baseline checkpoint'
 grep -Eq -- '--max-additional-completed' <<<"$allocation_help" \
   || fail 'allocation help does not expose a bounded completed-review cap'
+grep -Eq -- '--fresh-taper' <<<"$allocation_help" \
+  || fail 'allocation help does not expose explicit fresh-taper selection'
 grep -Fq 'cap exhausted; findings pending' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not explain pending work at cap exhaustion'
 

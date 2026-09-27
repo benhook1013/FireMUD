@@ -1573,6 +1573,113 @@ class RuntimeTest(unittest.TestCase):
         conflicted = history_for([trigger, summary, reply, checkpoint], [conflicting_review])
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in conflicted))
 
+    def test_archived_zero_reply_checkpoint_survives_a_later_hosted_review(self) -> None:
+        first_head = "932ff6e0027214d7e5303941de11e52501230220"
+        second_head = "52a" + "8" * 37
+        first_at = "2026-09-27T17:27:32Z"
+        first_trigger = {
+            "databaseId": 5858100193,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": first_at,
+            "updatedAt": first_at,
+            "url": "https://example.test/comments/5858100193",
+        }
+        first_summary = {
+            "databaseId": 5858101150,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                "**Actionable comments posted:** 0\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {first_head}."
+            ),
+            "createdAt": "2026-09-27T17:30:00Z",
+            "updatedAt": "2026-09-27T17:30:00Z",
+        }
+        first_reply = {
+            "databaseId": 5858101160,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-27T17:27:40Z",
+            "updatedAt": "2026-09-27T17:34:20Z",
+        }
+        first_checkpoint = {
+            "databaseId": 5858176568,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 0 found / 0 accepted / 0 routed · `{first_head[:9]}` · 6 files\n"
+                "<!-- firemud-hosted-review: 5858101160 -->"
+            ),
+            "createdAt": "2026-09-27T17:38:05Z",
+            "updatedAt": "2026-09-27T17:40:22Z",
+        }
+        second_at = "2026-09-27T21:36:08Z"
+        second_trigger = {
+            **first_trigger,
+            "databaseId": 5860038456,
+            "createdAt": second_at,
+            "updatedAt": second_at,
+            "url": "https://example.test/comments/5860038456",
+        }
+        second_checkpoint = {
+            **first_checkpoint,
+            "databaseId": 5860127083,
+            "body": (
+                f"Hosted: 1 found / 1 accepted / 0 routed · `{second_head[:9]}` · 6 files\n"
+                "<!-- firemud-hosted-review: 5332195978 -->"
+            ),
+            "createdAt": "2026-09-27T21:40:00Z",
+            "updatedAt": "2026-09-27T21:40:00Z",
+        }
+        second_review = {
+            "databaseId": 5332195978,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T21:39:18Z",
+            "commit": {"oid": second_head},
+        }
+        payload = self._payload(
+            [first_trigger, first_summary, first_reply, first_checkpoint, second_trigger, second_checkpoint],
+            [second_review],
+            head=second_head,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            trigger_dir = hosted.default_trigger_record_path("owner/repo", 42, common).parent
+            trigger_dir.mkdir(parents=True)
+            first_record = self._trigger_record(head=first_head, created=first_at)
+            first_record["status"] = "completed"
+            first_record["trigger"]["id"] = 5858100193
+            first_record["trigger"]["url"] = first_trigger["url"]
+            archived = trigger_dir / "trigger-5858100193.json"
+            archived.write_text(json.dumps(first_record), encoding="utf-8")
+            second_record = self._trigger_record(head=second_head, created=second_at)
+            second_record["trigger"].update(
+                {"id": 5860038456, "url": "https://example.test/comments/5860038456"}
+            )
+            hosted.default_trigger_record_path("owner/repo", 42, common).write_text(
+                json.dumps(second_record), encoding="utf-8"
+            )
+
+            self.assertIsNotNone(
+                hosted._zero_finding_summary(
+                    payload["data"]["repository"]["pullRequest"]["comments"]["nodes"],
+                    first_head,
+                    hosted.parse_timestamp(first_at),
+                )
+            )
+            old_state = hosted.trigger_state("owner/repo", 42, payload, first_record, archived)
+            self.assertEqual((old_state.state, old_state.response_id), ("completed", 5858101160))
+
+            history = self._history(common, payload, current_head=second_head)
+
+        checkpoints = {item["checkpoint"]: item for item in history if item.get("completed") is True}
+        self.assertIn("5858176568", checkpoints)
+        self.assertIn("5860127083", checkpoints)
+        self.assertEqual(checkpoints["5858176568"]["accepted"], 0)
+        self.assertEqual(checkpoints["5860127083"]["accepted"], 1)
+
     def test_completed_hosted_trigger_without_checkpoint_is_held(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         summary_at = "2026-09-23T00:02:00Z"
