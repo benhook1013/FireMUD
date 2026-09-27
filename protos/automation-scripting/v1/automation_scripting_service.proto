@@ -248,6 +248,7 @@ message GetDraftDesignDigestRequest {
 message GetDraftDesignDigestResponse {
   string tenant_id = 1;
   reserved 2;
+  reserved "scope_value";
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;
