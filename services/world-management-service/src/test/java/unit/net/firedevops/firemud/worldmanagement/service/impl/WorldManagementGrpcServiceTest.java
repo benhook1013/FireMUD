@@ -247,9 +247,10 @@ class WorldManagementGrpcServiceTest {
           "PERMISSION_DENIED",
           invokeDigestWithPeer(service, fullDigestRequest("1", "7"), peer("game-design-service"))
               .getError()
-              .getCode());
+              .getCode(),
+          "workload namespace: " + workloadNamespace);
+      Mockito.verifyNoInteractions(digestService);
     }
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
