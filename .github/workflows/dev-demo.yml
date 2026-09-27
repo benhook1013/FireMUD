@@ -428,9 +428,32 @@ jobs:
           # Keep the publication coordinator unavailable until every digest
           # participant has rolled to this image. A single chart apply can
           # otherwise make Game Design ready while participants are mixed.
+          game_design_service_index="$(python3 - /tmp/dev-demo-values.yaml <<'PY'
+          import sys
+
+          import yaml
+
+          with open(sys.argv[1], encoding="utf-8") as values_file:
+              values = yaml.safe_load(values_file)
+          services = values.get("previewStack", {}).get("services") if isinstance(values, dict) else None
+          if not isinstance(services, list):
+              raise SystemExit("rendered dev-demo values must contain previewStack.services")
+          matches = [
+              index
+              for index, service in enumerate(services)
+              if isinstance(service, dict) and service.get("name") == "game-design-service"
+          ]
+          if len(matches) != 1:
+              raise SystemExit(
+                  "rendered dev-demo values must contain exactly one game-design-service "
+                  f"(found {len(matches)})"
+              )
+          print(matches[0])
+          PY
+          )"
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
-            --set 'previewStack.services[3].replicaCount=0' \
+            --set "previewStack.services[${game_design_service_index}].replicaCount=0" \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             --wait \
             --timeout 15m

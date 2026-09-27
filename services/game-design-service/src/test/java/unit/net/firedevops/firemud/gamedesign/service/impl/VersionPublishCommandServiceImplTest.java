@@ -998,7 +998,7 @@ class VersionPublishCommandServiceImplTest {
     assertEquals("FAILED", snapshot.status());
     verify(publishAttemptService)
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
-    verify(versionRepository).delete(any(Version.class));
+    verify(versionRepository, never()).delete(any(Version.class));
     verify(assetExportService).deleteExportedAssets("tenant-1", 1, List.of("manifest.json"));
   }
 
