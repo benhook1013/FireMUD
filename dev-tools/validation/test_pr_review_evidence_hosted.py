@@ -331,6 +331,35 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[3].as_json()["routed"], 1)
         self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
 
+    def test_checkpoint_counts_file_counts_and_visible_durations_require_ascii_digits(self):
+        comments = [
+            {"body": "Hosted: １ found / 0 accepted", "created_at": "2026-09-23T00:00:00Z"},
+            {"body": "Hosted: 1 found / １ accepted", "created_at": "2026-09-23T00:01:00Z"},
+            {"body": "Hosted: 1 found / 0 accepted / １ routed", "created_at": "2026-09-23T00:02:00Z"},
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · １ files",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · 1 files · １s",
+                "created_at": "2026-09-23T00:04:00Z",
+            },
+            {
+                "body": "CLI: 1 found / 1 accepted · `abcdef1` · 1 files · 9s\n"
+                "<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:05:00Z",
+            },
+        ]
+
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 5)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].duration_seconds, 9)
+        self.assertEqual(evidence._visible_duration_seconds("9s"), 9)
+        self.assertIsNone(evidence._visible_duration_seconds("９s"))
+        self.assertIsNone(evidence._visible_duration_seconds("１m 09s"))
+
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
             {
@@ -1144,6 +1173,59 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "completed")
         self.assertEqual(state.duration_seconds, 60)
 
+    def test_zero_finding_finished_reply_uses_terminal_edit_for_duration_only_within_trigger_window(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 1. Files reviewed: 1. Files not reviewed: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = "2026-09-23T00:07:20Z"
+        reply = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:01:08Z")
+        reply["body"] = "Full review finished."
+        reply["updatedAt"] = "2026-09-23T00:07:48Z"
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary, reply]), trigger_record())
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
+        self.assertEqual(state.duration_seconds, 408)
+
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:07:30Z")
+        state_after_next_trigger = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, summary, reply, next_trigger]), trigger_record()
+        )
+        self.assertEqual(state_after_next_trigger.state, "ambiguous")
+        self.assertEqual(state_after_next_trigger.response_id, 11)
+        self.assertIsNone(state_after_next_trigger.duration_seconds)
+
+    def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 1. Files reviewed: 1. Files not reviewed: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:01:50Z",
+        )
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary, reply]), trigger_record())
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_created_at, "2026-09-23T00:02:00Z")
+        self.assertEqual(state.duration_seconds, 60)
+
     def test_substantive_exact_head_review_wins_over_incidental_failure_wording(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(
@@ -1161,6 +1243,47 @@ class HostedEvidenceTests(unittest.TestCase):
         failure = comment(11, "coderabbitai", "The review failed. Something went wrong.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, failure]), trigger_record())
         self.assertEqual(state.state, "failed")
+
+    def test_explicit_provider_file_ceiling_skip_is_attributable_terminal_failure(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        skip = comment(
+            11,
+            "coderabbitai[bot]",
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+            "<details><summary>⚠️ Action not completed</summary>\n\n"
+            "Review skipped: 121 files exceed the limit of 100.\n\n</details>",
+            "2026-09-23T00:02:00Z",
+        )
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, skip]), trigger_record())
+
+        self.assertEqual(state.state, "failed")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_url, "https://example.test/comments/11")
+
+    def test_file_ceiling_skip_requires_provider_wording_and_actual_overflow(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        cases = (
+            comment(11, "coderabbitai[bot]", "Review skipped: 80 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+            comment(
+                12,
+                "coderabbitai[bot]",
+                "Docstring Coverage: 31 skipped files over the file limit.",
+                "2026-09-23T00:02:00Z",
+            ),
+            comment(13, "maintainer", "Review skipped: 121 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+        )
+
+        for response in cases:
+            with self.subTest(response=response["body"]):
+                state = hosted.trigger_state(REPO, PR, review_payload([trigger, response]), trigger_record())
+                self.assertEqual(state.state, "awaiting_response")
+                self.assertFalse(state.terminal)
+                self.assertIsNone(state.response_id)
 
     def test_recorded_trigger_author_login_comparison_is_case_insensitive(self):
         trigger = comment(10, "Owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -223,7 +224,7 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T11:00:00"),
                 LocalDateTime.parse("2026-04-14T12:00:00")));
     Mockito.when(
-            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1", 7L))
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
         .thenReturn(
             new DesignControlPlaneDigestDto(
                 "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
@@ -373,6 +374,28 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishScriptPatchVersionRejectsNonPositiveBaseVersionBeforeServiceCall() throws Exception {
+    for (long baseVersionId : List.of(0L, -1L)) {
+      AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+      try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+        service.publishScriptPatchVersion(
+            PublishScriptPatchVersionRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setBaseVersionId(baseVersionId)
+                .setScriptPatchVersion("patch-1")
+                .setNotes("notes")
+                .setPublishRequestId("publish-request-1")
+                .build(),
+            observerFor(ref));
+      }
+
+      assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+      Mockito.verifyNoInteractions(versionService);
+    }
+  }
+
+  @Test
   void publishScriptPatchVersionMapsPendingReconciliationToStableCode() throws Exception {
     Mockito.when(
             versionService.publishScriptPatchVersion(
@@ -485,6 +508,29 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsPendingReconciliationToStableApplicationError() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
+        .thenThrow(new PublishAttemptPendingReconciliationException());
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals(
+        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
+    assertEquals(
+        PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
+        ref.get().getError().getMessage());
   }
 
   @Test
@@ -1238,7 +1284,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verify(versionService, Mockito.never())
         .getDesignControlPlaneDigestForScriptPatch(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
   }
 
   @Test

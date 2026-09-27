@@ -164,6 +164,7 @@ public class VersionServiceImpl implements VersionService {
       throw ex.causeException();
     }
     if (reservation.status() == PublishAttemptStatus.SUCCEEDED) {
+      notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
       return reservation.versionDto();
     }
     if (reservation.status() == PublishAttemptStatus.FAILED) {
@@ -183,11 +184,7 @@ public class VersionServiceImpl implements VersionService {
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
-        runSafely(
-            "notify script patch version update",
-            () ->
-                scriptingClient.notifyScriptVersionUpdate(
-                    tenantId, baseVersionId, scriptPatchVersion, List.of()));
+        notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {
@@ -224,6 +221,7 @@ public class VersionServiceImpl implements VersionService {
                         publishFailureCode(operationFailure),
                         publishFailureMessage(operationFailure)));
         if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
+          notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
           return failure.versionDto();
         }
       } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
@@ -256,7 +254,9 @@ public class VersionServiceImpl implements VersionService {
           existingAttempt, patchBinding, tenantId, baseVersionId, scriptPatchVersion);
       if (existingAttempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
         Version publishedVersion = requireAttemptVersion(existingAttempt, patchBinding);
-        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED) {
+        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED
+            && publishedVersion.getVersionState() != VersionLifecycleState.ACTIVE
+            && publishedVersion.getVersionState() != VersionLifecycleState.RETIRED) {
           throw new IllegalStateException(
               "PUBLISH_ATTEMPT_INCONSISTENT: succeeded attempt does not reference a published version");
         }
@@ -461,6 +461,15 @@ public class VersionServiceImpl implements VersionService {
       return new IllegalStateException(
           failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
+  }
+
+  private void notifyScriptPatchVersionUpdate(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
+    runSafely(
+        "notify script patch version update",
+        () ->
+            scriptingClient.notifyScriptVersionUpdate(
+                tenantId, baseVersionId, scriptPatchVersion, List.of()));
   }
 
   @Override
@@ -764,7 +773,7 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   public DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion, Long baseVersionId) {
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
     if (baseVersionId == null || baseVersionId <= 0L) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }

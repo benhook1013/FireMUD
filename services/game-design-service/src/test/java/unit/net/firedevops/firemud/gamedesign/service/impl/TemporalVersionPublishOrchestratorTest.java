@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.Test;
 
@@ -21,14 +22,32 @@ class TemporalVersionPublishOrchestratorTest {
             TemporalVersionPublishOrchestrator.PENDING_RECONCILIATION_REQUIRED_CODE,
             "publication readback is incomplete");
 
-    IllegalStateException thrown =
+    RuntimeException thrown =
         TemporalVersionPublishOrchestrator.timeoutException(snapshot, WORKFLOW_ID);
 
-    assertEquals(
-        "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: publication readback is incomplete; "
-            + "version publish workflow did not converge for workflowId="
-            + WORKFLOW_ID,
-        thrown.getMessage());
+    PublishAttemptPendingReconciliationException pending =
+        assertInstanceOf(PublishAttemptPendingReconciliationException.class, thrown);
+    assertEquals(PublishAttemptPendingReconciliationException.ERROR_CODE, pending.errorCode());
+    assertEquals(PublishAttemptPendingReconciliationException.SAFE_MESSAGE, pending.getMessage());
+  }
+
+  @Test
+  void failedSnapshotWithPendingReconciliationCodeUsesTypedException() {
+    PublishWorkflowSnapshot snapshot =
+        new PublishWorkflowSnapshot(
+            0L,
+            0,
+            WORKFLOW_ID,
+            "FAILED",
+            PublishAttemptPendingReconciliationException.ERROR_CODE,
+            "internal workflow detail");
+
+    RuntimeException thrown = TemporalVersionPublishOrchestrator.failureForSnapshot(snapshot);
+
+    PublishAttemptPendingReconciliationException pending =
+        assertInstanceOf(PublishAttemptPendingReconciliationException.class, thrown);
+    assertEquals(PublishAttemptPendingReconciliationException.ERROR_CODE, pending.errorCode());
+    assertEquals(PublishAttemptPendingReconciliationException.SAFE_MESSAGE, pending.getMessage());
   }
 
   @Test
@@ -37,9 +56,10 @@ class TemporalVersionPublishOrchestratorTest {
         new PublishWorkflowSnapshot(
             0L, 0, WORKFLOW_ID, "PENDING", "PUBLISH_ATTEMPT_INCONSISTENT", "other failure");
 
-    IllegalStateException thrown =
+    RuntimeException thrown =
         TemporalVersionPublishOrchestrator.timeoutException(snapshot, WORKFLOW_ID);
 
+    assertInstanceOf(IllegalStateException.class, thrown);
     assertEquals(
         "TEMPORAL_WORKFLOW_TIMEOUT: version publish workflow did not converge for workflowId="
             + WORKFLOW_ID,
@@ -48,9 +68,10 @@ class TemporalVersionPublishOrchestratorTest {
 
   @Test
   void timeoutKeepsGenericCodeWhenNoSnapshotWasObserved() {
-    IllegalStateException thrown =
+    RuntimeException thrown =
         TemporalVersionPublishOrchestrator.timeoutException(null, WORKFLOW_ID);
 
+    assertInstanceOf(IllegalStateException.class, thrown);
     assertEquals(
         "TEMPORAL_WORKFLOW_TIMEOUT: version publish workflow did not converge for workflowId="
             + WORKFLOW_ID,
@@ -93,5 +114,32 @@ class TemporalVersionPublishOrchestratorTest {
     assertInstanceOf(IllegalStateException.class, blankFailure);
     assertEquals("unknown failure", unknownFailure.getMessage());
     assertEquals("blank failure code", blankFailure.getMessage());
+  }
+
+  @Test
+  void genericFailureUsesStableFallbackWhenMessageAndCodeAreNullOrBlank() {
+    PublishWorkflowSnapshot nullFieldsSnapshot =
+        new PublishWorkflowSnapshot(0L, 0, WORKFLOW_ID, "FAILED", null, null);
+    PublishWorkflowSnapshot blankFieldsSnapshot =
+        new PublishWorkflowSnapshot(0L, 0, WORKFLOW_ID, "FAILED", "  ", "");
+    PublishWorkflowSnapshot nullMessageBlankCodeSnapshot =
+        new PublishWorkflowSnapshot(0L, 0, WORKFLOW_ID, "FAILED", " ", null);
+    PublishWorkflowSnapshot blankMessageNullCodeSnapshot =
+        new PublishWorkflowSnapshot(0L, 0, WORKFLOW_ID, "FAILED", null, "  ");
+
+    assertEquals(
+        "VERSION_PUBLISH_WORKFLOW_FAILED",
+        TemporalVersionPublishOrchestrator.failureForSnapshot(nullFieldsSnapshot).getMessage());
+    assertEquals(
+        "VERSION_PUBLISH_WORKFLOW_FAILED",
+        TemporalVersionPublishOrchestrator.failureForSnapshot(blankFieldsSnapshot).getMessage());
+    assertEquals(
+        "VERSION_PUBLISH_WORKFLOW_FAILED",
+        TemporalVersionPublishOrchestrator.failureForSnapshot(nullMessageBlankCodeSnapshot)
+            .getMessage());
+    assertEquals(
+        "VERSION_PUBLISH_WORKFLOW_FAILED",
+        TemporalVersionPublishOrchestrator.failureForSnapshot(blankMessageNullCodeSnapshot)
+            .getMessage());
   }
 }
