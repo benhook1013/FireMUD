@@ -33,6 +33,7 @@ ACTIVE_REVIEW_STATES = frozenset({"ACTIVE", "IN_PROGRESS", "REVIEWING", "RUNNING
 EXPLICIT_HUMAN_STOP_STATES = frozenset({
     "HUMAN_STOP", "HUMAN_STOPPED", "MANUALLY_STOPPED", "OVERRIDE", "STOPPED_BY_HUMAN",
 })
+REVIEW_FINISHED_STATES = EXPLICIT_HUMAN_STOP_STATES | {"COMPLETE"}
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -40,6 +41,8 @@ REFRESH_SCRIPT = """(() => {
   const progress = form.querySelector('.refresh-progress');
   let stage = 'rendering';
   let statusPending = false;
+  let waitingForOther = false;
+  let finishOther;
   const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};
   const readStage = async () => {
     if (statusPending) return;
@@ -48,6 +51,13 @@ REFRESH_SCRIPT = """(() => {
       const response = await fetch('/refresh-status', {credentials: 'same-origin'});
       if (!response.ok) return;
       const status = await response.json();
+      if (waitingForOther) {
+        if (['complete', 'render_failed', 'publish_failed', 'idle'].includes(status.phase)) {
+          waitingForOther = false;
+          finishOther(status.phase);
+        }
+        return;
+      }
       if (status.phase === 'publishing') {
         stage = 'publishing';
         progress.textContent = 'Publishing public status page';
@@ -63,12 +73,13 @@ REFRESH_SCRIPT = """(() => {
     if (button.disabled) return;
     button.disabled = true;
     stage = 'rendering';
+    waitingForOther = false;
     form.classList.remove('failed');
     progress.textContent = 'Refreshing local review data';
     form.classList.add('loading');
     const started = Date.now();
     const update = () => {
-      button.textContent = `${stageLabel[stage]} · ${Math.floor((Date.now() - started) / 1000)}s`;
+      button.textContent = `${waitingForOther ? 'Waiting' : stageLabel[stage]} · ${Math.floor((Date.now() - started) / 1000)}s`;
       void readStage();
     };
     update();
@@ -76,10 +87,27 @@ REFRESH_SCRIPT = """(() => {
     try {
       const response = await fetch(form.action, { method: 'POST', credentials: 'same-origin' });
       if (!response.ok) {
+        if (response.status === 409) {
+          waitingForOther = true;
+          progress.textContent = 'Another refresh is running. This page will update when it finishes.';
+          const outcome = await new Promise(resolve => { finishOther = resolve; void readStage(); });
+          if (outcome === 'complete') {
+            progress.textContent = 'Local and public status pages updated';
+            window.location.reload();
+          } else if (outcome === 'render_failed') {
+            form.classList.add('failed');
+            progress.textContent = 'The other local refresh failed. The previous pages are still available.';
+          } else if (outcome === 'publish_failed') {
+            form.classList.add('failed');
+            progress.textContent = 'The other refresh updated the local page, but public publishing failed.';
+          } else {
+            form.classList.add('failed');
+            progress.textContent = 'The other refresh ended. You can try again.';
+          }
+          return;
+        }
         form.classList.add('failed');
-        progress.textContent = response.status === 409
-          ? 'Another refresh is already running. Try again when it finishes.'
-          : response.status === 429
+        progress.textContent = response.status === 429
           ? 'Refresh recently completed. Try again shortly.'
           : response.status === 502
           ? 'Local refresh failed. The previous local and public pages are still available.'
@@ -407,6 +435,39 @@ def controller_stack(data: dict, review: dict, github: dict, now: datetime) -> d
     return {**data, "stack": entries}
 
 
+def selected_review_front(data: dict, review: dict, github: dict) -> int | None:
+    """Prefer the controller's next channel target; never feature a closed review."""
+    manual = data["review_front"]
+    if not review["available"] or not github.get("available"):
+        return manual
+    ordered = [item["number"] for item in data["stack"]]
+    queue = review.get("queue", {})
+    lifecycle = github.get("lifecycle", {})
+
+    def unfinished(number: int) -> bool:
+        channels = queue.get(number, {}).get("channels", {})
+        return (lifecycle.get(number) == "OPEN" and isinstance(channels, dict)
+                and any(channels.get(channel) not in REVIEW_FINISHED_STATES
+                        for channel in ("hosted", "cli")))
+
+    targets = review.get("review_targets", {})
+    selected = set()
+    if isinstance(targets, dict):
+        for channel in ("hosted", "cli"):
+            target = targets.get(channel, {})
+            if isinstance(target, dict) and type(target.get("pr")) is int:
+                number = target["pr"]
+                channels = queue.get(number, {}).get("channels", {})
+                if (number in ordered and unfinished(number) and isinstance(channels, dict)
+                        and channels.get(channel) not in REVIEW_FINISHED_STATES):
+                    selected.add(number)
+    if selected:
+        return next(number for number in ordered if number in selected)
+    if manual in ordered and unfinished(manual):
+        return manual
+    return next((number for number in ordered if unfinished(number)), None)
+
+
 def render(data: dict, review: dict, now: datetime, github: dict | None = None) -> str:
     stack = data["stack"]
     lanes = data["lanes"]
@@ -420,7 +481,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
     if len(set(stages)) != sum(1 for _ in groupby(stages)):
         raise ValueError("programme stages must be contiguous in stack order")
     github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
-    front_index = next((index for index, item in enumerate(stack) if item["number"] == data["review_front"]), None)
+    front_number = selected_review_front(data, review, github)
+    front_index = next((index for index, item in enumerate(stack) if item["number"] == front_number), None)
     front_item = stack[front_index] if front_index is not None else None
     next_pr = (
         next((item["number"] for item in stack[front_index + 1:]
@@ -487,11 +549,11 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             queue_badge_html = '<span class="queue-status queue-status-draft">DRAFT</span>'
         elif queue_item:
             status_html = controller_status_html
-            if number == data["review_front"]:
+            if number == front_number:
                 badge_label, badge_class = "REVIEW FRONT", "front"
             elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
                 badge_label, badge_class = "REVIEWING", "reviewing"
-            elif has_controller_states and all(state in EXPLICIT_HUMAN_STOP_STATES for state in states):
+            elif has_controller_states and all(state in REVIEW_FINISHED_STATES for state in states):
                 badge_label, badge_class = "REVIEW CLOSED", "review-closed"
             elif number == next_pr:
                 badge_label, badge_class = "UP NEXT", "up-next"
@@ -502,7 +564,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             status_html = controller_status_html
             queue_badge_html = (
                 '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
-                if number == data["review_front"] else
+                if number == front_number else
                 '<span class="queue-status queue-status-up-next">UP NEXT</span>'
                 if number == next_pr else
                 '<span class="queue-status queue-status-pending">PENDING</span>'
@@ -572,7 +634,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                     f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
                 )
         activity_grid = f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
-        if number == data["review_front"]:
+        if number == front_number:
             front_size_html = size_html
             if has_controller_states:
                 front_controller_html = f'<span class="front-controller-state">{safe(controller_text)}</span>'
@@ -582,7 +644,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             row_classes.append("merged")
         elif lifecycle == "CLOSED":
             row_classes.append("closed")
-        if number == data["review_front"]:
+        if number == front_number:
             row_classes.append("front")
         if number == next_pr:
             row_classes.append("next")
@@ -671,9 +733,9 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ width: 8.5rem; height: 2.6rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+.refresh-form {{ width: 8.5rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
 .refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
-.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .5rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .2rem .7rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
 .refresh-time {{ display: block; margin-top: .55rem; color: #f0e0e6; font-size: .78rem; line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
@@ -717,13 +779,16 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 :root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
 body {{ background: var(--ash); color: var(--ink); }}
 header.mast {{ position: sticky; top: 0; z-index: 20; background: var(--smoke); padding: .8rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
-.mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(0,auto) minmax(0,1fr); grid-template-areas: "refresh title repo"; align-items: center; column-gap: .75rem; max-width: 1440px; margin: auto; }}
+.mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo"; align-items: center; column-gap: 1rem; max-width: 1440px; margin: auto; }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
-.refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: start; }}
-.mast-content {{ grid-area: title; text-align: center; }}
+.refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: center; gap: .7rem; }}
+.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .55rem; text-align: left; }}
+.mast-icon {{ width: 1.7rem; height: 1.7rem; flex: none; }}
 .brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+.refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
 .mast-inner > .repo-links {{ grid-area: repo; justify-self: end; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .3rem 1rem; }}
 .repo-links a {{ color: #fff; font-size: .86rem; font-weight: 700; white-space: nowrap; }}
+.nav-short {{ display: none; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
@@ -776,9 +841,10 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
 a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 760px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) minmax(0,1fr); grid-template-areas: "title title" "refresh repo"; row-gap: .6rem; }} .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .repo-links a {{ font-size: .73rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 900px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "title repo" "refresh refresh"; gap: .45rem .8rem; }} .refresh-space {{ justify-self: start; }} }}
+@media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .repo-links a {{ font-size: .73rem; }} .repo-links .nav-full {{ display: none; }} .repo-links .nav-short {{ display: inline; }} .refresh-space {{ flex-wrap: wrap; gap: .35rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><h1 class="brand">FireMUD delivery status</h1><span class="refresh-time">{header_time}</span></div><nav class="repo-links"><a href="/progress.html">Project map ↗</a><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></nav></div></header>
+<header class="mast"><div class="mast-inner"><div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt=""><h1 class="brand">FireMUD Delivery Status</h1></div><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form><span class="refresh-time">{header_time}</span></div><nav class="repo-links"><a href="/progress.html"><span class="nav-full">Project Map ↗</span><span class="nav-short">Map ↗</span></a><a class="repo-link" href="{REPO_HOME}"><span class="nav-full">FireMUD on GitHub ↗</span><span class="nav-short">GitHub ↗</span></a></nav></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>

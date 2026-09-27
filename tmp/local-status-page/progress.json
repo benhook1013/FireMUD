@@ -1,6 +1,6 @@
 {
   "reviewed_at": "2026-09-27T03:05:00Z",
-  "headline": "From accepted design decisions to a proved, playable pre-v1 FireMUD",
+  "headline": "Building a playable FireMUD",
   "orientation": "This is the long-range map. The PR delivery page owns the live merge train; the corpus index and implementation trackers own detailed completion claims.",
   "tracks": [
     {
@@ -67,7 +67,7 @@
       "purpose": "Converge cross-service pre-v1 contracts after the playable repository slice.",
       "now": "The dev-demo summary parser and presence/privacy work joined the published tail. Remaining Phase 1 candidates intersect Account, Gameplay and publication work, so there is no independent active slice yet.",
       "milestone": "Choose the next coherent shared-foundation slice after those owner dependencies settle; service-local maintainability follows in Phase 2.",
-      "return_when": "The overlapping Account and Gameplay boundaries are stable enough to select one shared contract without duplicating their work.",
+      "return_when": "Document's Account admission work and Gameplay's publication contract settle enough for General to take a separate shared-service fix without duplicating either lane.",
       "phases": [
         {"name": "Phase 1 · parser and presence/privacy slices", "state": "PUBLISHED"},
         {"name": "Phase 1 · remaining shared contracts", "state": "PAUSED"},
@@ -99,7 +99,7 @@
   "return_points": [
     {"name": "Provisional corpus sections", "trigger": "An owner prerequisite or essential proof lands; Document reassesses from the current code and contracts.", "state": "REVISIT REPEATEDLY"},
     {"name": "Protected playable proof", "trigger": "Credential/CA setup and a coherent hosted deployment are available for the Gate 2 player journey.", "state": "PROOF OPEN"},
-    {"name": "Shared-foundation Phase 1", "trigger": "Account and Gameplay owner overlap clears enough to choose a coherent remaining candidate.", "state": "PAUSED"},
+    {"name": "Shared-foundation Phase 1", "trigger": "Resume General's shared-contract work after Document's Account admission and Gameplay's publication changes have a clear, stable boundary.", "state": "PAUSED"},
     {"name": "Service-local Phase 2", "trigger": "Shared-foundation Phase 1 is settled and a concrete maintainability slice is selected.", "state": "LATER"},
     {"name": "ADR 0183", "trigger": "Bring the pending proposal to human review; do not treat it as accepted meanwhile.", "state": "HUMAN DECISION"}
   ],

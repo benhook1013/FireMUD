@@ -92,12 +92,12 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<span class="refresh-slot"><button type="submit">Refresh review data</button></span>', result)
         self.assertIn('<link rel="icon" type="image/svg+xml" href="/flame-ember.svg">', result)
         self.assertNotIn('href="/icon-options.html">Icon options</a>', result)
-        self.assertIn('class="mast-inner"><div class="refresh-space"><form class="refresh-form"', result)
-        self.assertIn('</form></div><div class="mast-content"><h1 class="brand">FireMUD delivery status</h1>', result)
+        self.assertIn('class="mast-inner"><div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt=""><h1 class="brand">FireMUD Delivery Status</h1>', result)
+        self.assertIn('</div><div class="refresh-space"><form class="refresh-form"', result)
         self.assertIn('class="repo-link" href="https://github.com/benhook1013/FireMUD"', result)
-        self.assertIn('</h1><span class="refresh-time">', result)
-        self.assertIn('grid-template-columns: minmax(0,1fr) minmax(0,auto) minmax(0,1fr); grid-template-areas: "refresh title repo";', result)
-        self.assertIn('grid-template-areas: "title title" "refresh repo";', result)
+        self.assertIn('</form><span class="refresh-time">', result)
+        self.assertIn('grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo";', result)
+        self.assertIn('grid-template-areas: "title repo" "refresh refresh";', result)
         self.assertIn('width: 100%; height: 100%;', result)
         self.assertIn("const stageLabel = {rendering: 'Refreshing', publishing: 'Publishing'};", result)
         self.assertIn("form-action 'self'", result)
@@ -191,12 +191,12 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('.front-evidence { background: var(--fire);', result)
         self.assertIn('flex-direction: column; justify-content: center; align-items: stretch;', result)
         self.assertIn('.refresh-form button {', result)
-        self.assertIn('height: 2.6rem;', result)
+        self.assertIn('height: 2.1rem;', result)
         self.assertIn('line-height: 1.2; font-weight: 700;', result)
         self.assertIn('header.mast { position: sticky; top: 0; z-index: 20;', result)
         self.assertIn('.brand { display: block; min-width: 0; margin: 0;', result)
-        self.assertIn('.refresh-form { width: 8.5rem; height: 2.6rem;', result)
-        self.assertIn('.refresh-time { display: block; margin-top: .55rem;', result)
+        self.assertIn('.refresh-form { width: 8.5rem; height: 2.1rem;', result)
+        self.assertIn('.refresh-space .refresh-time { margin: 0; white-space: nowrap; }', result)
         self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #37414a;', result)
         self.assertIn('.front-facts { grid-template-columns: 1fr; }', result)
         self.assertIn('.queue-stage > .stack li.front { background: var(--blush); border-left: 0; '
@@ -299,6 +299,27 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('queue-status-front">REVIEW FRONT', unavailable_train)
         self.assertIn('queue-status-pending">PENDING', unavailable_train)
         self.assertNotIn('queue-status-reviewing">REVIEWING', unavailable_train)
+
+    def test_completed_old_head_yields_review_front_to_controller_target(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 43})
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {
+            42: {"channels": {"hosted": "HUMAN_STOPPED", "cli": "HUMAN_STOPPED"}},
+            43: {"channels": {"hosted": "PARENT_MOVED", "cli": "PARENT_MOVED"}},
+        }, "review_targets": {
+            "hosted": {"pr": 43, "status": "HELD"},
+            "cli": {"pr": 43, "status": "PARENT_MOVED"},
+        }})
+        github = {"available": True, "states": {42: False, 43: False},
+                  "lifecycle": {42: "OPEN", 43: "OPEN"}, "merged_at": {}, "stats": {}}
+        result = page.render(data, review, NOW, github)
+        old = result.split('<li id="pr-42"', 1)[1].split("</li>", 1)[0]
+        selected = result.split('<li id="pr-43"', 1)[1].split("</li>", 1)[0]
+        self.assertIn('queue-status-review-closed">REVIEW CLOSED', old)
+        self.assertNotIn('class="front"', old)
+        self.assertIn('queue-status-front">REVIEW FRONT', selected)
+        self.assertIn('id="front-title"><span class="front-number">#43</span>', result)
 
     def test_only_selected_channel_target_says_ready_to_request(self):
         data = self.fixture()
@@ -513,6 +534,45 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
             "Local refresh failed. The previous local and public pages are still available.",
             "Local page updated, but public publishing failed. Try again shortly.",
         ], json.loads(run.stdout))
+
+    @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
+    def test_busy_refresh_waits_for_other_job_then_reloads(self):
+        javascript = """
+const vm = require('node:vm');
+let submit;
+let tick;
+let phase = 'rendering';
+let posts = 0;
+let reloaded = false;
+const button = {disabled: false, textContent: 'Refresh review data'};
+const progress = {textContent: ''};
+const form = {
+  action: '/refresh', classList: {add() {}, remove() {}},
+  querySelector: selector => selector === 'button' ? button : progress,
+  addEventListener: (event, handler) => { submit = handler; }
+};
+vm.runInNewContext(process.argv[1], {
+  document: {querySelector: () => form}, Date,
+  setInterval: callback => { tick = callback; return 1; }, clearInterval: () => {},
+  fetch: async url => url === '/refresh-status'
+    ? {ok: true, json: async () => ({phase})}
+    : (posts++, {ok: false, status: 409}),
+  window: {location: {reload: () => { reloaded = true; }}}
+});
+(async () => {
+  const waiting = submit({preventDefault() {}});
+  await new Promise(setImmediate);
+  const during = [button.disabled, progress.textContent, reloaded, posts];
+  phase = 'complete';
+  tick();
+  await waiting;
+  process.stdout.write(JSON.stringify({during, after: [button.disabled, reloaded, posts]}));
+})().catch(error => { process.stderr.write(String(error)); process.exitCode = 1; });
+"""
+        run = subprocess.run(["node", "-e", javascript, page.REFRESH_SCRIPT], capture_output=True, text=True, check=True)
+        result = json.loads(run.stdout)
+        self.assertEqual([True, "Another refresh is running. This page will update when it finishes.", False, 1], result["during"])
+        self.assertEqual([False, True, 1], result["after"])
 
     @patch.object(page, "github_stages")
     @patch.object(page, "review_snapshot")

@@ -32,9 +32,11 @@ class ProjectMapTest(unittest.TestCase):
         data = json.loads((Path(__file__).with_name("progress.json")).read_text(encoding="utf-8"))
         result = render_progress.render(data, datetime(2026, 9, 27, tzinfo=timezone.utc))
         self.assertEqual(result.count('class="domain"'), 10)
-        self.assertIn('1/79 fully implemented', result)
+        self.assertIn('<strong>1/79</strong><span>fully implemented</span>', result)
+        self.assertIn('class="domain-summary"', result)
         self.assertIn('href="/"', result)
         self.assertIn('Return points', result)
+        self.assertIn('FireMUD Project Map', result)
         self.assertNotIn('/home/ben/', result)
 
     def test_manual_text_is_escaped_and_external_links_are_restricted(self):
