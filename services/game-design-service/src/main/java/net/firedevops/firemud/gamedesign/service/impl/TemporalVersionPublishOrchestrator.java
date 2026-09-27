@@ -47,11 +47,20 @@ public class TemporalVersionPublishOrchestrator {
     if (snapshot.isSucceeded()) {
       return commandService.publishFullVersion(tenantId, notes, workflowId);
     }
-    if (snapshot.failureCode() != null && snapshot.failureCode().startsWith("DIGEST_")) {
-      throw new PublishGateFailureException(
-          PublishGateFailureCode.valueOf(snapshot.failureCode()), snapshot.failureMessage());
+    throw failureForSnapshot(snapshot);
+  }
+
+  static RuntimeException failureForSnapshot(PublishWorkflowSnapshot snapshot) {
+    String failureCode = snapshot.failureCode();
+    if (failureCode != null && !failureCode.isBlank()) {
+      try {
+        PublishGateFailureCode gateFailureCode = PublishGateFailureCode.valueOf(failureCode);
+        return new PublishGateFailureException(gateFailureCode, snapshot.failureMessage());
+      } catch (IllegalArgumentException ignored) {
+        // Unknown snapshot codes remain generic failures.
+      }
     }
-    throw new IllegalStateException(
+    return new IllegalStateException(
         snapshot.failureMessage() == null || snapshot.failureMessage().isBlank()
             ? snapshot.failureCode()
             : snapshot.failureMessage());

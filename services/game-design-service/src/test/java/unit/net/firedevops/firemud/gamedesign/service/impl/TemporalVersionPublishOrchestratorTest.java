@@ -1,7 +1,10 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.Test;
 
 class TemporalVersionPublishOrchestratorTest {
@@ -52,5 +55,43 @@ class TemporalVersionPublishOrchestratorTest {
         "TEMPORAL_WORKFLOW_TIMEOUT: version publish workflow did not converge for workflowId="
             + WORKFLOW_ID,
         thrown.getMessage());
+  }
+
+  @Test
+  void knownGateFailureCodeIsPreservedAsPublishGateFailure() {
+    PublishWorkflowSnapshot snapshot =
+        new PublishWorkflowSnapshot(
+            0L,
+            0,
+            WORKFLOW_ID,
+            "FAILED",
+            PublishGateFailureCode.PARTICIPANT_SET_MISMATCH.name(),
+            "participant set mismatch");
+
+    RuntimeException failure = TemporalVersionPublishOrchestrator.failureForSnapshot(snapshot);
+
+    PublishGateFailureException gateFailure =
+        assertInstanceOf(PublishGateFailureException.class, failure);
+    assertEquals(PublishGateFailureCode.PARTICIPANT_SET_MISMATCH, gateFailure.failureCode());
+    assertEquals("participant set mismatch", gateFailure.getMessage());
+  }
+
+  @Test
+  void unknownOrBlankFailureCodeRemainsGeneric() {
+    PublishWorkflowSnapshot unknownSnapshot =
+        new PublishWorkflowSnapshot(
+            0L, 0, WORKFLOW_ID, "FAILED", "UNKNOWN_FAILURE", "unknown failure");
+    PublishWorkflowSnapshot blankSnapshot =
+        new PublishWorkflowSnapshot(0L, 0, WORKFLOW_ID, "FAILED", "", "blank failure code");
+
+    RuntimeException unknownFailure =
+        TemporalVersionPublishOrchestrator.failureForSnapshot(unknownSnapshot);
+    RuntimeException blankFailure =
+        TemporalVersionPublishOrchestrator.failureForSnapshot(blankSnapshot);
+
+    assertInstanceOf(IllegalStateException.class, unknownFailure);
+    assertInstanceOf(IllegalStateException.class, blankFailure);
+    assertEquals("unknown failure", unknownFailure.getMessage());
+    assertEquals("blank failure code", blankFailure.getMessage());
   }
 }
