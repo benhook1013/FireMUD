@@ -115,6 +115,22 @@ def _parser() -> argparse.ArgumentParser:
     allocation.add_argument("--pr", required=True, type=_positive_int)
     allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
     allocation.add_argument("--head", required=True, type=_exact_sha)
+    allocation.add_argument(
+        "--checkpoint",
+        help="optional completed attributable checkpoint to pin the allocation decision",
+    )
+    allocation.add_argument(
+        "--min-additional-completed",
+        type=_nonnegative_int,
+        metavar="N",
+        help="minimum additional completed attributable results after the decision (max-only defaults to 0)",
+    )
+    allocation.add_argument(
+        "--max-additional-completed",
+        type=_positive_int,
+        metavar="N",
+        help="maximum additional completed attributable results after the decision",
+    )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
     stop = decide_commands.add_parser(
@@ -475,6 +491,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 channel=args.channel,
                 head=args.head,
                 reason=args.reason,
+                checkpoint=args.checkpoint,
+                min_additional_completed=args.min_additional_completed,
+                max_additional_completed=args.max_additional_completed,
             ), 0
         if args.decide_command == "stop":
             return controller.decide_stop(

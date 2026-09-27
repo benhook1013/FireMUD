@@ -226,6 +226,7 @@ public class ScriptEventAuditRepository {
     String normalizedScriptPinControlPlaneRequestId =
         blankToNull(entity.getScriptPinControlPlaneRequestId());
     requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
+    requireCoherentPluginFence(entity);
     for (int attempt = 0; attempt < MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<HandlerIdentityInsertResult> inserted = insertHandlerIdentity(entity);
       if (inserted.isPresent()) {
@@ -234,6 +235,7 @@ public class ScriptEventAuditRepository {
           requireMatchingPinOwnerEvidence(
               normalizedScriptPinControlPlaneRequestId,
               result.audit().getScriptPinControlPlaneRequestId());
+          requireMatchingPluginFence(entity, result.audit());
         }
         return new IdempotentInsertResult(result.audit(), result.inserted());
       }
@@ -245,6 +247,7 @@ public class ScriptEventAuditRepository {
         requireMatchingPinOwnerEvidence(
             normalizedScriptPinControlPlaneRequestId,
             existing.orElseThrow().getScriptPinControlPlaneRequestId());
+        requireMatchingPluginFence(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -404,6 +407,7 @@ public class ScriptEventAuditRepository {
     String normalizedScriptPinControlPlaneRequestId =
         blankToNull(entity.getScriptPinControlPlaneRequestId());
     requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
+    requireCoherentPluginFence(entity);
     ScriptEventAudit persisted =
         findById(entity.getId())
             .orElseThrow(
@@ -427,6 +431,8 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.BINDING_ID, entity.getBindingId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_EVENT_AUDIT.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(SCRIPT_EVENT_AUDIT.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
@@ -468,6 +474,7 @@ public class ScriptEventAuditRepository {
   }
 
   private void populate(ScriptEventAuditRecord record, ScriptEventAudit entity) {
+    requireCoherentPluginFence(entity);
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setRegionId(entity.getRegionId());
@@ -481,6 +488,8 @@ public class ScriptEventAuditRepository {
     record.setBindingId(entity.getBindingId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setScriptPinEpoch(normalizedScriptPinEpoch(entity));
@@ -523,6 +532,10 @@ public class ScriptEventAuditRepository {
     entity.setBindingId(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
+    Long pluginActivationEpoch = record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_EVENT_AUDIT.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setTargetScopeType(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
@@ -580,6 +593,29 @@ public class ScriptEventAuditRepository {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id is immutable and conflicts with persisted identity");
     }
+    if (submitted.getPluginActivationEpoch() != persisted.getPluginActivationEpoch()) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch is immutable and conflicts with persisted identity");
+    }
+    if (submitted.getLifecycleRevision() != persisted.getLifecycleRevision()) {
+      throw new IllegalArgumentException(
+          "lifecycle_revision is immutable and conflicts with persisted identity");
+    }
+  }
+
+  private static void requireMatchingPluginFence(
+      ScriptEventAudit requested, ScriptEventAudit existing) {
+    if (requested.getPluginActivationEpoch() != existing.getPluginActivationEpoch()) {
+      throw new IllegalStateException("plugin_activation_epoch conflicts with existing identity");
+    }
+    if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
+      throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
+  private static void requireCoherentPluginFence(ScriptEventAudit entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
   }
 
   private static Long normalizedScriptPinEpoch(ScriptEventAudit entity) {

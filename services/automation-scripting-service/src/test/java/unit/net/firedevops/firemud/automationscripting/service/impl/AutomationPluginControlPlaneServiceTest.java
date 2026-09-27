@@ -37,7 +37,9 @@ class AutomationPluginControlPlaneServiceTest {
                         44L,
                         "",
                         ""),
-                    null)));
+                    null,
+                    0L,
+                    0L)));
     var service =
         new AutomationPluginControlPlaneService(
             pluginRuntimeStateService,
@@ -98,5 +100,44 @@ class AutomationPluginControlPlaneServiceTest {
     assertThat(response.getInspectedCount()).isEqualTo(4L);
     assertThat(response.getViolationsCount()).isEqualTo(1);
     assertThat(response.getViolations(0).getReason()).isEqualTo("policy_mismatch");
+  }
+
+  @Test
+  void reportsFailedPreconditionWhenPluginDrainIsRejected() {
+    var pluginRuntimeStateService =
+        Mockito.mock(
+            net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.class);
+    Mockito.when(
+            pluginRuntimeStateService.drain(
+                Mockito.any(
+                    net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService
+                        .PluginStateCommand.class)))
+        .thenReturn(false);
+    var service =
+        new AutomationPluginControlPlaneService(
+            pluginRuntimeStateService,
+            new net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties());
+
+    var response =
+        service.drainPlugin(
+            net.firedevops.firemud.automationscripting.v1.DrainPluginRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setGameInstanceId("game-1")
+                .setPluginId("plugin-1")
+                .setControlPlaneRequestId("drain-1")
+                .setActorPrincipal("operator-1")
+                .setReason("operator_drain")
+                .build());
+
+    assertThat(response.getSuccess()).isFalse();
+    assertThat(response.hasError()).isTrue();
+    assertThat(response.getError().getCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(response.getError().getMessage())
+        .isEqualTo("drain requires an ENABLED active plugin lifecycle");
+    Mockito.verify(pluginRuntimeStateService)
+        .drain(
+            new net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService
+                .PluginStateCommand(
+                "tenant-1", "game-1", "plugin-1", "drain-1", "operator-1", "operator_drain"));
   }
 }

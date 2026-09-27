@@ -38,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
 
@@ -162,19 +163,25 @@ class ScriptWorkItemServiceImplTest {
   @Test
   void replayDirectIdsNormalizesPaddedTenant() {
     ScriptWorkItem item = replayableRuntimeWorkItem(90L);
+    item.setAuthorityUnavailableRetryCount(4);
+    item.setNextEligibleAt(Instant.now().plusSeconds(3600));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     when(workItemRepository.findById(90L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     ScriptWorkItemService service = replayService(workItemRepository);
 
+    Instant replayStartedAt = Instant.now();
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
                 " 1 ", "", "", List.of("90"), "", 0L, 0L, 10, "", "", ""));
+    Instant replayFinishedAt = Instant.now();
 
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(result.rejectedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
+    assertThat(item.getNextEligibleAt()).isBetween(replayStartedAt, replayFinishedAt);
     verify(workItemRepository).findById(90L);
   }
 
@@ -349,8 +356,11 @@ class ScriptWorkItemServiceImplTest {
     item.setStatus("PENDING_EVALUATION");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ArgumentCaptor<Instant> eligibleAtCaptor = ArgumentCaptor.forClass(Instant.class);
     when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
-            "PENDING_EVALUATION", PageRequest.of(0, 10)))
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.eq(PageRequest.of(0, 10))))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
@@ -366,11 +376,19 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(PluginRuntimeStateService.class),
             gameDesignClient());
 
+    Instant claimStartedAt = Instant.now();
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
+    Instant claimFinishedAt = Instant.now();
 
     assertThat(claimed).containsExactly(item);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     assertThat(item.getUpdatedAt()).isNotNull();
+    verify(workItemRepository)
+        .findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            eligibleAtCaptor.capture(),
+            Mockito.eq(PageRequest.of(0, 10)));
+    assertThat(eligibleAtCaptor.getValue()).isBetween(claimStartedAt, claimFinishedAt);
     verify(workItemRepository).saveAll(List.of(item));
   }
 
@@ -400,8 +418,12 @@ class ScriptWorkItemServiceImplTest {
     item.setId(99L);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ArgumentCaptor<Instant> eligibleAtCaptor = ArgumentCaptor.forClass(Instant.class);
     when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-            List.of(99L, 100L), "PENDING_EVALUATION", PageRequest.of(0, 10)))
+            Mockito.eq(List.of(99L, 100L)),
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.eq(PageRequest.of(0, 10))))
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
@@ -417,10 +439,17 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(PluginRuntimeStateService.class),
             gameDesignClient());
 
-    List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 100L), 10);
+    Instant claimStartedAt = Instant.now();
+    List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 99L, 100L), 10);
+    Instant claimFinishedAt = Instant.now();
 
     assertThat(claimed).containsExactly(item);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    verify(workItemRepository)
+        .findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq(List.of(99L, 100L)), Mockito.eq("PENDING_EVALUATION"),
+            eligibleAtCaptor.capture(), Mockito.eq(PageRequest.of(0, 10)));
+    assertThat(eligibleAtCaptor.getValue()).isBetween(claimStartedAt, claimFinishedAt);
     verify(workItemRepository).saveAll(List.of(item));
   }
 
@@ -1862,6 +1891,8 @@ class ScriptWorkItemServiceImplTest {
     item.setEntityId("entity-1");
     item.setPluginId("plugin-1");
     item.setPluginVersionId("plugin-v1");
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-2");
@@ -1921,7 +1952,9 @@ class ScriptWorkItemServiceImplTest {
                     "admin",
                     System.currentTimeMillis(),
                     null,
-                    null)));
+                    null,
+                    1L,
+                    1L)));
     ScriptWorkItemService service =
         service(
             workItemRepository,
@@ -1952,6 +1985,8 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(result.rejectedCount()).isEqualTo(0L);
+    assertThat(item.getPluginActivationEpoch()).isEqualTo(1L);
+    assertThat(item.getLifecycleRevision()).isEqualTo(1L);
     verify(pluginRuntimeStateService).getStatus("1", "game-1", "plugin-1");
   }
 

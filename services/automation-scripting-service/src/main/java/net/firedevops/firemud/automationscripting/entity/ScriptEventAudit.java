@@ -19,6 +19,13 @@ public class ScriptEventAudit {
   private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
+
+  /** Captured plugin activation fence; zero means this is core-script work. */
+  private long pluginActivationEpoch;
+
+  /** Captured plugin lifecycle fence; zero means this is core-script work. */
+  private long lifecycleRevision;
+
   private String targetScopeType = "";
   private String targetScopeId = "";
   private String eventType;

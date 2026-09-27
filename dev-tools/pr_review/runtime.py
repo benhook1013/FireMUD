@@ -225,10 +225,11 @@ class LiveEvidence:
     def _comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]:
+            body = item.get("body")
             values.append(
                 {
                     "id": github.immutable_database_id(item),
-                    "body": item.get("body"),
+                    "body": body if isinstance(body, str) else "",
                     "created_at": item.get("createdAt"),
                     "updated_at": item.get("updatedAt"),
                     "author_login": ((item.get("author") or {}).get("login")),
@@ -1434,7 +1435,9 @@ class LiveEvidence:
         payload = self._payload(pr)
         live = self.live.pull_request(pr)
         head = live.head_sha
-        checkpoints, _ = evidence.parse_checkpoint_comments(self._comments(payload))
+        comments = self._comments(payload)
+        checkpoints, _ = evidence.parse_checkpoint_comments(comments)
+        scope_changes = evidence.parse_scope_changes(comments)
         checkpoints.sort(key=lambda item: (item.created_at, item.comment_id or 0))
         reviews = self._reviews(payload)
         values: list[dict[str, Any]] = []
@@ -1492,6 +1495,7 @@ class LiveEvidence:
                     "pr": pr,
                     "head": exact_head,
                     "reviewed_head": exact_head,
+                    "comment_id": checkpoint.comment_id,
                     "observed_at": checkpoint.created_at,
                     "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
                     "completed": completed,
@@ -1608,6 +1612,11 @@ class LiveEvidence:
                         "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
                         "reason": state.reason,
                     }
+                    if state.state == "active":
+                        anchor = record.get("anchor")
+                        observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                        observation["trigger_id"] = state.trigger_comment_id
+                        observation["response_id"] = state.response_id
                     if state.state == "ambiguous":
                         terminal_observation = self._terminal_ambiguous_hosted_observation(
                             pr, record, state, payload
@@ -1620,15 +1629,83 @@ class LiveEvidence:
                                 }
                             )
                     values.append(observation)
-        values.extend(
-            self._global_blockers(
-                pr,
-                head,
-                payload,
-                changed_files=live.changed_files,
-                include_hosted_findings=channel == "hosted",
+        parsed_scope_changes = {
+            (item.comment_id, item.created_at, item.description, item.updated_at)
+            for item in scope_changes
+        }
+        for comment in comments:
+            author_login = comment.get("author_login")
+            if github.is_coderabbit_login(author_login):
+                continue
+            body = comment["body"]
+            if not isinstance(body, str):
+                continue
+            lines = body.splitlines()
+            first = next((line for line in lines if line.strip() and not line[0].isspace()), None)
+            scope_heading = evidence.SCOPE_CHANGE.fullmatch(first or "")
+            exact_marker_lines = [line for line in lines[1:] if line == evidence.SCOPE_MARKER]
+            looks_like_scope_change = bool(
+                re.match(r"^\*{0,2}review\s+scope\s+changed\b", (first or "").strip(), re.IGNORECASE)
+                or any(line == evidence.SCOPE_MARKER for line in lines)
             )
+            if not looks_like_scope_change:
+                continue
+            comment_id = comment["id"]
+            created_at = comment["created_at"]
+            updated_at = comment["updated_at"]
+            description = scope_heading.group("description") if scope_heading is not None else None
+            valid = (
+                len(exact_marker_lines) == 1
+                and (comment_id, created_at, description, updated_at if updated_at != created_at else None)
+                in parsed_scope_changes
+            )
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "channel": channel,
+                    "kind": "scope_change" if valid else "scope_change_malformed",
+                    "scope_changed": True,
+                    "scope_change_malformed": not valid,
+                    "checkpoint": f"scope-change:{comment_id or created_at}",
+                    "comment_id": comment_id,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "observed_at": updated_at or created_at,
+                    "description": description,
+                    "completed": False,
+                    "attributable": False,
+                    "anchored": False,
+                    "accepted": 0,
+                    "raw": 0,
+                    "non_counting": True,
+                }
+            )
+        global_blockers = self._global_blockers(
+            pr,
+            head,
+            payload,
+            changed_files=live.changed_files,
+            include_hosted_findings=channel == "hosted",
         )
+        values.append(
+            {
+                "pr": pr,
+                "head": head,
+                "channel": channel,
+                "kind": "scope_timeline",
+                "scope_timeline": True,
+                "scope_timeline_complete": True,
+                "checkpoint": "scope-timeline:complete",
+                "completed": False,
+                "attributable": False,
+                "anchored": False,
+                "accepted": 0,
+                "raw": 0,
+                "non_counting": True,
+            }
+        )
+        values.extend(global_blockers)
         self._histories[key] = values
         return values
 

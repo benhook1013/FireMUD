@@ -20,6 +20,13 @@ public class ScriptWorkItem {
   private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
+
+  /** Captured plugin activation fence; zero means this is core-script work. */
+  private long pluginActivationEpoch;
+
+  /** Captured plugin lifecycle fence; zero means this is core-script work. */
+  private long lifecycleRevision;
+
   private String targetScopeType = "";
   private String targetScopeId = "";
   private String eventType;
@@ -46,6 +53,8 @@ public class ScriptWorkItem {
   private long admissionEpoch = 1L;
   private String status = "PENDING_EVALUATION";
   private String cancelReason;
+  private int authorityUnavailableRetryCount;
+  private Instant nextEligibleAt = Instant.now();
   private Instant createdAt = Instant.now();
   private Instant updatedAt = Instant.now();
   private int rowVersion;

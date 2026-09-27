@@ -20,6 +20,13 @@ public class ScriptEventIngressAudit {
   private String scriptId;
   private String pluginId;
   private String pluginVersionId;
+
+  /** Captured plugin activation fence; zero means this is core-script work. */
+  private long pluginActivationEpoch;
+
+  /** Captured plugin lifecycle fence; zero means this is core-script work. */
+  private long lifecycleRevision;
+
   private String eventType;
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;

@@ -542,6 +542,10 @@ class ReviewAllocation:
     stop_summary_disposition_fingerprints: tuple[str, ...] = ()
     retained_ambiguous_fingerprints: tuple[str, ...] = ()
     retained_ambiguous_reason: str | None = None
+    baseline_checkpoint: str | None = None
+    min_additional_completed: int | None = None
+    max_additional_completed: int | None = None
+    reopens_taper: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -562,6 +566,33 @@ class ReviewAllocation:
             raise StateError("review allocation baseline checkpoints must be non-empty strings")
         if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
             raise StateError("review allocation baseline checkpoints must be unique")
+        if self.min_additional_completed is not None and (
+            isinstance(self.min_additional_completed, bool)
+            or not isinstance(self.min_additional_completed, int)
+            or self.min_additional_completed < 0
+        ):
+            raise StateError("minimum additional completed reviews must be a non-negative integer or null")
+        if self.max_additional_completed is not None and (
+            isinstance(self.max_additional_completed, bool)
+            or not isinstance(self.max_additional_completed, int)
+            or self.max_additional_completed <= 0
+        ):
+            raise StateError("maximum additional completed reviews must be a positive integer")
+        if not isinstance(self.reopens_taper, bool):
+            raise StateError("review allocation taper-reopen marker must be boolean")
+        if self.min_additional_completed is None and self.max_additional_completed is None:
+            if self.baseline_checkpoint is not None:
+                raise StateError("a bounded review allocation requires a minimum or maximum")
+        elif self.min_additional_completed is not None and self.max_additional_completed is not None and (
+            self.min_additional_completed > self.max_additional_completed
+        ):
+            raise StateError("minimum additional completed reviews cannot exceed the maximum")
+        if self.baseline_checkpoint is not None and (
+            not isinstance(self.baseline_checkpoint, str)
+            or not self.baseline_checkpoint.strip()
+            or self.baseline_checkpoint not in self.baseline_checkpoints
+        ):
+            raise StateError("allocation baseline checkpoint must be present in the baseline set")
         handoff_values = (self.handoff_checkpoint, self.handoff_head, self.handoff_validation)
         if any(value is not None for value in handoff_values):
             if not all(isinstance(value, str) and value.strip() for value in handoff_values):
@@ -623,7 +654,7 @@ class ReviewAllocation:
         return f"{self.pr}:{self.channel}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "pr": self.pr,
             "channel": self.channel,
             "head": self.head,
@@ -650,6 +681,15 @@ class ReviewAllocation:
             "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
         }
+        if self.baseline_checkpoint is not None:
+            value["baseline_checkpoint"] = self.baseline_checkpoint
+        if self.min_additional_completed is not None:
+            value["min_additional_completed"] = self.min_additional_completed
+        if self.max_additional_completed is not None:
+            value["max_additional_completed"] = self.max_additional_completed
+        if self.reopens_taper:
+            value["reopens_taper"] = True
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
@@ -663,6 +703,10 @@ class ReviewAllocation:
             "patch_id",
             "baseline_checkpoints",
             "reason",
+            "baseline_checkpoint",
+            "min_additional_completed",
+            "max_additional_completed",
+            "reopens_taper",
             "handoff_checkpoint",
             "handoff_head",
             "handoff_validation",
@@ -712,6 +756,10 @@ class ReviewAllocation:
                 patch_id=value["patch_id"],
                 baseline_checkpoints=tuple(raw_checkpoints),
                 reason=value["reason"],
+                baseline_checkpoint=value.get("baseline_checkpoint"),
+                min_additional_completed=value.get("min_additional_completed"),
+                max_additional_completed=value.get("max_additional_completed"),
+                reopens_taper=value.get("reopens_taper", False),
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),
                 handoff_validation=value.get("handoff_validation"),

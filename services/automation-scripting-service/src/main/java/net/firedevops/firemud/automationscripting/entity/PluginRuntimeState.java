@@ -13,10 +13,16 @@ public class PluginRuntimeState {
   private Long runtimeRegionEpoch;
   private String pluginId;
   private String activePluginVersionId;
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
   private String pendingPluginVersionId;
   private String pluginState;
   private String statusReason;
   private String controlPlaneRequestId;
+
+  /** Canonical digest of the request that produced the durable state/ack. */
+  private String controlPlaneRequestFingerprint = "";
+
   private String actorPrincipal;
   private Instant lastChangedAt = Instant.now();
   private Instant lastPolicyCheckedAt = Instant.EPOCH;

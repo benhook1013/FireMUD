@@ -238,6 +238,57 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
+  void insertAndHydratePluginFencePersistsBothValues() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(12L, now, now);
+    row.setPluginActivationEpoch(4L);
+    row.setLifecycleRevision(8L);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> insertSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          insertSql.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setPluginActivationEpoch(4L);
+    entity.setLifecycleRevision(8L);
+
+    ScriptEventAudit saved = repository.insertIfAbsentByHandlerIdentity(entity).audit();
+
+    assertThat(saved.getPluginActivationEpoch()).isEqualTo(4L);
+    assertThat(saved.getLifecycleRevision()).isEqualTo(8L);
+    assertThat(insertSql)
+        .hasValueSatisfying(
+            sql -> assertThat(sql).contains("plugin_activation_epoch", "lifecycle_revision"));
+  }
+
+  @Test
+  void insertRejectsAConflictingPluginFencePair() {
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventAudit entity = auditEntity(Instant.parse("2026-08-01T00:00:00Z"));
+    entity.setPluginActivationEpoch(4L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByHandlerIdentity(entity))
+        .withMessage(
+            "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+  }
+
+  @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));
@@ -635,6 +686,8 @@ class ScriptEventAuditRepositoryTest {
     record.setRealmSlug("realm-1");
     record.setPointerVersion("1");
     record.setScriptId("script-1");
+    record.setPluginActivationEpoch(0L);
+    record.setLifecycleRevision(0L);
     record.setEventType("onTimerExpire");
     record.setEventSchemaVersion("v1");
     record.setScriptPatchVersion("patch-1");
