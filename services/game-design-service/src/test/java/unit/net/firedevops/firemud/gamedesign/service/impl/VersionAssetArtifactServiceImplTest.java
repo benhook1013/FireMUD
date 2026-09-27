@@ -80,6 +80,14 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
+  void optionalReadDistinguishesMissingArtifactWhileRequiredReadStillFails() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+
+    assertEquals(Optional.empty(), service.findState("tenant-1", 7L));
+    assertThrows(IllegalArgumentException.class, () -> service.getState("tenant-1", 7L));
+  }
+
+  @Test
   void repairFailsClosedWhenManifestHashDrifts() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
