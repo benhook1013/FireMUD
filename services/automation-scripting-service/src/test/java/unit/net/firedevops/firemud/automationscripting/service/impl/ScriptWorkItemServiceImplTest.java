@@ -3103,13 +3103,14 @@ class ScriptWorkItemServiceImplTest {
     verify(workItemRepository).findById(101L);
     verify(workItemRepository).findById(102L);
     verify(workItemRepository, never()).save(Mockito.any());
-    verify(replayRepository).insertOrGet(
-        Mockito.anyString(),
-        Mockito.eq("req-limit"),
-        Mockito.anyString(),
-        Mockito.anyString(),
-        Mockito.anyString(),
-        Mockito.any(Instant.class));
+    verify(replayRepository)
+        .insertOrGet(
+            Mockito.anyString(),
+            Mockito.eq("req-limit"),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
   }
 
   @Test

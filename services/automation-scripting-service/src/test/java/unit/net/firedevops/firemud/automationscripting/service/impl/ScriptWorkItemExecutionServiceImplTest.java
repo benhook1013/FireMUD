@@ -486,7 +486,8 @@ class ScriptWorkItemExecutionServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPinEpoch(3L))
+                        .setScriptPinEpoch(3L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-1"))
                 .build());
 
     ScriptWorkItemExecutionService service =
@@ -3951,7 +3952,8 @@ class ScriptWorkItemExecutionServiceImplTest {
                 .setRegionId("region-1")
                 .setRegionEpoch(12L)
                 .setPinnedScriptPatchVersion("patch-1")
-                .setScriptPinEpoch(3L))
+                .setScriptPinEpoch(3L)
+                .setScriptPatchPinnedControlPlaneRequestId("pin-1"))
         .build();
   }
 
@@ -3974,6 +3976,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setSourceService("game-session-service");
     item.setPayloadJson("{\"commandName\":\"LOOK\"}");
     item.setScriptPinEpoch(3L);
+    item.setScriptPinControlPlaneRequestId("pin-1");
     item.setStatus("EVALUATING");
     // This fixture represents work with no prior authority outage or retry delay.
     item.setNextEligibleAt(null);
