@@ -197,7 +197,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('line-height: 1.2; font-weight: 700;', result)
         self.assertIn('header.mast {\n  position: sticky;', result)
         self.assertIn('.brand {', result)
-        self.assertIn('.refresh-form { position: absolute; right: calc(100% + .7rem);', result)
+        self.assertIn('.refresh-form { position: absolute; right: calc(100% + .7rem); top: calc(50% - 1.05rem);', result)
         self.assertIn('width: 4.25rem; height: 2.1rem;', result)
         self.assertIn('width: 100%; height: 1.65rem;', result)
         self.assertIn('padding: .1rem .375rem;', result)

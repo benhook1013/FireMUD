@@ -755,7 +755,7 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ position: absolute; right: calc(100% + .7rem); top: 50%; transform: translateY(-50%); width: 4.25rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+.refresh-form {{ position: absolute; right: calc(100% + .7rem); top: calc(50% - 1.05rem); width: 4.25rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
 .refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
 .refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 1.65rem; border: 1px solid #f0e0e6; border-radius: 7px; padding: .1rem .375rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: pre-line; text-align: center; }}
 .refresh-form.loading button {{ height: 2.1rem; }}
