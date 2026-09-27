@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -351,14 +352,23 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.eq(exportedManifest.manifestHash()));
 
-    assertThatThrownBy(
+    Throwable publishFailure =
+        catchThrowable(
             () ->
                 versionPublishCommandService.publishFullVersion(
-                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId))
-        .isInstanceOf(RuntimeException.class);
+                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId));
 
-    assertThat(exportCompleted.get()).isTrue();
-    assertThat(finalizationFailureInjected.get()).isTrue();
+    assertThat(publishFailure).isInstanceOf(RuntimeException.class);
+    String failureContext =
+        "publish failed before export/finalization (candidateVersionId="
+            + candidateVersionId.get()
+            + ", failure="
+            + publishFailure.getClass().getName()
+            + ": "
+            + publishFailure.getMessage()
+            + ")";
+    assertThat(exportCompleted.get()).as(failureContext).isTrue();
+    assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
