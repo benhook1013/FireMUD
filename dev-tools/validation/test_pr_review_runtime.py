@@ -1665,6 +1665,8 @@ class RuntimeTest(unittest.TestCase):
 
         observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
         self.assertEqual(observation["anchor"], record["anchor"])
+        self.assertEqual(observation["trigger_id"], 10)
+        self.assertEqual(observation["response_id"], 11)
 
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"

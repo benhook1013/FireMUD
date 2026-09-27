@@ -543,6 +543,7 @@ class ReviewAllocation:
     retained_ambiguous_fingerprints: tuple[str, ...] = ()
     retained_ambiguous_reason: str | None = None
     baseline_checkpoint: str | None = None
+    min_additional_completed: int | None = None
     max_additional_completed: int | None = None
 
     def __post_init__(self) -> None:
@@ -564,21 +565,31 @@ class ReviewAllocation:
             raise StateError("review allocation baseline checkpoints must be non-empty strings")
         if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
             raise StateError("review allocation baseline checkpoints must be unique")
-        if self.max_additional_completed is None:
-            if self.baseline_checkpoint is not None:
-                raise StateError("a bounded review allocation requires a maximum completed-result cap")
-        elif (
+        if self.min_additional_completed is not None and (
+            isinstance(self.min_additional_completed, bool)
+            or not isinstance(self.min_additional_completed, int)
+            or self.min_additional_completed < 0
+        ):
+            raise StateError("minimum additional completed reviews must be a non-negative integer or null")
+        if self.max_additional_completed is not None and (
             isinstance(self.max_additional_completed, bool)
             or not isinstance(self.max_additional_completed, int)
             or self.max_additional_completed <= 0
         ):
             raise StateError("maximum additional completed reviews must be a positive integer")
-        elif (
+        if self.min_additional_completed is None and self.max_additional_completed is None:
+            if self.baseline_checkpoint is not None:
+                raise StateError("a bounded review allocation requires a minimum or maximum")
+        elif self.min_additional_completed is not None and self.max_additional_completed is not None and (
+            self.min_additional_completed > self.max_additional_completed
+        ):
+            raise StateError("minimum additional completed reviews cannot exceed the maximum")
+        if self.baseline_checkpoint is not None and (
             not isinstance(self.baseline_checkpoint, str)
             or not self.baseline_checkpoint.strip()
             or self.baseline_checkpoint not in self.baseline_checkpoints
         ):
-            raise StateError("a bounded review allocation requires its baseline checkpoint in the baseline set")
+            raise StateError("allocation baseline checkpoint must be present in the baseline set")
         handoff_values = (self.handoff_checkpoint, self.handoff_head, self.handoff_validation)
         if any(value is not None for value in handoff_values):
             if not all(isinstance(value, str) and value.strip() for value in handoff_values):
@@ -667,8 +678,11 @@ class ReviewAllocation:
             "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
         }
-        if self.max_additional_completed is not None:
+        if self.baseline_checkpoint is not None:
             value["baseline_checkpoint"] = self.baseline_checkpoint
+        if self.min_additional_completed is not None:
+            value["min_additional_completed"] = self.min_additional_completed
+        if self.max_additional_completed is not None:
             value["max_additional_completed"] = self.max_additional_completed
         return value
 
@@ -685,6 +699,7 @@ class ReviewAllocation:
             "baseline_checkpoints",
             "reason",
             "baseline_checkpoint",
+            "min_additional_completed",
             "max_additional_completed",
             "handoff_checkpoint",
             "handoff_head",
@@ -736,6 +751,7 @@ class ReviewAllocation:
                 baseline_checkpoints=tuple(raw_checkpoints),
                 reason=value["reason"],
                 baseline_checkpoint=value.get("baseline_checkpoint"),
+                min_additional_completed=value.get("min_additional_completed"),
                 max_additional_completed=value.get("max_additional_completed"),
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),

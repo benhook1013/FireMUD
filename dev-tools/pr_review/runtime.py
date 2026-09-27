@@ -1615,6 +1615,8 @@ class LiveEvidence:
                     if state.state == "active":
                         anchor = record.get("anchor")
                         observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                        observation["trigger_id"] = state.trigger_comment_id
+                        observation["response_id"] = state.response_id
                     if state.state == "ambiguous":
                         terminal_observation = self._terminal_ambiguous_hosted_observation(
                             pr, record, state, payload
