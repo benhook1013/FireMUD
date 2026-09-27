@@ -317,8 +317,20 @@ final class AutomationGameplayCommandAdmissionSupport {
             && existing.getCompletedAt() == null
             && "UNAVAILABLE".equals(result.errorCode());
     if (retryExisting) {
-      Optional<AdmissionResult> ownershipRejected =
-          rejectIfOwnershipClosed(request, runtimeRegionStatusRepository);
+      final Optional<AdmissionResult> ownershipRejected;
+      try {
+        ownershipRejected = rejectIfOwnershipClosed(request, runtimeRegionStatusRepository);
+      } catch (RuntimeException ex) {
+        return new DurableAdmission(
+            new AdmissionResult(
+                false,
+                "RETRY_QUEUED",
+                existing.getCommandId(),
+                "UNAVAILABLE",
+                "Runtime ownership is temporarily unavailable"),
+            null,
+            false);
+      }
       if (ownershipRejected.isPresent()) {
         return new DurableAdmission(ownershipRejected.orElseThrow(), null, false);
       }

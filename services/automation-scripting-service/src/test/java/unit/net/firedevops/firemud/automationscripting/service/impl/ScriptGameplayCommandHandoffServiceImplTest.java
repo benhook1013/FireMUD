@@ -114,6 +114,39 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void admissionPreflightFailureIsRetryableBeforeIntentOrRuntimeRead() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    AutomationAdmissionStateService admissionService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionService.getState("1", "7", "region-1"))
+        .thenThrow(new IllegalStateException("admission store unavailable"));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionService,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
+    verify(admissionService).getState("1", "7", "region-1");
+    verifyNoInteractions(
+        gameSessionClient, workItemRepository, auditRepository, handoffEventRepository);
+  }
+
+  @Test
   void intentCommitsBeforeGameSessionRpcAndRpcRunsWithoutLocalTransaction() {
     List<String> operations = new ArrayList<>();
     RecordingTransactionManager transactionManager = new RecordingTransactionManager(operations);
