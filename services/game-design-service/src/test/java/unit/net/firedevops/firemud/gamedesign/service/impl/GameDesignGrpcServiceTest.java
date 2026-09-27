@@ -373,6 +373,28 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishScriptPatchVersionRejectsNonPositiveBaseVersionBeforeServiceCall() throws Exception {
+    for (long baseVersionId : List.of(0L, -1L)) {
+      AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+      try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+        service.publishScriptPatchVersion(
+            PublishScriptPatchVersionRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setBaseVersionId(baseVersionId)
+                .setScriptPatchVersion("patch-1")
+                .setNotes("notes")
+                .setPublishRequestId("publish-request-1")
+                .build(),
+            observerFor(ref));
+      }
+
+      assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+      Mockito.verifyNoInteractions(versionService);
+    }
+  }
+
+  @Test
   void publishScriptPatchVersionMapsPendingReconciliationToStableCode() throws Exception {
     Mockito.when(
             versionService.publishScriptPatchVersion(

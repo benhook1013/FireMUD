@@ -388,6 +388,50 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("1.0.0");
+    instance.setVersionId(7L);
+    instance.setScriptPatchVersion("patch-9");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
+    instance.setScriptPatchPinnedBy("operator-1");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
+    instance.setOwnerAccountId(99L);
+    instance.setStatus("RUNNING");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.getPinnedScriptPatchVersion(
+        GetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("patch-9", responseRef.get().getPinnedScriptPatchVersion());
+    assertEquals("req-99", responseRef.get().getControlPlaneRequestId());
+    assertEquals(17L, responseRef.get().getPublication().getVersionId());
+    assertEquals(7L, responseRef.get().getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getPublication().getLookupErrorCode());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+        responseRef.get().getPublication().getPublicationState());
+  }
+
+  @Test
+  void getPinnedScriptPatchVersionRetainsMissingBaseErrorForLegacyPersistedPin() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("1.0.0");
     instance.setScriptPatchVersion("patch-9");
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));

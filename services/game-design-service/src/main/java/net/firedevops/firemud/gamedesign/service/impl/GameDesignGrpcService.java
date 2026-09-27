@@ -253,6 +253,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         PublishScriptPatchVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
+      if (request.getBaseVersionId() <= 0L) {
+        throw new IllegalArgumentException("base_version_id must be positive");
+      }
       if (request.getPublishRequestId().isBlank()) {
         throw new IllegalArgumentException("publish_request_id is required");
       }

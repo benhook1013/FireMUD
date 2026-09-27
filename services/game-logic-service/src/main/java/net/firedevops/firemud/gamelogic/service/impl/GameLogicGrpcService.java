@@ -116,7 +116,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         PublicationReadGuard.configured(workloadNamespace));
   }
 
-  public GameLogicGrpcService(
+  GameLogicGrpcService(
       PingService pingService,
       CommandService commandService,
       LookAggregationService lookAggregationService,

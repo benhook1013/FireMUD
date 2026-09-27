@@ -442,6 +442,7 @@ class GameLogicGrpcServiceTest {
   private GetDraftDesignDigestResponse invokeDigest(
       GameLogicGrpcService service, GetDraftDesignDigestRequest request) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> failure = new AtomicReference<>();
     service.getDraftDesignDigest(
         request,
         new StreamObserver<>() {
@@ -451,12 +452,21 @@ class GameLogicGrpcServiceTest {
           }
 
           @Override
-          public void onError(Throwable t) {}
+          public void onError(Throwable t) {
+            failure.set(t);
+          }
 
           @Override
           public void onCompleted() {}
         });
-    return ref.get();
+    if (failure.get() != null) {
+      throw new AssertionError("getDraftDesignDigest completed with an error", failure.get());
+    }
+    GetDraftDesignDigestResponse response = ref.get();
+    if (response == null) {
+      throw new AssertionError("getDraftDesignDigest completed without a response");
+    }
+    return response;
   }
 
   private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
