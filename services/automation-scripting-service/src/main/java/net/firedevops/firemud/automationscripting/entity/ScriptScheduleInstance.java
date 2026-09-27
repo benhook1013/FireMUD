@@ -9,6 +9,7 @@ public class ScriptScheduleInstance {
   private String tenantId;
   private String gameInstanceId;
   private String scriptPatchVersion;
+  private Long scriptPatchBaseVersionId;
   private long scriptPinEpoch;
   private String scriptId;
   private String playableStateScope = "";

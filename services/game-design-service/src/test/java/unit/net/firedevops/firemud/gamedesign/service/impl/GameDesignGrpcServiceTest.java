@@ -21,11 +21,13 @@ import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -56,6 +58,8 @@ import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
@@ -275,6 +279,215 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsKnownPublishAttemptStateFailures() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalStateException(
+                "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_SCOPE_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
+    PublishGateFailureException gateFailure =
+        (PublishGateFailureException)
+            TemporalVersionPublishOrchestrator.failureForSnapshot(
+                new PublishWorkflowSnapshot(
+                    0L,
+                    0,
+                    "publish:tenant-1:publish-request:publish-request-1",
+                    "FAILED",
+                    PublishGateFailureCode.PARTICIPANT_SET_MISMATCH.name(),
+                    "participant set mismatch"));
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(gateFailure);
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PARTICIPANT_SET_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsKnownIllegalArgumentPublishAttemptCode() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalArgumentException(
+                "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: publish workflow does not match request"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_IDENTITY_CONFLICT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsKnownPublishAttemptStateFailures() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: finalization pending"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_INCONSISTENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsPendingReconciliationToStableCode() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.PendingReconciliationException(
+                "release evidence needs readback"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsScriptPatchIdentityConflict() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalArgumentException(
+                "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT: artifact belongs to another request"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsUnknownIllegalArgumentToInvalidArgument() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalArgumentException("invalid patch request"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("unexpected internal state"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new IllegalStateException("unexpected internal state"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
   void uploadPluginBundleReturnsPublicationId() {
     Mockito.when(
             versionService.uploadPluginBundle(
@@ -377,6 +590,51 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishPluginVersionMapsImmutableTerminalConflictToTypedError() {
+    Mockito.doThrow(
+            new IllegalArgumentException(
+                "PLUGIN_VERSION_IMMUTABLE: terminal plugin version cannot be republished; create a new plugin version"))
+        .when(versionService)
+        .publishPluginVersion(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v1",
+            7L,
+            "ability-1",
+            "bundle-1",
+            1,
+            "dist-hash",
+            "dist-path",
+            "signer-1",
+            false,
+            "ALLOWED",
+            "notes");
+
+    AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishPluginVersion(
+          PublishPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setBaseVersionId(7L)
+              .setAbilitySchemaDigest("ability-1")
+              .setBundleDigest("bundle-1")
+              .setManifestSchemaVersion(1)
+              .setDistributionManifestHash("dist-hash")
+              .setDistributionManifestPath("dist-path")
+              .setSignerKeyId("signer-1")
+              .setComponentPolicyDecision(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PLUGIN_VERSION_IMMUTABLE", ref.get().getError().getCode());
+  }
+
+  @Test
   void getPublishedPluginVersionReturnsPublicationReadModel() {
     Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(
@@ -419,6 +677,53 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED,
         ref.get().getPluginVersion().getComponentPolicyDecision());
+  }
+
+  @Test
+  void getPublishedPluginVersionReturnsHistoricalTerminalStates() {
+    for (VersionLifecycleState state :
+        List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
+      Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
+          .thenReturn(
+              new PublishedPluginVersionDto(
+                  15L,
+                  "tenant-1",
+                  "plugin-1",
+                  "plugin-v1",
+                  7L,
+                  state,
+                  "ability-1",
+                  "bundle-1",
+                  1,
+                  "dist-hash",
+                  "dist-path",
+                  "signer-1",
+                  false,
+                  "ALLOWED",
+                  "notes",
+                  "reason",
+                  LocalDateTime.parse("2026-04-22T12:00:00")));
+
+      AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
+      try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+        service.getPublishedPluginVersion(
+            GetPublishedPluginVersionRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .build(),
+            observerFor(ref));
+      }
+
+      assertEquals("", ref.get().getError().getCode());
+      assertEquals(
+          state == VersionLifecycleState.SUPERSEDED
+              ? net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                  .VERSION_LIFECYCLE_STATE_SUPERSEDED
+              : net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                  .VERSION_LIFECYCLE_STATE_REVOKED_DESIGN,
+          ref.get().getPluginVersion().getPublicationState());
+    }
   }
 
   @Test

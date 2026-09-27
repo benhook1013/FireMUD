@@ -150,6 +150,7 @@ class SummaryFindingDisposition:
     decision: str
     reason: str
     corrected_head: str | None = None
+    route_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -164,7 +165,7 @@ class SummaryFindingDisposition:
             raise StateError("summary disposition kind must be outside_diff or duplicate")
         if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count <= 0:
             raise StateError("summary disposition count must be a positive integer")
-        if self.decision not in {"rejected", "accepted_unfixed", "accepted_fixed"}:
+        if self.decision not in {"rejected", "accepted_unfixed", "accepted_fixed", "routed"}:
             raise StateError("summary disposition decision is invalid")
         if not isinstance(self.reason, str) or not self.reason.strip() or len(self.reason) > 500:
             raise StateError("summary disposition requires a reason of at most 500 characters")
@@ -177,13 +178,23 @@ class SummaryFindingDisposition:
                 raise StateError("accepted-fixed summary disposition requires a changed head")
         elif self.corrected_head is not None:
             raise StateError("only accepted-fixed summary dispositions may set a corrected head")
+        if self.decision == "routed":
+            if not isinstance(self.route_ids, tuple) or not self.route_ids or any(
+                not isinstance(route_id, str) or not re.fullmatch(r"[0-9a-f]{24}", route_id)
+                for route_id in self.route_ids
+            ):
+                raise StateError("routed summary disposition requires stable route IDs")
+        elif self.route_ids:
+            raise StateError("only routed summary dispositions may set route IDs")
 
     @property
     def identity(self) -> tuple[int, str, str, int, str, int]:
         return (self.pr, self.head.casefold(), self.source, self.summary_id, self.kind, self.count)
 
     def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+        value = dataclasses.asdict(self)
+        value["route_ids"] = list(self.route_ids)
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> SummaryFindingDisposition:
@@ -197,10 +208,123 @@ class SummaryFindingDisposition:
             "decision",
             "reason",
             "corrected_head",
+            "route_ids",
         }
         if set(value) - allowed:
             raise StateError("summary disposition contains fields outside the private schema")
-        return cls(**{key: value[key] for key in allowed if key in value})
+        fields = {key: value[key] for key in allowed if key in value}
+        if "route_ids" in fields:
+            if not isinstance(fields["route_ids"], list):
+                raise StateError("routed summary route IDs must be a JSON array")
+            fields["route_ids"] = tuple(fields["route_ids"])
+        return cls(**fields)
+
+
+@dataclasses.dataclass(frozen=True)
+class FindingRoute:
+    """One durable route from a source review finding to its owning PR."""
+
+    source_pr: int
+    source_channel: str
+    source_review: str
+    source_finding: str
+    observations: tuple[str, ...]
+    target_pr: int | None = None
+    status: str = "open"
+    disposition: str | None = None
+    proof: str | None = None
+    target_history: tuple[int | None, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.source_pr, bool) or not isinstance(self.source_pr, int) or self.source_pr <= 0:
+            raise StateError("route source PR must be a positive integer")
+        if self.source_channel not in {"hosted", "cli"}:
+            raise StateError("route source channel must be hosted or cli")
+        for name in ("source_review", "source_finding"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip() or len(value) > 200:
+                raise StateError(f"route {name.replace('_', ' ')} must be non-empty and at most 200 characters")
+        if not isinstance(self.observations, tuple) or not self.observations:
+            raise StateError("route must retain at least one observation")
+        if any(
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 500
+            or any(ord(char) < 0x20 for char in value)
+            for value in self.observations
+        ):
+            raise StateError("route observations must be non-empty text of at most 500 characters")
+        if self.target_pr is not None and (
+            isinstance(self.target_pr, bool) or not isinstance(self.target_pr, int) or self.target_pr <= 0
+        ):
+            raise StateError("route target PR must be a positive integer or null")
+        if self.status not in {"open", "accepted_fixed", "rejected"}:
+            raise StateError("route status is invalid")
+        if self.status == "accepted_fixed":
+            if not isinstance(self.proof, str) or not self.proof.strip() or len(self.proof) > 500:
+                raise StateError("accepted-fixed route requires proof")
+            if self.disposition != "accepted and fixed":
+                raise StateError("accepted-fixed route requires its disposition")
+        elif self.status == "rejected":
+            if not isinstance(self.disposition, str) or not self.disposition.strip() or len(self.disposition) > 500:
+                raise StateError("rejected route requires a reason")
+            if self.proof is not None:
+                raise StateError("rejected route cannot have fix proof")
+        elif self.disposition is not None or self.proof is not None:
+            raise StateError("open route cannot have a terminal disposition")
+        if not isinstance(self.target_history, tuple) or any(
+            item is not None and (isinstance(item, bool) or not isinstance(item, int) or item <= 0)
+            for item in self.target_history
+        ):
+            raise StateError("route target history is invalid")
+
+    @property
+    def identity(self) -> tuple[int, str, str, str]:
+        return (self.source_pr, self.source_channel, self.source_review, self.source_finding)
+
+    @property
+    def route_id(self) -> str:
+        encoded = "\0".join((str(self.source_pr), self.source_channel, self.source_review, self.source_finding))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "route_id": self.route_id,
+            "source_pr": self.source_pr,
+            "source_channel": self.source_channel,
+            "source_review": self.source_review,
+            "source_finding": self.source_finding,
+            "observations": list(self.observations),
+            "target_pr": self.target_pr,
+            "status": self.status,
+            "disposition": self.disposition,
+            "proof": self.proof,
+            "target_history": list(self.target_history),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> FindingRoute:
+        allowed = {
+            "route_id", "source_pr", "source_channel", "source_review", "source_finding", "observations",
+            "target_pr", "status", "disposition", "proof", "target_history",
+        }
+        if set(value) - allowed or not isinstance(value.get("observations"), list):
+            raise StateError("route record contains fields outside its schema")
+        route = cls(
+            source_pr=value.get("source_pr"),
+            source_channel=value.get("source_channel"),
+            source_review=value.get("source_review"),
+            source_finding=value.get("source_finding"),
+            observations=tuple(value["observations"]),
+            target_pr=value.get("target_pr"),
+            status=value.get("status", "open"),
+            disposition=value.get("disposition"),
+            proof=value.get("proof"),
+            target_history=tuple(value.get("target_history", ())),
+        )
+        if value.get("route_id") not in (None, route.route_id):
+            raise StateError("route ID does not match its stable source finding identity")
+        return route
 
 
 def adjudicate_summary_findings(
@@ -254,7 +378,7 @@ def adjudicate_summary_findings(
         # A fixed disposition refers to a prior head and can never clear a
         # finding in a current-head summary. It remains in state as a historical
         # operator decision; any new summary has a distinct identity.
-        if disposition.decision != "rejected":
+        if disposition.decision not in {"rejected", "routed"}:
             remaining.append(dict(finding))
     return remaining, matched
 
@@ -508,13 +632,13 @@ class LegacyEvidenceTransition:
 
 @dataclasses.dataclass(frozen=True)
 class ReviewAllocation:
-    """A durable, pre-authorized one-result review allocation.
+    """A durable one-result allocation or explicit channel-stop decision.
 
     The allocation is bound to the complete stack identity observed when an
-    operator made the promise.  The controller may consume it only after a
-    completed result for that identity, and the optional handoff proof records
-    the later corrected state without pretending that the review itself made
-    the PR merge-ready.
+    operator made the promise. The controller may consume it only after a
+    completed result for that identity. New stop decisions record the exact
+    reviewed checkpoint and the current live anchor separately; legacy handoff
+    fields remain readable for state migration and are never newly issued.
     """
 
     pr: int
@@ -529,6 +653,23 @@ class ReviewAllocation:
     handoff_checkpoint: str | None = None
     handoff_head: str | None = None
     handoff_validation: str | None = None
+    stop_basis: str | None = None
+    stop_checkpoint: str | None = None
+    stop_reviewed_head: str | None = None
+    stop_reviewed_patch_id: str | None = None
+    stop_head: str | None = None
+    stop_parent_identity: str | None = None
+    stop_parent_head: str | None = None
+    stop_merge_base: str | None = None
+    stop_patch_id: str | None = None
+    stop_reason: str | None = None
+    stop_summary_disposition_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_fingerprints: tuple[str, ...] = ()
+    retained_ambiguous_reason: str | None = None
+    baseline_checkpoint: str | None = None
+    min_additional_completed: int | None = None
+    max_additional_completed: int | None = None
+    reopens_taper: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -549,19 +690,95 @@ class ReviewAllocation:
             raise StateError("review allocation baseline checkpoints must be non-empty strings")
         if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
             raise StateError("review allocation baseline checkpoints must be unique")
+        if self.min_additional_completed is not None and (
+            isinstance(self.min_additional_completed, bool)
+            or not isinstance(self.min_additional_completed, int)
+            or self.min_additional_completed < 0
+        ):
+            raise StateError("minimum additional completed reviews must be a non-negative integer or null")
+        if self.max_additional_completed is not None and (
+            isinstance(self.max_additional_completed, bool)
+            or not isinstance(self.max_additional_completed, int)
+            or self.max_additional_completed <= 0
+        ):
+            raise StateError("maximum additional completed reviews must be a positive integer")
+        if not isinstance(self.reopens_taper, bool):
+            raise StateError("review allocation taper-reopen marker must be boolean")
+        if self.min_additional_completed is None and self.max_additional_completed is None:
+            if self.baseline_checkpoint is not None:
+                raise StateError("a bounded review allocation requires a minimum or maximum")
+        elif self.min_additional_completed is not None and self.max_additional_completed is not None and (
+            self.min_additional_completed > self.max_additional_completed
+        ):
+            raise StateError("minimum additional completed reviews cannot exceed the maximum")
+        if self.baseline_checkpoint is not None and (
+            not isinstance(self.baseline_checkpoint, str)
+            or not self.baseline_checkpoint.strip()
+            or self.baseline_checkpoint not in self.baseline_checkpoints
+        ):
+            raise StateError("allocation baseline checkpoint must be present in the baseline set")
         handoff_values = (self.handoff_checkpoint, self.handoff_head, self.handoff_validation)
         if any(value is not None for value in handoff_values):
             if not all(isinstance(value, str) and value.strip() for value in handoff_values):
                 raise StateError("review allocation handoff proof must be complete")
             if not EXACT_SHA.fullmatch(self.handoff_head or ""):
                 raise StateError("review allocation handoff head must be an exact SHA")
+        stop_values = (
+            self.stop_checkpoint,
+            self.stop_reviewed_head,
+            self.stop_reviewed_patch_id,
+            self.stop_head,
+            self.stop_parent_identity,
+            self.stop_parent_head,
+            self.stop_merge_base,
+            self.stop_patch_id,
+            self.stop_reason,
+        )
+        if self.stop_basis is None:
+            if any(value is not None for value in stop_values):
+                raise StateError("review allocation stop fields require a stop basis")
+            if self.stop_summary_disposition_fingerprints or self.retained_ambiguous_fingerprints:
+                raise StateError("stop audit details require a stop basis")
+        else:
+            if self.stop_basis not in {"allocated", "direct_human"}:
+                raise StateError("review allocation stop basis must be allocated or direct_human")
+            if not all(isinstance(value, str) and value.strip() for value in stop_values):
+                raise StateError("review allocation stop proof must be complete")
+            for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if not EXACT_SHA.fullmatch(getattr(self, name) or ""):
+                    raise StateError(f"review allocation {name} must be an exact SHA")
+            if len(self.stop_reason or "") > 500 or any(ord(character) < 0x20 for character in self.stop_reason or ""):
+                raise StateError("review allocation stop reason must be at most 500 characters without controls")
+            if not isinstance(self.stop_summary_disposition_fingerprints, tuple) or any(
+                not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+                for value in self.stop_summary_disposition_fingerprints
+            ):
+                raise StateError("review allocation stop summary disposition fingerprints are malformed")
+            if len(set(self.stop_summary_disposition_fingerprints)) != len(self.stop_summary_disposition_fingerprints):
+                raise StateError("review allocation stop summary disposition fingerprints must be unique")
+        if not isinstance(self.retained_ambiguous_fingerprints, tuple) or any(
+            not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+            for value in self.retained_ambiguous_fingerprints
+        ):
+            raise StateError("retained ambiguous evidence requires exact fingerprints")
+        if len(set(self.retained_ambiguous_fingerprints)) != len(self.retained_ambiguous_fingerprints):
+            raise StateError("retained ambiguous fingerprints must be unique")
+        if bool(self.retained_ambiguous_fingerprints) != (self.retained_ambiguous_reason is not None):
+            raise StateError("retained ambiguous evidence requires both fingerprint and reason")
+        if self.retained_ambiguous_fingerprints and (
+            not isinstance(self.retained_ambiguous_reason, str)
+            or not self.retained_ambiguous_reason.strip()
+            or len(self.retained_ambiguous_reason) > 500
+            or any(ord(character) < 0x20 for character in self.retained_ambiguous_reason)
+        ):
+            raise StateError("retained ambiguous evidence requires a bounded reason without controls")
 
     @property
     def identity(self) -> str:
         return f"{self.pr}:{self.channel}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "pr": self.pr,
             "channel": self.channel,
             "head": self.head,
@@ -574,7 +791,29 @@ class ReviewAllocation:
             "handoff_checkpoint": self.handoff_checkpoint,
             "handoff_head": self.handoff_head,
             "handoff_validation": self.handoff_validation,
+            "stop_basis": self.stop_basis,
+            "stop_checkpoint": self.stop_checkpoint,
+            "stop_reviewed_head": self.stop_reviewed_head,
+            "stop_reviewed_patch_id": self.stop_reviewed_patch_id,
+            "stop_head": self.stop_head,
+            "stop_parent_identity": self.stop_parent_identity,
+            "stop_parent_head": self.stop_parent_head,
+            "stop_merge_base": self.stop_merge_base,
+            "stop_patch_id": self.stop_patch_id,
+            "stop_reason": self.stop_reason,
+            "stop_summary_disposition_fingerprints": list(self.stop_summary_disposition_fingerprints),
+            "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
+            "retained_ambiguous_reason": self.retained_ambiguous_reason,
         }
+        if self.baseline_checkpoint is not None:
+            value["baseline_checkpoint"] = self.baseline_checkpoint
+        if self.min_additional_completed is not None:
+            value["min_additional_completed"] = self.min_additional_completed
+        if self.max_additional_completed is not None:
+            value["max_additional_completed"] = self.max_additional_completed
+        if self.reopens_taper:
+            value["reopens_taper"] = True
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
@@ -588,15 +827,48 @@ class ReviewAllocation:
             "patch_id",
             "baseline_checkpoints",
             "reason",
+            "baseline_checkpoint",
+            "min_additional_completed",
+            "max_additional_completed",
+            "reopens_taper",
             "handoff_checkpoint",
             "handoff_head",
             "handoff_validation",
+            "stop_basis",
+            "stop_checkpoint",
+            "stop_reviewed_head",
+            "stop_reviewed_patch_id",
+            "stop_head",
+            "stop_parent_identity",
+            "stop_parent_head",
+            "stop_merge_base",
+            "stop_patch_id",
+            "stop_reason",
+            "stop_summary_disposition_fingerprints",
+            "retained_ambiguous_fingerprints",
+            "retained_ambiguous_fingerprint",
+            "retained_ambiguous_reason",
         }
         if set(value) - allowed:
             raise StateError("review allocation contains fields outside the private schema")
         raw_checkpoints = value.get("baseline_checkpoints")
         if not isinstance(raw_checkpoints, list):
             raise StateError("review allocation baseline checkpoints must be a JSON array")
+        raw_stop_dispositions = value.get("stop_summary_disposition_fingerprints", ())
+        if isinstance(raw_stop_dispositions, list):
+            raw_stop_dispositions = tuple(raw_stop_dispositions)
+        raw_retained_fingerprints = value.get("retained_ambiguous_fingerprints")
+        legacy_retained_fingerprint = value.get("retained_ambiguous_fingerprint")
+        if raw_retained_fingerprints is None:
+            raw_retained_fingerprints = (
+                () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
+            )
+        elif isinstance(raw_retained_fingerprints, list):
+            raw_retained_fingerprints = tuple(raw_retained_fingerprints)
+        else:
+            raise StateError("retained ambiguous fingerprints must be a JSON array")
+        if legacy_retained_fingerprint is not None and raw_retained_fingerprints != (legacy_retained_fingerprint,):
+            raise StateError("legacy retained ambiguous fingerprint conflicts with the fingerprint set")
         try:
             return cls(
                 pr=value["pr"],
@@ -608,9 +880,26 @@ class ReviewAllocation:
                 patch_id=value["patch_id"],
                 baseline_checkpoints=tuple(raw_checkpoints),
                 reason=value["reason"],
+                baseline_checkpoint=value.get("baseline_checkpoint"),
+                min_additional_completed=value.get("min_additional_completed"),
+                max_additional_completed=value.get("max_additional_completed"),
+                reopens_taper=value.get("reopens_taper", False),
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),
                 handoff_validation=value.get("handoff_validation"),
+                stop_basis=value.get("stop_basis"),
+                stop_checkpoint=value.get("stop_checkpoint"),
+                stop_reviewed_head=value.get("stop_reviewed_head"),
+                stop_reviewed_patch_id=value.get("stop_reviewed_patch_id"),
+                stop_head=value.get("stop_head"),
+                stop_parent_identity=value.get("stop_parent_identity"),
+                stop_parent_head=value.get("stop_parent_head"),
+                stop_merge_base=value.get("stop_merge_base"),
+                stop_patch_id=value.get("stop_patch_id"),
+                stop_reason=value.get("stop_reason"),
+                stop_summary_disposition_fingerprints=raw_stop_dispositions,
+                retained_ambiguous_fingerprints=raw_retained_fingerprints,
+                retained_ambiguous_reason=value.get("retained_ambiguous_reason"),
             )
         except KeyError as exc:
             raise StateError("review allocation contains malformed private records") from exc
@@ -626,6 +915,7 @@ class ReviewState:
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
     legacy_transitions: tuple[LegacyEvidenceTransition, ...] = ()
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
+    routes: tuple[FindingRoute, ...] = ()
     allocations: Mapping[str, ReviewAllocation] = dataclasses.field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -655,6 +945,17 @@ class ReviewState:
             raise StateError("summary dispositions must contain validated disposition records")
         if any(not isinstance(item, LegacyEvidenceTransition) for item in self.legacy_transitions):
             raise StateError("legacy transitions must contain validated transition records")
+        if any(not isinstance(item, FindingRoute) for item in self.routes):
+            raise StateError("routes must contain validated finding route records")
+        route_ids = [item.route_id for item in self.routes]
+        if len(set(route_ids)) != len(route_ids):
+            raise StateError("routes must have unique stable source finding identities")
+        available_route_ids = set(route_ids)
+        if any(
+            item.decision == "routed" and not set(item.route_ids) <= available_route_ids
+            for item in self.summary_dispositions
+        ):
+            raise StateError("routed summary dispositions must link to a durable route")
         identities = [item.identity for item in self.summary_dispositions]
         if len(set(identities)) != len(identities):
             raise StateError("summary dispositions must have unique exact finding identities")
@@ -668,6 +969,7 @@ class ReviewState:
             "reconciliations": [item.to_dict() for item in self.reconciliations],
             "legacy_transitions": [item.to_dict() for item in self.legacy_transitions],
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
+            "routes": [item.to_dict() for item in self.routes],
             "allocations": {identity: item.to_dict() for identity, item in sorted(self.allocations.items())},
         }
 
@@ -683,6 +985,7 @@ class ReviewState:
             "reconciliations",
             "legacy_transitions",
             "summary_dispositions",
+            "routes",
             "allocations",
         }:
             raise StateError("state contains fields outside the private configuration schema")
@@ -698,6 +1001,9 @@ class ReviewState:
             raise StateError("review allocations must be an object")
         if any(not isinstance(item, Mapping) for item in raw_allocations.values()):
             raise StateError("review allocation records must be objects")
+        raw_routes = value.get("routes", [])
+        if not isinstance(raw_routes, list) or any(not isinstance(item, Mapping) for item in raw_routes):
+            raise StateError("routes must be an array of objects")
         try:
             overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
             allocations = {identity: ReviewAllocation.from_dict(item) for identity, item in raw_allocations.items()}
@@ -714,6 +1020,7 @@ class ReviewState:
                 summary_dispositions=tuple(
                     SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
                 ),
+                routes=tuple(FindingRoute.from_dict(item) for item in raw_routes),
                 allocations=allocations,
             )
         except StateError:

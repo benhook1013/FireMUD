@@ -203,7 +203,7 @@ public class CertificateMaterialService {
         plan,
         role,
         certificateFactory.grpcPublication(plan, workload, properties.getGrpcRenewBefore()),
-        plan.grpcPublicationSourceSecretName(workload),
+        plan.sourceSecretName(role),
         expectation,
         batch);
   }
@@ -426,7 +426,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.identityNamespace())
-            .withName(sourceSecretName(plan, role))
+            .withName(plan.sourceSecretName(role))
             .get();
     if (source != null) {
       requireIdentitySourceBinding(source, plan, role);
@@ -451,7 +451,7 @@ public class CertificateMaterialService {
       RoleExpectation expectation,
       boolean deferredBehindAnotherRotation) {
     String name = plan.secretName(role);
-    String sourceName = sourceSecretName(plan, role);
+    String sourceName = plan.sourceSecretName(role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     requireOwned(current, plan, role, "runtime projection Secret");
     Map<String, String> annotations = current.getMetadata().getAnnotations();
@@ -715,13 +715,6 @@ public class CertificateMaterialService {
         throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
       }
     };
-  }
-
-  private static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
-    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      return plan.grpcPublicationSourceSecretNames().get(role);
-    }
-    return plan.secretName(role);
   }
 
   private static String issuerName(EnvironmentIdentityPlan plan, String role) {

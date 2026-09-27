@@ -6,6 +6,10 @@ metadata:
   name: game-session-service
 spec:
   replicas: 2
+  # V2 changes unique keys with blocking DDL; do not admit an old and new
+  # Game Session binary at the same time.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: game-session-service

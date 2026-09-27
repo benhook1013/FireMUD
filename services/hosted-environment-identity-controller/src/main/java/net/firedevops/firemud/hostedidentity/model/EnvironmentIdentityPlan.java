@@ -2,6 +2,8 @@ package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 
 public record EnvironmentIdentityPlan(
@@ -35,6 +37,17 @@ public record EnvironmentIdentityPlan(
     grpcPublicationCertificateNames = Map.copyOf(grpcPublicationCertificateNames);
     grpcPublicationSecretNames = Map.copyOf(grpcPublicationSecretNames);
     grpcPublicationSourceSecretNames = Map.copyOf(grpcPublicationSourceSecretNames);
+
+    Set<String> expectedGrpcPublicationRoles =
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(Collectors.toUnmodifiableSet());
+    if (!grpcPublicationCertificateNames.keySet().equals(expectedGrpcPublicationRoles)
+        || !grpcPublicationSecretNames.keySet().equals(expectedGrpcPublicationRoles)
+        || !grpcPublicationSourceSecretNames.keySet().equals(expectedGrpcPublicationRoles)) {
+      throw new IllegalArgumentException(
+          "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
+    }
   }
 
   public String secretName(String role) {
@@ -54,6 +67,18 @@ public record EnvironmentIdentityPlan(
         throw new IllegalArgumentException("unsupported identity role: " + role);
       }
     };
+  }
+
+  public String sourceSecretName(String role) {
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      String sourceSecretName = grpcPublicationSourceSecretNames.get(role);
+      if (sourceSecretName == null) {
+        throw new IllegalArgumentException(
+            "missing source Secret for gRPC publication role: " + role);
+      }
+      return sourceSecretName;
+    }
+    return secretName(role);
   }
 
   public String grpcPublicationCertificateName(String workload) {

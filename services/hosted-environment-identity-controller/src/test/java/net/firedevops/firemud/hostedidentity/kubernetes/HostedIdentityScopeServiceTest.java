@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.findRepositoryFile;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -804,6 +805,13 @@ class HostedIdentityScopeServiceTest {
     assertEquals("hosted identity scope RoleBinding roleRef drifted", roleRefFailure.getMessage());
   }
 
+  @Test
+  void celListParserTreatsBlankExpressionAsEmptyList() {
+    assertEquals(List.of(), splitCelList(""));
+    assertEquals(List.of(), splitCelList(" \t\n "));
+    assertEquals(List.of("'get'", "'list'"), splitCelList("'get', 'list'"));
+  }
+
   private static IllegalStateException assertRoleDriftFailsClosed(Role current, Role desired) {
     RoleClient fixture = roleClient();
     when(fixture.operation().get()).thenReturn(current);
@@ -1056,13 +1064,6 @@ class HostedIdentityScopeServiceTest {
     return List.copyOf(elements);
   }
 
-  @Test
-  void celListParserTreatsBlankExpressionAsEmptyList() {
-    assertEquals(List.of(), splitCelList(""));
-    assertEquals(List.of(), splitCelList(" \t\n "));
-    assertEquals(List.of("'get'", "'list'"), splitCelList("'get', 'list'"));
-  }
-
   private static String evaluateIdentitySecretName(
       String expression, EnvironmentIdentityPlan plan) {
     var literal = CEL_STRING_LITERAL.matcher(expression.trim());
@@ -1076,21 +1077,6 @@ class HostedIdentityScopeServiceTest {
         expression.trim().substring(0, suffix.start()).trim(),
         "identity Secret name expression must use the canonical environment prefix");
     return plan.runtimeNamespace() + suffix.group(1);
-  }
-
-  private static Path findRepositoryFile(String relativePath) {
-    Path directory = Path.of("").toAbsolutePath();
-    while (directory != null) {
-      Path candidate = directory.resolve(relativePath);
-      if (Files.isRegularFile(candidate)) {
-        return candidate;
-      }
-      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
-        break;
-      }
-      directory = directory.getParent();
-    }
-    throw new AssertionError("could not locate repository file " + relativePath);
   }
 
   private static List<String> celStringLiterals(String expression) {
