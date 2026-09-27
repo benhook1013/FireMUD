@@ -678,13 +678,13 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 :root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
 body {{ background: var(--ash); color: var(--ink); }}
-header.mast {{ background: var(--smoke); padding: 1rem clamp(1rem,4vw,3.5rem) .8rem; }}
-.mast-inner {{ display: grid; grid-template-columns: 8.5rem minmax(0,1fr); column-gap: .75rem; max-width: 1440px; margin: auto; }}
+header.mast {{ position: sticky; top: 0; z-index: 20; background: var(--smoke); padding: .8rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
+.mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(0,auto) minmax(0,1fr); grid-template-areas: "refresh title repo"; align-items: center; column-gap: .75rem; max-width: 1440px; margin: auto; }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
-.refresh-space {{ display: flex; align-items: center; }}
-.mast-top {{ display: flex; width: 100%; min-height: 2.6rem; justify-content: space-between; align-items: center; gap: 1rem; border-bottom: 1px solid #92747d; padding-bottom: .8rem; margin: 0; max-width: none; }}
+.refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: start; }}
+.mast-content {{ grid-area: title; text-align: center; }}
 .brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
-.mast-top > .repo-link {{ flex: 0 0 auto; color: #fff; }}
+.mast-inner > .repo-link {{ grid-area: repo; justify-self: end; color: #fff; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
@@ -737,9 +737,9 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
 a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 760px) {{ .mast-top {{ align-items: flex-start; flex-direction: column; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 760px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) minmax(0,1fr); grid-template-areas: "title title" "refresh repo"; row-gap: .6rem; }} .mast-inner > .repo-link {{ white-space: normal; text-align: right; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><div class="mast-top"><h1 class="brand">FireMUD delivery status</h1><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div><span class="refresh-time">{header_time}</span></div></div></header>
+<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><h1 class="brand">FireMUD delivery status</h1><span class="refresh-time">{header_time}</span></div><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
