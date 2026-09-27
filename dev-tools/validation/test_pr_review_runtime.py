@@ -1470,8 +1470,14 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": "2026-09-23T00:03:20Z",
         }
         edited_reply = {**reply, "updatedAt": "2026-09-23T00:03:30Z"}
-        provider_valid = history_for([trigger, provider_summary, edited_reply, checkpoint])
+        edited_duration_checkpoint = {
+            **checkpoint,
+            "body": checkpoint["body"].replace("120s", "150s").replace(": 120 -->", ": 150 -->"),
+        }
+        provider_valid = history_for([trigger, provider_summary, edited_reply, edited_duration_checkpoint])
         self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_valid))
+        provider_old_duration = history_for([trigger, provider_summary, edited_reply, checkpoint])
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_old_duration))
 
         incomplete_provider_summary = {
             **provider_summary,
