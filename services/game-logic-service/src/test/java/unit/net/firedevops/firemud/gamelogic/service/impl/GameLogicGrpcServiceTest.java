@@ -269,7 +269,7 @@ class GameLogicGrpcServiceTest {
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
         .thenThrow(
-            new UnsupportedOperationException(
+            new GameLogicDraftDesignDigestService.UnsupportedDigestScopeException(
                 "Game Logic owner-local manifest and provenance are unavailable"));
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
@@ -314,6 +314,24 @@ class GameLogicGrpcServiceTest {
     assertEquals("", ref.get().getAppliedCommitId());
     assertEquals("", ref.get().getContentDigest());
     assertEquals(0, ref.get().getDigestSchemaVersion());
+  }
+
+  @Test
+  void getDraftDesignDigestMapsUnexpectedUnsupportedOperationToInternalError() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
+        .thenThrow(new UnsupportedOperationException("unexpected implementation failure"));
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    GameLogicGrpcService service = newDigestService(digestService);
+    AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+
+    runAsGameDesign(
+        () -> response.set(invokeDigest(service, fullDigestRequest("1", "7"))));
+
+    assertTrue(response.get().hasError());
+    assertEquals("INTERNAL", response.get().getError().getCode());
+    assertEquals("Internal error", response.get().getError().getMessage());
   }
 
   @Test
