@@ -295,8 +295,11 @@ expected_proxy = {
     "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/gateway-ws-client-tls/tls.crt",
     "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/gateway-ws-client-tls/tls.key",
     "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/gateway-ws-client-tls/ca.crt",
-    "FIREMUD_TLS_READINESS_GATE_ENABLED": "true",
 }
+if "FIREMUD_TLS_READINESS_GATE_ENABLED" in proxy_env:
+    raise SystemExit(
+        "hosted TCP Proxy must use route-specific TLS readiness instead of aggregate TLS gating"
+    )
 for key, value in expected_proxy.items():
     if proxy_env.get(key) != value:
         raise SystemExit(f"Proxy env {key} did not render as {value!r}: {proxy_env.get(key)!r}")

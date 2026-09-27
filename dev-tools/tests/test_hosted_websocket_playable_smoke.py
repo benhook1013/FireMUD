@@ -15,10 +15,11 @@ SPEC.loader.exec_module(MODULE)
 
 
 class FakeHttp:
-    def __init__(self, *, cookie="Firemud-Connect-Token=token-1", readiness=None):
+    def __init__(self, *, cookie="Firemud-Connect-Token=token-1", readiness=None, characters=None):
         self.calls = []
         self.cookie = cookie
         self.readiness = readiness
+        self.characters = characters if characters is not None else [{"characterName": "Ada"}]
         self.connect_count = 0
 
     def __call__(self, method, url, payload, headers, timeout):
@@ -36,9 +37,7 @@ class FakeHttp:
                 {"data": [{"realmSlug": "production", "connectScopeId": "scope-1"}]},
             )
         if "/characters?" in url:
-            return MODULE.HttpResponse(
-                200, {}, {"data": [{"characterName": "Ada"}]}
-            )
+            return MODULE.HttpResponse(200, {}, {"data": self.characters})
         if url.endswith("/auth/connect-token"):
             self.connect_count += 1
             cookie = self.cookie
@@ -155,6 +154,23 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             "accountIdentifier": "operator@example.com",
             "secret": "do-not-print-this",
         })
+
+    def test_ambiguous_character_discovery_fails_before_connect_token(self):
+        http = FakeHttp(
+            characters=[{"characterName": "Ada"}, {"characterName": "Bea"}]
+        )
+
+        with self.assertRaisesRegex(
+            MODULE.HostedWebSocketPlayableSmokeError,
+            "multiple characters.*explicit character",
+        ):
+            MODULE.run_smoke(
+                self.config(),
+                http_request=http,
+                websocket_factory=FakeWebSocket,
+            )
+
+        self.assertEqual(http.connect_count, 0)
 
     def test_reconnect_uses_a_fresh_connect_cookie(self):
         http = FakeHttp()
