@@ -127,3 +127,8 @@ Entry format:
   - Context: the Account response-envelope Secret materializer emitted canonical UTC timestamps with trailing fractional zeroes removed. A broad developer-tool run intermittently failed its CLI readback although focused tests using whole-second timestamps passed.
   - Observation: this runner's Python `datetime.fromisoformat` rejected a valid five-digit fractional-second timestamp such as `.00101Z` after offset normalization. A timestamp round-trip sweep reproduced the defect, and the parser was changed to accept the contract's one-to-six fractional digits explicitly; the full 112-test developer-tool suite then passed.
   - Expected pattern: test exact writer-to-reader timestamp round trips across fractional precisions, including live-clock output, before treating a source-generation/freshness readback as reliable.
+
+- `2026-09-27`: Hosted database task success may lack per-case proof artifacts
+  - Context: Unit 1B Account integration tests skipped locally without Docker. Hosted runs executed the integration task and passed on corrected code, but the uploaded artifact contained JaCoCo output without JUnit XML for the named PostgreSQL case.
+  - Observation: task-level execution and success are useful composed evidence, but they do not independently identify which newly corrected database methods ran or whether any were skipped.
+  - Expected pattern: retain and upload the exact integration JUnit XML alongside coverage artifacts when individual database regressions are needed as proof; until then report task-level success separately from per-case execution.
