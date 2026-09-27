@@ -700,6 +700,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptId(workItem.getScriptId())
         .setBindingId(normalize(workItem.getBindingId()))
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
+        .setScriptPatchBaseVersionId(workItem.getScriptPatchBaseVersionId())
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
         .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))

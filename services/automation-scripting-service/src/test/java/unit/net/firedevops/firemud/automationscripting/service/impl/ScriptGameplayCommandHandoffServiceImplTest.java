@@ -393,6 +393,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(requestCaptor.getValue().getAutomationWorkItemId()).isEqualTo("99");
     assertThat(requestCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(requestCaptor.getValue().getScriptPatchBaseVersionId()).isEqualTo(7L);
     assertThat(requestCaptor.getValue().getScriptPinEpoch()).isEqualTo(2L);
     assertThat(requestCaptor.getValue().getScriptPinControlPlaneRequestId())
         .isEqualTo("pin-request-1");
@@ -1331,6 +1332,33 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
             workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @Test
+  void missingWorkItemBaseVersionFailsClosedBeforeLocalEnqueue() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem workItem = workItem();
+    workItem.setScriptPatchBaseVersionId(null);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");

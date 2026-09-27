@@ -225,6 +225,7 @@ public final class GameSessionCommandControlPlaneService {
         request.getAutomationWorkItemId(),
         request.getScriptId(),
         request.getScriptPatchVersion(),
+        request.getScriptPatchBaseVersionId() > 0 ? request.getScriptPatchBaseVersionId() : null,
         normalizeBlank(request.getPluginId()),
         normalizeBlank(request.getPluginVersionId()),
         normalizePlayableStateScope(request.getPlayableStateScope()),
@@ -1787,7 +1788,7 @@ public final class GameSessionCommandControlPlaneService {
           scriptPatchPublicationLink(
               command.getTenantId(),
               command.getScriptPatchVersion(),
-              command.getAdmittedVersionId()));
+              command.getScriptPatchBaseVersionId()));
     }
     if (command.getPluginId() != null
         && !command.getPluginId().isBlank()
@@ -2016,11 +2017,23 @@ public final class GameSessionCommandControlPlaneService {
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
+    if (baseVersionId == null || baseVersionId <= 0L) {
+      return scriptPatchPublicationLookupError(
+          normalizedScriptPatchVersion,
+          "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+          "Exact admitted script patch base version is unavailable");
+    }
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
+                tenantId, normalizedScriptPatchVersion, baseVersionId);
+    if (response == null) {
+      return scriptPatchPublicationLookupError(
+          normalizedScriptPatchVersion,
+          "SCRIPT_PATCH_PUBLICATION_LOOKUP_UNAVAILABLE",
+          "Game Design returned no script patch lookup response");
+    }
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)
@@ -2032,12 +2045,43 @@ public final class GameSessionCommandControlPlaneService {
           .setLookupErrorMessage(response.getError().getMessage())
           .build();
     }
+    if (!response.hasScriptPatch()) {
+      return scriptPatchPublicationLookupError(
+          normalizedScriptPatchVersion,
+          "SCRIPT_PATCH_PUBLICATION_LOOKUP_EMPTY",
+          "Game Design returned no published script patch");
+    }
+    if (!normalizedScriptPatchVersion.equals(response.getScriptPatch().getScriptPatchVersion())) {
+      return scriptPatchPublicationLookupError(
+          normalizedScriptPatchVersion,
+          "SCRIPT_PATCH_PROVENANCE_MISMATCH",
+          "Published script patch version does not match the admitted script patch");
+    }
+    if (response.getScriptPatch().getBaseVersionId() != baseVersionId) {
+      return scriptPatchPublicationLookupError(
+          normalizedScriptPatchVersion,
+          "SCRIPT_PATCH_PROVENANCE_MISMATCH",
+          "Published script patch base version does not match the admitted base version");
+    }
     return ScriptPatchPublicationLink.newBuilder()
         .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
         .setVersionId(response.getScriptPatch().getVersionId())
         .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
         .setPublicationState(response.getScriptPatch().getPublicationState())
         .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
+        .build();
+  }
+
+  private ScriptPatchPublicationLink scriptPatchPublicationLookupError(
+      String scriptPatchVersion, String code, String message) {
+    return ScriptPatchPublicationLink.newBuilder()
+        .setScriptPatchVersion(scriptPatchVersion)
+        .setVersionId(0L)
+        .setBaseVersionId(0L)
+        .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+        .setLastChangedAtMs(0L)
+        .setLookupErrorCode(code)
+        .setLookupErrorMessage(message)
         .build();
   }
 

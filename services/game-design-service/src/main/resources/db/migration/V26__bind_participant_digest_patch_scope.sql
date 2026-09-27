@@ -67,6 +67,7 @@ SELECT CAST(NULLIF(
         JOIN publish_attempt AS attempt
           ON attempt.id = participant.publish_attempt_id
         WHERE attempt.publish_type = 'SCRIPT_PATCH'
+          AND attempt.status <> 'FAILED'
           AND participant.base_version_id IS NULL
     ) THEN 'V26 unresolved SCRIPT_PATCH attempt participant evidence'
       ELSE '1' END,
