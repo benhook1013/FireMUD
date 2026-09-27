@@ -460,6 +460,19 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             )
 
             def record(current):
+                existing_disposition = next(
+                    (item for item in current.summary_dispositions if item.identity == disposition.identity),
+                    None,
+                )
+                if (
+                    existing_disposition is not None
+                    and existing_disposition.decision == "routed"
+                    and (
+                        disposition.decision != "routed"
+                        or set(existing_disposition.route_ids) != set(disposition.route_ids)
+                    )
+                ):
+                    raise CliError("an existing routed summary bucket must retain its exact route IDs")
                 retained = tuple(item for item in current.summary_dispositions if item.identity != disposition.identity)
                 stored_routes = current.routes
                 for route in routes:
