@@ -1058,7 +1058,8 @@ class CliReviewRunnerTests(unittest.TestCase):
             common_dir.mkdir()
             record_path = write_hosted_trigger(common_dir, anchor=cli_anchor())
             original_record = json.loads(record_path.read_text())
-            commands = FakeCommands(root)
+            files = [f"src/provider-ceiling-{index:03}.java" for index in range(121)]
+            commands = FakeCommands(root, files=files)
             body = (
                 "<!-- This is an auto-generated reply by CodeRabbit -->\n"
                 "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
@@ -1070,8 +1071,12 @@ class CliReviewRunnerTests(unittest.TestCase):
                 return_value=hosted_payload(body),
             ):
                 run_cli_review(
-                    target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
-                    github=FakeGitHub(),
+                    target(
+                        merge_base=PARENT,
+                        patch_identity=cli_anchor()["patch_id"],
+                        changed_files=len(files),
+                    ),
+                    github=FakeGitHub(files=files),
                     source_root=root,
                     runner=commands,
                 )
