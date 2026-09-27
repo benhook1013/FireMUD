@@ -91,6 +91,7 @@ public class VersionPublishCommandServiceImpl {
   }
 
   public PublishWorkflowSnapshot reconcileFullVersionPublish(PublishWorkflowRequest request) {
+    request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
         "Reconciling full-version publish workflow tenant={} workflowId={}",
@@ -172,9 +173,10 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
 
+    PublishWorkflowRequest effectiveRequest = request;
     try {
       return publishAttemptService.executeFullVersionTransaction(
-          () -> finalizeFullVersion(request, participantDigests, exportedManifest));
+          () -> finalizeFullVersion(effectiveRequest, participantDigests, exportedManifest));
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       RuntimeException operationFailure = ex.causeException();
       if (operationFailure instanceof PendingReconciliationException) {
@@ -461,15 +463,17 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
-            // A failed candidate may be abandoned only while no bundle references it. The
-            // readback above is in this same locked transaction, so never delete a bundled version.
-            versionRepository.delete(currentVersion);
+            // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
-      throw ex.causeException();
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ex.causeException());
     } catch (RuntimeException ambiguousFailure) {
-      throw ambiguousFailure;
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ambiguousFailure);
     }
     cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
     return new PublishWorkflowSnapshot(

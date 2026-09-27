@@ -211,6 +211,10 @@ SELECT tenant_id, base_version_id, script_patch_version,
        ARRAY_AGG(version_state ORDER BY id) AS version_states
 FROM version
 WHERE is_script_only = TRUE
+  AND base_version_id IS NOT NULL
+  AND base_version_id > 0
+  AND script_patch_version IS NOT NULL
+  AND script_patch_version <> ''
 GROUP BY tenant_id, base_version_id, script_patch_version
 HAVING COUNT(*) > 1
 ORDER BY tenant_id, base_version_id, script_patch_version;

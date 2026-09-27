@@ -70,8 +70,8 @@ rules:
       - replicasets
       - statefulsets
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # The trusted migration preflight scales only these writer Deployments down
-  # before applying the retained-database migration release.
+  # Trusted deploy preflights scale only these Deployments down before staged
+  # migration activation or participant-first publication rollout.
   - apiGroups: ["apps"]
     resources:
       - deployments/scale
@@ -79,6 +79,7 @@ rules:
       - account-service
       - game-session-service
       - automation-scripting-service
+      - game-design-service
     verbs: ["get", "update", "patch"]
   # Service admission is restored only after the trusted migration helper
   # observes that these services have no EndpointSlice endpoints.
