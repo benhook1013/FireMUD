@@ -1082,19 +1082,28 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
-  void neverJoinedSnapshotRejectsPairBaselineContradictingV31Authority() {
-    JoinFixture mismatchedBaseline = fixture("active");
-    preparePairAuthorityBaseline(mismatchedBaseline);
+  void neverJoinedSnapshotRejectsAdvancedMembershipGenerationWithoutSourceEvent() {
+    JoinFixture advancedMembership = fixture("active");
+    preparePairAuthorityBaseline(advancedMembership);
     dsl.execute(
         "UPDATE account_authority_generations SET generation = generation + 1, "
             + "source_version = source_version + 1 WHERE scope_kind = 'MEMBERSHIP' "
             + "AND account_uuid = ? AND tenant_uuid = ?",
-        mismatchedBaseline.accountUuid(),
-        mismatchedBaseline.tenantUuid());
+        advancedMembership.accountUuid(),
+        advancedMembership.tenantUuid());
 
-    assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(mismatchedBaseline))
+    assertThat(
+            countAuthorityStreamEvents(
+                MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                    + "membership/"
+                    + advancedMembership.accountUuid()
+                    + "/"
+                    + advancedMembership.tenantUuid()))
+        .isZero();
+    assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(advancedMembership))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("differs from its positive pair baseline");
+        .hasMessageContaining(
+            "membership authority generation cannot prove its sequence-zero baseline");
   }
 
   @Test
