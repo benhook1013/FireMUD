@@ -363,8 +363,7 @@ class GameDesignGrpcServiceTest {
           observerFor(ref));
     }
 
-    assertEquals(
-        "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
+    assertEquals("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
   }
 
   @Test

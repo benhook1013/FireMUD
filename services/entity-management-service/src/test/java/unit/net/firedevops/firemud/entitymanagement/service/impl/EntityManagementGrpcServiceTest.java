@@ -114,8 +114,7 @@ class EntityManagementGrpcServiceTest {
             null, List.of(), Map.of(), true, "game-design-service", "test-instance");
 
         GetDraftDesignDigestResponse response =
-            invokeDigestWithPeer(
-                service, fullDigestRequest("1", "7"), peer("game-design-service"));
+            invokeDigestWithPeer(service, fullDigestRequest("1", "7"), peer("game-design-service"));
 
         assertEquals("PERMISSION_DENIED", response.getError().getCode());
         verifyNoInteractions(digestService);
@@ -139,8 +138,7 @@ class EntityManagementGrpcServiceTest {
       SessionContext.setContext(
           null, List.of(), Map.of(), true, "game-design-service", "test-instance");
       GetDraftDesignDigestResponse response =
-          invokeDigestWithPeer(
-              service, fullDigestRequest("1", "7"), peer("game-design-service"));
+          invokeDigestWithPeer(service, fullDigestRequest("1", "7"), peer("game-design-service"));
 
       assertEquals("PERMISSION_DENIED", response.getError().getCode());
       verifyNoInteractions(digestService);

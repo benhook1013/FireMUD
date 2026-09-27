@@ -196,8 +196,7 @@ class WorldManagementGrpcServiceTest {
             publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
+    runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
 
     assertEquals("7", ref.get().getVersionId());
     assertEquals("version:7", ref.get().getAppliedCommitId());
@@ -246,8 +245,7 @@ class WorldManagementGrpcServiceTest {
 
       assertEquals(
           "PERMISSION_DENIED",
-          invokeDigestWithPeer(
-                  service, fullDigestRequest("1", "7"), peer("game-design-service"))
+          invokeDigestWithPeer(service, fullDigestRequest("1", "7"), peer("game-design-service"))
               .getError()
               .getCode());
     }
@@ -396,8 +394,7 @@ class WorldManagementGrpcServiceTest {
             new ObjectMapper(),
             publicationReadGuard());
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
+    runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }

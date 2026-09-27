@@ -224,8 +224,7 @@ class ScriptPatchPinProjectionServiceImplTest {
               assertThat(summary.runtimeRegionEpoch()).isEqualTo(4L);
             });
     verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
-    verify(scheduleInstanceService)
-        .reconcileObservedRuntimeState("1", "game-1", unpinnedState);
+    verify(scheduleInstanceService).reconcileObservedRuntimeState("1", "game-1", unpinnedState);
     verifyNoInteractions(rolloutProjectionService);
   }
 

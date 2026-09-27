@@ -295,11 +295,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           errorCode == null
               ? GrpcAppErrors.internal(meterRegistry, logger, "PublishScriptPatchVersion", ex)
               : GrpcAppErrors.error(
-                  meterRegistry,
-                  logger,
-                  "PublishScriptPatchVersion",
-                  errorCode,
-                  ex.getMessage()));
+                  meterRegistry, logger, "PublishScriptPatchVersion", errorCode, ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "PublishScriptPatchVersion", ex));
@@ -2022,7 +2018,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           "PUBLISH_ATTEMPT_INCONSISTENT",
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
           "PUBLISH_ATTEMPT_SCOPE_MISMATCH",
-          "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" -> candidate;
+          "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" ->
+          candidate;
       default -> null;
     };
   }
