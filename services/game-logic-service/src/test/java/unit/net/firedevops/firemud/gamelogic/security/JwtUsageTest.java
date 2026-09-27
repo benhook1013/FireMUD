@@ -21,9 +21,11 @@ class JwtUsageTest {
       Pattern.compile("(?<![\\w$])AUTHORIZATION_HEADER(?![\\w$])");
   private static final Pattern STATIC_AUTHORIZATION_IMPORT =
       Pattern.compile(
-          "(?m)^\\s*import\\s+static\\s+org\\.springframework\\.http\\.HttpHeaders\\.AUTHORIZATION\\s*;");
+          "(?m)^\\s*import\\s+static\\s+(?:[\\w$]+\\.)*HttpHeaders\\.AUTHORIZATION\\s*;");
   private static final Pattern STATIC_HTTP_HEADERS_WILDCARD_IMPORT =
       Pattern.compile("(?m)^\\s*import\\s+static\\s+(?:[\\w$]+\\.)*HttpHeaders\\.\\*\\s*;");
+  private static final Pattern STATIC_AUTHORIZATION_MEMBER_IMPORT =
+      Pattern.compile("(?m)^\\s*import\\s+static\\s+[\\w$]+(?:\\.[\\w$]+)*\\.AUTHORIZATION\\s*;");
   private static final Pattern JAVA_IMPORT_DECLARATION =
       Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?[^;\\r\\n]+;");
   private static final Pattern BARE_AUTHORIZATION_IDENTIFIER =
@@ -42,6 +44,11 @@ class JwtUsageTest {
     assertTrue(
         containsAuthorizationHeaderReference(
             "import static org.springframework.http.HttpHeaders.AUTHORIZATION;\n"
+                + "request.getHeader(AUTHORIZATION)"));
+    assertTrue(
+        containsAuthorizationHeaderReference(
+            "import static org.springframework.http.HttpHeaders.*;\n"
+                + "import static com.google.common.net.HttpHeaders.AUTHORIZATION;\n"
                 + "request.getHeader(AUTHORIZATION)"));
     assertTrue(
         containsAuthorizationHeaderReference(
@@ -124,6 +131,15 @@ class JwtUsageTest {
   }
 
   @Test
+  void singleStaticAuthorizationImportShadowsWildcardImport() {
+    assertFalse(
+        containsAuthorizationHeaderReference(
+            "import static org.springframework.http.HttpHeaders.*;\n"
+                + "import static example.Permission.AUTHORIZATION;\n"
+                + "return AUTHORIZATION;"));
+  }
+
+  @Test
   void noJwtReferencesInMainSources() throws IOException {
     try (Stream<Path> paths = Files.walk(Path.of("src/main/java"))) {
       paths
@@ -176,6 +192,7 @@ class JwtUsageTest {
         || AUTHORIZATION_HEADER_IDENTIFIER.matcher(code).find()
         || STATIC_AUTHORIZATION_IMPORT.matcher(javaCode).find()
         || (STATIC_HTTP_HEADERS_WILDCARD_IMPORT.matcher(code).find()
+            && !STATIC_AUTHORIZATION_MEMBER_IMPORT.matcher(code).find()
             && BARE_AUTHORIZATION_IDENTIFIER
                 .matcher(JAVA_IMPORT_DECLARATION.matcher(code).replaceAll(""))
                 .find());

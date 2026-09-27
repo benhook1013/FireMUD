@@ -2688,8 +2688,10 @@ class AccountServiceImplTest {
     assertEquals(exception.getMessage(), replayed.getMessage());
   }
 
-  @Test
-  void issueConnectTokenKeepsGenericMembershipRejectionDistinctFromBillingDenial() {
+  @ParameterizedTest
+  @CsvSource({"true,production", "false,preview"})
+  void issueConnectTokenRejectsPresentNonAdmittingMembership(
+      boolean publicProductionRealm, String realmSlug) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2705,7 +2707,7 @@ class AccountServiceImplTest {
             java.util.List.of(
                 net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
                     .setWorldSlug("demo")
-                    .setRealmSlug("preview")
+                    .setRealmSlug(realmSlug)
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
@@ -2714,17 +2716,17 @@ class AccountServiceImplTest {
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(true)
-                    .setPublicProductionRealm(false)
+                    .setPublicProductionRealm(publicProductionRealm)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", realmSlug))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
                 .setWorldDisplayName("Demo World")
-                .setRealmSlug("preview")
+                .setRealmSlug(realmSlug)
                 .setRealmDisplayName("Preview Realm")
                 .setTenantId("7")
                 .setGameInstanceId("55")
@@ -2733,13 +2735,13 @@ class AccountServiceImplTest {
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
                 .setVisible(true)
-                .setPublicProductionRealm(false)
+                .setPublicProductionRealm(publicProductionRealm)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
                 .build());
     when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            11L, 7L, "demo", "preview"))
+            11L, 7L, "demo", realmSlug))
         .thenReturn(true);
     Subscription active = new Subscription();
     active.setId(22L);
@@ -2906,7 +2908,8 @@ class AccountServiceImplTest {
 
   @ParameterizedTest
   @CsvSource({"false", "true"})
-  void listBootstrapCharactersRequiresCurrentAdmittingMembership(boolean membershipExists) {
+  void listBootstrapCharactersDistinguishesMissingAndNonAdmittingMembership(
+      boolean membershipExists) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2940,11 +2943,150 @@ class AccountServiceImplTest {
                 service.listBootstrapCharacters(
                     bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
 
-    assertEquals("JOIN_REQUIRED", exception.getCode());
-    assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    if (membershipExists) {
+      assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
+      assertEquals("Gameplay admission is not allowed for this account", exception.getMessage());
+    } else {
+      assertEquals("JOIN_REQUIRED", exception.getCode());
+      assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    }
     verifyNoInteractions(entityManagementClient);
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+  }
+
+  @Test
+  void listBootstrapCharactersChecksPublicJoinPolicyBeforeReturningJoinRequired() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription grace = new Subscription();
+    grace.setId(22L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(subscriptionRepository, accountTenantMembershipRepository);
+    order.verify(subscriptionRepository, org.mockito.Mockito.times(2)).findByTenantId(7L);
+    order.verify(accountTenantMembershipRepository).findByAccountIdAndTenantId(11L, 7L);
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void listBootstrapCharactersReturnsEntitlementUnavailableBeforeClassifyingMembership() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(active), java.util.List.of());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(accountTenantMembershipRepository, entityManagementClient);
+  }
+
+  @Test
+  void listBootstrapCharactersDoesNotUsePublicJoinForPrivateMembershipLostAfterDiscovery() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)), Optional.empty());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "production"))
+        .thenReturn(true);
+    var privateRealm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setDisplayName("Private Realm")
+            .setTenantId("7")
+            .setGameInstanceId("44")
+            .setRealmId(REALM_ID)
+            .setPlayableStateNamespaceId("production-namespace-7")
+            .setCatalogRevision(23L)
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(false)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .build();
+    when(gameSessionClient.listGameplayRealms("demo")).thenReturn(java.util.List.of(privateRealm));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Private Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setRealmId(REALM_ID)
+                .setPlayableStateNamespaceId("production-namespace-7")
+                .setCatalogRevision(23L)
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(false)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("NON_PUBLIC_ENROLLMENT_REQUIRED", exception.getCode());
+    assertEquals(
+        "Existing game membership is required for this non-public realm", exception.getMessage());
+    verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -4154,6 +4296,30 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void requestPasswordResetContainsDeliveryFailureAfterSavingToken() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+    org.mockito.Mockito.doThrow(new RuntimeException("SMTP failure"))
+        .when(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Password Reset"),
+            org.mockito.ArgumentMatchers.anyString());
+
+    service.requestPasswordReset(new PasswordResetRequest("demo@example.com"));
+
+    org.mockito.Mockito.verify(passwordResetTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Password Reset"),
+            org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
   void sendUsernameReminderEmailsUsername() {
     Account account = new Account();
     account.setId(1L);
@@ -4182,6 +4348,30 @@ class AccountServiceImplTest {
             "unknown@example.com"));
 
     org.mockito.Mockito.verifyNoInteractions(emailService, notificationService);
+  }
+
+  @Test
+  void sendUsernameReminderContainsDeliveryFailure() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+    org.mockito.Mockito.doThrow(new RuntimeException("SMTP failure"))
+        .when(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Username Reminder"),
+            org.mockito.ArgumentMatchers.anyString());
+
+    service.sendUsernameReminder(
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest("demo@example.com"));
+
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Username Reminder"),
+            org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
@@ -4250,6 +4440,30 @@ class AccountServiceImplTest {
 
     org.mockito.Mockito.verifyNoInteractions(
         emailVerificationTokenRepository, emailService, notificationService);
+  }
+
+  @Test
+  void requestEmailVerificationByEmailContainsDeliveryFailureAfterSavingToken() {
+    Account account = new Account();
+    account.setId(6L);
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+    org.mockito.Mockito.doThrow(new RuntimeException("SMTP failure"))
+        .when(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Email Verification"),
+            org.mockito.ArgumentMatchers.anyString());
+
+    service.requestEmailVerification("demo@example.com");
+
+    org.mockito.Mockito.verify(emailVerificationTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Email Verification"),
+            org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test

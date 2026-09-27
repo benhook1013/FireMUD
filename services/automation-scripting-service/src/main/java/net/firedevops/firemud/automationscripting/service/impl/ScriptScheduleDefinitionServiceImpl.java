@@ -58,6 +58,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
                 tenantKey, scriptPatchVersion);
     Set<String> affectedScriptSet = new HashSet<>(affectedScripts);
+    requirePatchBase(definitions, scriptPatchVersion);
     Set<String> occupiedKeys = new HashSet<>();
     for (ScriptScheduleDefinition definition : existing) {
       if (!affectedScriptSet.contains(definition.getScriptId())) {
@@ -153,6 +154,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     ScriptScheduleDefinition schedule = new ScriptScheduleDefinition();
     schedule.setTenantId(tenantId);
     schedule.setScriptPatchVersion(scriptPatchVersion);
+    schedule.setBaseVersionId(scriptDefinition.getBaseVersionId());
     schedule.setScriptId(scriptDefinition.getName());
     schedule.setPluginId(pluginOwner.pluginId());
     schedule.setPluginVersionId(pluginOwner.pluginVersionId());
@@ -167,6 +169,28 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     schedule.setCreatedAt(now);
     schedule.setUpdatedAt(now);
     return schedule;
+  }
+
+  private static void requirePatchBase(
+      List<ScriptDefinition> definitions, String scriptPatchVersion) {
+    Long baseVersionId = null;
+    for (ScriptDefinition definition : definitions) {
+      if (definition == null
+          || definition.getBaseVersionId() == null
+          || definition.getBaseVersionId() <= 0L) {
+        throw new IllegalArgumentException("script_patch_base_version_unavailable");
+      }
+      if (baseVersionId != null && !baseVersionId.equals(definition.getBaseVersionId())) {
+        throw new IllegalArgumentException("script_patch_base_version_mismatch");
+      }
+      baseVersionId = definition.getBaseVersionId();
+      if (!scriptPatchVersion.equals(definition.getScriptVersion())) {
+        throw new IllegalArgumentException("script_patch_version_mismatch");
+      }
+    }
+    if (baseVersionId == null) {
+      throw new IllegalArgumentException("script_patch_base_version_unavailable");
+    }
   }
 
   private Cadence resolveCadence(String eventType, Map<String, Object> handlerNode) {

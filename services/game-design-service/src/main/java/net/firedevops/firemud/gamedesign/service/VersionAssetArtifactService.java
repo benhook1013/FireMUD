@@ -1,11 +1,14 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import java.util.Optional;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetDeletionEligibilityDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetPurgeWorkflowStatusDto;
 
 public interface VersionAssetArtifactService {
   VersionAssetArtifactStateDto getState(String tenantId, long versionId);
+
+  Optional<VersionAssetArtifactStateDto> findState(String tenantId, long versionId);
 
   VersionAssetArtifactStateDto markExportedUnattested(
       String tenantId,

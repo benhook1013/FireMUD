@@ -32,7 +32,8 @@ class GameInstanceRepositoryOperationKindValidationTest {
                       "operator",
                       "pin",
                       "EXPECT_EPOCH",
-                      1L));
+                      1L,
+                      10L));
       assertEquals(expectedMessage, applyError.getMessage());
 
       IllegalArgumentException failureError =

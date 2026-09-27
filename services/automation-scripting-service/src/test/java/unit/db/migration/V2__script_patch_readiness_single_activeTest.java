@@ -52,10 +52,14 @@ class V2__script_patch_readiness_single_activeTest {
     String normalized = migration.replaceAll("\\s+", " ").trim();
     assertThat(normalized)
         .contains(
-            "DROP INDEX uq_script_work_item_trigger_identity",
-            "DROP INDEX uq_script_work_item_trigger_identity_unpinned",
-            "DROP INDEX uq_script_event_audit_handler_identity",
-            "DROP INDEX uq_script_event_audit_handler_identity_unpinned");
+            "DO $v2_preflight$",
+            "Automation V2 requires the four exact V1 producer-agnostic unique indexes",
+            "Automation V2 found retained duplicate active readiness rows",
+            "Automation V2 requires all active work-item and onLoad claims to drain before migration",
+            "DROP INDEX uq_script_work_item_trigger_identity;",
+            "DROP INDEX uq_script_work_item_trigger_identity_unpinned;",
+            "DROP INDEX uq_script_event_audit_handler_identity;",
+            "DROP INDEX uq_script_event_audit_handler_identity_unpinned;");
 
     assertThat(indexColumns(normalized, "uq_script_work_item_trigger_identity"))
         .containsExactly(HANDLER_IDENTITY_COLUMNS);

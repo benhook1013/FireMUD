@@ -84,6 +84,32 @@ runtime_resources = {
 }
 assert "secrets" in runtime_resources, "runtime deployment cannot create/update namespace-local Secrets"
 assert "namespaces" not in runtime_resources, "runtime role must not manage namespaces"
+scale_rules = [
+    rule
+    for rule in rules(runtime_role)
+    if "deployments/scale" in (rule.get("resources") or [])
+]
+assert len(scale_rules) == 1, "runtime role must have one scoped Deployment scale rule"
+assert scale_rules[0].get("apiGroups") == ["apps"]
+assert scale_rules[0].get("resources") == ["deployments/scale"]
+assert set(scale_rules[0].get("resourceNames") or []) == {
+    "account-service",
+    "game-session-service",
+    "automation-scripting-service",
+}
+assert set(scale_rules[0].get("verbs") or []) == {"get", "update", "patch"}
+endpoint_slice_rules = [
+    rule
+    for rule in rules(runtime_role)
+    if "endpointslices" in (rule.get("resources") or [])
+]
+assert len(endpoint_slice_rules) == 1, "runtime role must have one EndpointSlice observation rule"
+assert endpoint_slice_rules[0].get("apiGroups") == ["discovery.k8s.io"]
+assert endpoint_slice_rules[0].get("resources") == ["endpointslices"]
+assert set(endpoint_slice_rules[0].get("verbs") or []) == {"list"}
+assert "resourceNames" not in endpoint_slice_rules[0], (
+    "EndpointSlice list access must remain read-only"
+)
 
 cert_rules = [rule for rule in rules(cert_role) if "cert-manager.io" in (rule.get("apiGroups") or [])]
 assert len(cert_rules) == 1
