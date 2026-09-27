@@ -2756,29 +2756,45 @@ class ReviewController:
     def _bounded_allocation_evidence(
         allocation: ReviewAllocation, history: Sequence[Any]
     ) -> dict[str, Any]:
-        """Project immutable completed results after one exact baseline checkpoint."""
+        """Project immutable completed results created after the allocation decision."""
 
+        baseline_checkpoints = set(allocation.baseline_checkpoints)
         baseline_checkpoint = allocation.baseline_checkpoint
         baseline_matches = [
             (index, value)
             for index, value in enumerate(history)
-            if _field(value, "checkpoint", "checkpoint_id") == baseline_checkpoint
+            if baseline_checkpoint is not None
+            and _field(value, "checkpoint", "checkpoint_id") == baseline_checkpoint
             and _field(value, "correction") is not True
             and _field(value, "non_counting") is not True
         ]
-        if len(baseline_matches) != 1:
+        if baseline_checkpoint is not None and len(baseline_matches) != 1:
             return {
                 "baseline": None,
+                "baseline_head": allocation.head,
                 "results": [],
                 "in_flight": 0,
-                "error": "the bounded allocation baseline is missing or ambiguous",
+                "error": "the allocation's pinned baseline checkpoint is missing or ambiguous",
             }
-        baseline_index, baseline = baseline_matches[0]
-        baseline_head = _field(baseline, "head", "reviewed_head")
-        baseline_parent_head = _field(baseline, "parent_head", "parent_sha", "base_tip_sha")
-        baseline_merge_base = _field(baseline, "merge_base")
-        baseline_patch = _field(baseline, "patch_id", "patch_identity")
-        if not (
+        baseline = baseline_matches[0][1] if baseline_matches else next(
+            (
+                value
+                for value in reversed(history)
+                if _field(value, "checkpoint", "checkpoint_id") in baseline_checkpoints
+                and _field(value, "completed") is True
+                and _field(value, "attributable") is True
+                and _field(value, "anchored") is True
+                and _field(value, "provisional") is not True
+                and _field(value, "correction") is not True
+                and _field(value, "non_counting") is not True
+            ),
+            None,
+        )
+        baseline_head = _field(baseline, "head", "reviewed_head") if baseline is not None else allocation.head
+        baseline_parent_head = _field(baseline, "parent_head", "parent_sha", "base_tip_sha") if baseline else None
+        baseline_merge_base = _field(baseline, "merge_base") if baseline else None
+        baseline_patch = _field(baseline, "patch_id", "patch_identity") if baseline else None
+        if baseline_checkpoint is not None and not (
             _field(baseline, "pr") == allocation.pr
             and _field(baseline, "channel") in (None, allocation.channel)
             and _field(baseline, "completed") is True
@@ -2800,6 +2816,7 @@ class ReviewController:
         ):
             return {
                 "baseline": None,
+                "baseline_head": allocation.head,
                 "results": [],
                 "in_flight": 0,
                 "error": "the bounded allocation baseline is not a completed attributable anchored review in this scope",
@@ -2851,7 +2868,18 @@ class ReviewController:
                 }
             relevant_scope_rows.append(value)
 
-        if relevant_scope_rows:
+        if relevant_scope_rows and baseline_checkpoint is None and any(
+            _field(value, "checkpoint", "checkpoint_id") not in baseline_checkpoints
+            for value in relevant_scope_rows
+        ):
+            return {
+                "baseline": baseline,
+                "baseline_head": baseline_head,
+                "results": [],
+                "in_flight": 0,
+                "error": "review scope changed after the allocation decision; renewed human judgment is required",
+            }
+        if relevant_scope_rows and baseline_checkpoint is not None:
             baseline_at = parse_timestamp(_field(baseline, "observed_at"))
             if baseline_at is None:
                 return {
@@ -2926,8 +2954,8 @@ class ReviewController:
 
         results: list[dict[str, Any]] = []
         in_flight_ids: dict[str, str] = {}
-        seen_checkpoints: set[str] = set()
-        for value in history[baseline_index + 1 :]:
+        seen_checkpoints: set[str] = set(baseline_checkpoints)
+        for value in history:
             checkpoint = _field(value, "checkpoint", "checkpoint_id")
             channel = _field(value, "channel")
             if channel not in (None, allocation.channel):
@@ -2953,6 +2981,13 @@ class ReviewController:
                 and isinstance(_field(value, "anchor"), Mapping)
                 and trigger_checkpoint is not None
             )
+            if checkpoint in baseline_checkpoints and not (
+                _field(value, "active_review") is True
+                or _field(value, "active_reservation") is True
+                or active_response
+                or anchored_active_trigger
+            ):
+                continue
             if (
                 _field(value, "active_review") is True
                 or _field(value, "active_reservation") is True
@@ -3087,6 +3122,7 @@ class ReviewController:
 
         return {
             "baseline": baseline,
+            "baseline_head": baseline_head,
             "results": results,
             "in_flight": len(in_flight_ids),
             "in_flight_heads": list(in_flight_ids.values()),
@@ -3106,11 +3142,21 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] | None,
     ) -> dict[str, Any]:
         cap = allocation.max_additional_completed
-        assert cap is not None
+        minimum = allocation.min_additional_completed or 0
         snapshot = self._bounded_allocation_evidence(allocation, history)
         used = len(snapshot["results"])
         in_flight = snapshot["in_flight"]
         latest = snapshot["results"][-1] if snapshot["results"] else None
+        baseline = snapshot["baseline"]
+        baseline_head = snapshot.get("baseline_head") or allocation.head
+        normal_taper_complete = policy.taper_satisfied_for_state(
+            state,
+            allocation.channel,
+            history,
+            baseline_checkpoints=(
+                allocation.baseline_checkpoints if allocation.reopens_taper else ()
+            ),
+        )
 
         def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
             return {
@@ -3123,18 +3169,26 @@ class ReviewController:
                 "handoff_head": allocation.handoff_head,
                 "stop_basis": "human_cap" if status == "CAP_AUDITED_STOP" else allocation.stop_basis,
                 "baseline_checkpoint": allocation.baseline_checkpoint,
+                "min_additional_completed": minimum,
                 "max_additional_completed": cap,
+                "completed_count": used,
+                "taper_complete": normal_taper_complete,
+                "historical_taper_complete": policy.taper_satisfied(
+                    allocation.channel,
+                    history,
+                    policy.required_taper(state, allocation.channel, history),
+                ),
+                "reopens_taper": allocation.reopens_taper,
                 "used": used,
                 "cap": cap,
-                "remaining": max(0, cap - used - in_flight),
+                "remaining": max(0, cap - used - in_flight) if cap is not None else None,
                 "in_flight": in_flight,
                 "selection_control": control,
+                "controlling_reason": reason,
             }
 
         if snapshot["error"] is not None:
             return result("INVALID", snapshot["error"], control="unresolved_work")
-        baseline = snapshot["baseline"]
-        baseline_head = _field(baseline, "head", "reviewed_head")
         if current is None or reconciliation in {
             stack.ReconciliationStatus.PARENT_MOVED,
             stack.ReconciliationStatus.UNRECONCILED,
@@ -3148,7 +3202,7 @@ class ReviewController:
             return result("INVALID", "the parent or merge base changed; renewed human judgment is required", control="unresolved_work")
         try:
             if not self.git.is_ancestor(baseline_head, allocation.head):
-                return result("INVALID", "the baseline is outside the allocated review lineage", control="unresolved_work")
+                return result("INVALID", "the decision baseline is outside the allocated review lineage", control="unresolved_work")
             if not self.git.is_ancestor(allocation.head, current.child_head):
                 return result("INVALID", "the live head is outside the allocated review lineage", control="unresolved_work")
             previous_head = baseline_head
@@ -3165,42 +3219,91 @@ class ReviewController:
                     return result("INVALID", "an in-flight review is outside the live corrected-head lineage", control="unresolved_work")
         except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
             return result("INVALID", "could not verify baseline and corrected-head ancestry", control="unresolved_work")
-        if used > cap or used + in_flight > cap:
+        if cap is not None and (used > cap or used + in_flight > cap):
             return result("INVALID", "completed and in-flight reviews exceed the authorized cap", control="unresolved_work")
-        if used < cap:
-            if not in_flight and any(completed["accepted"] > 0 for completed in snapshot["results"]):
-                try:
-                    self._check_stop_evidence(
-                        state,
-                        allocation.pr,
-                        policy.Channel(allocation.channel),
-                        current,
-                        reconciliation_result,
-                        checkpoint_pin=latest["checkpoint"] if latest else None,
-                        stop_audit_cache=stop_audit_cache,
-                        history_cache=history_cache,
-                    )
-                except (ControllerError, ValueError) as error:
-                    return result(
-                        "CAP_FINDINGS_PENDING",
-                        "accepted findings remain pending before another review",
-                        control="unresolved_work",
-                        details=str(error),
-                    )
-            control = "unresolved_work" if in_flight else "taper"
-            reason = (
-                "a posted review is still in flight within the bounded allowance"
-                if in_flight
-                else "normal channel taper may finish before the additional-review cap"
-            )
-            return result("CAP_ACTIVE", reason, control=control)
         if in_flight:
             return result(
-                "CAP_EXHAUSTED_PENDING",
-                "cap exhausted; findings pending",
+                "CAP_ACTIVE",
+                "a posted review is still in flight within the allocated allowance",
                 control="unresolved_work",
-                details="a posted request remains in flight and cannot be cancelled or replaced",
+                details="the in-flight request does not count until it is complete and attributable",
             )
+
+        if any(completed["accepted"] > 0 for completed in snapshot["results"]):
+            checkpoint_pin = (
+                latest["checkpoint"] if latest else _field(baseline, "checkpoint", "checkpoint_id")
+            )
+            try:
+                self._check_stop_evidence(
+                    state,
+                    allocation.pr,
+                    policy.Channel(allocation.channel),
+                    current,
+                    reconciliation_result,
+                    checkpoint_pin=checkpoint_pin,
+                    stop_audit_cache=stop_audit_cache,
+                    history_cache=history_cache,
+                )
+            except (ControllerError, ValueError) as error:
+                cap_reached = cap is not None and used >= cap
+                return result(
+                    "CAP_EXHAUSTED_PENDING" if cap_reached else "CAP_FINDINGS_PENDING",
+                    "cap exhausted; findings pending"
+                    if cap_reached
+                    else "accepted findings remain pending; their fixes are mandatory",
+                    control="unresolved_work",
+                    details=str(error),
+                )
+
+        stopping_checkpoint = (
+            latest["checkpoint"] if latest else _field(baseline, "checkpoint", "checkpoint_id")
+        )
+        if used < minimum:
+            return result(
+                "CAP_ACTIVE",
+                f"minimum of {minimum} additional completed reviews is not met",
+                control="minimum",
+            )
+        if normal_taper_complete:
+            if reconciliation_result is None or not stopping_checkpoint:
+                return result(
+                    "CAP_TAPERED_PENDING",
+                    "normal taper is complete but current finding and thread evidence is unavailable",
+                    control="unresolved_work",
+                )
+            try:
+                self._check_stop_evidence(
+                    state,
+                    allocation.pr,
+                    policy.Channel(allocation.channel),
+                    current,
+                    reconciliation_result,
+                    checkpoint_pin=stopping_checkpoint,
+                    stop_audit_cache=stop_audit_cache,
+                    history_cache=history_cache,
+                )
+            except (ControllerError, ValueError) as error:
+                return result(
+                    "CAP_TAPERED_PENDING",
+                    "normal taper is complete but review obligations remain pending",
+                    control="unresolved_work",
+                    details=str(error),
+                )
+            return result(
+                "CAP_TAPERED",
+                "normal channel taper is complete and the minimum allocation is met",
+                control="taper",
+            )
+        if cap is None or used < cap:
+            if allocation.reopens_taper and not normal_taper_complete:
+                reason = "fresh taper restarted at this post-taper allocation; additional results may be requested"
+            else:
+                reason = (
+                    "normal channel taper is not complete; more allocated results may be requested"
+                    if cap is None
+                    else "normal channel taper may finish before the maximum additional-review limit"
+                )
+            return result("CAP_ACTIVE", reason, control="taper")
         if reconciliation_result is None or not latest:
             return result(
                 "CAP_EXHAUSTED_PENDING",
@@ -3228,8 +3331,8 @@ class ReviewController:
             )
         return result(
             "CAP_AUDITED_STOP",
-            "the additional-review cap is exhausted and review obligations are clear",
-            control="cap",
+            "the maximum additional completed reviews is reached and review obligations are clear",
+            control="maximum",
         )
 
     def _allocation_progress(
@@ -3247,6 +3350,15 @@ class ReviewController:
         """Derive consumption from immutable evidence; never persist a live observation."""
 
         def result(status: str, reason: str, checkpoint: str | None = None, accepted: int | None = None) -> dict[str, Any]:
+            completed_count = 1 if checkpoint is not None else 0
+            control = (
+                "maximum"
+                if status == "EXHAUSTED_PENDING"
+                and reason == "review allocation exhausted; an explicit stop decision is required"
+                else "unresolved_work"
+                if status in {"EXHAUSTED_PENDING", "CAP_FINDINGS_PENDING"}
+                else "allocation"
+            )
             return {
                 "status": status,
                 "reason": reason,
@@ -3255,6 +3367,15 @@ class ReviewController:
                 "accepted": accepted,
                 "handoff_head": allocation.handoff_head,
                 "stop_basis": allocation.stop_basis or ("allocated" if allocation.handoff_checkpoint else None),
+                "min_additional_completed": 1,
+                "max_additional_completed": 1,
+                "completed_count": completed_count,
+                "used": completed_count,
+                "cap": 1,
+                "remaining": max(0, 1 - completed_count),
+                "in_flight": 0,
+                "selection_control": control,
+                "controlling_reason": reason,
             }
 
         if allocation.stop_basis == "direct_human":
@@ -3271,7 +3392,7 @@ class ReviewController:
                 history_cache,
             )
 
-        if allocation.max_additional_completed is not None:
+        if allocation.min_additional_completed is not None or allocation.max_additional_completed is not None:
             return self._bounded_allocation_progress(
                 allocation,
                 history,
@@ -3450,7 +3571,7 @@ class ReviewController:
                 current = self._anchor(pr, live[pr], reconciliation.links[pr])
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
                 current = None
-            views[pr] = self._allocation_progress(
+            view = self._allocation_progress(
                 allocation,
                 histories[pr],
                 current,
@@ -3460,6 +3581,43 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
+            default_one_result = (
+                allocation.min_additional_completed is None
+                and allocation.max_additional_completed is None
+                and allocation.stop_basis is None
+            )
+            minimum = 1 if default_one_result else allocation.min_additional_completed
+            maximum = 1 if default_one_result else allocation.max_additional_completed
+            completed_count = view.get("completed_count", view.get("used", 1 if view.get("checkpoint") else 0))
+            view.setdefault("min_additional_completed", minimum)
+            view.setdefault("minimum_additional_completed", minimum)
+            view.setdefault("max_additional_completed", maximum)
+            view.setdefault("maximum_additional_completed", maximum)
+            view.setdefault("completed_count", completed_count)
+            view.setdefault("controlling_reason", view.get("reason", "allocation"))
+            view["minimum_additional_completed"] = minimum
+            view["maximum_additional_completed"] = maximum
+            view["completed_count"] = completed_count
+            view["reopens_taper"] = allocation.reopens_taper
+            view["historical_taper_complete"] = policy.taper_satisfied(
+                channel,
+                histories[pr],
+                policy.required_taper(state, channel, histories[pr]),
+            )
+            taper_values = policy.fresh_taper_history(
+                state,
+                channel,
+                histories[pr],
+                baseline_checkpoints=(
+                    allocation.baseline_checkpoints if allocation.reopens_taper else ()
+                ),
+            )
+            view["taper_complete"] = policy.taper_satisfied(
+                channel,
+                taper_values,
+                policy.required_taper(state, channel, taper_values),
+            )
+            views[pr] = view
         return views
 
     @staticmethod
@@ -3482,14 +3640,31 @@ class ReviewController:
             values = histories[other].get(pr, ())
             latest = _latest_review(values)
             other_anchor_status = reconciliation.status_for(pr, other.value)
+            proven_cli_descendant = (
+                channel == policy.Channel.HOSTED
+                and ReviewController._hosted_head_mismatch_is_proven_cli_descendant(
+                    pr, histories, reconciliation
+                )
+            )
             if latest is not None and other_anchor_status not in {
                 stack.ReconciliationStatus.PATCH_CHANGED,
                 stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-            }:
+            } and not proven_cli_descendant:
                 value = _field(latest, "head", "reviewed_head")
                 if isinstance(value, str):
                     other_heads[pr] = value
         channel_allocations = allocations
+        taper_history_by_pr = {
+            pr: policy.fresh_taper_history(
+                state,
+                channel,
+                histories[channel].get(pr, ()),
+                baseline_checkpoints=state.allocations[f"{pr}:{channel.value}"].baseline_checkpoints,
+            )
+            for pr, view in channel_allocations.items()
+            if view.get("reopens_taper") is True
+            and f"{pr}:{channel.value}" in state.allocations
+        }
         decision = policy.select_review_target(
             state,
             channel,
@@ -3503,6 +3678,7 @@ class ReviewController:
                 pr
                 for pr, view in channel_allocations.items()
                 if view["status"] in {"HANDED_OFF", "CAP_AUDITED_STOP"}
+                or view["status"] == "CAP_TAPERED"
             ),
             human_stopped_prs=(
                 pr for pr, view in channel_allocations.items() if view["status"] == "STOPPED"
@@ -3518,7 +3694,11 @@ class ReviewController:
             allocation_holds={
                 pr: view["reason"]
                 for pr, view in channel_allocations.items()
-                if view["status"] in {"CAP_FINDINGS_PENDING", "CAP_EXHAUSTED_PENDING"}
+                if view["status"] in {
+                    "CAP_FINDINGS_PENDING",
+                    "CAP_EXHAUSTED_PENDING",
+                    "CAP_TAPERED_PENDING",
+                }
                 or (
                     view["status"] == "CAP_ACTIVE"
                     and view.get("selection_control") == "unresolved_work"
@@ -3528,11 +3708,18 @@ class ReviewController:
             | {
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] == "CAP_ACTIVE"
-                and view.get("selection_control") == "taper"
-                and view.get("remaining", 0) > 0
-                and view.get("used", 0) == 0
+                if (
+                    view["status"] == "CAP_ACTIVE"
+                    and view.get("selection_control") == "minimum"
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
+                or (
+                    view.get("reopens_taper") is True
+                    and view["status"] in {"PROMISED", "CAP_ACTIVE"}
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
             },
+            taper_history_by_pr=taper_history_by_pr,
         )
         if (
             channel == policy.Channel.CLI
@@ -3546,6 +3733,47 @@ class ReviewController:
         ):
             return dataclasses.replace(decision, reason=HOSTED_CLI_OVERLAP_HOLD_REASON)
         return decision
+
+    @staticmethod
+    def _hosted_head_mismatch_is_proven_cli_descendant(
+        pr: int,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        reconciliation: stack.Reconciliation,
+    ) -> bool:
+        """Allow proven CLI taper to coexist with Hosted's current-head review."""
+
+        cli_history = histories[policy.Channel.CLI].get(pr, ())
+        latest_cli = _latest_review(cli_history)
+        if latest_cli is None or _field(latest_cli, "current_candidate_descendant_proven") is not True:
+            return False
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            for value in histories[channel].get(pr, ()):
+                checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                if (
+                    _field(value, "active_review") is True
+                    or _field(value, "active_reservation") is True
+                    or (
+                        _field(value, "held") is True
+                        and _field(value, "reason") == HOSTED_ACTIVE_RESPONSE_REASON
+                    )
+                    or (
+                        _field(value, "held") is True
+                        and isinstance(checkpoint, str)
+                        and checkpoint.startswith("trigger:")
+                        and _field(value, "rate_limited") is not True
+                        and _field(value, "terminal_ambiguous") is not True
+                    )
+                ):
+                    return False
+        allowed_statuses = {
+            stack.ReconciliationStatus.COHERENT,
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+            stack.ReconciliationStatus.PATCH_CHANGED,
+        }
+        return all(
+            reconciliation.status_for(pr, channel.value) in allowed_statuses
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        )
 
     def _status_review_targets(
         self,
@@ -3608,22 +3836,27 @@ class ReviewController:
             pr: self._policy_history(state, pr, other, reconciliation)
             for pr in state.ordered_prs
         }
-        if selected == policy.Channel.CLI:
-            history = {
-                pr: self._project_cli_streak_lineage(
-                    self._project_cli_hosted_reservations(
-                        history[pr],
-                        other_history[pr],
-                        pr,
-                        live[pr].head,
-                        self._reconciled_anchor(pr, live[pr], reconciliation),
-                    ),
+        cli_history = history if selected == policy.Channel.CLI else other_history
+        hosted_history = other_history if selected == policy.Channel.CLI else history
+        projected_cli_history = {
+            pr: self._project_cli_streak_lineage(
+                self._project_cli_hosted_reservations(
+                    cli_history[pr],
+                    hosted_history[pr],
                     pr,
-                    state,
+                    live[pr].head,
                     self._reconciled_anchor(pr, live[pr], reconciliation),
-                )
-                for pr in state.ordered_prs
-            }
+                ),
+                pr,
+                state,
+                self._reconciled_anchor(pr, live[pr], reconciliation),
+            )
+            for pr in state.ordered_prs
+        }
+        if selected == policy.Channel.CLI:
+            history = projected_cli_history
+        else:
+            other_history = projected_cli_history
         allocations = self._allocation_views(state, live, reconciliation, selected, history)
         decision = self._select_review_decision(
             state,
@@ -3697,7 +3930,9 @@ class ReviewController:
             selected,
             pr,
             policy.ReviewStatus.READY if completed_allocation_override else decision.status,
-            "explicit bounded allocation overrides the completed taper" if completed_allocation_override else decision.reason,
+            "explicit allocation reopens a fresh taper after completion"
+            if completed_allocation_override
+            else decision.reason,
             selected_target,
             anchor,
             decision.provisional,
@@ -3822,6 +4057,12 @@ class ReviewController:
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
+                proven_cli_descendant = (
+                    channel == policy.Channel.HOSTED
+                    and self._hosted_head_mismatch_is_proven_cli_descendant(
+                        pr, histories, reconciliation
+                    )
+                )
                 if allocations[channel].get(pr, {}).get("status") == "STOPPED":
                     channel_status[channel.value] = policy.ReviewStatus.HUMAN_STOPPED.value
                 elif channel_reconciliation in {
@@ -3838,6 +4079,7 @@ class ReviewController:
                         other_channel_head=(
                             other_head
                             if isinstance(other_head, str)
+                            and not proven_cli_descendant
                             and reconciliation.status_for(pr, other.value)
                             not in {
                                 stack.ReconciliationStatus.PATCH_CHANGED,
@@ -4390,6 +4632,24 @@ class ReviewController:
     def evidence(self, pr: int | None = None) -> dict[str, Any]:
         state = self._state()
         numbers = (pr,) if pr is not None else state.ordered_prs
+        history_cache: dict[tuple[int, str], list[Any]] = {}
+        eligible_prs = tuple(number for number in numbers if number in state.ordered_prs)
+        canonical_allocations: dict[int, dict[str, Any]] = {}
+        if any(
+            f"{number}:{channel.value}" in state.allocations
+            for number in eligible_prs
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        ):
+            status = self._status_from_state(
+                state,
+                evidence_prs=set(eligible_prs),
+                history_cache=history_cache,
+            )
+            canonical_allocations = {
+                row["pr"]: row.get("allocations", {})
+                for row in status.get("prs", ())
+                if isinstance(row, Mapping) and isinstance(row.get("pr"), int)
+            }
         result: dict[str, Any] = {}
         for number in numbers:
             histories = {
@@ -4399,7 +4659,7 @@ class ReviewController:
                     else dataclasses.asdict(item)
                     if dataclasses.is_dataclass(item)
                     else policy.Evidence.from_value(item).__dict__
-                    for item in _history(self._evidence_provider, number, channel)
+                    for item in self._cached_history(number, channel, history_cache)
                 ]
                 for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
             }
@@ -4410,20 +4670,18 @@ class ReviewController:
             allocations: dict[str, Any] = {}
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 allocation = state.allocations.get(f"{number}:{channel.value}")
-                if allocation is None or allocation.max_additional_completed is None:
+                if allocation is None:
                     continue
-                snapshot = self._bounded_allocation_evidence(allocation, histories[channel])
-                cap = allocation.max_additional_completed
-                used = len(snapshot["results"])
+                view = canonical_allocations.get(number, {}).get(channel.value)
+                if view is None:
+                    continue
                 allocations[channel.value] = {
+                    **view,
                     "baseline_checkpoint": allocation.baseline_checkpoint,
-                    "used": used,
-                    "cap": cap,
-                    "max_additional_completed": cap,
-                    "remaining": max(0, cap - used - snapshot["in_flight"]),
-                    "in_flight": snapshot["in_flight"],
                     "reason": allocation.reason,
-                    "evidence_error": snapshot["error"],
+                    "allocation_reason": allocation.reason,
+                    "progress_reason": view.get("reason"),
+                    "evidence_error": view.get("reason") if view.get("status") == "INVALID" else None,
                 }
             if allocations:
                 row["allocations"] = allocations
@@ -4499,6 +4757,7 @@ class ReviewController:
         head: str,
         reason: str,
         checkpoint: str | None = None,
+        min_additional_completed: int | None = None,
         max_additional_completed: int | None = None,
     ) -> dict[str, Any]:
         """Grant, replace, or cancel a one-result or bounded review allocation."""
@@ -4513,16 +4772,29 @@ class ReviewController:
             raise ControllerError("review allocation decisions require a reason")
         if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
             raise ControllerError("allocation baseline checkpoint must be a non-empty immutable identity")
+        if min_additional_completed is not None and (
+            isinstance(min_additional_completed, bool)
+            or not isinstance(min_additional_completed, int)
+            or min_additional_completed < 0
+        ):
+            raise ControllerError("minimum additional completed reviews must be a non-negative integer")
         if max_additional_completed is not None and (
             isinstance(max_additional_completed, bool)
             or not isinstance(max_additional_completed, int)
             or max_additional_completed <= 0
         ):
             raise ControllerError("maximum additional completed reviews must be a positive integer")
-        if (checkpoint is None) != (max_additional_completed is None):
-            raise ControllerError("bounded allocations require both --checkpoint and --max-additional-completed")
-        if action == "cancel" and (checkpoint is not None or max_additional_completed is not None):
-            raise ControllerError("cancel removes the existing allocation without a replacement cap")
+        if (
+            min_additional_completed is not None
+            and max_additional_completed is not None
+            and min_additional_completed > max_additional_completed
+        ):
+            raise ControllerError("minimum additional completed reviews cannot exceed the maximum")
+        bounded_replacement = min_additional_completed is not None or max_additional_completed is not None
+        if checkpoint is not None and not bounded_replacement:
+            raise ControllerError("--checkpoint requires a minimum or maximum allocation")
+        if action == "cancel" and (checkpoint is not None or bounded_replacement):
+            raise ControllerError("cancel removes the existing allocation without a replacement policy")
         normalized_head = _sha(head, "allocation head")
         state = self._state()
         if pr not in state.ordered_prs:
@@ -4533,9 +4805,11 @@ class ReviewController:
             raise ControllerError("allocation already exists; use renew or cancel explicitly")
         if action != "grant" and previous is None:
             raise ControllerError("no allocation exists for this PR and channel")
-        bounded_replacement = max_additional_completed is not None
-        if action == "renew" and previous is not None and previous.max_additional_completed is not None and not bounded_replacement:
-            raise ControllerError("renewing a bounded allocation requires a new checkpoint and positive cap")
+        previous_is_bounded = previous is not None and (
+            previous.min_additional_completed is not None or previous.max_additional_completed is not None
+        )
+        if action == "renew" and previous_is_bounded and not bounded_replacement:
+            raise ControllerError("renewing a bounded allocation requires a new minimum or maximum")
         live, reconciliation = self._reconciliation(state)
         item = live[pr]
         if normalized_head != item.head:
@@ -4563,10 +4837,17 @@ class ReviewController:
             raise ControllerError("allocation requires a coherent current stack identity")
         current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
-        policy_history = (
-            self._policy_history(state, pr, selected, reconciliation)
-            if bounded_replacement
-            else history
+        policy_history = self._policy_history(state, pr, selected, reconciliation)
+        prior_taper_baseline = (
+            previous.baseline_checkpoints
+            if previous is not None and previous.reopens_taper
+            else ()
+        )
+        reopens_taper = policy.taper_satisfied_for_state(
+            state,
+            selected,
+            policy_history,
+            baseline_checkpoints=prior_taper_baseline,
         )
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
@@ -4600,7 +4881,7 @@ class ReviewController:
             target = self._target(
                 selected,
                 expected_pr=pr,
-                allow_completed_allocation=bounded_replacement,
+                allow_completed_allocation=True,
             )
             try:
                 self._ensure_runnable(target)
@@ -4618,14 +4899,6 @@ class ReviewController:
                 raise ControllerError("a stopped allocation cannot be renewed")
             if self._head_repository_problem(item):
                 raise ControllerError(f"PR #{pr} has an unsupported head repository")
-            self._check_stop_evidence(
-                state,
-                pr,
-                selected,
-                current,
-                reconciliation,
-                checkpoint_pin=checkpoint,
-            )
         else:
             assert previous is not None
             progress = self._allocation_progress(
@@ -4667,7 +4940,9 @@ class ReviewController:
             baseline_checkpoints=baseline,
             reason=reason,
             baseline_checkpoint=checkpoint,
+            min_additional_completed=min_additional_completed,
             max_additional_completed=max_additional_completed,
+            reopens_taper=reopens_taper,
         )
         progress = None
         if bounded_replacement:

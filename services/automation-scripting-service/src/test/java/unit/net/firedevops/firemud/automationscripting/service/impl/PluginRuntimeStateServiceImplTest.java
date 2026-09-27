@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeEvent;
@@ -36,6 +39,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class PluginRuntimeStateServiceImplTest {
   @Test
@@ -411,6 +418,38 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(status.get().lifecycleRevision()).isEqualTo(9L);
     assertThat(status.get().activePublication()).isNull();
     assertThat(status.get().pendingPublication()).isNull();
+    Mockito.verifyNoInteractions(gameDesignClient);
+  }
+
+  @Test
+  void localLifecycleStatusFailsClosedForUnknownPersistedPluginState() {
+    PluginRuntimeState existing = new PluginRuntimeState();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setPluginId("plugin-1");
+    existing.setPluginState("PLUGIN_STATE_FUTURE_VALUE");
+    existing.setLastChangedAt(Instant.ofEpochMilli(123L));
+    existing.setLastPolicyCheckedAt(Instant.ofEpochMilli(456L));
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            gameDesignClient,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
+        service.getLocalLifecycleStatus("1", "game-1", "plugin-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_UNSPECIFIED);
+    assertThat(status.get().statusReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE);
     Mockito.verifyNoInteractions(gameDesignClient);
   }
 
@@ -1532,6 +1571,126 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.eq(runtimeState),
             Mockito.any(Instant.class),
             Mockito.eq("plugin-b"));
+  }
+
+  @Test
+  void policyDecisionCommitsBeforeNextLifecycleLockIsAcquired() {
+    PluginRuntimeState pluginB = activePluginState();
+    pluginB.setPluginId("plugin-b");
+    PluginRuntimeState pluginA = activePluginState();
+    pluginA.setPluginId("plugin-a");
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
+    AtomicBoolean transactionActive = new AtomicBoolean();
+    AtomicBoolean lifecycleLockHeld = new AtomicBoolean();
+    AtomicInteger externalReads = new AtomicInteger();
+    AtomicInteger acquiredLocks = new AtomicInteger();
+    AtomicInteger committedTransactions = new AtomicInteger();
+    List<String> lockedPluginIds = new ArrayList<>();
+    when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
+        .thenAnswer(
+            invocation -> {
+              TransactionDefinition definition = invocation.getArgument(0);
+              assertThat(definition.getPropagationBehavior())
+                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+              assertThat(transactionActive.get()).isFalse();
+              assertThat(lifecycleLockHeld.get()).isFalse();
+              assertThat(acquiredLocks.get()).isEqualTo(committedTransactions.get());
+              assertThat(externalReads.get()).isEqualTo(4);
+              transactionActive.set(true);
+              return new SimpleTransactionStatus();
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive.get()).isTrue();
+              assertThat(lifecycleLockHeld.get()).isTrue();
+              transactionActive.set(false);
+              lifecycleLockHeld.set(false);
+              committedTransactions.incrementAndGet();
+              return null;
+            })
+        .when(transactionManager)
+        .commit(Mockito.any(TransactionStatus.class));
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive.get()).isTrue();
+              assertThat(lifecycleLockHeld.get()).isTrue();
+              transactionActive.set(false);
+              lifecycleLockHeld.set(false);
+              return null;
+            })
+        .when(transactionManager)
+        .rollback(Mockito.any(TransactionStatus.class));
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive.get()).isTrue();
+              assertThat(lifecycleLockHeld.compareAndSet(false, true)).isTrue();
+              assertThat(acquiredLocks.get()).isEqualTo(committedTransactions.get());
+              lockedPluginIds.add(invocation.getArgument(2));
+              acquiredLocks.incrementAndGet();
+              return null;
+            })
+        .when(repository)
+        .lockLifecycleScope(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
+        .thenReturn(List.of(pluginB, pluginA));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-a"))
+        .thenReturn(Optional.of(pluginA));
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-b"))
+        .thenReturn(Optional.of(pluginB));
+    when(repository.save(Mockito.any(PluginRuntimeState.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameDesignClient.getPublishedPluginVersion(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenAnswer(
+            invocation -> {
+              externalReads.incrementAndGet();
+              return publishedPluginVersion(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, true);
+            });
+    GetGameInstanceRuntimeStateResponse runtimeResponse =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenAnswer(
+            invocation -> {
+              externalReads.incrementAndGet();
+              return runtimeResponse;
+            });
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {},
+            null,
+            transactionManager);
+
+    PluginRuntimeStateService.PolicyReconciliationResult result =
+        service.reconcileActivePluginPolicy(10);
+
+    assertThat(result.inspectedCount()).isEqualTo(2);
+    assertThat(result.disabledCount()).isEqualTo(2);
+    assertThat(lockedPluginIds).containsExactly("plugin-a", "plugin-b");
+    assertThat(acquiredLocks.get()).isEqualTo(2);
+    assertThat(committedTransactions.get()).isEqualTo(2);
+    assertThat(transactionActive.get()).isFalse();
+    assertThat(lifecycleLockHeld.get()).isFalse();
   }
 
   @Test

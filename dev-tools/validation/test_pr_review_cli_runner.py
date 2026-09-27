@@ -71,6 +71,30 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
         self.assertEqual(args.checkpoint, "5846432587")
         self.assertEqual(args.max_additional_completed, 2)
 
+    def test_minimum_and_maximum_are_optional_without_a_pinned_checkpoint(self):
+        common = [
+            "decide",
+            "allocation",
+            "grant",
+            "--pr",
+            "2827",
+            "--channel",
+            "cli",
+            "--head",
+            HEAD,
+            "--reason",
+            "additional review judgment",
+        ]
+        minimum_only = _parser().parse_args([*common, "--min-additional-completed", "2"])
+        self.assertIsNone(minimum_only.checkpoint)
+        self.assertEqual(minimum_only.min_additional_completed, 2)
+        self.assertIsNone(minimum_only.max_additional_completed)
+
+        maximum_only = _parser().parse_args([*common, "--max-additional-completed", "3"])
+        self.assertIsNone(maximum_only.checkpoint)
+        self.assertIsNone(maximum_only.min_additional_completed)
+        self.assertEqual(maximum_only.max_additional_completed, 3)
+
     def test_legacy_cancel_shape_needs_no_cap_replacement(self):
         args = _parser().parse_args(
             [
