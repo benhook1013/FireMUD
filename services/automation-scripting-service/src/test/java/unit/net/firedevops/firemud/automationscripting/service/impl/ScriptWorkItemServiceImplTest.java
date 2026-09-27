@@ -1253,7 +1253,10 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses.get(0).baseVersionId()).isZero();
     assertThat(statuses.get(0).abilitySchemaDigest()).isEmpty();
     assertThat(statuses.get(0).publication().versionId()).isZero();
-    assertThat(statuses.get(0).publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(statuses.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(statuses.get(0).publication().lookupErrorMessage())
+        .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
   }
 
   @Test
@@ -2115,7 +2118,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("projection_lag_exceeded");
     assertThat(summary.get().projectionStale()).isTrue();
     assertThat(summary.get().publication().versionId()).isZero();
-    assertThat(summary.get().publication().lookupErrorCode()).isEqualTo("NOT_FOUND");
+    assertThat(summary.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
