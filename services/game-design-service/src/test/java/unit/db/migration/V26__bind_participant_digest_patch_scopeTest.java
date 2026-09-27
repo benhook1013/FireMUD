@@ -143,6 +143,21 @@ class V26__bind_participant_digest_patch_scopeTest {
     }
   }
 
+  @Test
+  void readsMigrationDocumentationFromRepositoryRootModuleAndNestedDirectories()
+      throws IOException {
+    Path repositoryRoot = findRepositoryRoot(Path.of(System.getProperty("user.dir")));
+    String expected = readMigrationDoc(repositoryRoot);
+
+    assertThat(readMigrationDoc(repositoryRoot)).isEqualTo(expected);
+    assertThat(readMigrationDoc(repositoryRoot.resolve("services/game-design-service")))
+        .isEqualTo(expected);
+    assertThat(
+            readMigrationDoc(
+                repositoryRoot.resolve("services/game-design-service/src/test/java/unit/db/migration")))
+        .isEqualTo(expected);
+  }
+
   private String extractAttemptPredeployDiagnostic(String documentation) {
     Matcher matcher =
         Pattern.compile(
@@ -195,8 +210,25 @@ class V26__bind_participant_digest_patch_scopeTest {
   }
 
   private String readMigrationDoc() throws IOException {
+    return readMigrationDoc(Path.of(System.getProperty("user.dir")));
+  }
+
+  private String readMigrationDoc(Path start) throws IOException {
     return Files.readString(
-        Path.of("..", "..", "design", "architecture", "system-architecture-database-migrations.md"),
+        findRepositoryRoot(start)
+            .resolve("design/architecture/system-architecture-database-migrations.md"),
         StandardCharsets.UTF_8);
+  }
+
+  private Path findRepositoryRoot(Path start) throws IOException {
+    Path current = start.toAbsolutePath().normalize();
+    while (current != null) {
+      if (Files.isRegularFile(
+          current.resolve("design/architecture/system-architecture-database-migrations.md"))) {
+        return current;
+      }
+      current = current.getParent();
+    }
+    throw new IOException("repository root not found from " + start);
   }
 }
