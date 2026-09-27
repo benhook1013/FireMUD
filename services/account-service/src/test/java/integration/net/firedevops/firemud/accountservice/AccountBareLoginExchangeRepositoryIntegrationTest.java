@@ -3,6 +3,10 @@ package integration.net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssua
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepository;
 import net.firedevops.firemud.accountservice.security.AccountEncryptedEnvelope;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeBinding;
+import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -29,6 +34,7 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -230,6 +236,89 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
       start.countDown();
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  void lostExchangeResponseRecoversExactEncryptedResultFromDurableReadback(
+      @TempDir Path temporaryDirectory) throws Exception {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(72);
+    byte[] originalResult = "original-private-delegation-result".getBytes(StandardCharsets.UTF_8);
+    byte[] connectKey = new byte[32];
+    byte[] bareLoginKey = new byte[32];
+    java.util.Arrays.fill(connectKey, (byte) 1);
+    java.util.Arrays.fill(bareLoginKey, (byte) 2);
+    Path manifest = temporaryDirectory.resolve("manifest.v1");
+    Files.writeString(
+        manifest,
+        "version=1\nactiveKeyId=k1\n"
+            + "key:k1:bare-login="
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(bareLoginKey)
+            + "\nkey:k1:connect-token="
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(connectKey)
+            + "\n",
+        StandardCharsets.US_ASCII);
+    AccountEnvelopeCrypto writer = new AccountEnvelopeCrypto(manifest);
+
+    AccountEnvelopeBinding binding =
+        inTransaction(
+            context.transaction(),
+            () -> {
+              var claim = context.repository().claim(identity, requestDigest);
+              AccountEnvelopeBinding issuedBinding =
+                  binding(claim.operation().operationId(), identity, requestDigest, 73);
+              context
+                  .repository()
+                  .recordPendingEvidence(
+                      claim,
+                      requestDigest,
+                      "delegation-jti-recovery",
+                      digest(80),
+                      issuedBinding.contextEvidenceDigest(),
+                      issuedBinding.authorityTupleDigest(),
+                      issuedBinding.issuanceFenceDigest(),
+                      issuedBinding.postconditionDigest());
+              context
+                  .repository()
+                  .completeWithEnvelope(
+                      claim,
+                      requestDigest,
+                      "delegation-jti-recovery",
+                      digest(80),
+                      issuedBinding,
+                      writer.encrypt(
+                          AccountEnvelopePurpose.BARE_LOGIN_RESPONSE,
+                          issuedBinding,
+                          originalResult));
+              return issuedBinding;
+            });
+
+    var retry =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    assertThat(retry.disposition())
+        .isEqualTo(AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
+    assertThat(retry.operation().lifecycle()).isEqualTo(Lifecycle.COMMITTED);
+    var stored =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .readResponseEnvelope(identity, requestDigest, binding)
+                    .orElseThrow());
+    AccountEnvelopeCrypto recoveryReader = new AccountEnvelopeCrypto(manifest);
+    assertThat(
+            recoveryReader.decrypt(
+                stored.envelope(), AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, stored.binding()))
+        .containsExactly(originalResult);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(), () -> context.repository().find(identity, digest(74))))
+        .isInstanceOf(AccountBareLoginExchangeRepository.IdempotencyConflictException.class);
   }
 
   @Test
