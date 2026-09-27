@@ -5,7 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
@@ -64,7 +63,6 @@ final class AutomationPatchControlPlaneService {
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
-  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
   private final TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver;
@@ -74,7 +72,6 @@ final class AutomationPatchControlPlaneService {
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptRuntimeProperties runtimeProperties,
       TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver) {
@@ -82,7 +79,6 @@ final class AutomationPatchControlPlaneService {
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
-    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
     this.workflowMetadataResolver = workflowMetadataResolver;
@@ -569,9 +565,10 @@ final class AutomationPatchControlPlaneService {
         .setScriptPatchVersion(AutomationControlPlaneSupport.normalize(scriptPatchVersion))
         .setBaseVersionId(0L)
         .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
-        .setLookupErrorCode("INVALID_ARGUMENT")
+        .setLookupErrorCode("PUBLICATION_SCOPE_UNAVAILABLE")
         .setLookupErrorMessage(
-            "base_version_id is required for exact script-patch publication lookup")
+            "base_version_id is unavailable in the pin projection required for exact "
+                + "script-patch publication lookup")
         .build();
   }
 

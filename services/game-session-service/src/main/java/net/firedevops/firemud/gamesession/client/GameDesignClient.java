@@ -103,8 +103,8 @@ public final class GameDesignClient
       return GetPublishedScriptPatchVersionResponse.newBuilder()
           .setError(
               ErrorDetail.newBuilder()
-                  .setCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
-                  .setMessage("base_version_id is required for script patch publication lookup")
+                  .setCode("INVALID_ARGUMENT")
+                  .setMessage("base_version_id must be positive for script-patch publication lookup")
                   .build())
           .build();
     }

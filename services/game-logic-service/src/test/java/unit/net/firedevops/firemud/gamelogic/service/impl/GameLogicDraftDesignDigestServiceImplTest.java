@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamelogic.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
 import org.junit.jupiter.api.Test;
 
 class GameLogicDraftDesignDigestServiceImplTest {
@@ -11,9 +12,9 @@ class GameLogicDraftDesignDigestServiceImplTest {
 
   @Test
   void getDraftDesignDigestFailsWhenOwnerManifestAndProvenanceAreUnavailable() {
-    UnsupportedOperationException thrown =
+    GameLogicDraftDesignDigestService.UnsupportedDigestScopeException thrown =
         assertThrows(
-            UnsupportedOperationException.class,
+            GameLogicDraftDesignDigestService.UnsupportedDigestScopeException.class,
             () -> service.getDraftDesignDigest("tenant-1", "7"));
 
     assertEquals(

@@ -239,8 +239,10 @@ class StatusTest(unittest.TestCase):
         self.assertFalse(target["ready"])
         self.assertIn("target-owner disposition", target["reasons"][-1])
         self.assertEqual(target["incoming_routes"], [route])
+        self.assertEqual(target["routes_out"], [])
         self.assertTrue(source["ready"])
         self.assertEqual(source["routes_out"], [route])
+        self.assertEqual(source["incoming_routes"], [])
 
     def _ready_report(self, payload: dict, **kwargs) -> dict:
         with patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}):
@@ -725,6 +727,55 @@ class StatusTest(unittest.TestCase):
         self.assertIn(report["verdict"], compact)
         self.assertEqual(decoded, report)
         self.assertEqual(decoded["threads"], {"current": 1, "outdated": 0, "total": 1})
+
+    def test_compact_incoming_route_handles_missing_or_empty_observations(self) -> None:
+        base_route = {
+            "route_id": "1" * 24,
+            "source_pr": 2828,
+            "source_channel": "cli",
+            "source_review": "review-1",
+            "source_finding": "finding-1",
+        }
+        routes = [base_route, {**base_route, "route_id": "2" * 24, "observations": []}]
+        report = {
+            "pr_number": 2879,
+            "pull_request": {
+                "title": "Route target",
+                "headRefName": "route-target",
+                "headRefOid": HEAD,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+                "changedFiles": 1,
+                "isDraft": False,
+                "mergeable": "MERGEABLE",
+                "mergeStateStatus": "CLEAN",
+            },
+            "threads": {"current": 0, "outdated": 0, "total": 0},
+            "incoming_routes": routes,
+            "routes_out": [],
+            "review_decision": {"status": "ready"},
+            "ci": {
+                "required": {"status": "success", "contexts": []},
+                "pending": [],
+                "failed": [],
+                "aggregate": {"state": "SUCCESS"},
+                "optional": {"failed": []},
+                "observed": True,
+            },
+            "checkpoint_counts": {
+                "by_type": {
+                    "Hosted": {"raw_found": 0, "accepted": 0, "routed": 0},
+                    "CLI": {"raw_found": 0, "accepted": 0, "routed": 0},
+                }
+            },
+            "verdict": "READY",
+            "reasons": [],
+        }
+
+        compact = status.emit_text(report)
+
+        self.assertEqual(compact.count("incoming route:"), 2)
+        self.assertIn("finding finding-1 · ", compact)
 
     def test_ci_coalescing_keeps_latest_failed_check_and_contexts(self) -> None:
         checks = [
