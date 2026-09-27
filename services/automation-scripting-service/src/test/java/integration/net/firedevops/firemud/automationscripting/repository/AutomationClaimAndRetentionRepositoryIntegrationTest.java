@@ -120,16 +120,16 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
                     + " AND tablename = 'script_work_items'"
                     + " AND indexname = 'idx_script_work_items_status_eligible_created'",
-                Integer.class))
-        .isEqualTo(1);
+                Long.class))
+        .isEqualTo(1L);
     assertThat(
             dsl.fetchValue(
                 "SELECT count(*) FROM information_schema.tables"
                     + " WHERE table_schema = 'public'"
                     + " AND table_name IN ('script_dead_letter_replay_requests',"
                     + " 'script_dead_letter_replay_results')",
-                Integer.class))
-        .isEqualTo(2);
+                Long.class))
+        .isEqualTo(2L);
   }
 
   @Test
