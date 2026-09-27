@@ -899,6 +899,38 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void missingLegacyPublishRequestIdIsRecoveredFromCanonicalWorkflowId() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.FAILED, 10L, 1, workflowId);
+    attempt.setRequestDigest(null);
+    attempt.setFailureCode("PUBLISH_FAILED");
+    attempt.setFailureMessage("legacy publish failure");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+
+    PublishWorkflowSnapshot snapshot =
+        service.reconcileFullVersionPublish(
+            new PublishWorkflowRequest("tenant-1", "notes", null, workflowId));
+
+    assertEquals("FAILED", snapshot.status());
+    assertEquals("PUBLISH_FAILED", snapshot.failureCode());
+    verify(publishAttemptRepository).findByPublishWorkflowId(workflowId);
+  }
+
+  @Test
+  void missingLegacyPublishRequestIdDoesNotCrossTenantWorkflowPrefix() {
+    String workflowId = "publish:tenant-2:publish-request:workflow-1";
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", null, workflowId)));
+
+    verify(publishAttemptRepository, never()).findByPublishWorkflowId(any(String.class));
+  }
+
+  @Test
   void mismatchedRequestDigestCannotReplaySucceededAttempt() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
@@ -1063,6 +1095,55 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptService, never())
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
+  @Test
+  void failureMarkingCommitUncertaintyLeavesAttemptPendingAndDoesNotCleanAssets() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    Game game = new Game();
+    game.setTenantId("tenant-1");
+    ExportedAssetManifest manifest =
+        new ExportedAssetManifest("manifest-hash", List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty());
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.empty());
+    java.util.concurrent.atomic.AtomicInteger transactionCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (transactionCalls.getAndIncrement() == 0) {
+                throw new PublishAttemptService.FullVersionTransactionException(
+                    new IllegalStateException("version finalization failed"));
+              }
+              ((java.util.function.Supplier<?>) invocation.getArgument(0)).get();
+              throw new IllegalStateException("failure-marking commit outcome unknown");
+            })
+        .when(publishAttemptService)
+        .executeFullVersionTransaction(any());
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("failure marking commit outcome is unknown"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(publishAttemptService)
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }

@@ -224,7 +224,7 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T11:00:00"),
                 LocalDateTime.parse("2026-04-14T12:00:00")));
     Mockito.when(
-            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1", 7L))
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
         .thenReturn(
             new DesignControlPlaneDigestDto(
                 "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
@@ -1284,7 +1284,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verify(versionService, Mockito.never())
         .getDesignControlPlaneDigestForScriptPatch(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
   }
 
   @Test

@@ -563,7 +563,10 @@ class ScriptWorkItemServiceImplTest {
     assertThat(status.get().baseVersionId()).isZero();
     assertThat(status.get().abilitySchemaDigest()).isEmpty();
     assertThat(status.get().publication().versionId()).isZero();
-    assertThat(status.get().publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(status.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(status.get().publication().lookupErrorMessage())
+        .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
   }
 
   @Test
@@ -613,7 +616,10 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses.get(0).baseVersionId()).isZero();
     assertThat(statuses.get(0).abilitySchemaDigest()).isEmpty();
     assertThat(statuses.get(0).publication().versionId()).isZero();
-    assertThat(statuses.get(0).publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(statuses.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(statuses.get(0).publication().lookupErrorMessage())
+        .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
   }
 
   @Test
@@ -1265,7 +1271,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().projectionLagMs()).isZero();
     assertThat(summary.get().projectionStale()).isFalse();
     assertThat(summary.get().publication().versionId()).isZero();
-    assertThat(summary.get().publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(summary.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1357,7 +1364,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("projection_lag_exceeded");
     assertThat(summary.get().projectionStale()).isTrue();
     assertThat(summary.get().publication().versionId()).isZero();
-    assertThat(summary.get().publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(summary.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1460,7 +1468,8 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
     assertThat(summaries.get(0).publication().versionId()).isZero();
-    assertThat(summaries.get(0).publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(summaries.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1511,7 +1520,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
     assertThat(deadLetters.get(0).publication().versionId()).isZero();
-    assertThat(deadLetters.get(0).publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(deadLetters.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
     verify(workItemRepository)
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
@@ -1694,7 +1704,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
     assertThat(events.get(0).publication().versionId()).isZero();
-    assertThat(events.get(0).publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(events.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test

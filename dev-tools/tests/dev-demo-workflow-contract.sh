@@ -885,15 +885,36 @@ if not (
     < deploy_run.rindex("helm upgrade --install")
 ):
     raise SystemExit("dev-demo must wait for participants with Game Design at zero replicas before restoring it")
+first_helm = deploy_run.index("helm upgrade --install")
+second_helm = deploy_run.index("helm upgrade --install", first_helm + 1)
+if not first_helm < second_helm:
+    raise SystemExit("dev-demo must keep the participant-first and publication-restore Helm upgrades ordered")
 for required in (
-    "deadline=$((SECONDS + 300))",
-    "get pods -l app=game-design-service -o json",
+    'closed_selector="firemud-game-design-migration-quiesced"',
+    "trap leave_game_design_closed_on_failure EXIT",
+    'get service "$game_design_service" -o json',
+    "admission_mutation_started=true",
+    'patch service "$game_design_service"',
+    '.spec.selector == {app: $selector}',
     "get endpointslices.discovery.k8s.io",
-    '[[ "$pod_count" == 0 && "$endpoint_count" == 0 ]]',
-    "(( SECONDS < deadline ))",
+    'deployment/$game_design_service" --replicas=0',
+    'get deployment "$game_design_service" -o json',
+    'old_pod_count="$(jq -er --arg service "$game_design_service"',
 ):
-    if required not in deploy_run or deploy_run.index(required) > deploy_run.rindex("helm upgrade --install"):
-        raise SystemExit(f"dev-demo must prove Game Design pods and endpoints are gone before restoring publication: {required}")
+    if required not in deploy_run or deploy_run.index(required) >= first_helm:
+        raise SystemExit(f"dev-demo must prove Game Design admission closure and drain before participants: {required}")
+if deploy_run.index("generation has passed Helm's readiness gate") >= second_helm:
+    raise SystemExit("dev-demo must restore Game Design only after the participant readiness gate")
+reclose_marker = "The participant chart reapplies the canonical Service selector"
+if not (
+    reclose_marker in deploy_run
+    and first_helm < deploy_run.index(reclose_marker) < second_helm
+):
+    raise SystemExit("dev-demo must re-close Game Design admission after the participant chart and before restore")
+if deploy_run.index("deploy_complete=true") <= second_helm:
+    raise SystemExit("dev-demo must keep Game Design admission fail-closed until the restore Helm upgrade succeeds")
+if deploy_run.rindex("trap - EXIT") <= second_helm:
+    raise SystemExit("dev-demo must remove its Game Design failure trap only after publication restore succeeds")
 if "set -euo pipefail" not in deploy_run:
     raise SystemExit("dev-demo staged rollout must stop before restoring Game Design after a failed participant rollout")
 hosted_values = yaml.safe_load(
@@ -1353,6 +1374,38 @@ expected_success_condition = (
 )
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
+
+game_design_warning = deploy_by_name[
+    "Warn about Game Design recovery after staged deploy failure"
+]
+expected_game_design_warning_condition = (
+    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'failure' }}"
+)
+if game_design_warning.get("if") != expected_game_design_warning_condition:
+    raise SystemExit(
+        "Game Design recovery warning must run after every failed staged deployment"
+    )
+if not (
+    deploy_names.index("Show dev-demo rollout diagnostics")
+    < deploy_names.index("Warn about Game Design recovery after staged deploy failure")
+    < deploy_names.index("Fail if dev-demo rollout did not complete")
+):
+    raise SystemExit(
+        "Game Design recovery warning must follow diagnostics and precede rollout failure"
+    )
+game_design_warning_run = game_design_warning.get("run", "")
+for required_warning in (
+    "may have left Game Design unavailable",
+    "scaled to zero",
+    "publication endpoints drained",
+    "Inspect and repair",
+    "Game Design Deployment, Pods, Service, and EndpointSlices",
+):
+    if required_warning not in game_design_warning_run:
+        raise SystemExit(
+            f"Game Design recovery warning must include: {required_warning}"
+        )
 
 quiesce_writers = deploy_by_name[
     "Quiesce Account, Game Session, and Automation migration writers"
@@ -2198,21 +2251,65 @@ if [[ "${TEST_HELM_RESULT:?}" == failure && "$invocation" == 0 ]]; then
   exit 42
 fi
 [[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ]]
+if [[ "$invocation" == 0 ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+fi
 printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
 SH
 cat >"$deployment_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1" == -n && "$3" == get && "$4" == service ]]; then
+  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+    printf 'service-closed-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
+  else
+    printf 'service-canonical-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"game-design-service"}}}\n'
+  fi
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == hpa ]]; then
+  printf 'hpa-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  printf '{"kind":"HorizontalPodAutoscalerList","items":[]}\n'
+  exit 0
+fi
 if [[ "$1" == -n && "$3" == get && "$4" == pods ]]; then
-  printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-  printf '{"kind":"PodList","items":[]}\n'
+  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/scaled" ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  else
+    printf 'pods-old-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"game-design-service"}},"spec":{"containers":[{"name":"game-design-service","image":"game-design-service:old"}]}}]}\n'
+  fi
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == deployment ]]; then
+  printf 'deployment-zero-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  printf '{"kind":"Deployment","spec":{"replicas":0}}\n'
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == patch && "$4" == service ]]; then
+  [[ "$5" == game-design-service ]]
+  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+    printf 'service-reclosed\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  else
+    printf 'service-closed\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  fi
+  : >"${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == scale && "$4" == deployment/game-design-service ]]; then
+  [[ "$5" == --replicas=0 ]]
+  printf 'deployment-scaled-zero\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  : >"${TEST_DEPLOYMENT_STATE:?}/scaled"
   exit 0
 fi
 if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; then
   if [[ "${TEST_HELM_RESULT:?}" == quiescence-failure ]]; then
-    printf 'endpoints-present\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-    printf '{"kind":"EndpointSliceList","items":[{"metadata":{"labels":{"kubernetes.io/service-name":"game-design-service"}},"endpoints":[{}]}]}\n'
+    printf 'endpoints-invalid\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"InvalidEndpointSliceList","items":[]}\n'
   else
     printf 'endpoints-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
     printf '{"kind":"EndpointSliceList","items":[]}\n'
@@ -2237,23 +2334,10 @@ run_deployment_evidence_fixture() {
   local deploy_status
   local deploy_script="$deploy_release_step"
 
-  if [[ "$scenario" == quiescence-failure ]]; then
-    deploy_script="$fixture_dir/deploy-release-quiescence-failure-step.sh"
-    python3 - "$deploy_release_step" "$deploy_script" <<'PY'
-from pathlib import Path
-import sys
-
-source = Path(sys.argv[1]).read_text(encoding="utf-8")
-needle = "deadline=$((SECONDS + 300))"
-if source.count(needle) != 1:
-    raise SystemExit("could not shorten the quiescence failure fixture")
-Path(sys.argv[2]).write_text(
-    source.replace(needle, "deadline=$((SECONDS - 1))", 1), encoding="utf-8"
-)
-PY
-  fi
-
   : >"$deployment_log"
+  local deployment_state="$fixture_dir/deployment-${scenario}.state"
+  rm -rf "$deployment_state"
+  mkdir -p "$deployment_state"
   : >"$github_env"
   set +e
   (
@@ -2262,6 +2346,7 @@ PY
       PATH="$deployment_stub_dir:$PATH" \
       GITHUB_ENV="$github_env" \
       TEST_DEPLOYMENT_LOG="$deployment_log" \
+      TEST_DEPLOYMENT_STATE="$deployment_state" \
       TEST_RENDERED_VALUES_PATH="$deployment_values_path" \
       TEST_GAME_DESIGN_INDEX=1 \
       TEST_HELM_RESULT="$scenario" \
@@ -2286,7 +2371,7 @@ PY
   if [[ "$scenario" == failure ]]; then
     [[ "$deploy_status" -eq 42 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "helm-start helm-failure" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-failure service-reclosed" ]]
     if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
       echo "failed Helm attempt recorded deployed-head evidence" >&2
       exit 1
@@ -2297,7 +2382,7 @@ PY
   if [[ "$scenario" == quiescence-failure ]]; then
     [[ "$deploy_status" -ne 0 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "helm-start helm-success pods-empty endpoints-present" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-invalid service-reclosed" ]]
     if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
       echo "uncertain Game Design quiescence recorded deployed-head evidence" >&2
       exit 1
@@ -2307,7 +2392,7 @@ PY
 
   [[ "$scenario" == success && "$deploy_status" -eq 0 ]]
   mapfile -t actual <"$deployment_log"
-  [[ "${actual[*]}" == "helm-start helm-success pods-empty endpoints-empty helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
   grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
 }
 

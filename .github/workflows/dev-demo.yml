@@ -451,49 +451,148 @@ jobs:
           print(matches[0])
           PY
           )"
+          runtime_namespace="${{ needs.dev-demo-plan.outputs.namespace }}"
+          game_design_service="game-design-service"
+          closed_selector="firemud-game-design-migration-quiesced"
+          admission_mutation_started=false
+          deploy_complete=false
+
+          leave_game_design_closed_on_failure() {
+            local exit_status=$?
+            trap - EXIT
+            if [[ "$admission_mutation_started" == true && "$deploy_complete" != true ]]; then
+              kubectl -n "$runtime_namespace" patch service "$game_design_service" \
+                --type=merge \
+                --patch "{\"spec\":{\"selector\":{\"app\":\"$closed_selector\"}}}" >/dev/null ||
+                echo "::error title=Game Design admission closure failed::Could not reapply the closed Service selector after staged deployment failure." >&2
+            fi
+            exit "$exit_status"
+          }
+          trap leave_game_design_closed_on_failure EXIT
+
+          service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)"
+          jq -e --arg service "$game_design_service" \
+            '.metadata.name == $service and .spec.selector == {app: $service}' \
+            <<<"$service_json" >/dev/null || {
+            echo "Game Design Service does not have the canonical app=game-design-service selector." >&2
+            exit 1
+          }
+          pods_json="$(kubectl -n "$runtime_namespace" get pods -o json)"
+          jq -e --arg selector "$closed_selector" '
+            if .kind != "PodList" or ((.items | type) != "array") then
+              error("invalid PodList")
+            else
+              ([.items[]? | select((.metadata.labels.app // "") == $selector)] | length) == 0
+            end
+          ' <<<"$pods_json" >/dev/null || {
+            echo "The reserved Game Design closed selector already matches a Pod." >&2
+            exit 1
+          }
+          hpa_json="$(kubectl -n "$runtime_namespace" get hpa -o json)"
+          jq -e --arg service "$game_design_service" '
+            ([.items[]? | select(
+              .spec.scaleTargetRef.kind == "Deployment" and
+              .spec.scaleTargetRef.name == $service
+            )] | length) == 0
+          ' <<<"$hpa_json" >/dev/null || {
+            echo "An HPA targets the Game Design Deployment; remove or suspend it before migration." >&2
+            exit 1
+          }
+
+          admission_mutation_started=true
+          kubectl -n "$runtime_namespace" patch service "$game_design_service" \
+            --type=merge \
+            --patch "{\"spec\":{\"selector\":{\"app\":\"$closed_selector\"}}}"
+          service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)"
+          jq -e --arg selector "$closed_selector" \
+            '.spec.selector == {app: $selector}' <<<"$service_json" >/dev/null || {
+            echo "Game Design Service selector did not remain closed." >&2
+            exit 1
+          }
+          deadline=$((SECONDS + 300))
+          while :; do
+            endpoint_slices_json="$(kubectl -n "$runtime_namespace" \
+              get endpointslices.discovery.k8s.io \
+              --selector kubernetes.io/service-name=game-design-service -o json)"
+            endpoint_count="$(jq -er --arg service "$game_design_service" '
+              if .kind != "EndpointSliceList" or ((.items | type) != "array") then
+                error("invalid Game Design EndpointSliceList")
+              elif any(.items[]?; (.metadata.labels["kubernetes.io/service-name"] // "") != $service) then
+                error("Game Design EndpointSlice service label mismatch")
+              else
+                [.items[]? | (.endpoints // [])[]?] | length
+              end
+            ' <<<"$endpoint_slices_json")"
+            if [[ "$endpoint_count" == 0 ]]; then
+              break
+            fi
+            (( SECONDS < deadline )) || {
+              echo "Game Design publication endpoints remain after 300 seconds." >&2
+              exit 1
+            }
+            sleep 2
+          done
+
+          kubectl -n "$runtime_namespace" scale "deployment/$game_design_service" --replicas=0
+          deadline=$((SECONDS + 300))
+          while :; do
+            deployment_json="$(kubectl -n "$runtime_namespace" get deployment "$game_design_service" -o json)"
+            deployment_replicas="$(jq -er '.spec.replicas // 0' <<<"$deployment_json")"
+            pods_json="$(kubectl -n "$runtime_namespace" get pods -o json)"
+            old_pod_count="$(jq -er --arg service "$game_design_service" '
+              if .kind != "PodList" or ((.items | type) != "array") then
+                error("invalid PodList")
+              else
+                [
+                  .items[]?
+                  | select(
+                      (.metadata.labels.app == $service)
+                      or any(.spec.containers[]?;
+                        .name == $service
+                        or ((.image // "") | split("@")[0] | split(":")[0] | split("/")[-1]) == $service
+                      )
+                    )
+                ] | length
+              end
+            ' <<<"$pods_json")"
+            if [[ "$deployment_replicas" == 0 && "$old_pod_count" == 0 ]]; then
+              break
+            fi
+            (( SECONDS < deadline )) || {
+              echo "Old Game Design Deployment or Pods remain after 300 seconds." >&2
+              exit 1
+            }
+            sleep 2
+          done
+
+          # Helm --wait proves that every participant generation is ready while
+          # Game Design remains at zero and its Service admission stays closed.
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
             --set "previewStack.services[${game_design_service_index}].replicaCount=0" \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             --wait \
             --timeout 15m
-          deadline=$((SECONDS + 300))
-          while :; do
-            pods_json="$(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" \
-              get pods -l app=game-design-service -o json)"
-            pod_count="$(jq -er '
-              if .kind != "PodList" or ((.items | type) != "array") then
-                error("invalid Game Design PodList")
-              else
-                .items | length
-              end
-            ' <<<"$pods_json")"
-            endpoint_slices_json="$(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" \
-              get endpointslices.discovery.k8s.io \
-              --selector kubernetes.io/service-name=game-design-service -o json)"
-            endpoint_count="$(jq -er '
-              if .kind != "EndpointSliceList" or ((.items | type) != "array") then
-                error("invalid Game Design EndpointSliceList")
-              elif any(.items[]?; (.metadata.labels["kubernetes.io/service-name"] // "") != "game-design-service") then
-                error("Game Design EndpointSlice service label mismatch")
-              else
-                [.items[]? | (.endpoints // [])[]?] | length
-              end
-            ' <<<"$endpoint_slices_json")"
-            if [[ "$pod_count" == 0 && "$endpoint_count" == 0 ]]; then
-              break
-            fi
-            (( SECONDS < deadline )) || {
-              echo "Game Design pods or publication endpoints remain after 300 seconds." >&2
-              exit 1
-            }
-            sleep 2
-          done
+          # The participant chart reapplies the canonical Service selector;
+          # close Game Design again before the publication-restore upgrade.
+          kubectl -n "$runtime_namespace" patch service "$game_design_service" \
+            --type=merge \
+            --patch "{\"spec\":{\"selector\":{\"app\":\"$closed_selector\"}}}"
+          service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)"
+          jq -e --arg selector "$closed_selector" \
+            '.spec.selector == {app: $selector}' <<<"$service_json" >/dev/null || {
+            echo "Game Design Service selector could not remain closed before publication restore." >&2
+            exit 1
+          }
+          # Restore the canonical Service selector only after the participant
+          # generation has passed Helm's readiness gate.
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             --wait \
             --timeout 15m
+          deploy_complete=true
+          trap - EXIT
 
       - name: Record exact deployed dev-demo head
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
@@ -531,6 +630,16 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${DEV_DEMO_STAGE:-unknown}" \
             "Dev-demo"
+
+      - name: Warn about Game Design recovery after staged deploy failure
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          {
+            echo ""
+            echo "### Game Design recovery"
+            echo ""
+            echo "**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained) because the staged dev-demo deploy did not complete. Inspect and repair the Game Design Deployment, Pods, Service, and EndpointSlices before retrying."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if dev-demo rollout did not complete
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
