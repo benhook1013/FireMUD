@@ -701,7 +701,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" "$telnet_port_resolver" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" "$telnet_port_resolver" "$ROOT_DIR/dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh" <<'PY'
 import os
 import re
 import subprocess
@@ -742,6 +742,7 @@ assert push_verified_image.is_file()
 assert push_verified_image.stat().st_mode & 0o111
 waiter = Path(sys.argv[12])
 telnet_port_resolver = Path(sys.argv[13])
+staged_dev_demo_rollout = Path(sys.argv[14]).read_text(encoding="utf-8")
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -2642,7 +2643,8 @@ assert preflight_lines[preflight_line_start : preflight_line_start + 7] == [
 render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
 dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
 assert render_position < preflight_command_start < dry_run_position
-assert "helm upgrade --install" in dev_demo_by_name["Deploy dev-demo release"]["run"]
+assert "dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh" in dev_demo_by_name["Deploy dev-demo release"]["run"]
+assert staged_dev_demo_rollout.count("helm upgrade --install") == 2
 
 operator_step = dev_demo_by_name["Validate controller-projected dev-demo identity"]
 assert operator_step["if"] == (
