@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -112,7 +113,7 @@ class ScriptScheduleInstanceServiceImplTest {
             invocation ->
                 new ScriptEventAuditRepository.IdempotentInsertResult(
                     invocation.getArgument(0), true));
-    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion(any(), any()))
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion(any(), anyLong(), any()))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -3680,7 +3681,8 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
               assertThat(summary.sourceDueTickId()).isEqualTo(130L);
-              assertThat(summary.publication().versionId()).isEqualTo(17L);
+              assertThat(summary.publication().versionId()).isZero();
+              assertThat(summary.publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
             });
   }
 
@@ -3713,7 +3715,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setRequiresExclusiveEvent(false);
     instance.setMaterializationStatus("READY");
     instance.setNextDueAt(Instant.ofEpochMilli(5555L));
-    instance.setObservedRuntimeVersionId("runtime-v2");
+    instance.setObservedRuntimeVersionId("7");
     instance.setLastObservedControlPlaneRequestId("req-9");
     instance.setPinObservedAt(Instant.ofEpochMilli(1234L));
     instance.setMaterializedAt(Instant.ofEpochMilli(1235L));
@@ -3740,11 +3742,13 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
 
   @Test
   void listInstancesLogsAndContainsPublicationLookupFailures() {
     ScriptScheduleInstance instance = wallClockTimerInstance();
+    instance.setObservedRuntimeVersionId("7");
     instance.setPluginId("plugin-1");
     instance.setPluginVersionId("plugin-v1");
     setPluginFence(instance);
@@ -3753,7 +3757,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
                 "1", "game-1", "patch-1"))
         .thenReturn(List.of(instance));
-    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion("1", "patch-1"))
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion("1", 7L, "patch-1"))
         .thenThrow(new IllegalStateException("script publication lookup failed"));
     when(gameDesignControlPlaneClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
         .thenThrow(new IllegalStateException("plugin publication lookup failed"));

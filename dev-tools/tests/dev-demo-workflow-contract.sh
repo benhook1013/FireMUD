@@ -667,6 +667,7 @@ import yaml
 workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, hosted_identity_workflow_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
+repository_root = workflow_path.parents[2]
 validator_spec = importlib.util.spec_from_file_location(
     "dev_demo_summary_validator_contract", validator_script_path
 )
@@ -833,6 +834,73 @@ with tempfile.NamedTemporaryFile() as destroy_output:
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
+deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
+quiesced_upgrade = "--set 'previewStack.services[3].replicaCount=0'"
+if deploy_run.count("helm upgrade --install") != 2:
+    raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
+if not (
+    deploy_run.index(quiesced_upgrade) < deploy_run.rindex("helm upgrade --install")
+    and deploy_run.index("--wait", deploy_run.index(quiesced_upgrade))
+    < deploy_run.rindex("helm upgrade --install")
+):
+    raise SystemExit("dev-demo must wait for participants with Game Design at zero replicas before restoring it")
+for required in (
+    "deadline=$((SECONDS + 300))",
+    "get pods -l app=game-design-service -o json",
+    "get endpointslices.discovery.k8s.io",
+    '[[ "$pod_count" == 0 && "$endpoint_count" == 0 ]]',
+    "(( SECONDS < deadline ))",
+):
+    if required not in deploy_run or deploy_run.index(required) > deploy_run.rindex("helm upgrade --install"):
+        raise SystemExit(f"dev-demo must prove Game Design pods and endpoints are gone before restoring publication: {required}")
+if "set -euo pipefail" not in deploy_run:
+    raise SystemExit("dev-demo staged rollout must stop before restoring Game Design after a failed participant rollout")
+hosted_values = yaml.safe_load(
+    (repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text(encoding="utf-8")
+)
+configured_services = hosted_values["previewStack"]["services"]
+if len(configured_services) <= 3 or configured_services[3].get("name") != "game-design-service":
+    raise SystemExit("dev-demo publication-quiescence override must target the Game Design chart entry")
+with tempfile.TemporaryDirectory() as temp_dir:
+    rendered_values_path = Path(temp_dir) / "dev-demo-values.yaml"
+    subprocess.run(
+        [
+            sys.executable,
+            str(repository_root / "dev-tools/hosted/dev-demo/render-dev-demo-values.py"),
+            str(repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml"),
+            str(rendered_values_path),
+            "dev",
+            "dev",
+            "dev.preview.firedevops.net",
+            "contract-test",
+            "32016",
+        ],
+        check=True,
+    )
+    quiesced_render = subprocess.run(
+        [
+            "helm",
+            "template",
+            "dev",
+            str(repository_root / "k8s/helm/firemud"),
+            "-f",
+            str(rendered_values_path),
+            "--set",
+            "previewStack.services[3].replicaCount=0",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+quiesced_deployments = [
+    document
+    for document in yaml.safe_load_all(quiesced_render.stdout)
+    if isinstance(document, dict)
+    and document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+]
+if len(quiesced_deployments) != 1 or quiesced_deployments[0].get("spec", {}).get("replicas") != 0:
+    raise SystemExit("Game Design chart render must preserve explicit zero replicas during participant rollout")
 deploy_checkouts = [
     step
     for step in deploy_steps
@@ -2049,30 +2117,59 @@ cat >"$deployment_stub_dir/helm" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected=(
-  upgrade --install dev k8s/helm/firemud
-  -f /tmp/dev-demo-values.yaml
-  --namespace dev
-  --wait
-  --timeout 15m
-)
 actual=("$@")
+invocation="$(grep -c '^helm-start$' "${TEST_DEPLOYMENT_LOG:?}" || true)"
+if [[ "$invocation" == 0 ]]; then
+  expected=(
+    upgrade --install dev k8s/helm/firemud
+    -f /tmp/dev-demo-values.yaml
+    --set 'previewStack.services[3].replicaCount=0'
+    --namespace dev
+    --wait
+    --timeout 15m
+  )
+elif [[ "$invocation" == 1 ]]; then
+  expected=(
+    upgrade --install dev k8s/helm/firemud
+    -f /tmp/dev-demo-values.yaml
+    --namespace dev
+    --wait
+    --timeout 15m
+  )
+else
+  exit 1
+fi
 [[ $# -eq ${#expected[@]} ]]
 for index in "${!expected[@]}"; do
   [[ "${actual[$index]}" == "${expected[$index]}" ]]
 done
 printf 'helm-start\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-if [[ "${TEST_HELM_RESULT:?}" == failure ]]; then
+if [[ "${TEST_HELM_RESULT:?}" == failure && "$invocation" == 0 ]]; then
   printf 'helm-failure\n' >>"$TEST_DEPLOYMENT_LOG"
   exit 42
 fi
-[[ "$TEST_HELM_RESULT" == success ]]
+[[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ]]
 printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
 SH
 cat >"$deployment_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1" == -n && "$3" == get && "$4" == pods ]]; then
+  printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  printf '{"kind":"PodList","items":[]}\n'
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; then
+  if [[ "${TEST_HELM_RESULT:?}" == quiescence-failure ]]; then
+    printf 'endpoints-present\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"EndpointSliceList","items":[{"metadata":{"labels":{"kubernetes.io/service-name":"game-design-service"}},"endpoints":[{}]}]}\n'
+  else
+    printf 'endpoints-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"EndpointSliceList","items":[]}\n'
+  fi
+  exit 0
+fi
 [[ $# -eq 5 ]]
 [[ "$1" == annotate ]]
 [[ "$2" == namespace ]]
@@ -2089,6 +2186,23 @@ run_deployment_evidence_fixture() {
   local github_env="$fixture_dir/deployment-${scenario}.env"
   local head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   local deploy_status
+  local deploy_script="$deploy_release_step"
+
+  if [[ "$scenario" == quiescence-failure ]]; then
+    deploy_script="$fixture_dir/deploy-release-quiescence-failure-step.sh"
+    python3 - "$deploy_release_step" "$deploy_script" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = "deadline=$((SECONDS + 300))"
+if source.count(needle) != 1:
+    raise SystemExit("could not shorten the quiescence failure fixture")
+Path(sys.argv[2]).write_text(
+    source.replace(needle, "deadline=$((SECONDS - 1))", 1), encoding="utf-8"
+)
+PY
+  fi
 
   : >"$deployment_log"
   : >"$github_env"
@@ -2100,7 +2214,7 @@ run_deployment_evidence_fixture() {
       GITHUB_ENV="$github_env" \
       TEST_DEPLOYMENT_LOG="$deployment_log" \
       TEST_HELM_RESULT="$scenario" \
-      bash "$deploy_release_step"
+      bash "$deploy_script"
   )
   deploy_status=$?
   set -e
@@ -2129,13 +2243,25 @@ run_deployment_evidence_fixture() {
     return
   fi
 
+  if [[ "$scenario" == quiescence-failure ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "helm-start helm-success pods-empty endpoints-present" ]]
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "uncertain Game Design quiescence recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
   [[ "$scenario" == success && "$deploy_status" -eq 0 ]]
   mapfile -t actual <"$deployment_log"
-  [[ "${actual[*]}" == "helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  [[ "${actual[*]}" == "helm-start helm-success pods-empty endpoints-empty helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
   grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
 }
 
 run_deployment_evidence_fixture failure
+run_deployment_evidence_fixture quiescence-failure
 run_deployment_evidence_fixture success
 
 # Execute the Ready waiter against strict bounded Kubernetes fixtures so each

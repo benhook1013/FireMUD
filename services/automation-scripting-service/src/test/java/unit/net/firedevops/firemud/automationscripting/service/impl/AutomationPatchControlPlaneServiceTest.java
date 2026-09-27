@@ -29,7 +29,9 @@ import org.mockito.Mockito;
 class AutomationPatchControlPlaneServiceTest {
   private static GameDesignControlPlaneClient gameDesignClient() {
     GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
-    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            client.getPublishedScriptPatchVersion(
+                Mockito.anyString(), Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(

@@ -79,14 +79,41 @@ public class VersionRepository {
             .fetchOne(this::toEntity));
   }
 
-  public Optional<Version> findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-      String tenantId, String scriptPatchVersion) {
-    return Optional.ofNullable(
-        dsl.selectFrom(VERSION_TABLE)
-            .where(TENANT_ID.eq(tenantId).and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion)))
-            .orderBy(VERSION_NUMBER.desc(), ID.desc())
-            .limit(1)
-            .fetchOne(this::toEntity));
+  /**
+   * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
+   * reject anything other than one row so duplicate retained scope is fail-closed.
+   */
+  public List<Version> findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
+    return dsl.selectFrom(VERSION_TABLE)
+        .where(
+            TENANT_ID
+                .eq(tenantId)
+                .and(BASE_VERSION_ID.eq(baseVersionId))
+                .and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(VERSION_STATE.eq(VersionLifecycleState.PUBLISHED.name()))
+                .and(IS_SCRIPT_ONLY.isTrue()))
+        .orderBy(VERSION_NUMBER.desc(), ID.desc())
+        .fetch(this::toEntity);
+  }
+
+  /**
+   * Returns every retained script-only row for an exact effective artifact identity. The caller
+   * holds the tenant game-row lock before using this read and must reject a non-empty result when
+   * no exact publish-request replay exists. The database uniqueness index remains the concurrency
+   * backstop for callers that race outside this service boundary.
+   */
+  public List<Version> findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
+    return dsl.selectFrom(VERSION_TABLE)
+        .where(
+            TENANT_ID
+                .eq(tenantId)
+                .and(BASE_VERSION_ID.eq(baseVersionId))
+                .and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(IS_SCRIPT_ONLY.isTrue()))
+        .orderBy(VERSION_NUMBER.asc(), ID.asc())
+        .fetch(this::toEntity);
   }
 
   public Optional<Version> findById(Long id) {

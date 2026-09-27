@@ -10,6 +10,7 @@ public class PublishAttemptParticipantDigest {
   private Long publishAttemptId;
   private PublishParticipantKey participantKey;
   private String scopeValue;
+  private Long baseVersionId;
   private String appliedCommitId;
   private String contentDigest;
 

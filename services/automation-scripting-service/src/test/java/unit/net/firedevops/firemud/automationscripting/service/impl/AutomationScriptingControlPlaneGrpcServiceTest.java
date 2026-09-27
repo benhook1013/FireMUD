@@ -84,7 +84,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
   private static GameDesignControlPlaneClient gameDesignClient() {
     GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
-    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            client.getPublishedScriptPatchVersion(
+                Mockito.anyString(), Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -1140,7 +1142,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getPointerVersion()).isEqualTo("17");
-    assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
+    assertThat(ref.get().getPublication().getVersionId()).isZero();
+    assertThat(ref.get().getPublication().getLookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
   }
 
   @Test

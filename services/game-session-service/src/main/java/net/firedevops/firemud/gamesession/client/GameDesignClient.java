@@ -98,7 +98,16 @@ public final class GameDesignClient
   }
 
   public GetPublishedScriptPatchVersionResponse getPublishedScriptPatchVersion(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, long baseVersionId) {
+    if (baseVersionId <= 0L) {
+      return GetPublishedScriptPatchVersionResponse.newBuilder()
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
+                  .setMessage("base_version_id is required for script patch publication lookup")
+                  .build())
+          .build();
+    }
     if (stub() == null) {
       return unavailableScriptPatchVersion();
     }
@@ -108,6 +117,7 @@ public final class GameDesignClient
               GetPublishedScriptPatchVersionRequest.newBuilder()
                   .setTenantId(Long.toString(tenantId))
                   .setScriptPatchVersion(scriptPatchVersion)
+                  .setBaseVersionId(baseVersionId)
                   .build());
     } catch (RuntimeException ex) {
       return unavailableScriptPatchVersion();

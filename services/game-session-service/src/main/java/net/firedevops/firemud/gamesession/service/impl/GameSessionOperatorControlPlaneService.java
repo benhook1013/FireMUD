@@ -93,7 +93,10 @@ final class GameSessionOperatorControlPlaneService {
                 ? ""
                 : instance.getScriptPatchPinnedControlPlaneRequestId())
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -115,7 +118,10 @@ final class GameSessionOperatorControlPlaneService {
         .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
         .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                RuntimeVersionIdResolver.resolve(instance)))
         .build();
   }
 
@@ -432,12 +438,18 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
+    Long runtimeVersionId = RuntimeVersionIdResolver.resolve(instance);
+    if (runtimeVersionId == null) {
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+    }
+
     GetPublishedScriptPatchVersionResponse publicationResponse;
     try {
       publicationResponse =
           gameDesignClient == null
               ? null
-              : gameDesignClient.getPublishedScriptPatchVersion(tenantId, targetScriptPatchVersion);
+              : gameDesignClient.getPublishedScriptPatchVersion(
+                  tenantId, targetScriptPatchVersion, runtimeVersionId);
     } catch (RuntimeException ex) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
@@ -496,29 +508,10 @@ final class GameSessionOperatorControlPlaneService {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
-    Long runtimeVersionId = runtimeVersionId(instance);
-    if (runtimeVersionId == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-    }
     if (!runtimeVersionId.equals(published.getBaseVersionId())) {
       return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
     }
     return null;
-  }
-
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null) {
-      return instance.getVersionId() > 0L ? instance.getVersionId() : null;
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
   }
 
   private String normalizePatch(String value) {
@@ -551,13 +544,13 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
+                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)

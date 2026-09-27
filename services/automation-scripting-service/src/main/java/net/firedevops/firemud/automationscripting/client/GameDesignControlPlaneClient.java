@@ -76,9 +76,12 @@ public class GameDesignControlPlaneClient
   }
 
   public GetPublishedScriptPatchVersionResponse getPublishedScriptPatchVersion(
-      String tenantId, String scriptPatchVersion) {
+      String tenantId, long baseVersionId, String scriptPatchVersion) {
     if (stub() == null) {
       return unavailableScriptPatchVersion();
+    }
+    if (baseVersionId <= 0L) {
+      return invalidScriptPatchVersionScope();
     }
     try {
       return stub()
@@ -86,6 +89,7 @@ public class GameDesignControlPlaneClient
           .getPublishedScriptPatchVersion(
               GetPublishedScriptPatchVersionRequest.newBuilder()
                   .setTenantId(tenantId)
+                  .setBaseVersionId(baseVersionId)
                   .setScriptPatchVersion(scriptPatchVersion)
                   .build());
     } catch (RuntimeException ex) {
@@ -128,6 +132,15 @@ public class GameDesignControlPlaneClient
             ErrorDetail.newBuilder()
                 .setCode("GAME_DESIGN_UNAVAILABLE")
                 .setMessage("Game Design service unavailable"))
+        .build();
+  }
+
+  private static GetPublishedScriptPatchVersionResponse invalidScriptPatchVersionScope() {
+    return GetPublishedScriptPatchVersionResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("INVALID_ARGUMENT")
+                .setMessage("base_version_id must be positive for script-patch publication lookup"))
         .build();
   }
 

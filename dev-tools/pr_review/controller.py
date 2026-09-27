@@ -4053,9 +4053,17 @@ class ReviewController:
         if decision == "accepted-fixed":
             if not isinstance(proof, str) or not proof.strip() or reason is not None or target_pr is not None:
                 raise ControllerError("accepted-fixed route disposition requires only --proof")
+            if len(proof) > 500:
+                raise ControllerError("accepted-fixed route proof must be at most 500 characters")
+            if any(ord(character) < 0x20 for character in proof):
+                raise ControllerError("accepted-fixed route proof must not contain control characters")
         elif decision == "rejected":
             if not isinstance(reason, str) or not reason.strip() or proof is not None or target_pr is not None:
                 raise ControllerError("rejected route disposition requires only --reason")
+            if len(reason) > 500:
+                raise ControllerError("rejected route reason must be at most 500 characters")
+            if any(ord(character) < 0x20 for character in reason):
+                raise ControllerError("rejected route reason must not contain control characters")
         elif decision == "retargeted":
             if (
                 isinstance(target_pr, bool)

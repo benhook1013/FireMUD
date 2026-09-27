@@ -1,15 +1,16 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -66,16 +67,14 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
 @GrpcService
-@RequiredArgsConstructor
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected services and registry remain internal")
 public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
@@ -88,6 +87,79 @@ public class WorldManagementGrpcService
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
+  private final PublicationReadGuard publicationReadGuard;
+
+  private WorldManagementGrpcService(
+      PublicationReadGuard publicationReadGuard,
+      PingService pingService,
+      RoomService roomService,
+      WorldInstanceActivationService worldInstanceActivationService,
+      WorldDraftDesignDigestService worldDraftDesignDigestService,
+      WorldDesignMutationService worldDesignMutationService,
+      WorldUpgradeValidationService worldUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper) {
+    this.pingService = pingService;
+    this.roomService = roomService;
+    this.worldInstanceActivationService = worldInstanceActivationService;
+    this.worldDraftDesignDigestService = worldDraftDesignDigestService;
+    this.worldDesignMutationService = worldDesignMutationService;
+    this.worldUpgradeValidationService = worldUpgradeValidationService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
+    this.meterRegistry = meterRegistry;
+    this.objectMapper = objectMapper;
+    this.publicationReadGuard = publicationReadGuard;
+  }
+
+  @Autowired
+  public WorldManagementGrpcService(
+      PingService pingService,
+      RoomService roomService,
+      WorldInstanceActivationService worldInstanceActivationService,
+      WorldDraftDesignDigestService worldDraftDesignDigestService,
+      WorldDesignMutationService worldDesignMutationService,
+      WorldUpgradeValidationService worldUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        PublicationReadGuard.configured(workloadNamespace),
+        pingService,
+        roomService,
+        worldInstanceActivationService,
+        worldDraftDesignDigestService,
+        worldDesignMutationService,
+        worldUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry,
+        objectMapper);
+  }
+
+  public WorldManagementGrpcService(
+      PingService pingService,
+      RoomService roomService,
+      WorldInstanceActivationService worldInstanceActivationService,
+      WorldDraftDesignDigestService worldDraftDesignDigestService,
+      WorldDesignMutationService worldDesignMutationService,
+      WorldUpgradeValidationService worldUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper,
+      PublicationReadGuard publicationReadGuard) {
+    this(
+        publicationReadGuard,
+        pingService,
+        roomService,
+        worldInstanceActivationService,
+        worldDraftDesignDigestService,
+        worldDesignMutationService,
+        worldUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry,
+        objectMapper);
+  }
 
   @Override
   @Timed(value = "worldGrpc.prepareWorldInstance")
@@ -253,6 +325,7 @@ public class WorldManagementGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
         responseObserver.onNext(
             GetDraftDesignDigestResponse.newBuilder()
@@ -267,16 +340,38 @@ public class WorldManagementGrpcService
         responseObserver.onCompleted();
         return;
       }
+      PublicationDigestRequestBinding binding =
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
       var digest =
           worldDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
-      responseObserver.onNext(
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
+      GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(digest.tenantId())
-              .setScopeValue(digest.scopeValue())
+              .setTenantId(binding.tenantId())
+              .setVersionId(binding.versionId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .setDigestSchemaVersion(digest.digestSchemaVersion());
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -298,6 +393,14 @@ public class WorldManagementGrpcService
               .build());
       responseObserver.onCompleted();
     }
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(
+        PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD);
   }
 
   @Override
