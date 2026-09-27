@@ -117,6 +117,16 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
+  void optionalReadDistinguishesMissingBundleWhileRequiredReadStillFails() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+
+    assertEquals(Optional.empty(), service.findPublishedReleaseBundle("tenant-1", 7L));
+    assertThrows(
+        PublishedReleaseBundleNotFoundException.class,
+        () -> service.getPublishedReleaseBundle("tenant-1", 7L));
+  }
+
+  @Test
   void createFullVersionBundleRejectsDuplicateCommandDefinitionAlias() {
     VersionDto version =
         new VersionDto(
