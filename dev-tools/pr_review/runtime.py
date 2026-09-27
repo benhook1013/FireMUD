@@ -1681,6 +1681,13 @@ class LiveEvidence:
                     "non_counting": True,
                 }
             )
+        global_blockers = self._global_blockers(
+            pr,
+            head,
+            payload,
+            changed_files=live.changed_files,
+            include_hosted_findings=channel == "hosted",
+        )
         values.append(
             {
                 "pr": pr,
@@ -1698,15 +1705,7 @@ class LiveEvidence:
                 "non_counting": True,
             }
         )
-        values.extend(
-            self._global_blockers(
-                pr,
-                head,
-                payload,
-                changed_files=live.changed_files,
-                include_hosted_findings=channel == "hosted",
-            )
-        )
+        values.extend(global_blockers)
         self._histories[key] = values
         return values
 

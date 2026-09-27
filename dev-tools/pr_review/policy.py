@@ -58,6 +58,8 @@ class Evidence:
     streak_break_before: bool = False
     lineage_proven_to_next: bool = False
     current_candidate_descendant_proven: bool = False
+    scope_timeline: bool = False
+    scope_timeline_complete: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -248,6 +250,80 @@ def taper_satisfied(
     return reached
 
 
+def fresh_taper_history(
+    state: ReviewState,
+    channel: Channel | str,
+    history: Iterable[Evidence | Mapping[str, Any]],
+    *,
+    baseline_checkpoints: Iterable[str] = (),
+) -> list[Evidence]:
+    """Return only review evidence eligible for the current fresh taper.
+
+    Completed taper remains durable until a human explicitly reopens a channel
+    or grants/renews an allocation after completion. Those decisions establish
+    a new baseline; older dry results remain historical but cannot count toward
+    the fresh streak.
+    """
+
+    selected = Channel(channel)
+    materialized = [Evidence.from_value(value) for value in history]
+    relevant = [item for item in materialized if not item.correction and not item.non_counting]
+    pr_numbers = {item.pr for item in relevant}
+    if len(pr_numbers) != 1:
+        return relevant
+    pr = next(iter(pr_numbers))
+
+    reopen = next(
+        (
+            judgment
+            for judgment in reversed(state.judgments)
+            if judgment.pr == pr
+            and judgment.channel == selected.value
+            and judgment.decision == "reopen"
+        ),
+        None,
+    )
+    if reopen is not None:
+        matches = [
+            index
+            for index, item in enumerate(relevant)
+            if item.pr == reopen.pr
+            and item.head == reopen.head
+            and item.checkpoint == reopen.checkpoint
+            and item.patch_id == reopen.patch_id
+        ]
+        # A missing or ambiguous decision anchor must not let old evidence
+        # satisfy the fresh streak.
+        if len(matches) != 1:
+            relevant = []
+        else:
+            relevant = relevant[matches[0] + 1 :]
+
+    baseline = set(baseline_checkpoints)
+    if baseline:
+        relevant = [item for item in relevant if item.checkpoint not in baseline]
+    return relevant
+
+
+def taper_satisfied_for_state(
+    state: ReviewState,
+    channel: Channel | str,
+    history: Iterable[Evidence | Mapping[str, Any]],
+    *,
+    baseline_checkpoints: Iterable[str] = (),
+) -> bool:
+    """Evaluate taper after any exact human-reopen or allocation baseline."""
+
+    selected = Channel(channel)
+    values = fresh_taper_history(
+        state,
+        selected,
+        history,
+        baseline_checkpoints=baseline_checkpoints,
+    )
+    return taper_satisfied(selected, values, required_taper(state, selected, values))
+
+
 def required_taper(
     state: ReviewState,
     channel: Channel | str,
@@ -301,10 +377,15 @@ def completion_status(
         return ReviewStatus.MISSING_EVIDENCE
     history = [item for item in all_items if not item.correction and not item.non_counting]
     if not history:
-        if all_items and any(item.non_counting for item in all_items):
+        if all_items:
             reconciliation_blocker = _blocked(Evidence(all_items[0].pr, "", ""), reconciliation)
             if reconciliation_blocker:
                 return reconciliation_blocker
+        if all_items and all(
+            item.non_counting and item.scope_timeline and item.scope_timeline_complete for item in all_items
+        ):
+            return ReviewStatus.MISSING_EVIDENCE
+        if all_items and any(item.non_counting for item in all_items):
             return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:
@@ -320,10 +401,6 @@ def completion_status(
     latest = reviews[-1]
     latest_judgment = _judgment(state, selected, latest)
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
-    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
-        selected == Channel.CLI and latest.current_candidate_descendant_proven
-    ):
-        return ReviewStatus.READY
     if selected == Channel.CLI and latest_judgment is not None and latest_judgment.decision == "reopen":
         return ReviewStatus.READY
     retained_equivalent_history = False
@@ -337,24 +414,31 @@ def completion_status(
         # whose old-head evidence predates the corrected-state annotation; it
         # must not manufacture corrected evidence for unrelated histories.
         retained_equivalent_history = latest_judgment.decision == "retain"
-    required = required_taper(state, selected, history)
+    taper_history = fresh_taper_history(state, selected, history)
+    required = required_taper(state, selected, taper_history)
     if retained_equivalent_history:
         # Preserve a taper already proved before identity moved, while letting
         # an explicit retain count only results on the exact retained patch.
         taper_complete = taper_satisfied(
             selected,
-            history,
+            taper_history,
             required,
             require_corrected_state=True,
         ) or taper_satisfied(
             selected,
-            history,
+            taper_history,
             required,
             allow_uncorrected_state=True,
             retained_patch_id=latest.patch_id,
         )
     else:
-        taper_complete = taper_satisfied(selected, history, required)
+        taper_complete = taper_satisfied(selected, taper_history, required)
+    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
+        selected == Channel.CLI and latest.current_candidate_descendant_proven
+    ):
+        if taper_complete and latest_judgment is None:
+            return ReviewStatus.JUDGMENT_REQUIRED
+        return ReviewStatus.READY
     if _same_head_provisional_barrier(history, reviews):
         return ReviewStatus.READY
     if taper_complete:
@@ -385,6 +469,7 @@ def select_review_target(
     allocation_blocks: Mapping[int, str] | None = None,
     allocation_holds: Mapping[int, str] | None = None,
     allocation_reopen_prs: Iterable[int] = (),
+    taper_history_by_pr: Mapping[int, Sequence[Evidence | Mapping[str, Any]]] | None = None,
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
@@ -397,15 +482,19 @@ def select_review_target(
     allocation_blocks = allocation_blocks or {}
     allocation_holds = allocation_holds or {}
     allocation_reopen = set(allocation_reopen_prs)
+    taper_history_by_pr = taper_history_by_pr or {}
     encountered_human_stop = False
 
     def completed_taper(pr: int) -> bool:
         values = evidence_by_pr.get(pr, ())
-        return taper_satisfied(
-            selected,
-            values,
-            required_taper(state, selected, values),
-        )
+        if pr in taper_history_by_pr:
+            taper_values = taper_history_by_pr[pr]
+            return taper_satisfied(
+                selected,
+                taper_values,
+                required_taper(state, selected, taper_values),
+            )
+        return taper_satisfied_for_state(state, selected, values)
 
     for pr in live_prs:
         if pr in handed_off:
@@ -447,10 +536,14 @@ def select_review_target(
         evidence = [item for item in all_items if not item.correction and not item.non_counting]
         reviews = _review_entries(evidence)
         latest = reviews[-1] if reviews else Evidence(pr, "", "")
+        latest_judgment = _judgment(state, selected, latest)
+        taper_values = taper_history_by_pr.get(pr)
+        if taper_values is None:
+            taper_values = fresh_taper_history(state, selected, evidence)
         taper_complete = taper_satisfied(
             selected,
-            evidence,
-            required_taper(state, selected, evidence),
+            taper_values,
+            required_taper(state, selected, taper_values),
         )
         blocked = None
         for item in evidence:
@@ -481,7 +574,7 @@ def select_review_target(
         if taper_complete and reconciliation_status in {
             ReconciliationStatus.PATCH_CHANGED,
             ReconciliationStatus.EQUIVALENT_HISTORY,
-        } and not (
+        } and latest_judgment is None and not (
             selected == Channel.CLI
             and latest.current_candidate_descendant_proven
             and reconciliation_status == ReconciliationStatus.PATCH_CHANGED

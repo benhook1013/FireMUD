@@ -575,8 +575,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private PinValidation validatePinnedPatch(
-      TriggerScriptEventRequest request,
-      ScriptEventIngressAudit claim) {
+      TriggerScriptEventRequest request, ScriptEventIngressAudit claim) {
     if (request.getGameInstanceId().isBlank()) {
       return new PinValidation(null, 0L);
     }
