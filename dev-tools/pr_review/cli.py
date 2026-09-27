@@ -8,6 +8,7 @@ import json
 import re
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from . import acceptance, github, hosted
@@ -15,7 +16,16 @@ from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
 from .runtime import default_controller
-from .state import FindingRoute, StateError, SummaryFindingDisposition, merge_open_route
+from .sqlite_store import SqliteStateStore
+from .state import (
+    FindingRoute,
+    StateError,
+    SummaryFindingDisposition,
+    controller_state_status,
+    merge_open_route,
+    sqlite_state_path,
+    state_path,
+)
 
 
 class CliError(RuntimeError):
@@ -61,6 +71,17 @@ def _parser() -> argparse.ArgumentParser:
         help="isolated state file (required with --acceptance-fixture)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    state = commands.add_parser("state", help="inspect or explicitly migrate private controller state")
+    state_commands = state.add_subparsers(dest="state_command", required=True)
+    state_status = state_commands.add_parser("status", help="show read-only state format compatibility")
+    state_status.add_argument("--path", metavar="JSON_PATH", help="state file to inspect; defaults to repository state")
+    state_status.add_argument("--json", action="store_true", dest="as_json")
+    state_migrate = state_commands.add_parser(
+        "migrate-sqlite", help="atomically migrate JSON controller state to SQLite"
+    )
+    state_migrate.add_argument("--path", metavar="JSON_PATH", help="state file to migrate; defaults to repository state")
+    state_migrate.add_argument("--json", action="store_true", dest="as_json")
 
     stack = commands.add_parser("stack", help="configure the one repository review stack")
     stack_commands = stack.add_subparsers(dest="stack_command", required=True)
@@ -294,6 +315,17 @@ def _render_status_overview(report: Mapping[str, Any]) -> str:
 
 
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
+    if args.command == "state":
+        if args.acceptance_fixture is not None or args.state_path is not None:
+            raise CliError("state management commands do not accept acceptance-fixture options")
+        selected = Path(args.path).expanduser().absolute() if args.path is not None else state_path()
+        if args.state_command == "status":
+            return controller_state_status(selected), 0
+        if args.state_command == "migrate-sqlite":
+            SqliteStateStore.migrate_legacy_json(selected, sqlite_state_path(selected))
+            return controller_state_status(selected), 0
+        raise CliError(f"unsupported state command: {args.state_command}")
+
     controller, fixture = _controller(args)
     if args.command == "stack":
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()

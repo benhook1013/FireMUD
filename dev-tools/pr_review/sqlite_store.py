@@ -23,7 +23,9 @@ from typing import Any
 from .state import ReviewState, StateError, _locked
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 1
+WRITER_BUILD = 2
+STATUS_VERSION = 1
+CUTOVER_VERSION = 1
 _METADATA_TABLE = "controller_metadata"
 _STATE_TABLE = "review_state"
 
@@ -184,6 +186,7 @@ class SqliteStateStore:
         """Return local schema/build compatibility without creating or changing files."""
 
         base: dict[str, Any] = {
+            "status_version": STATUS_VERSION,
             "format": "missing",
             "schema_version": None,
             "data_model_version": None,
@@ -398,6 +401,7 @@ class SqliteStateStore:
                 marker_path = retained_source / "sqlite-cutover.json"
                 marker = {
                     "format": "firemud-pr-review-sqlite-cutover",
+                    "cutover_version": CUTOVER_VERSION,
                     "database": str(target),
                     "sqlite_schema_version": SQLITE_SCHEMA_VERSION,
                     "state_schema_version": imported.schema_version,
@@ -407,6 +411,7 @@ class SqliteStateStore:
                     json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n"
                 ).encode("utf-8")
                 with marker_path.open("xb") as handle:
+                    os.fchmod(handle.fileno(), 0o600)
                     handle.write(marker_bytes)
                     handle.flush()
                     os.fsync(handle.fileno())

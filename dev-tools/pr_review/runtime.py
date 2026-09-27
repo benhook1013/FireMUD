@@ -19,6 +19,7 @@ from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
 from .state import (
+    ControllerStateStore,
     StateError,
     StateStore,
     SummaryFindingDisposition,
@@ -106,7 +107,7 @@ class LiveGitHub:
 class LiveEvidence:
     """Map complete live comments plus private captures into policy evidence."""
 
-    def __init__(self, repo: str, live: LiveGitHub, state_store: StateStore | None = None) -> None:
+    def __init__(self, repo: str, live: LiveGitHub, state_store: StateStore | ControllerStateStore | None = None) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
@@ -2026,7 +2027,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     selected = github.infer_repo(repo)
     repository = github.repository_metadata(selected)
     live = LiveGitHub(selected)
-    store = StateStore()
+    store = ControllerStateStore()
     observations = LiveEvidence(selected, live, store)
     git_provider = DefaultGitProvider()
     hosted_runner = HostedRunner(selected, live)
