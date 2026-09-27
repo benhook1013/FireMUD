@@ -1804,7 +1804,7 @@ class CertificateMaterialServiceTest {
     String workload = "game-design-service";
     String role = HostedIdentityContract.grpcPublicationRole(workload);
     String projectionName = plan.grpcPublicationSecretName(workload);
-    String sourceName = plan.grpcPublicationSourceSecretName(workload);
+    String sourceName = plan.sourceSecretName(role);
     Map<String, String> previousData =
         Map.of("tls.crt", encoded("previous"), "tls.key", encoded("key-previous"));
     String previousRevision = SecretProjectionService.revisionForRole(role, previousData);

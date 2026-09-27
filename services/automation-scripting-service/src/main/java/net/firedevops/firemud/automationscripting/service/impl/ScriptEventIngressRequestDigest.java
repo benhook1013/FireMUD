@@ -24,7 +24,7 @@ final class ScriptEventIngressRequestDigest {
 
   static String compute(
       TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
-    StringBuilder preimage = new StringBuilder("script-event-ingress-v1|");
+    StringBuilder preimage = new StringBuilder("script-event-ingress-v2|");
     append(preimage, "tenantId", request.getTenantId());
     append(preimage, "gameInstanceId", request.getGameInstanceId());
     append(preimage, "regionId", request.getRegionId());
@@ -36,6 +36,8 @@ final class ScriptEventIngressRequestDigest {
     append(preimage, "eventType", request.getEventType());
     append(preimage, "eventSchemaVersion", schemaVersion);
     append(preimage, "scriptPatchVersion", request.getScriptPatchVersion());
+    append(
+        preimage, "scriptPatchBaseVersionId", Long.toString(request.getScriptPatchBaseVersionId()));
     append(preimage, "scriptPinEpoch", Long.toString(request.getScriptPinEpoch()));
     append(preimage, "scriptPinControlPlaneRequestId", request.getScriptPinControlPlaneRequestId());
     append(preimage, "scriptEventId", request.getScriptEventId());

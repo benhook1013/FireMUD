@@ -6,7 +6,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.util.HexFormat;
-import java.util.Objects;
 
 /**
  * Canonical publication-read binding shared by Game Design and its digest participants.
@@ -60,7 +59,10 @@ public final class PublicationDigestRequestBinding {
       String scriptPatchVersion,
       String publishRequestId) {
     this.tenantId = requireId(tenantId, "tenantId");
-    this.scopeKind = Objects.requireNonNull(scopeKind, "scopeKind must not be null");
+    if (scopeKind == null) {
+      throw new IllegalArgumentException("scopeKind must not be null");
+    }
+    this.scopeKind = scopeKind;
     this.publishRequestId = requireId(publishRequestId, "publishRequestId");
 
     if (scopeKind == ScopeKind.FULL_VERSION) {
@@ -90,6 +92,21 @@ public final class PublicationDigestRequestBinding {
       String tenantId, String baseVersionId, String scriptPatchVersion, String publishRequestId) {
     return new PublicationDigestRequestBinding(
         tenantId, ScopeKind.SCRIPT_PATCH, "", baseVersionId, scriptPatchVersion, publishRequestId);
+  }
+
+  /**
+   * Creates a binding for an explicitly typed scope while preserving and validating every scope
+   * field supplied by the RPC request.
+   */
+  public static PublicationDigestRequestBinding forScope(
+      ScopeKind scopeKind,
+      String tenantId,
+      String versionId,
+      String baseVersionId,
+      String scriptPatchVersion,
+      String publishRequestId) {
+    return new PublicationDigestRequestBinding(
+        tenantId, scopeKind, versionId, baseVersionId, scriptPatchVersion, publishRequestId);
   }
 
   /** Validates publication identity before a draft or durable workflow is created. */
@@ -144,6 +161,18 @@ public final class PublicationDigestRequestBinding {
   /** Returns the lowercase hexadecimal SHA-256 digest of {@link #canonicalPreimage()}. */
   public String requestDigest() {
     return requestDigest;
+  }
+
+  /** Verifies that an owner digest is bound to this binding's exact tenant and typed scope. */
+  public void requireOwnerScope(String ownerTenantId, String ownerScopeValue) {
+    String expectedScope =
+        switch (scopeKind) {
+          case FULL_VERSION -> versionId;
+          case SCRIPT_PATCH -> scriptPatchVersion;
+        };
+    if (!tenantId.equals(ownerTenantId) || !expectedScope.equals(ownerScopeValue)) {
+      throw new IllegalArgumentException("owner digest scope does not match publication binding");
+    }
   }
 
   /**

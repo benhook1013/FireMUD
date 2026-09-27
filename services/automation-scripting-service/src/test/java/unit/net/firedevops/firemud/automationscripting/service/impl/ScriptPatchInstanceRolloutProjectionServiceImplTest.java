@@ -206,8 +206,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 2L, "req-2", 200L, 205L, 0L, false, "", 0L, "",
-                        "", "")),
+                        "1", "game-1", "patch-1", 7L, 2L, "req-2", 200L, 205L, 0L, false, "", 0L,
+                        "", "", "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))
@@ -290,8 +290,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", 2L, "req-2", 200L, 205L, 0L, false, "", 0L, "",
-                        "", "")),
+                        "1", "game-1", "patch-2", 7L, 2L, "req-2", 200L, 205L, 0L, false, "", 0L,
+                        "", "", "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))
@@ -377,8 +377,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 2L, "req-2", 200L, 100L, 100L, true, "", 0L, "",
-                        "", "")),
+                        "1", "game-1", "patch-1", 7L, 2L, "req-2", 200L, 100L, 100L, true, "", 0L,
+                        "", "", "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))

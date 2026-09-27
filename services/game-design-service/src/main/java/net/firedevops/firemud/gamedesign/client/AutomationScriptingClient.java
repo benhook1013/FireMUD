@@ -53,12 +53,16 @@ public class AutomationScriptingClient
 
   /** Notify the Automation service that a new script patch version is active. */
   public void notifyScriptVersionUpdate(
-      String tenantId, String patchVersion, List<String> scripts) {
+      String tenantId, Long baseVersionId, String patchVersion, List<String> scripts) {
+    if (baseVersionId == null || baseVersionId <= 0) {
+      throw new IllegalArgumentException("baseVersionId must be positive");
+    }
     NotifyScriptVersionUpdateRequest request =
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId(tenantId)
             .setScriptPatchVersion(patchVersion)
             .addAllAffectedScripts(scripts)
+            .setBaseVersionId(baseVersionId)
             .build();
     stub().notifyScriptVersionUpdate(request);
   }
@@ -91,12 +95,8 @@ public class AutomationScriptingClient
     if (mismatch != null) {
       return new PublishParticipantDigestDto(
           "AUTOMATION_SCRIPTING",
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? binding.versionId()
-              : binding.scriptPatchVersion(),
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? null
-              : Long.valueOf(binding.baseVersionId()),
+          binding.scriptPatchVersion(),
+          Long.valueOf(binding.baseVersionId()),
           null,
           null,
           null,
@@ -105,8 +105,8 @@ public class AutomationScriptingClient
     }
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
-        response.hasVersionId() ? response.getVersionId() : response.getScriptPatchVersion(),
-        response.hasVersionId() ? null : Long.valueOf(binding.baseVersionId()),
+        binding.scriptPatchVersion(),
+        Long.valueOf(binding.baseVersionId()),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),

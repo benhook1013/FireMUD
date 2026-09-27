@@ -233,6 +233,7 @@ public class EntityManagementGrpcService
       InventoryService inventoryService,
       ContainerService containerService,
       RoomEntityService roomEntityService,
+      RuntimeInstanceCleanupService runtimeInstanceCleanupService,
       EntityMutationEffectReplayService entityMutationEffectReplayService,
       EntityUpgradeValidationService entityUpgradeValidationService,
       EntityTemplateReferenceService entityTemplateReferenceService,
@@ -250,16 +251,14 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
-        (tenantId, gameInstanceId, terminationRequestId) ->
-            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
-                0L, 0L, 0L, 0L),
+        runtimeInstanceCleanupService,
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
         entityTemplateReferenceService,
         gameplaySessionAttestationService,
         meterRegistry,
         effectPayloadParser);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   public EntityManagementGrpcService(
@@ -314,13 +313,15 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
         meterRegistry,
-        new EffectPayloadParser(new ObjectMapper()),
-        "");
+        new EffectPayloadParser(new ObjectMapper()));
   }
 
   @Override
@@ -344,17 +345,19 @@ public class EntityManagementGrpcService
         responseObserver.onCompleted();
         return;
       }
-      if (!request.getBaseVersionId().isEmpty()) {
-        throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-      }
       PublicationDigestRequestBinding binding =
-          PublicationDigestRequestBinding.full(
-              request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
       var digest =
           entityDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
-      requireMatchingDigestScope(binding, digest.tenantId(), digest.scopeValue());
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
@@ -397,30 +400,12 @@ public class EntityManagementGrpcService
     }
   }
 
-  private static void requireMatchingDigestScope(
-      PublicationDigestRequestBinding binding, String tenantId, String scopeValue) {
-    if (!binding.tenantId().equals(tenantId) || !binding.versionId().equals(scopeValue)) {
-      throw new IllegalArgumentException("owner digest scope does not match publication binding");
-    }
-  }
-
   private void requirePublicationRead() {
     if (publicationReadGuard == null) {
       throw new AdminAuthorizationException("Publication read authorization is not configured");
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
   }
 
   @Override

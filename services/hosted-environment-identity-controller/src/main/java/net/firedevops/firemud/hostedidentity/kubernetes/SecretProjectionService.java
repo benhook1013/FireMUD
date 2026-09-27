@@ -91,7 +91,7 @@ public class SecretProjectionService {
             oldObjectGeneration,
             oldSpki);
         PreservationResult preservation =
-            preservePredecessor(client, plan, role, name, existing, runtimeProfileFence);
+            preservePredecessor(client, plan, role, existing, runtimeProfileFence);
         if (preservation == PreservationResult.CAS_CONFLICT) {
           return ProjectionResult.awaiting("predecessor-cas-conflict", oldRevision);
         }
@@ -230,15 +230,10 @@ public class SecretProjectionService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String role,
-      String targetName,
       Secret existing,
       Runnable runtimeProfileFence) {
     runtimeProfileFence.run();
-    String predecessorSourceName =
-        HostedIdentityContract.isGrpcPublicationRole(role)
-            ? plan.grpcPublicationSourceSecretNames().get(role)
-            : targetName;
-    String name = predecessorSourceName + "-previous";
+    String name = plan.sourceSecretName(role) + "-previous";
     Map<String, String> annotations = new LinkedHashMap<>(existing.getMetadata().getAnnotations());
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "predecessor");
     // Retain the predecessor in identityNamespace; the projected source is in disposable

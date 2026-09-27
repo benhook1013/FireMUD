@@ -107,6 +107,32 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void flywayV4EvolvesV3EligibilityWithoutLosingReplayEvidence() {
+    assertThat(
+            dsl.fetchValue(
+                "SELECT is_nullable FROM information_schema.columns"
+                    + " WHERE table_schema = 'public' AND table_name = 'script_work_items'"
+                    + " AND column_name = 'next_eligible_at'",
+                String.class))
+        .isEqualTo("YES");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
+                    + " AND tablename = 'script_work_items'"
+                    + " AND indexname = 'idx_script_work_items_status_eligible_created'",
+                Integer.class))
+        .isEqualTo(1);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT count(*) FROM information_schema.tables"
+                    + " WHERE table_schema = 'public'"
+                    + " AND table_name IN ('script_dead_letter_replay_requests',"
+                    + " 'script_dead_letter_replay_results')",
+                Integer.class))
+        .isEqualTo(2);
+  }
+
+  @Test
   void concurrentPinnedIngressClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);

@@ -315,6 +315,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             1L,
             name,
             "patch-definition",
+            1L,
             "{\"replacement\":true}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
