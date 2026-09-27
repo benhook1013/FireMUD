@@ -19,8 +19,7 @@ import org.springframework.stereotype.Component;
 public class TemporalVersionPublishOrchestrator {
   static final String PENDING_RECONCILIATION_REQUIRED_CODE =
       PublishAttemptPendingReconciliationException.ERROR_CODE;
-  private static final String VERSION_PUBLISH_WORKFLOW_FAILED =
-      "VERSION_PUBLISH_WORKFLOW_FAILED";
+  private static final String VERSION_PUBLISH_WORKFLOW_FAILED = "VERSION_PUBLISH_WORKFLOW_FAILED";
   private static final Duration QUERY_WAIT_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration QUERY_WAIT_INTERVAL = Duration.ofMillis(100);
 
