@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameInstancesRecord;
+import net.firedevops.firemud.gamesession.service.RuntimeVersionIdResolver;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -35,6 +36,7 @@ public class GameInstanceRepository {
     GAME_INSTANCES.TENANT_ID,
     GAME_INSTANCES.RUNTIME_VERSION,
     GAME_INSTANCES.SCRIPT_PATCH_VERSION,
+    GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID,
     GAME_INSTANCES.SCRIPT_PIN_EPOCH,
     GAME_INSTANCES.GAME_TEMPLATE_ID,
     GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID,
@@ -142,6 +144,7 @@ public class GameInstanceRepository {
             .set(GAME_INSTANCES.TENANT_ID, entity.getTenantId())
             .set(GAME_INSTANCES.RUNTIME_VERSION, entity.getRuntimeVersion())
             .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID, entity.getScriptPatchBaseVersionId())
             .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(GAME_INSTANCES.GAME_TEMPLATE_ID, entity.getGameTemplateId())
             .set(GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID, entity.getLaunchDescriptorId())
@@ -195,7 +198,11 @@ public class GameInstanceRepository {
       String actorPrincipal,
       String reason,
       String expectedPinKind,
-      Long expectedScriptPinEpoch) {
+      Long expectedScriptPinEpoch,
+      Long validatedBaseVersionId) {
+    if (validatedBaseVersionId == null || validatedBaseVersionId <= 0L) {
+      throw new IllegalArgumentException("validated base_version_id must be positive");
+    }
     ScriptPinLedgerContext ledger =
         prepareScriptPinLedger(
             tenantId,
@@ -207,6 +214,7 @@ public class GameInstanceRepository {
             reason,
             expectedPinKind,
             expectedScriptPinEpoch,
+            validatedBaseVersionId,
             null,
             false);
     return dsl.transactionResult(
@@ -240,6 +248,7 @@ public class GameInstanceRepository {
             return replay.get();
           }
           String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+          Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
           Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
           String previousRequestId =
               current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
@@ -255,7 +264,44 @@ public class GameInstanceRepository {
                   actorPrincipal,
                   reason,
                   expectedPinKind,
-                  expectedScriptPinEpoch);
+                  expectedScriptPinEpoch,
+                  validatedBaseVersionId);
+
+          Long lockedRuntimeVersionId =
+              RuntimeVersionIdResolver.resolve(
+                  current.get(GAME_INSTANCES.VERSION_ID),
+                  current.get(GAME_INSTANCES.RUNTIME_VERSION));
+          if (lockedRuntimeVersionId == null
+              || !validatedBaseVersionId.equals(lockedRuntimeVersionId)) {
+            String errorCode =
+                lockedRuntimeVersionId == null
+                    ? "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"
+                    : "SCRIPT_PATCH_BASE_VERSION_MISMATCH";
+            ScriptPinMutationResult result =
+                new ScriptPinMutationResult(
+                    previousPatch,
+                    previousEpoch,
+                    previousPatch,
+                    previousEpoch,
+                    controlPlaneRequestId,
+                    errorCode,
+                    previousBaseVersionId,
+                    previousBaseVersionId);
+            insertOperation(
+                tx,
+                tenantId,
+                gameInstanceId,
+                effectiveOperationKind,
+                targetScriptPatchVersion,
+                validatedBaseVersionId,
+                expectedPinKind,
+                expectedScriptPinEpoch,
+                actorPrincipal,
+                reason,
+                effectiveMutationDigest,
+                result);
+            return result;
+          }
 
           long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
           if (!expectedPinMatches(
@@ -267,13 +313,16 @@ public class GameInstanceRepository {
                     previousPatch,
                     previousEpoch,
                     controlPlaneRequestId,
-                    "SCRIPT_PIN_EXPECTATION_FAILED");
+                    "SCRIPT_PIN_EXPECTATION_FAILED",
+                    previousBaseVersionId,
+                    previousBaseVersionId);
             insertOperation(
                 tx,
                 tenantId,
                 gameInstanceId,
                 effectiveOperationKind,
                 targetScriptPatchVersion,
+                validatedBaseVersionId,
                 expectedPinKind,
                 expectedScriptPinEpoch,
                 actorPrincipal,
@@ -291,13 +340,16 @@ public class GameInstanceRepository {
                     previousPatch,
                     previousEpoch,
                     controlPlaneRequestId,
-                    "SCRIPT_PIN_EPOCH_EXHAUSTED");
+                    "SCRIPT_PIN_EPOCH_EXHAUSTED",
+                    previousBaseVersionId,
+                    previousBaseVersionId);
             insertOperation(
                 tx,
                 tenantId,
                 gameInstanceId,
                 effectiveOperationKind,
                 targetScriptPatchVersion,
+                validatedBaseVersionId,
                 expectedPinKind,
                 expectedScriptPinEpoch,
                 actorPrincipal,
@@ -315,6 +367,7 @@ public class GameInstanceRepository {
           int updated =
               tx.update(GAME_INSTANCES)
                   .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
+                  .set(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID, validatedBaseVersionId)
                   .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, resultingEpoch)
                   .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT, toLocalDateTime(Instant.now()))
                   .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_BY, actorPrincipal)
@@ -340,13 +393,16 @@ public class GameInstanceRepository {
                   targetScriptPatchVersion,
                   resultingEpoch,
                   controlPlaneRequestId,
-                  null);
+                  null,
+                  previousBaseVersionId,
+                  validatedBaseVersionId);
           insertOperation(
               tx,
               tenantId,
               gameInstanceId,
               effectiveOperationKind,
               targetScriptPatchVersion,
+              validatedBaseVersionId,
               expectedPinKind,
               expectedScriptPinEpoch,
               actorPrincipal,
@@ -376,6 +432,32 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
+    return recordScriptPinFailure(
+        tenantId,
+        gameInstanceId,
+        operationKind,
+        targetScriptPatchVersion,
+        controlPlaneRequestId,
+        actorPrincipal,
+        reason,
+        expectedPinKind,
+        expectedScriptPinEpoch,
+        null,
+        errorCode);
+  }
+
+  public ScriptPinMutationResult recordScriptPinFailure(
+      Long tenantId,
+      Long gameInstanceId,
+      String operationKind,
+      String targetScriptPatchVersion,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason,
+      String expectedPinKind,
+      Long expectedScriptPinEpoch,
+      Long validatedBaseVersionId,
+      String errorCode) {
     ScriptPinLedgerContext ledger =
         prepareScriptPinLedger(
             tenantId,
@@ -387,6 +469,7 @@ public class GameInstanceRepository {
             reason,
             expectedPinKind,
             expectedScriptPinEpoch,
+            validatedBaseVersionId,
             errorCode,
             true);
     return dsl.transactionResult(
@@ -416,6 +499,7 @@ public class GameInstanceRepository {
             return replay.get();
           }
           String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+          Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
           Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
           String previousRequestId =
               current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
@@ -431,7 +515,8 @@ public class GameInstanceRepository {
                   actorPrincipal,
                   reason,
                   expectedPinKind,
-                  expectedScriptPinEpoch);
+                  expectedScriptPinEpoch,
+                  validatedBaseVersionId);
           ScriptPinMutationResult result =
               new ScriptPinMutationResult(
                   previousPatch,
@@ -439,13 +524,16 @@ public class GameInstanceRepository {
                   previousPatch,
                   previousEpoch,
                   controlPlaneRequestId,
-                  errorCode);
+                  errorCode,
+                  previousBaseVersionId,
+                  previousBaseVersionId);
           insertOperation(
               tx,
               tenantId,
               gameInstanceId,
               effectiveOperationKind,
               targetScriptPatchVersion,
+              validatedBaseVersionId,
               expectedPinKind,
               expectedScriptPinEpoch,
               actorPrincipal,
@@ -478,6 +566,7 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch,
+      Long validatedBaseVersionId,
       String errorCode,
       boolean requireErrorCode) {
     validateOperationKind(operationKind);
@@ -494,6 +583,9 @@ public class GameInstanceRepository {
       throw new IllegalArgumentException("errorCode is required");
     }
     validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
+    if (validatedBaseVersionId != null && validatedBaseVersionId <= 0L) {
+      throw new IllegalArgumentException("validated base_version_id must be positive");
+    }
     return new ScriptPinLedgerContext(
         mutationDigest(
             tenantId,
@@ -503,7 +595,8 @@ public class GameInstanceRepository {
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch),
+            expectedScriptPinEpoch,
+            validatedBaseVersionId),
         mutationDigest(
             tenantId,
             gameInstanceId,
@@ -512,7 +605,8 @@ public class GameInstanceRepository {
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch),
+            expectedScriptPinEpoch,
+            validatedBaseVersionId),
         canDeriveRepin(operationKind));
   }
 
@@ -548,6 +642,7 @@ public class GameInstanceRepository {
       Long gameInstanceId,
       String operationKind,
       String targetScriptPatchVersion,
+      Long validatedBaseVersionId,
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String actorPrincipal,
@@ -560,6 +655,7 @@ public class GameInstanceRepository {
         .set(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID, result.controlPlaneRequestId())
         .set(SCRIPT_PIN_OPERATION.OPERATION_KIND, operationKind)
         .set(SCRIPT_PIN_OPERATION.TARGET_SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
+        .set(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID, validatedBaseVersionId)
         .set(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND, expectedPinKind)
         .set(SCRIPT_PIN_OPERATION.EXPECTED_SCRIPT_PIN_EPOCH, expectedScriptPinEpoch)
         .set(SCRIPT_PIN_OPERATION.ACTOR_PRINCIPAL, actorPrincipal)
@@ -569,10 +665,16 @@ public class GameInstanceRepository {
         .set(SCRIPT_PIN_OPERATION.ERROR_CODE, result.errorCode())
         .set(
             SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION, result.previousScriptPatchVersion())
+        .set(
+            SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_BASE_VERSION_ID,
+            result.previousScriptPatchBaseVersionId())
         .set(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH, result.previousScriptPinEpoch())
         .set(
             SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
             result.resultingScriptPatchVersion())
+        .set(
+            SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_BASE_VERSION_ID,
+            result.resultingScriptPatchBaseVersionId())
         .set(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH, result.resultingScriptPinEpoch())
         .execute();
   }
@@ -585,9 +687,12 @@ public class GameInstanceRepository {
             SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID,
             SCRIPT_PIN_OPERATION.MUTATION_DIGEST,
             SCRIPT_PIN_OPERATION.ERROR_CODE,
+            SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID,
             SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION,
+            SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_BASE_VERSION_ID,
             SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH,
             SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+            SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_BASE_VERSION_ID,
             SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
         .from(SCRIPT_PIN_OPERATION)
         .where(
@@ -607,7 +712,9 @@ public class GameInstanceRepository {
         record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION),
         record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH),
         controlPlaneRequestId,
-        record.get(SCRIPT_PIN_OPERATION.ERROR_CODE));
+        record.get(SCRIPT_PIN_OPERATION.ERROR_CODE),
+        record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_BASE_VERSION_ID),
+        record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_BASE_VERSION_ID));
   }
 
   private ScriptPinMutationResult idempotencyConflict(String controlPlaneRequestId) {
@@ -692,7 +799,8 @@ public class GameInstanceRepository {
       String actorPrincipal,
       String reason,
       String expectedPinKind,
-      Long expectedScriptPinEpoch) {
+      Long expectedScriptPinEpoch,
+      Long validatedBaseVersionId) {
     String normalized =
         String.join(
             "|",
@@ -703,7 +811,8 @@ public class GameInstanceRepository {
             canonical(actorPrincipal),
             canonical(reason),
             canonical(expectedPinKind),
-            canonical(expectedScriptPinEpoch));
+            canonical(expectedScriptPinEpoch),
+            canonical(validatedBaseVersionId));
     try {
       byte[] digest =
           MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(StandardCharsets.UTF_8));
@@ -737,6 +846,7 @@ public class GameInstanceRepository {
     record.setTenantId(entity.getTenantId());
     record.setRuntimeVersion(entity.getRuntimeVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setGameTemplateId(entity.getGameTemplateId());
     record.setLaunchDescriptorId(entity.getLaunchDescriptorId());
@@ -760,6 +870,7 @@ public class GameInstanceRepository {
     entity.setTenantId(record.get(GAME_INSTANCES.TENANT_ID));
     entity.setRuntimeVersion(record.get(GAME_INSTANCES.RUNTIME_VERSION));
     entity.setScriptPatchVersion(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(record.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID));
     entity.setScriptPinEpoch(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH));
     entity.setGameTemplateId(record.get(GAME_INSTANCES.GAME_TEMPLATE_ID));
     entity.setLaunchDescriptorId(record.get(GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID));

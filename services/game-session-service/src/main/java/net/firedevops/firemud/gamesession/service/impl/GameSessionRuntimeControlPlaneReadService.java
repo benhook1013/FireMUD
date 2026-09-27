@@ -137,11 +137,15 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
         .setRegionEpoch(runtimeStatus.getRegionEpoch())
         .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
+        .setPinnedScriptPatchBaseVersionId(
+            instance.getScriptPatchBaseVersionId() == null
+                ? 0L
+                : instance.getScriptPatchBaseVersionId())
         .setPublication(
             scriptPatchPublicationLink(
                 instance.getTenantId(),
                 instance.getScriptPatchVersion(),
-                RuntimeVersionIdResolver.resolve(instance)))
+                instance.getScriptPatchBaseVersionId()))
         .build();
   }
 

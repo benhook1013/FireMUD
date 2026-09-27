@@ -105,10 +105,10 @@ import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -228,6 +228,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setRuntimeVersion("1.0.0");
     instance.setVersionId(7L);
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchBaseVersionId(7L);
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-01-01T00:00:00Z"));
     instance.setScriptPatchPinnedBy("old-user");
@@ -240,7 +241,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AutomationScriptingControlPlaneClient automation = automationScriptingControlPlaneClient();
     Mockito.when(
             repository.applyScriptPin(
-                1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L))
+                1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L, 7L))
         .thenReturn(new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -276,7 +277,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(2L, responseRef.get().getScriptPinEpoch());
     assertEquals("req-1", responseRef.get().getControlPlaneRequestId());
     Mockito.verify(repository)
-        .applyScriptPin(1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L);
+        .applyScriptPin(
+            1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L, 7L);
     Mockito.verify(repository, Mockito.never()).save(Mockito.any(GameInstance.class));
   }
 
@@ -288,6 +290,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setTenantId(1L);
     instance.setVersionId(7L);
     instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPatchBaseVersionId(7L);
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
@@ -303,7 +306,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "tester",
                 "rollback",
                 "EXPECT_EPOCH",
-                1L))
+                1L,
+                7L))
         .thenReturn(
             new ScriptPinMutationResult("patch-2", 1L, "patch-1", 2L, "req-rollback-1", null));
 
@@ -349,7 +353,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             "tester",
             "rollback",
             "EXPECT_EPOCH",
-            1L);
+            1L,
+            7L);
     Mockito.verify(repository, Mockito.never()).save(Mockito.any(GameInstance.class));
   }
 
@@ -468,6 +473,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setLaunchDescriptorId("ld-9");
     instance.setStatus("RUNNING");
     instance.setVersionId(11L);
+    instance.setScriptPatchBaseVersionId(7L);
     instance.setReleaseBundleId(19L);
     instance.setVersionStateEpoch(77L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
@@ -4810,6 +4816,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPatchBaseVersionId(100L);
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -4947,9 +4954,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getCoordinator().getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getCoordinator().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCoordinator().getPluginVersionId());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getCoordinator().getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getCoordinator().getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getCoordinator().getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1",
         responseRef.get().getCoordinator().getPluginPublication().getPluginVersionId());
@@ -5022,6 +5028,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setAutomationWorkItemId("work-1");
     followup.setScriptId("script-1");
     followup.setScriptPatchVersion("patch-1");
+    followup.setScriptPatchBaseVersionId(100L);
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setEffectKey("damage:1");
@@ -5104,9 +5111,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-target-current", responseRef.get().getFollowup().getCurrentTargetRuntimeRegionId());
     assertEquals("9", responseRef.get().getFollowup().getCurrentTargetRuntimeGameInstanceId());
     assertTrue(responseRef.get().getFollowup().getIsTargetRoutingBundleStale());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getFollowup().getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getFollowup().getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getFollowup().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -5236,6 +5242,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setAutomationWorkItemId("work-1");
     result.setScriptId("script-1");
     result.setScriptPatchVersion("patch-1");
+    result.setScriptPatchBaseVersionId(100L);
     result.setPluginId("plugin-1");
     result.setPluginVersionId("plugin-v1");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
@@ -5338,9 +5345,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-target-current", responseRef.get().getResult().getCurrentTargetRuntimeRegionId());
     assertEquals("9", responseRef.get().getResult().getCurrentTargetRuntimeGameInstanceId());
     assertTrue(responseRef.get().getResult().getIsTargetRoutingBundleStale());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getResult().getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getResult().getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getResult().getPublication().getLookupErrorCode());
   }
 
   @Test
@@ -5600,6 +5606,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPatchBaseVersionId(100L);
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -5749,8 +5756,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(
-            authorityService.listByRuntimeTarget(Mockito.eq(1L), Mockito.anyLong()))
+    Mockito.when(authorityService.listByRuntimeTarget(Mockito.eq(1L), Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
               long gameInstanceId = invocation.getArgument(1, Long.class);
@@ -5907,9 +5913,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         "entity:entity-9", responseRef.get().getCoordinators(0).getFollowupClaimTargetAggregate());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCoordinators(0).getLatestResultOutcome());
     assertEquals("RATE_LIMIT", responseRef.get().getCoordinators(0).getLatestResultErrorCode());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getCoordinators(0).getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getCoordinators(0).getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getCoordinators(0).getPublication().getLookupErrorCode());
     Mockito.verify(gameInstanceRepository).findById(7L);
     Mockito.verify(gameInstanceRepository).findById(9L);
     Mockito.verify(repository)
@@ -6173,6 +6178,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setAutomationWorkItemId("work-1");
     followup.setScriptId("script-1");
     followup.setScriptPatchVersion("patch-1");
+    followup.setScriptPatchBaseVersionId(100L);
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setEffectKey("damage:1");
@@ -6423,9 +6429,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getFollowups(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getFollowups(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getFollowups(0).getPluginVersionId());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getFollowups(0).getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getFollowups(0).getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getFollowups(0).getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1", responseRef.get().getFollowups(0).getPluginPublication().getPluginVersionId());
     assertEquals(31L, responseRef.get().getFollowups(0).getPluginPublication().getPublicationId());
@@ -6731,6 +6736,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                         && "production".equals(request.realmSlug())
                         && Objects.equals(Long.valueOf(17L), request.pointerVersion())
                         && "patch-1".equals(request.scriptPatchVersion())
+                        && Objects.equals(Long.valueOf(100L), request.scriptPatchBaseVersionId())
+                        && Objects.equals(Long.valueOf(3L), request.scriptPinEpoch())
+                        && "pin-request-1".equals(request.scriptPinControlPlaneRequestId())
                         && "plugin-1".equals(request.pluginId())
                         && "plugin-v1".equals(request.pluginVersionId())
                         && "dispatch-1".equals(request.automationDispatchId())
@@ -7230,6 +7238,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setAutomationWorkItemId("work-1");
     result.setScriptId("script-1");
     result.setScriptPatchVersion("patch-1");
+    result.setScriptPatchBaseVersionId(100L);
     result.setPluginId("plugin-1");
     result.setPluginVersionId("plugin-v1");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
@@ -7514,9 +7523,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getResults(0).getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getResults(0).getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getResults(0).getPublication().getLookupErrorCode());
     assertEquals(
         "plugin-v1", responseRef.get().getResults(0).getPluginPublication().getPluginVersionId());
     assertEquals(31L, responseRef.get().getResults(0).getPluginPublication().getPublicationId());
@@ -8412,6 +8420,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setRealmSlug("production")
         .setPointerVersion(17L)
         .setScriptPatchVersion("patch-1")
+        .setScriptPatchBaseVersionId(100L)
+        .setScriptPinEpoch(3L)
+        .setScriptPinControlPlaneRequestId("pin-request-1")
         .setPluginId("plugin-1")
         .setPluginVersionId("plugin-v1")
         .setAutomationDispatchId("dispatch-1")

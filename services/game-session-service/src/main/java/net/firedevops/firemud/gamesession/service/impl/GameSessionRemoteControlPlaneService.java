@@ -130,10 +130,7 @@ final class GameSessionRemoteControlPlaneService {
     return GetRemoteFollowupResponse.newBuilder()
         .setFollowup(
             toRemoteFollowupEntry(
-                followup,
-                linkedTargetCommand(tenantId, followup),
-                coordinator,
-                new HashMap<>()))
+                followup, linkedTargetCommand(tenantId, followup), coordinator, new HashMap<>()))
         .build();
   }
 
@@ -318,7 +315,12 @@ final class GameSessionRemoteControlPlaneService {
                 normalizeBlank(request.getScriptEventId()),
                 normalizeBlank(request.getTriggerMode()),
                 normalizeBlank(request.getReadSnapshotToken()),
-                normalizeBlank(request.getEventPayloadJson())));
+                normalizeBlank(request.getEventPayloadJson()),
+                request.getScriptPatchBaseVersionId() > 0
+                    ? request.getScriptPatchBaseVersionId()
+                    : null,
+                request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
+                normalizeBlank(request.getScriptPinControlPlaneRequestId())));
     return ScheduleRemoteFollowupResponse.newBuilder()
         .setCoordinatorId(outcome.coordinatorId())
         .setFollowupId(outcome.followupId())
@@ -504,11 +506,7 @@ final class GameSessionRemoteControlPlaneService {
               followup == null ? null : targetCommandsByFollowupId.get(followup.getFollowupId());
           response.addResults(
               toRemoteFollowupResultEntry(
-                  result,
-                  coordinator,
-                  followup,
-                  targetCommand,
-                  runtimeBoundaryCache));
+                  result, coordinator, followup, targetCommand, runtimeBoundaryCache));
         });
     return response.build();
   }
@@ -647,7 +645,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         coordinator.getTenantId(),
-        null,
+        coordinator.getScriptPatchBaseVersionId(),
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
@@ -751,7 +749,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
-        null,
+        followup.getScriptPatchBaseVersionId(),
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
@@ -854,7 +852,7 @@ final class GameSessionRemoteControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         result.getTenantId(),
-        null,
+        result.getScriptPatchBaseVersionId(),
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());

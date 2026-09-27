@@ -1,17 +1,20 @@
-package net.firedevops.firemud.gamesession.service.impl;
+package net.firedevops.firemud.gamesession.service;
 
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 
-final class RuntimeVersionIdResolver {
+/** Resolves the immutable owner version ID recorded for a Game Session runtime. */
+public final class RuntimeVersionIdResolver {
   private RuntimeVersionIdResolver() {}
 
-  static Long resolve(GameInstance instance) {
-    Long versionId = instance.getVersionId();
+  public static Long resolve(GameInstance instance) {
+    return resolve(instance.getVersionId(), instance.getRuntimeVersion());
+  }
+
+  public static Long resolve(Long versionId, String runtimeVersion) {
     if (versionId != null) {
       return versionId > 0L ? versionId : null;
     }
 
-    String runtimeVersion = instance.getRuntimeVersion();
     if (runtimeVersion == null || runtimeVersion.isBlank()) {
       return null;
     }
