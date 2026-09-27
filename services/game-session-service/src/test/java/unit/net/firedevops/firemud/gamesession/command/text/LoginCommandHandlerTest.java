@@ -379,10 +379,10 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginAcceptsVerifiedFirstPartyAccountDifferentFromGameOwner() {
+  void bareLoginDoesNotPromoteVerifiedFirstPartyContextWithoutAccountExchange() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
-    stubSessionContext(
+    SessionContext shell =
         new SessionContext(
             1L,
             22L,
@@ -400,7 +400,8 @@ class LoginCommandHandlerTest {
             7L,
             "SHARED",
             "shell-scope",
-            "shell-request"));
+            "shell-request");
+    stubSessionContext(shell);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
@@ -419,23 +420,26 @@ class LoginCommandHandlerTest {
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
-    assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 99", joinedOutputText(result.outputs()));
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals("Authentication service unavailable", result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR AUTH_UNAVAILABLE Authentication service unavailable",
+        joinedOutputText(result.outputs()));
+    assertEquals(
+        "error.login.unavailable", ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    verify(commandService).enqueue("1", "LOGIN", false);
-    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
-    SessionContext saved = captor.getValue();
-    assertEquals(99L, saved.accountId());
-    assertEquals(1L, saved.bootstrapGameInstanceId());
-    assertEquals("demo", saved.worldSlug());
-    assertEquals("production", saved.realmSlug());
-    assertEquals(1L, saved.pointerVersion());
-    assertEquals("SHARED", saved.playableStateScope());
-    assertEquals("scope-1", saved.connectScopeId());
-    assertEquals("req-1", saved.connectRequestId());
-    assertEquals(0L, saved.characterId());
-    assertEquals(0L, saved.gameInstanceId());
+    verify(accountClient, never()).requestEmailLoginOtp(anyString());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+    assertEquals(0L, shell.accountId());
+    assertNull(shell.jwt());
+    assertEquals(1L, shell.bootstrapGameInstanceId());
+    assertEquals("shell-world", shell.worldSlug());
+    assertEquals("shell-realm", shell.realmSlug());
+    assertEquals("shell-scope", shell.connectScopeId());
+    assertEquals("shell-request", shell.connectRequestId());
     assertEquals(77L, instance.getOwnerAccountId());
   }
 
@@ -490,7 +494,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginFallsBackToPersistedFirstPartyContextWhenRegistryEntryIsMissing() {
+  void bareLoginFailsUnavailableForPersistedFirstPartyContextFallback() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     SessionContext persisted =
@@ -519,9 +523,11 @@ class LoginCommandHandlerTest {
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
-    assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
-    verify(commandService).enqueue("1", "LOGIN", false);
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    verify(accountClient, never()).authenticate(anyString(), anyString());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
   }
 
   @Test

@@ -941,8 +941,23 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          if [[ "${{ matrix.module }}" == "account-service" ]]; then
+            ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache
+          else
+            ./gradlew :${{ matrix.module }}:check -PfullCheck
+          fi
           echo "::endgroup::"
+
+      - name: 🔎 Verify Account PostgreSQL proof cases
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
+            account-service
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
