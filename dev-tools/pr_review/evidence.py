@@ -17,6 +17,7 @@ from typing import Any
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
     r"(?P<raw_found>\d+) found / (?P<accepted>\d+) accepted"
+    r"(?: / (?P<routed>\d+) routed)?"
     r"(?(bold)\*\*|)(?P<suffix>.*)$"
 )
 CHECKPOINT_SUFFIX = re.compile(
@@ -63,6 +64,7 @@ class Checkpoint:
     duration_seconds: int | None = None
     duration_invalid: bool = False
     author_login: str | None = None
+    routed: int | None = None
 
     def as_json(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -71,6 +73,7 @@ class Checkpoint:
             "type": self.type,
             "raw_found": self.raw_found,
             "accepted": self.accepted,
+            "routed": self.routed,
             "reviewed_sha": self.reviewed_sha,
             "file_count": self.file_count,
             "correction": self.correction,
@@ -105,6 +108,15 @@ def format_duration_seconds(seconds: int) -> str:
     if minutes:
         return f"{minutes}m {remaining_seconds:02d}s"
     return f"{remaining_seconds}s"
+
+
+def format_checkpoint_counts(found: int, accepted: int, routed: int) -> str:
+    """Format the public finding-count segment used by new checkpoints."""
+
+    values = (found, accepted, routed)
+    if any(type(value) is not int or value < 0 for value in values) or accepted + routed > found:
+        raise ValueError("checkpoint counts must be non-negative and accepted plus routed cannot exceed found")
+    return f"{found} found / {accepted} accepted / {routed} routed"
 
 
 def _visible_duration_seconds(value: str) -> int | None:
@@ -330,7 +342,8 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
             continue
         suffix = CHECKPOINT_SUFFIX.fullmatch(match.group("suffix").split(r"\n", 1)[0])
         raw, accepted = int(match.group("raw_found")), int(match.group("accepted"))
-        if suffix is None or accepted > raw:
+        routed = int(match.group("routed")) if match.group("routed") is not None else None
+        if suffix is None or accepted > raw or (routed is not None and accepted + routed > raw):
             unparsed += 1
             continue
         run_id, duplicate_run_marker = _run_id(body)
@@ -363,6 +376,7 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
                         (comment.get("author") or {}).get("login") if isinstance(comment.get("author"), dict) else None
                     )
                 ),
+                routed=routed,
             )
         )
     return checkpoints, unparsed
@@ -538,8 +552,11 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
     ):
         raise CaptureInvalid("historical rejection records cannot explain accepted CLI findings")
     accepted = sum(disposition == "accepted" for disposition, _ in capture.decisions.values())
+    routed = sum(disposition == "routed" for disposition, _ in capture.decisions.values())
     if accepted != checkpoint.accepted:
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")
+    if routed != (checkpoint.routed or 0):
+        raise CaptureInvalid("CLI checkpoint routed count does not match linked findings decisions")
 
 
 def _load_cli_capture(
@@ -640,10 +657,10 @@ def _load_cli_capture(
         if not line.strip():
             continue
         fields = line.split("\t")
-        if len(fields) != 3 or not fields[0].isdigit() or fields[1] not in {"accepted", "rejected"}:
+        if len(fields) != 3 or not fields[0].isdigit() or fields[1] not in {"accepted", "routed", "rejected"}:
             raise CaptureInvalid(f"decision records are malformed at line {number}")
         finding_id, disposition, reason = int(fields[0]), fields[1], fields[2]
-        if not 1 <= finding_id <= len(findings) or (disposition == "rejected" and not reason.strip()):
+        if not 1 <= finding_id <= len(findings) or (disposition in {"routed", "rejected"} and not reason.strip()):
             unlinked.append({"finding_id": finding_id, "disposition": disposition, "reason": reason or "not recorded"})
         elif finding_id in decisions:
             raise CaptureInvalid("decision records duplicate a finding")
@@ -785,10 +802,10 @@ def _read_decisions(
         if not line.strip():
             continue
         fields = line.split("\t")
-        if len(fields) != 3 or not fields[0].isdigit() or fields[1] not in {"accepted", "rejected"}:
+        if len(fields) != 3 or not fields[0].isdigit() or fields[1] not in {"accepted", "routed", "rejected"}:
             raise CaptureInvalid(f"decision records are malformed at line {number}")
         finding_id, disposition, reason = int(fields[0]), fields[1], fields[2]
-        if finding_id not in finding_ids or (disposition == "rejected" and not reason.strip()):
+        if finding_id not in finding_ids or (disposition in {"routed", "rejected"} and not reason.strip()):
             unlinked.append({"finding_id": finding_id, "disposition": disposition, "reason": reason or "not recorded"})
         elif finding_id in decisions:
             raise CaptureInvalid("decision records duplicate a finding")

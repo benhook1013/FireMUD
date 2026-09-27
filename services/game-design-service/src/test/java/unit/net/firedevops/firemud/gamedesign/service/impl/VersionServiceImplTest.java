@@ -1034,6 +1034,22 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void getPublishedPluginVersionReadsHistoricalTerminalVersions() {
+    for (VersionLifecycleState state :
+        List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
+      PublishedPluginVersion historical = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+      historical.setPublicationState(state);
+      when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+              "tenant-1", "plugin-1", "plugin-v1"))
+          .thenReturn(Optional.of(historical));
+
+      assertEquals(
+          state,
+          service.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1").publicationState());
+    }
+  }
+
+  @Test
   void getDesignControlPlaneDigestForScriptPatchRejectsMissingPublishedScope() {
     when(versionRepository
             .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
