@@ -12,6 +12,7 @@ COMPOSE_FILES=(
   -f "$DOCKER_DIR/docker-compose.override.yml"
   -f "$DOCKER_DIR/docker-compose.smoke-images.override.yml"
 )
+COMPOSE_CONFIG_FILE=""
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_CHECK_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
@@ -49,7 +50,54 @@ if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   export SMOKE_IMAGE_PULL_POLICY=never
 fi
 
+SMOKE_MINIO_LOCAL_ONLY="${SMOKE_MINIO_LOCAL_ONLY:-false}"
+case "$SMOKE_MINIO_LOCAL_ONLY" in
+  true)
+    [[ "${SMOKE_MINIO_SERVER_IMAGE:-}" =~ ^firemud-minio-server-smoke:[A-Za-z0-9_.-]+$ ]] || {
+      echo "SMOKE_MINIO_LOCAL_ONLY=true requires a unique local server image tag." >&2
+      exit 1
+    }
+    [[ "${SMOKE_MINIO_CLIENT_IMAGE:-}" =~ ^firemud-minio-client-smoke:[A-Za-z0-9_.-]+$ ]] || {
+      echo "SMOKE_MINIO_LOCAL_ONLY=true requires a unique local client image tag." >&2
+      exit 1
+    }
+    for image_id in "${SMOKE_MINIO_SERVER_IMAGE_ID:-}" "${SMOKE_MINIO_CLIENT_IMAGE_ID:-}"; do
+      if [[ ! "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+        echo "SMOKE_MINIO_LOCAL_ONLY=true requires the built server and client sha256 image IDs." >&2
+        exit 1
+      fi
+    done
+    COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.pr-local-minio.override.yml" )
+    ;;
+  false)
+    ;;
+  *)
+    echo "SMOKE_MINIO_LOCAL_ONLY must be boolean true/false; refusing to run." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" && "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" != "true" ]]; then
+  for image_ref_and_id in "$SMOKE_MINIO_SERVER_IMAGE|$SMOKE_MINIO_SERVER_IMAGE_ID" \
+    "$SMOKE_MINIO_CLIENT_IMAGE|$SMOKE_MINIO_CLIENT_IMAGE_ID"; do
+    image_ref="${image_ref_and_id%%|*}"
+    image_id="${image_ref_and_id#*|}"
+    local_image_id="$(docker image inspect --format '{{.Id}}' "$image_ref")" || {
+      echo "Required source-built MinIO image $image_ref is not available locally." >&2
+      exit 1
+    }
+    [[ "$local_image_id" == "$image_id" ]] || {
+      echo "Local MinIO image $image_ref ID did not match the pinned-source build output." >&2
+      exit 1
+    }
+    printf 'Verified source-built MinIO image ID: %s -> %s\n' "$image_ref" "$image_id"
+  done
+fi
+
 cleanup() {
+  if [[ -n "$COMPOSE_CONFIG_FILE" ]]; then
+    rm -f "$COMPOSE_CONFIG_FILE"
+  fi
   rm -f "$DOCKER_ENV_FILE"
   if [[ -n "$ROOT_ENV_BACKUP" && -f "$ROOT_ENV_BACKUP" ]]; then
     mv "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
@@ -105,6 +153,9 @@ echo "Smoke image proof: destroy this run-owned compose project's state, resolve
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   echo "Local-only mode enabled: compose will reuse matching local FireMUD images while pulling missing dependencies."
 fi
+if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
+  echo "PR-local MinIO mode enabled: compose will use unique local tags whose image IDs match the pinned-source build outputs, with pull_policy never."
+fi
 
 if [[ -f "$ROOT_ENV_FILE" ]]; then
   ROOT_ENV_BACKUP="$(mktemp)"
@@ -133,7 +184,30 @@ cp "$ROOT_ENV_FILE" "$DOCKER_ENV_FILE"
 upsert_env_var "$ROOT_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 upsert_env_var "$DOCKER_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 
-docker compose "${COMPOSE_FILES[@]}" config >/dev/null
+if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
+  COMPOSE_CONFIG_FILE="$(mktemp)"
+  docker compose "${COMPOSE_FILES[@]}" config --format json >"$COMPOSE_CONFIG_FILE"
+  python3 - "$COMPOSE_CONFIG_FILE" "$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE" <<'PY'
+import json
+import sys
+
+config_path, server_image, client_image = sys.argv[1:]
+with open(config_path, encoding="utf-8") as source:
+    config = json.load(source)
+
+services = config.get("services", {})
+expected = {"minio": server_image, "minio-setup": client_image}
+for service_name, image_ref in expected.items():
+    service = services.get(service_name, {})
+    if service.get("image") != image_ref:
+        raise SystemExit(f"Compose {service_name} image did not match its unique local tag")
+    if service.get("pull_policy") != "never":
+        raise SystemExit(f"Compose {service_name} must use pull_policy: never")
+print("Verified PR-local MinIO Compose image tags and pull policies.")
+PY
+else
+  docker compose "${COMPOSE_FILES[@]}" config >/dev/null
+fi
 if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi

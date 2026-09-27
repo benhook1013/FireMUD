@@ -35,6 +35,7 @@ import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -116,6 +117,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                   entity.getTenantId(),
                   entity.getRuntimeVersion(),
                   entity.getScriptPatchVersion(),
+                  entity.getScriptPatchBaseVersionId(),
                   entity.getScriptPinEpoch(),
                   entity.getScriptPatchPinnedControlPlaneRequestId(),
                   entity.getGameTemplateId(),
@@ -403,6 +405,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchBaseVersionId(77L);
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
     instance.setOwnerAccountId(100L);
@@ -420,7 +423,11 @@ class GameInstanceServiceLifecycleIntegrationTest {
 
     assertThat(repository.findById(instanceId)).isPresent();
     assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
-    verify(sessionStateService).saveState(any());
+    ArgumentCaptor<GameInstanceDto> state = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(sessionStateService).saveState(state.capture());
+    assertThat(state.getValue().scriptPatchBaseVersionId()).isEqualTo(77L);
+    assertThat(repository.findById(instanceId).orElseThrow().getScriptPatchBaseVersionId())
+        .isEqualTo(77L);
   }
 
   @Test

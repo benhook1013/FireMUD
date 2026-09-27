@@ -16,40 +16,28 @@ class ScriptVersionServiceImplTest {
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
-    when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(true);
+    when(commandService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"))).thenReturn(true);
 
-    service.notifyUpdate("1", "patch-1", List.of("guard-script"));
+    service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
 
-    verify(commandService).notifyUpdate("1", "patch-1", List.of("guard-script"));
+    verify(commandService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     verify(orchestrator).startTracking("1", "patch-1");
   }
 
   @Test
-  void notifyUpdateSkipsTemporalTrackingForExistingReadinessIdentity() {
-    ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
-    TemporalScriptPatchReadinessOrchestrator orchestrator =
-        mock(TemporalScriptPatchReadinessOrchestrator.class);
-    ScriptVersionServiceImpl service =
-        new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
-    when(commandService.notifyUpdate("1", "patch-1", List.of("guard-script"))).thenReturn(false);
-
-    service.notifyUpdate("1", "patch-1", List.of("guard-script"));
-
-    verify(commandService).notifyUpdate("1", "patch-1", List.of("guard-script"));
-    org.mockito.Mockito.verifyNoInteractions(orchestrator);
-  }
-
-  @Test
-  void notifyUpdateSkipsTemporalTrackingForEmptyPatch() {
+  void notifyUpdateSkipsTemporalTrackingWhenReadinessIsTerminal() {
     ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
     TemporalScriptPatchReadinessOrchestrator orchestrator =
         mock(TemporalScriptPatchReadinessOrchestrator.class);
     ScriptVersionServiceImpl service =
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
 
-    service.notifyUpdate("1", "patch-1", List.of());
+    when(commandService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")))
+        .thenReturn(false);
 
-    verify(commandService).notifyUpdate("1", "patch-1", List.of());
+    service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+
+    verify(commandService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     org.mockito.Mockito.verifyNoInteractions(orchestrator);
   }
 }

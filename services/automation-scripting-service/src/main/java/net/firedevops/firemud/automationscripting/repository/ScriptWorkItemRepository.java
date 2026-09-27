@@ -339,9 +339,12 @@ public class ScriptWorkItemRepository {
   }
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
-      String status, Pageable pageable) {
+      String status, Instant eligibleAt, Pageable pageable) {
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.STATUS.eq(status),
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -354,9 +357,14 @@ public class ScriptWorkItemRepository {
    */
   public List<ScriptWorkItem> findByStatusForUpdateOrderByCreatedAtAscIdAsc(
       String status, Pageable pageable) {
+    return findByStatusForUpdateOrderByCreatedAtAscIdAsc(status, Instant.now(), pageable);
+  }
+
+  public List<ScriptWorkItem> findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+      String status, Instant eligibleAt, Pageable pageable) {
     Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
     if ("PENDING_EVALUATION".equals(status)) {
-      condition = condition.and(retryEligibilityCondition());
+      condition = condition.and(retryEligibilityCondition(eligibleAt));
     }
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
@@ -368,12 +376,16 @@ public class ScriptWorkItemRepository {
   }
 
   public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-      Collection<Long> ids, String status, Pageable pageable) {
+      Collection<Long> ids, String status, Instant eligibleAt, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)),
+        SCRIPT_WORK_ITEMS
+            .ID
+            .in(ids)
+            .and(SCRIPT_WORK_ITEMS.STATUS.eq(status))
+            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -382,12 +394,18 @@ public class ScriptWorkItemRepository {
   /** Claims explicitly selected pending rows under the same retry/backoff fence as the scanner. */
   public List<ScriptWorkItem> findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
       Collection<Long> ids, String status, Pageable pageable) {
+    return findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+        ids, status, Instant.now(), pageable);
+  }
+
+  public List<ScriptWorkItem> findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+      Collection<Long> ids, String status, Instant eligibleAt, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
     Condition condition = SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status));
     if ("PENDING_EVALUATION".equals(status)) {
-      condition = condition.and(retryEligibilityCondition());
+      condition = condition.and(retryEligibilityCondition(eligibleAt));
     }
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
@@ -622,6 +640,10 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH, entity.getAdmissionEpoch())
             .set(SCRIPT_WORK_ITEMS.STATUS, entity.getStatus())
             .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, entity.getCancelReason())
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT,
+                entity.getAuthorityUnavailableRetryCount())
+            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
             .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
@@ -629,7 +651,10 @@ public class ScriptWorkItemRepository {
                 SCRIPT_WORK_ITEMS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_WORK_ITEMS.SCRIPT_PATCH_BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getScriptPatchBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -662,6 +687,7 @@ public class ScriptWorkItemRepository {
           requireMatchingPinOwnerEvidence(
               normalizedRequestId, result.workItem().getScriptPinControlPlaneRequestId());
           requireMatchingPluginFence(entity, result.workItem());
+          requireMatchingPatchBase(entity, result.workItem());
         }
         return new IdempotentInsertResult(result.workItem(), result.inserted());
       }
@@ -691,6 +717,7 @@ public class ScriptWorkItemRepository {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
         requireMatchingPluginFence(entity, existing.orElseThrow());
+        requireMatchingPatchBase(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -875,6 +902,7 @@ public class ScriptWorkItemRepository {
         .set(SCRIPT_WORK_ITEMS.STATUS, "PENDING_EVALUATION")
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE, (LocalDateTime) null)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT, 0)
+        .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT, 0)
         .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, (LocalDateTime) null)
         .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(now))
         .set(SCRIPT_WORK_ITEMS.ROW_VERSION, expectedRowVersion + 1)
@@ -966,11 +994,16 @@ public class ScriptWorkItemRepository {
         .fetch(this::toEntity);
   }
 
-  private static Condition retryEligibilityCondition() {
+  private static Condition retryEligibilityCondition(Instant eligibleAt) {
+    LocalDateTime eligibleAtLocal = toLocalDateTime(Objects.requireNonNull(eligibleAt));
     return SCRIPT_WORK_ITEMS
         .NEXT_ELIGIBLE_AT
         .isNull()
-        .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(CURRENT_TIMESTAMP));
+        .or(
+            SCRIPT_WORK_ITEMS
+                .NEXT_ELIGIBLE_AT
+                .le(CURRENT_TIMESTAMP)
+                .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(eligibleAtLocal)));
   }
 
   private void populate(ScriptWorkItemsRecord record, ScriptWorkItem entity) {
@@ -1000,6 +1033,7 @@ public class ScriptWorkItemRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.set(
         SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
@@ -1019,6 +1053,8 @@ public class ScriptWorkItemRepository {
     record.setAdmissionEpoch(entity.getAdmissionEpoch());
     record.setStatus(entity.getStatus());
     record.setCancelReason(entity.getCancelReason());
+    record.setAuthorityUnavailableRetryCount(entity.getAuthorityUnavailableRetryCount());
+    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
@@ -1043,25 +1079,24 @@ public class ScriptWorkItemRepository {
     return requestId;
   }
 
-  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
-    requireCoherentPluginFence(entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
-  }
-
-  private static void requireCoherentPluginFence(
-      long pluginActivationEpoch, long lifecycleRevision) {
-    if (pluginActivationEpoch < 0L || lifecycleRevision < 0L) {
-      throw new IllegalArgumentException("plugin fence values must be non-negative");
-    }
-    if ((pluginActivationEpoch == 0L) != (lifecycleRevision == 0L)) {
-      throw new IllegalArgumentException(
-          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
-    }
-  }
-
   private static void requireMatchingPinOwnerEvidence(
       String requestedRequestId, String existingRequestId) {
     if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
       throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
+    }
+  }
+
+  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
+    AutomationScriptingJooqRepositorySupport.requireCoherentPluginFence(
+        entity.getPluginActivationEpoch(), entity.getLifecycleRevision());
+    boolean hasPluginId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginId()).isBlank();
+    boolean hasPluginVersionId =
+        !AutomationScriptingJooqRepositorySupport.normalize(entity.getPluginVersionId()).isBlank();
+    if (!hasPluginId && !hasPluginVersionId) {
+      if (entity.getPluginActivationEpoch() != 0L || entity.getLifecycleRevision() != 0L) {
+        throw new IllegalArgumentException("plugin lifecycle evidence requires plugin identity");
+      }
     }
   }
 
@@ -1072,6 +1107,14 @@ public class ScriptWorkItemRepository {
     }
     if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
       throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
+  private static void requireMatchingPatchBase(ScriptWorkItem requested, ScriptWorkItem existing) {
+    if (!Objects.equals(
+        requested.getScriptPatchBaseVersionId(), existing.getScriptPatchBaseVersionId())) {
+      throw new IllegalStateException(
+          "script_patch_base_version_id conflicts with existing trigger identity");
     }
   }
 
@@ -1109,6 +1152,7 @@ public class ScriptWorkItemRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_BASE_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(
@@ -1129,6 +1173,11 @@ public class ScriptWorkItemRepository {
     entity.setAdmissionEpoch(admissionEpoch == null ? 0L : admissionEpoch);
     entity.setStatus(record.get(SCRIPT_WORK_ITEMS.STATUS));
     entity.setCancelReason(record.get(SCRIPT_WORK_ITEMS.CANCEL_REASON));
+    Integer authorityUnavailableRetryCount =
+        record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT);
+    entity.setAuthorityUnavailableRetryCount(
+        authorityUnavailableRetryCount == null ? 0 : authorityUnavailableRetryCount);
+    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
     entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
     Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);

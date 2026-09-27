@@ -145,6 +145,7 @@ class AutomationPatchControlPlaneServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    7L,
                     9L,
                     "npc-guard",
                     "SHARED",

@@ -199,6 +199,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           roleMaterials.material(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
       CertificateMaterialService.RoleMaterial grpc =
           roleMaterials.material(HostedIdentityContract.GRPC_ROLE);
+      CertificateMaterialService.RoleMaterial grpcAccount =
+          roleMaterials.material(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
       validateDistinctIdentities(
           rolePipeline.stream()
               .map(RoleMaterialBinding::material)
@@ -270,7 +272,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 bridgeMaterial,
                 gatewayInternalWs.summary().certificateFingerprint(),
                 grpc.source(),
-                grpc.summary().certificateFingerprint());
+                grpcAccount.summary().certificateFingerprint());
       } else {
         probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
       }

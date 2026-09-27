@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -47,6 +48,23 @@ public final class GrpcMaterialFixture {
           .generate(plan, caSource, 1, Duration.ofDays(7), now);
     } catch (Exception exception) {
       throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
+    }
+  }
+
+  public static List<Secret> generateDistinctLeavesWithSharedCa(EnvironmentIdentityPlan plan) {
+    try {
+      Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+      Duration lifetime = Duration.ofDays(7);
+      Secret caSource = generatedCa(now, Duration.ofDays(60));
+      String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
+      GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
+      GrpcTransportBundleGenerator generator =
+          new GrpcTransportBundleGenerator(new SecretMaterialValidator());
+      return List.of(
+          generator.generate(plan, caSource, 1, lifetime, now),
+          generator.generate(plan, caSource, 2, lifetime, now));
+    } catch (Exception exception) {
+      throw new AssertionError("unable to create shared-CA gRPC test leaves", exception);
     }
   }
 
