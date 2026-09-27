@@ -205,7 +205,7 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+  void getDraftDesignDigestRejectsForgedInternalSessionClaimWithoutPeerIdentity() {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(

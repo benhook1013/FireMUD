@@ -21,12 +21,16 @@ CHECKPOINT_HEADING = re.compile(
 )
 CHECKPOINT_SUFFIX = re.compile(
     r"^(?: · (?P<sha>`?[0-9a-fA-F]{7,40}`?))?"
-    r"(?: · (?P<files>\d+) files)?(?: · (?P<duration>\d+)s)?$"
+    r"(?: · (?P<files>\d+) files)?"
+    r"(?: · (?P<duration>(?:\d+h \d{2}m \d{2}s|\d+m \d{2}s|\d+s)))?$"
 )
 CHECKPOINT_CANDIDATE = re.compile(r"^(?:\*\*)?(?:Correction — )?(?:Hosted|CLI):")
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 HOSTED_MARKER = re.compile(r"^<!-- firemud-hosted-review: (?P<review_id>[1-9][0-9]*) -->$")
 DURATION_MARKER = re.compile(r"^<!-- firemud-review-duration-seconds: (?P<seconds>0|[1-9][0-9]*) -->$")
+HUMAN_DURATION = re.compile(
+    r"^(?:(?P<hours>\d+)h )?(?:(?P<minutes>\d+)m )?(?P<seconds>\d+)s$"
+)
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
@@ -78,6 +82,8 @@ class Checkpoint:
         ):
             if item is not None:
                 value[key] = item
+        if self.duration_seconds is not None:
+            value["duration_display"] = format_duration_seconds(self.duration_seconds)
         if self.updated_at is not None:
             value["updated_at"] = self.updated_at
         if self.author_login is not None:
@@ -85,6 +91,36 @@ class Checkpoint:
         if self.duration_invalid:
             value["duration_invalid"] = True
         return value
+
+
+def format_duration_seconds(seconds: int) -> str:
+    """Format seconds for public checkpoint text while keeping private data numeric."""
+
+    if type(seconds) is not int or seconds < 0:
+        raise ValueError("duration must be a non-negative integer number of seconds")
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {remaining_seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {remaining_seconds:02d}s"
+    return f"{remaining_seconds}s"
+
+
+def _visible_duration_seconds(value: str) -> int | None:
+    """Parse legacy Ns or the canonical human-readable duration form."""
+
+    if value.endswith("s") and " " not in value and value[:-1].isdigit():
+        return int(value[:-1])
+    match = HUMAN_DURATION.fullmatch(value)
+    if match is None:
+        return None
+    seconds = (
+        int(match.group("hours") or 0) * 3600
+        + int(match.group("minutes") or 0) * 60
+        + int(match.group("seconds"))
+    )
+    return seconds if format_duration_seconds(seconds) == value else None
 
 
 @dataclass(frozen=True)
@@ -274,7 +310,8 @@ def _duration_evidence(body: str, visible_duration: str | None) -> tuple[int | N
         return None, True
     if visible_duration is None and not found:
         return None, False
-    if visible_duration is None or not found or int(visible_duration) != found[0]:
+    visible_seconds = _visible_duration_seconds(visible_duration) if visible_duration is not None else None
+    if visible_seconds is None or not found or visible_seconds != found[0]:
         return None, True
     return found[0], False
 
@@ -368,7 +405,11 @@ def duration_marker_audit(comments: list[dict[str, Any]]) -> dict[str, int]:
             result["duplicate_count"] += 1
         if visible is not None and (malformed or not found) or visible is None and (found or malformed):
             result["missing_count"] += 1
-        elif visible is not None and len(found) == 1 and int(visible) != found[0]:
+        elif (
+            visible is not None
+            and len(found) == 1
+            and _visible_duration_seconds(visible) != found[0]
+        ):
             result["mismatch_count"] += 1
     return result
 

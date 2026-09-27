@@ -66,6 +66,11 @@ class VersionPublishCommandServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle(
+            any(String.class), any(Long.class)))
+        .thenReturn(Optional.empty());
+    when(versionAssetArtifactService.findState(any(String.class), any(Long.class)))
+        .thenReturn(Optional.empty());
     org.mockito.Mockito.doAnswer(
             invocation -> {
               try {
@@ -485,16 +490,17 @@ class VersionPublishCommandServiceImplTest {
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(bundle);
-    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(driftedArtifact);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(bundle));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.of(driftedArtifact));
 
     PublishWorkflowSnapshot snapshot =
         service.reconcileFullVersionPublish(
             new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
 
     assertEquals("SUCCEEDED", snapshot.status());
-    verify(publishedReleaseBundleService).getPublishedReleaseBundle("tenant-1", 10L);
+    verify(publishedReleaseBundleService).findPublishedReleaseBundle("tenant-1", 10L);
     verify(publishAttemptRepository, never())
         .backfillFullVersionRequestDigestIfAbsent(
             any(Long.class),
@@ -504,7 +510,7 @@ class VersionPublishCommandServiceImplTest {
             any(Integer.class),
             any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
-    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
@@ -543,8 +549,8 @@ class VersionPublishCommandServiceImplTest {
             LocalDateTime.now());
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(bundle);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(bundle));
 
     assertThrows(
         IllegalStateException.class,
@@ -553,7 +559,7 @@ class VersionPublishCommandServiceImplTest {
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
-    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(recordedParticipantDigestService, never())
         .recordVerifiedDigests(
@@ -567,7 +573,8 @@ class VersionPublishCommandServiceImplTest {
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L)).thenReturn(null);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty());
 
     assertThrows(
         IllegalStateException.class,
@@ -576,7 +583,7 @@ class VersionPublishCommandServiceImplTest {
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
-    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(recordedParticipantDigestService, never())
         .recordVerifiedDigests(
@@ -590,7 +597,7 @@ class VersionPublishCommandServiceImplTest {
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenThrow(new IllegalStateException("bundle read unavailable"));
 
     assertThrows(
@@ -600,7 +607,7 @@ class VersionPublishCommandServiceImplTest {
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
-    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(recordedParticipantDigestService, never())
         .recordVerifiedDigests(
@@ -630,8 +637,8 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now());
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(bundle);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(bundle));
 
     PublishWorkflowSnapshot snapshot =
         service.reconcileFullVersionPublish(
@@ -647,7 +654,7 @@ class VersionPublishCommandServiceImplTest {
             any(Integer.class),
             any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
-    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
@@ -690,6 +697,46 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void readbackWithArtifactButNoBundleRemainsPartial() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "EXPORTED_UNATTESTED",
+            1L,
+            "manifest-hash",
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty());
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+  }
+
+  @Test
   void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
@@ -729,9 +776,9 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.of(attempt));
     when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(bundle);
-    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(artifact);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(bundle));
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
 
     PublishWorkflowSnapshot snapshot =
         service.reconcileFullVersionPublish(
@@ -823,7 +870,7 @@ class VersionPublishCommandServiceImplTest {
 
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(publishedReleaseBundleService, never())
-        .getPublishedReleaseBundle(any(String.class), any(Long.class));
+        .findPublishedReleaseBundle(any(String.class), any(Long.class));
   }
 
   @Test
@@ -866,7 +913,7 @@ class VersionPublishCommandServiceImplTest {
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
     verify(publishedReleaseBundleService, never())
-        .getPublishedReleaseBundle(any(String.class), any(Long.class));
+        .findPublishedReleaseBundle(any(String.class), any(Long.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
@@ -931,9 +978,9 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(List.class)))
         .thenReturn(bundle);
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L)).thenReturn(null);
-    when(versionAssetArtifactService.getState("tenant-1", 10L))
-        .thenThrow(new IllegalArgumentException("artifact absent"));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty());
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.empty());
     org.mockito.Mockito.doAnswer(
             invocation -> {
               // The production transaction rolls managed entity changes back before readback.
@@ -999,9 +1046,9 @@ class VersionPublishCommandServiceImplTest {
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L)).thenReturn(null);
-    when(versionAssetArtifactService.getState("tenant-1", 10L))
-        .thenThrow(new IllegalArgumentException("artifact absent"));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty());
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.empty());
     org.mockito.Mockito.doThrow(new IllegalStateException("commit outcome unknown"))
         .when(publishAttemptService)
         .executeFullVersionTransaction(any());
