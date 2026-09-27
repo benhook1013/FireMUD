@@ -1,10 +1,10 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,12 +34,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private static final Logger logger = LoggerFactory.getLogger(PluginRuntimeStateServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
@@ -47,6 +49,14 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private static final String DEFAULT_DISABLED_REASON = "not_activated";
   private static final String OPERATION_ACTIVATE = "ACTIVATE";
   private static final int MAX_CONTROL_PLANE_REQUEST_ID_LENGTH = 128;
+  private static final TransactionOperations DIRECT_TRANSACTION_OPERATIONS =
+      new TransactionOperations() {
+        @Override
+        public <T> T execute(TransactionCallback<T> action) {
+          // Package-private constructors are used by unit tests without a Spring context.
+          return action.doInTransaction(null);
+        }
+      };
 
   private final PluginRuntimeStateRepository repository;
   private final PluginRuntimeEventRepository eventRepository;
@@ -55,6 +65,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final PluginActivationPreflightService pluginActivationPreflightService;
   private final PluginRuntimeRequestHistoryRepository requestHistoryRepository;
+  private final TransactionOperations policyDecisionTransactions;
 
   @Autowired
   public PluginRuntimeStateServiceImpl(
@@ -64,7 +75,28 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       PluginActivationPreflightService pluginActivationPreflightService,
-      PluginRuntimeRequestHistoryRepository requestHistoryRepository) {
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository,
+      PlatformTransactionManager transactionManager) {
+    this(
+        repository,
+        eventRepository,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
+        scriptScheduleInstanceService,
+        pluginActivationPreflightService,
+        requestHistoryRepository,
+        requiresNewTransactions(transactionManager));
+  }
+
+  PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      PluginRuntimeEventRepository eventRepository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      PluginActivationPreflightService pluginActivationPreflightService,
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository,
+      TransactionOperations policyDecisionTransactions) {
     this.repository = repository;
     this.eventRepository = eventRepository;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
@@ -72,6 +104,26 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.pluginActivationPreflightService = pluginActivationPreflightService;
     this.requestHistoryRepository = requestHistoryRepository;
+    this.policyDecisionTransactions = policyDecisionTransactions;
+  }
+
+  PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      PluginRuntimeEventRepository eventRepository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      PluginActivationPreflightService pluginActivationPreflightService,
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository) {
+    this(
+        repository,
+        eventRepository,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
+        scriptScheduleInstanceService,
+        pluginActivationPreflightService,
+        requestHistoryRepository,
+        DIRECT_TRANSACTION_OPERATIONS);
   }
 
   PluginRuntimeStateServiceImpl(
@@ -87,7 +139,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         gameSessionControlPlaneClient,
         scriptScheduleInstanceService,
         (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {},
-        null);
+        null,
+        DIRECT_TRANSACTION_OPERATIONS);
+  }
+
+  private static TransactionOperations requiresNewTransactions(
+      PlatformTransactionManager transactionManager) {
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return template;
   }
 
   @Override
@@ -100,6 +160,41 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return repository
         .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
         .map(state -> toStatus(state, publicationLinks(tenantId, pluginId, state)));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<PluginRuntimeStatus> getLocalLifecycleStatus(
+      String tenantId, String gameInstanceId, String pluginId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    requireText(pluginId, "plugin_id");
+    return repository
+        .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
+        .map(
+            state -> {
+              try {
+                return toStatus(state, Map.of());
+              } catch (IllegalArgumentException ex) {
+                return new PluginRuntimeStatus(
+                    normalize(state.getActivePluginVersionId()),
+                    normalize(state.getPendingPluginVersionId()),
+                    normalize(state.getRuntimeRegionId()),
+                    zeroIfNull(state.getRuntimeRegionEpoch()),
+                    PluginState.PLUGIN_STATE_UNSPECIFIED,
+                    ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+                    state.getLastChangedAt() == null ? 0L : state.getLastChangedAt().toEpochMilli(),
+                    normalize(state.getControlPlaneRequestId()),
+                    normalize(state.getActorPrincipal()),
+                    state.getLastPolicyCheckedAt() == null
+                        ? 0L
+                        : state.getLastPolicyCheckedAt().toEpochMilli(),
+                    null,
+                    null,
+                    state.getPluginActivationEpoch(),
+                    state.getLifecycleRevision());
+              }
+            });
   }
 
   @Override
@@ -194,11 +289,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     String previous = normalize(state.getActivePluginVersionId());
     String actorPrincipal = normalize(command.actorPrincipal());
     if (controlPlaneRequestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different activation request");
-      }
-      return new ActivationResult(previous, previous, controlPlaneRequestId);
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable activation request history");
     }
     GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
     if (matches(state, command.targetPluginVersionId(), PluginState.PLUGIN_STATE_ENABLED)) {
@@ -347,30 +439,73 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   }
 
   @Override
-  @Transactional
   public PolicyReconciliationResult reconcileActivePluginPolicy(int maxItems) {
     int limit = Math.max(1, maxItems);
     List<PluginRuntimeState> activeStates =
         repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit));
+    List<PolicyDecision> policyDecisions =
+        activeStates.stream()
+            .map(
+                state ->
+                    new PolicyDecision(
+                        state,
+                        disableReasonForCurrentPolicy(
+                            gameDesignControlPlaneClient.getPublishedPluginVersion(
+                                state.getTenantId(),
+                                state.getPluginId(),
+                                normalize(state.getActivePluginVersionId())))))
+            .toList();
+    List<PolicyDecision> decisions =
+        policyDecisions.stream()
+            .map(
+                decision -> {
+                  GetGameInstanceRuntimeStateResponse runtime =
+                      decision.disableReason().isEmpty()
+                          ? null
+                          : gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                              decision.snapshot().getTenantId(),
+                              decision.snapshot().getGameInstanceId(),
+                              normalize(decision.snapshot().getRuntimeRegionId()));
+                  return new PolicyDecision(decision.snapshot(), decision.disableReason(), runtime);
+                })
+            .toList();
     Instant now = Instant.now();
     int disabledCount = 0;
-    for (PluginRuntimeState state : activeStates) {
-      Optional<String> disableReason =
-          disableReasonForCurrentPolicy(
-              gameDesignControlPlaneClient.getPublishedPluginVersion(
-                  state.getTenantId(),
-                  state.getPluginId(),
-                  normalize(state.getActivePluginVersionId())));
-      if (disableReason.isPresent()) {
-        disableForPolicy(state, disableReason.get(), now);
+    for (PolicyDecision decision :
+        decisions.stream()
+            .sorted(
+                Comparator.comparing((PolicyDecision decision) -> decision.snapshot().getTenantId())
+                    .thenComparing(decision -> decision.snapshot().getGameInstanceId())
+                    .thenComparing(decision -> decision.snapshot().getPluginId()))
+            .toList()) {
+      boolean disabled =
+          Boolean.TRUE.equals(
+              policyDecisionTransactions.execute(status -> applyPolicyDecision(decision, now)));
+      if (disabled) {
         disabledCount++;
-      } else {
-        state.setLastPolicyCheckedAt(now);
-        repository.save(state);
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
+  }
+
+  private boolean applyPolicyDecision(PolicyDecision decision, Instant now) {
+    PluginRuntimeState state = decision.snapshot();
+    if (decision.disableReason().isPresent()) {
+      return disableForPolicy(
+          state, decision.disableReason().orElseThrow(), decision.runtimeState(), now);
+    }
+    markPolicyCheckedIfCurrent(state, now);
+    return false;
+  }
+
+  private record PolicyDecision(
+      PluginRuntimeState snapshot,
+      Optional<String> disableReason,
+      GetGameInstanceRuntimeStateResponse runtimeState) {
+    private PolicyDecision(PluginRuntimeState snapshot, Optional<String> disableReason) {
+      this(snapshot, disableReason, null);
+    }
   }
 
   @Override
@@ -457,7 +592,25 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     };
   }
 
-  private void disableForPolicy(PluginRuntimeState state, String reason, Instant now) {
+  private boolean disableForPolicy(
+      PluginRuntimeState snapshot,
+      String reason,
+      GetGameInstanceRuntimeStateResponse runtime,
+      Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
+      return false;
+    }
     String previous = normalize(state.getActivePluginVersionId());
     String previousState = normalize(state.getPluginState());
     long previousPluginActivationEpoch = state.getPluginActivationEpoch();
@@ -504,7 +657,28 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestId()),
         normalize(saved.getActorPrincipal()),
         now);
-    reconcileSchedules(saved);
+    reconcileSchedules(saved, runtime);
+    return true;
+  }
+
+  private boolean markPolicyCheckedIfCurrent(PluginRuntimeState snapshot, Instant now) {
+    repository.lockLifecycleScope(
+        snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId());
+    PluginRuntimeState state =
+        repository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                snapshot.getTenantId(), snapshot.getGameInstanceId(), snapshot.getPluginId())
+            .orElse(null);
+    if (state == null
+        || !PluginState.PLUGIN_STATE_ENABLED.name().equals(normalize(state.getPluginState()))
+        || state.getPluginActivationEpoch() != snapshot.getPluginActivationEpoch()
+        || !normalize(state.getActivePluginVersionId())
+            .equals(normalize(snapshot.getActivePluginVersionId()))) {
+      return false;
+    }
+    state.setLastPolicyCheckedAt(now);
+    repository.save(state);
+    return true;
   }
 
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> activeStates) {
@@ -546,11 +720,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                         command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
     String previous = normalize(state.getActivePluginVersionId());
     if (requestId.equals(normalize(state.getControlPlaneRequestId()))) {
-      if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
-        throw new IllegalArgumentException(
-            "control_plane_request_id already records a different plugin state request");
-      }
-      return true;
+      throw new IllegalArgumentException(
+          "control_plane_request_id has no immutable plugin state request history");
     }
     if (targetState.name().equals(state.getPluginState())) {
       recordRequest(
@@ -624,6 +795,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
             state.getTenantId(), state.getGameInstanceId(), normalize(state.getRuntimeRegionId()));
+    reconcileSchedules(state, runtime);
+  }
+
+  private void reconcileSchedules(
+      PluginRuntimeState state, GetGameInstanceRuntimeStateResponse runtime) {
     if (runtime == null) {
       logger.warn(
           "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state client returned null",

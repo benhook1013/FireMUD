@@ -120,7 +120,7 @@ public class AutomationScriptingGrpcService
         workItemRepository,
         formationService,
         meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   @SuppressFBWarnings(
@@ -377,6 +377,7 @@ public class AutomationScriptingGrpcService
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
               request.getVersion(),
+              request.getBaseVersionId(),
               request.getDefinition(),
               request.getEventBindingsList().stream()
                   .map(
@@ -475,10 +476,19 @@ public class AutomationScriptingGrpcService
   private static PublicationDigestRequestBinding publicationBinding(
       GetDraftDesignDigestRequest request) {
     return switch (request.getScopeCase()) {
-      case VERSION_ID -> fullPublicationBinding(request);
-      case SCRIPT_PATCH_VERSION ->
-          PublicationDigestRequestBinding.patch(
+      case VERSION_ID ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
               request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+              request.getTenantId(),
+              request.getVersionId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getPublishRequestId());
@@ -492,26 +502,6 @@ public class AutomationScriptingGrpcService
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
-  }
-
-  private static PublicationDigestRequestBinding fullPublicationBinding(
-      GetDraftDesignDigestRequest request) {
-    if (!request.getBaseVersionId().isEmpty()) {
-      throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-    }
-    return PublicationDigestRequestBinding.full(
-        request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
   }
 
   @Override
@@ -559,7 +549,10 @@ public class AutomationScriptingGrpcService
         return;
       }
       scriptVersionService.notifyUpdate(
-          request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+          request.getTenantId(),
+          request.getBaseVersionId(),
+          request.getScriptPatchVersion(),
+          request.getAffectedScriptsList());
       response.setSuccess(true);
     } catch (IllegalArgumentException ex) {
       response

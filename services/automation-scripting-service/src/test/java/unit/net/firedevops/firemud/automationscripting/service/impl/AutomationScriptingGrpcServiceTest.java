@@ -108,6 +108,59 @@ class AutomationScriptingGrpcServiceTest {
     SessionContext.clear();
   }
 
+  private AutomationScriptingGrpcService configuredService(
+      String workloadNamespace, ScriptDesignDigestService digestService) {
+    return new AutomationScriptingGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(ScriptDefinitionService.class),
+        digestService,
+        Mockito.mock(ScriptVersionService.class),
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        Mockito.mock(ScriptEventIngressService.class),
+        Mockito.mock(ScriptWorkItemRepository.class),
+        Mockito.mock(NpcFormationService.class),
+        new SimpleMeterRegistry(),
+        workloadNamespace);
+  }
+
+  @Test
+  void missingOrInvalidConfiguredWorkloadNamespaceDeniesDigestReadBeforeOwnerRead() {
+    for (String workloadNamespace : new String[] {null, "", " ", "not a namespace"}) {
+      ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+      AutomationScriptingGrpcService service = configuredService(workloadNamespace, digestService);
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+      Mockito.verifyNoInteractions(digestService);
+    }
+
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    runAsGameDesign(
+        () ->
+            assertEquals(
+                "PERMISSION_DENIED",
+                invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    Mockito.verifyNoInteractions(digestService);
+  }
+
   @Test
   void getDraftDesignDigestRejectsUnmappedVersionScope() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -198,6 +251,22 @@ class AutomationScriptingGrpcServiceTest {
 
     assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(scriptDesignDigestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsInactiveBaseVersionForFullScope() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    GetDraftDesignDigestRequest request =
+        fullDigestRequest("1", "7").toBuilder().setBaseVersionId("6").build();
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(() -> ref.set(invokeDigest(service, request)));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
@@ -646,7 +715,7 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new IllegalArgumentException("schedule_interval_ticks_required"))
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -663,6 +732,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -730,7 +800,7 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new ScriptIngressInProgressException())
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -748,6 +818,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -884,6 +955,7 @@ class AutomationScriptingGrpcServiceTest {
     service.updateScript(
         UpdateScriptRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setName("guard-script")
             .setVersion("v1")
             .setDefinition("{}")

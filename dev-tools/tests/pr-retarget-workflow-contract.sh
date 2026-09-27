@@ -883,7 +883,7 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
 done
-assert_job_contains runtime-images.yml pr-local-smoke 'timeout-minutes: 25'
+assert_job_contains runtime-images.yml pr-local-smoke 'timeout-minutes: 45'
 
 for job in build-base-image build-runtime-images smoke-full; do
   assert_job_contains runtime-images.yml "$job" "github.event_name != 'pull_request'"

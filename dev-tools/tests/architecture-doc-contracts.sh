@@ -1859,7 +1859,10 @@ require_contains(
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces now provide durable exact-scope request-result acknowledgement and matching readback",
+        "`SetAutomationAdmissionMode` persists the successful exact-scope request result and resulting admission epoch",
+        "`GetAutomationDrainStatus` returns the request ID, target mode, immutable fingerprint, outcome, and acknowledgement timestamp",
+        "the response does not expose the acknowledged resulting epoch separately",
+        "The acknowledged epoch therefore cannot be matched in current readback, and recovery must fail closed",
         "Matching Set/Get evidence is required but is not complete recovery authorization",
         "exact pin-epoch, process-cessation, and safe-rebuild proof remain unavailable",
         "deployment-wide Automation containment only with explicit impact approval",
@@ -1869,7 +1872,8 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "durable exact-scope successful acknowledgement/readback",
+        "the read does not expose the acknowledgement's resulting epoch as a separate field",
+        "keep the fence in place and fail closed",
         "do not treat a successful RPC response, admission mode/epoch, fresh `observedAt`, or zero drain counts alone as proof of recovery containment",
         "overall queue recovery/resume path still lacks exact pin-epoch, process-cessation, and rebuild proof",
         "deployment-wide Automation containment only with explicit impact approval",
@@ -2111,6 +2115,26 @@ require_absent(
         "service startup for each region to converge",
     ],
 )
+for tick_commit_path in (
+    "design/architecture/system-architecture-tick-execution-flows.md",
+    "design/architecture/system-architecture-ticks.md",
+):
+    require_contains(
+        tick_commit_path,
+        [
+            "current-epoch commit predicate: terminal (`APPLIED` or `ABANDONED`) evidence",
+            "every required participant in that tick's complete expected current-epoch participant set",
+            "Inconclusive old-epoch rows remain non-terminal reconciliation work outside this current-epoch commit predicate",
+            "may still block unsafe next-tick progression, reset-scope convergence, or reopening",
+        ],
+    )
+    require_absent(
+        tick_commit_path,
+        [
+            "An inconclusive old-epoch row remains non-terminal and blocks this advancement",
+            "inconclusive old-epoch work remains non-terminal and prevents this boundary",
+        ],
+    )
 
 automation_base = (root / "k8s/base/automation-scripting-service.yaml").read_text(encoding="utf-8")
 game_design_base = (root / "k8s/base/game-design-service.yaml").read_text(encoding="utf-8")
@@ -2139,24 +2163,79 @@ if not re.search(
     raise SystemExit(
         "k8s/base/game-design-service.yaml: Game Design Deployment must use Recreate"
     )
-if not re.search(
-    r'(?ms)^\s*\{\{- if or \(eq \$service\.name "tcp-proxy-service"\) '
-    r'\(eq \$service\.name "automation-scripting-service"\) '
-    r'\(eq \$service\.name "game-design-service"\) \}\}.*?'
-    r'^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$',
-    automation_helm,
-):
-    raise SystemExit(
-        "k8s/helm/firemud/templates/apps.yaml: Automation, Game Design, and TCP Proxy Recreate gate drifted"
+automation_recreate_condition = (
+    '{{- if or (eq $service.name "tcp-proxy-service") '
+    '(eq $service.name "account-service") '
+    '(eq $service.name "game-session-service") '
+    '(eq $service.name "automation-scripting-service") '
+    '(eq $service.name "game-design-service") }}'
+)
+
+
+def helm_conditional_block(template, opening_line):
+    lines = template.splitlines(keepends=True)
+    opening_index = next(
+        (index for index, line in enumerate(lines) if line.strip() == opening_line),
+        None,
     )
+    if opening_index is None:
+        return None
+    block_lines = []
+    depth = 0
+    control = re.compile(r"\{\{-?\s*(if|range|with|block|define|end)\b")
+    for line in lines[opening_index:]:
+        block_lines.append(line)
+        for match in control.finditer(line):
+            depth += -1 if match.group(1) == "end" else 1
+            if depth == 0:
+                return "".join(block_lines)
+    return None
+
+
+def has_automation_recreate_gate(template):
+    block = helm_conditional_block(template, automation_recreate_condition)
+    return block is not None and re.search(
+        r"(?m)^\s+strategy:\n\s+type: Recreate\s*$",
+        block,
+    ) is not None
+
+
+if not has_automation_recreate_gate(automation_helm):
+    raise SystemExit(
+        "k8s/helm/firemud/templates/apps.yaml: TCP Proxy, Account, Game Session, Automation, and Game Design Recreate gate drifted"
+    )
+
+recreate_strategy_block = "  strategy:\n    type: Recreate\n  {{- end }}\n  selector:"
+if recreate_strategy_block not in automation_helm:
+    raise SystemExit("k8s/helm/firemud/templates/apps.yaml: Recreate regression fixture could not be built")
+recreate_outside_gate = automation_helm.replace(
+    recreate_strategy_block,
+    "  {{- end }}\n  selector:",
+    1,
+)
+recreate_outside_gate += (
+    '\n{{- if eq $service.name "unrelated-service" }}\n'
+    "  strategy:\n    type: Recreate\n  {{- end }}\n"
+)
+unsafe_crossing_pattern = re.compile(
+    re.escape(automation_recreate_condition)
+    + r".*?^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$",
+    re.MULTILINE | re.DOTALL,
+)
+if unsafe_crossing_pattern.search(recreate_outside_gate) is None:
+    raise SystemExit("architecture-doc-contracts.sh: negative Recreate fixture stopped reproducing the old regex escape")
+if has_automation_recreate_gate(recreate_outside_gate):
+    raise SystemExit("architecture-doc-contracts.sh: Recreate gate accepted a strategy outside its five-service block")
+
 require_contains(
     "k8s/helm/firemud/templates/apps.yaml",
     [
-        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "automation-scripting-service") (eq $service.name "game-design-service") }}',
+        automation_recreate_condition,
         "  strategy:\n    type: Recreate",
         "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
         "# V3 changes the persisted plugin lifecycle fence; executor generations",
         "# V26 changes the persisted publication participant scope; old and new",
+        "# Account and Game Session writers must not overlap across the V2 migration boundary.",
     ],
 )
 for path, text in (

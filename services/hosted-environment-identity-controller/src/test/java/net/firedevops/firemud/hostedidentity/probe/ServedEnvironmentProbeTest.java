@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
@@ -393,22 +394,44 @@ class ServedEnvironmentProbeTest {
   void internalGrpcProbeCompletesMutualTlsWithFixedCaHostnameAndLeafPin() throws Exception {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    Secret material = generatedMaterial(plan);
-    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
-    String leaf = fingerprint(material.getData().get("tls.crt"));
+    List<Secret> materials = GrpcMaterialFixture.generateDistinctLeavesWithSharedCa(plan);
+    Secret accountServerMaterial = materials.get(0);
+    Secret genericClientMaterial = materials.get(1);
+    String trustAnchor = fingerprint(accountServerMaterial.getData().get("ca.crt"));
+    String accountLeaf = fingerprint(accountServerMaterial.getData().get("tls.crt"));
+    String genericLeaf = fingerprint(genericClientMaterial.getData().get("tls.crt"));
     String identityHostname = "account-service.pr-42.svc.cluster.local";
+    assertEquals(
+        accountServerMaterial.getData().get("ca.crt"),
+        genericClientMaterial.getData().get("ca.crt"));
+    assertNotEquals(accountLeaf, genericLeaf);
 
-    try (SSLServerSocket server = mutualTlsServer(material, trustAnchor, "h2")) {
+    try (SSLServerSocket server = mutualTlsServer(accountServerMaterial, trustAnchor, "h2")) {
       CompletableFuture<Void> accepted = acceptOne(server);
       try (SSLSocket client =
           ServedEnvironmentProbe.openGrpcTlsSocket(
               InetAddress.getLoopbackAddress().getHostAddress(),
               identityHostname,
               server.getLocalPort(),
-              leaf,
-              material,
+              accountLeaf,
+              genericClientMaterial,
               trustAnchor)) {
         assertNotNull(client);
+      }
+      accepted.get(10, TimeUnit.SECONDS);
+    }
+
+    try (SSLServerSocket server = mutualTlsServer(accountServerMaterial, trustAnchor, "h2")) {
+      CompletableFuture<Void> accepted = acceptOne(server);
+      try (SSLSocket client =
+          ServedEnvironmentProbe.openGrpcTlsSocket(
+              InetAddress.getLoopbackAddress().getHostAddress(),
+              identityHostname,
+              server.getLocalPort(),
+              genericLeaf,
+              genericClientMaterial,
+              trustAnchor)) {
+        assertNull(client);
       }
       accepted.get(10, TimeUnit.SECONDS);
     }

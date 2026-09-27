@@ -15,7 +15,7 @@ from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
 from .runtime import default_controller
-from .state import SummaryFindingDisposition
+from .state import FindingRoute, SummaryFindingDisposition
 
 
 class CliError(RuntimeError):
@@ -71,6 +71,17 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="show live stack or one-PR status")
     status.add_argument("--pr", type=_positive_int)
     status.add_argument("--json", action="store_true", dest="as_json")
+    status.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="deeply fetch and reconcile every configured PR",
+    )
+
+    routes = commands.add_parser("routes", help="list open incoming or unassigned finding routes")
+    route_query = routes.add_mutually_exclusive_group(required=True)
+    route_query.add_argument("--target-pr", type=_positive_int)
+    route_query.add_argument("--unassigned", action="store_true")
+    routes.add_argument("--json", action="store_true", dest="as_json")
 
     run = commands.add_parser("run", help="run the automatically selected review target")
     run_commands = run.add_subparsers(dest="run_command", required=True)
@@ -104,22 +115,64 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
     allocation = decide_commands.add_parser(
-        "allocation", help="grant, renew, cancel, or hand off one exact-bound channel review allocation"
+        "allocation", help="grant, renew, or cancel one exact-bound channel review allocation"
     )
-    allocation.add_argument("action", choices=("grant", "renew", "cancel", "handoff"))
+    allocation.add_argument("action", choices=("grant", "renew", "cancel"))
     allocation.add_argument("--pr", required=True, type=_positive_int)
     allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
     allocation.add_argument("--head", required=True, type=_exact_sha)
+    allocation.add_argument(
+        "--checkpoint",
+        help="optional completed attributable checkpoint to pin the allocation decision",
+    )
+    allocation.add_argument(
+        "--min-additional-completed",
+        type=_nonnegative_int,
+        metavar="N",
+        help="minimum additional completed attributable results after the decision (max-only defaults to 0)",
+    )
+    allocation.add_argument(
+        "--max-additional-completed",
+        type=_positive_int,
+        metavar="N",
+        help="maximum additional completed attributable results after the decision",
+    )
     allocation.add_argument("--reason", required=True)
-    allocation.add_argument("--checkpoint")
-    allocation.add_argument("--validation")
     allocation.add_argument("--json", action="store_true", dest="as_json")
+    stop = decide_commands.add_parser(
+        "stop", help="record a human decision to stop new review discovery on one channel"
+    )
+    stop.add_argument("--pr", required=True, type=_positive_int)
+    stop.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    stop.add_argument("--reason", required=True)
+    stop.add_argument("--head", type=_exact_sha)
+    stop.add_argument("--checkpoint")
+    stop.add_argument("--retain-ambiguous-fingerprint", action="append", default=[])
+    stop.add_argument("--ambiguity-reason")
+    stop.add_argument(
+        "--acknowledge-over-ceiling",
+        action="store_true",
+        help="acknowledge only current-head over-ceiling skip evidence for a direct human stop; requires --head",
+    )
+    stop.add_argument("--json", action="store_true", dest="as_json")
+    route = decide_commands.add_parser("route", help="record or disposition one stable routed finding")
+    route.add_argument("action", choices=("open", "accepted-fixed", "rejected", "retargeted"))
+    route.add_argument("--route-id")
+    route.add_argument("--source-pr", type=_positive_int)
+    route.add_argument("--channel", choices=("hosted", "cli"))
+    route.add_argument("--review")
+    route.add_argument("--finding")
+    route.add_argument("--observation")
+    route.add_argument("--target-pr", type=_positive_int)
+    route.add_argument("--reason")
+    route.add_argument("--proof")
+    route.add_argument("--json", action="store_true", dest="as_json")
     summary_disposition = decide_commands.add_parser(
         "summary-disposition",
         help="adjudicate one exact CodeRabbit summary-only finding bucket",
     )
     summary_disposition.add_argument(
-        "decision", choices=("rejected", "accepted-unfixed", "accepted-fixed")
+        "decision", choices=("rejected", "accepted-unfixed", "accepted-fixed", "routed")
     )
     summary_disposition.add_argument("--pr", required=True, type=_positive_int)
     summary_disposition.add_argument("--head", required=True, type=_exact_sha)
@@ -129,6 +182,9 @@ def _parser() -> argparse.ArgumentParser:
     summary_disposition.add_argument("--count", required=True, type=_positive_int)
     summary_disposition.add_argument("--reason", required=True)
     summary_disposition.add_argument("--corrected-head", type=_exact_sha)
+    summary_disposition.add_argument("--target-pr", type=_positive_int)
+    summary_disposition.add_argument("--route-finding", action="append", default=[])
+    summary_disposition.add_argument("--route-observation", action="append", default=[])
     summary_disposition.add_argument("--json", action="store_true", dest="as_json")
     reconcile = decide_commands.add_parser(
         "reconcile", help="reopen review against one exact coherent current stack anchor"
@@ -213,27 +269,70 @@ def _render(value: Any, as_json: bool = False) -> str:
     return str(value)
 
 
+def _render_status_overview(report: Mapping[str, Any]) -> str:
+    window = report.get("detail_window", {})
+    lines = [
+        (
+            f"review stack: {report.get('status', 'UNKNOWN')} · "
+            f"detail window={len(window.get('deep_prs', []))}/{window.get('unmerged_limit', 4)} unmerged"
+        )
+    ]
+    for item in report.get("prs", []):
+        channels = item.get("channels", {})
+        lines.append(
+            f"#{item.get('pr')} {item.get('state', 'UNKNOWN')} · head={str(item.get('head') or 'unknown')[:12]} · "
+            f"Hosted={channels.get('hosted', 'UNKNOWN')} · CLI={channels.get('cli', 'UNKNOWN')} · "
+            f"evidence={item.get('evidence_status', 'unknown')} ({item.get('detail_level', 'unknown')})"
+        )
+    if window.get("active_target_error"):
+        lines.append(f"active target scan: unknown · {window['active_target_error']}")
+    if window.get("deep_error"):
+        lines.append(f"deep evidence: unavailable · {window['deep_error']}")
+    if window.get("reason"):
+        lines.append(f"live identity batch: unavailable · {window['reason']}")
+    return "\n".join(lines)
+
+
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     controller, fixture = _controller(args)
     if args.command == "stack":
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
         return value, 0
 
+    if args.command == "routes":
+        return controller.list_routes(target_pr=args.target_pr, unassigned=args.unassigned), 0
+
     if args.command == "status":
         if args.pr is None:
-            return fixture.status(controller) if fixture is not None else controller.status(), 0
+            if fixture is not None:
+                return fixture.status(controller), 0
+            if args.full_scan:
+                report = controller.status()
+                return (report if args.as_json else _render(report)), 0
+            report = controller.status_overview()
+            return (report if args.as_json else _render_status_overview(report)), 0
         if fixture is not None:
             return fixture.status(controller, args.pr), 0
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
         report = status_module.status(args.pr, summary_dispositions=summary_dispositions)
-        stack_report = controller.status()
+        stack_report = controller.status() if args.full_scan else controller.status_for_pr(args.pr)
         report["review_stack"] = stack_report
         stack_item = next((item for item in stack_report.get("prs", []) if item.get("pr") == args.pr), None)
+        incoming_routes = (
+            stack_item.get("incoming_routes", []) if stack_item is not None else stack_report.get("incoming_routes", [])
+        )
+        outgoing_routes = stack_item.get("routes_out", []) if stack_item is not None else stack_report.get("routes_out", [])
+        report["incoming_routes"] = incoming_routes
+        report["routes_out"] = outgoing_routes
         review_reasons: list[str] = []
         if stack_item is None:
             review_reasons.append("PR is not configured in the repository review stack")
         else:
+            if incoming_routes:
+                review_reasons.append(
+                    f"{len(incoming_routes)} open incoming routed finding(s) require target-owner disposition"
+                )
             pull_request = report.get("pull_request", {})
             snapshot_matches = (
                 pull_request.get("headRefOid") == stack_item.get("head")
@@ -245,10 +344,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
             for channel, state in stack_item["channels"].items():
-                if state != "COMPLETE":
+                if state == "HUMAN_STOPPED":
+                    review_reasons.append(
+                        f"{channel} review discovery was explicitly stopped; this is not taper or merge-readiness proof"
+                    )
+                elif state != "COMPLETE":
                     review_reasons.append(f"{channel} review policy is {state}")
             for channel, allocation in stack_item.get("allocations", {}).items():
-                if allocation["status"] != "HANDED_OFF":
+                if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
                     review_reasons.append(
                         f"{channel} review allocation is {allocation['status']}: {allocation['reason']}"
                     )
@@ -296,6 +399,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 raise CliError("accepted-fixed summary disposition requires --corrected-head")
             if decision != "accepted_fixed" and args.corrected_head is not None:
                 raise CliError("--corrected-head is valid only for accepted-fixed summary disposition")
+            if decision != "routed" and args.target_pr is not None:
+                raise CliError("--target-pr is valid only for routed summary disposition")
+            if decision != "routed" and (args.route_finding or args.route_observation):
+                raise CliError("route finding references and observations are valid only for routed disposition")
             payload = github.fetch_pull_request(controller.repository, args.pr)
             pull_request = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
             if not isinstance(pull_request, Mapping):
@@ -322,6 +429,23 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 for finding in selected.get("findings", [])
             ):
                 raise CliError("the exact summary does not contain the requested finding kind and count")
+            routes = []
+            if decision == "routed":
+                if len(args.route_finding) != args.count or len(args.route_observation) != args.count:
+                    raise CliError("routed summary disposition requires one stable finding reference and observation per item")
+                if len(set(args.route_finding)) != len(args.route_finding):
+                    raise CliError("routed summary finding references must be unique")
+                routes = [
+                    FindingRoute(
+                        source_pr=args.pr,
+                        source_channel="hosted",
+                        source_review=f"summary:{args.source}:{args.summary_id}",
+                        source_finding=f"{args.kind}:{args.count}:{finding_ref}",
+                        observations=(observation,),
+                        target_pr=args.target_pr,
+                    )
+                    for finding_ref, observation in zip(args.route_finding, args.route_observation, strict=True)
+                ]
             disposition = SummaryFindingDisposition(
                 pr=args.pr,
                 head=args.head,
@@ -332,14 +456,65 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 decision=decision,
                 reason=args.reason,
                 corrected_head=args.corrected_head,
+                route_ids=tuple(item.route_id for item in routes),
             )
 
             def record(current):
                 retained = tuple(item for item in current.summary_dispositions if item.identity != disposition.identity)
-                return dataclasses.replace(current, summary_dispositions=(*retained, disposition))
+                stored_routes = current.routes
+                for route in routes:
+                    existing = next((item for item in stored_routes if item.route_id == route.route_id), None)
+                    if existing is None:
+                        stored_routes = (*stored_routes, route)
+                    elif existing.status != "open":
+                        raise CliError(f"stable summary route {route.route_id} is already dispositioned")
+                    else:
+                        if existing.target_pr is not None and args.target_pr not in (None, existing.target_pr):
+                            raise CliError("an existing route must be explicitly retargeted")
+                        observations = existing.observations
+                        for observation in route.observations:
+                            if observation not in observations:
+                                observations = (*observations, observation)
+                        updated = dataclasses.replace(
+                            existing,
+                            observations=observations,
+                            target_pr=args.target_pr if existing.target_pr is None else existing.target_pr,
+                        )
+                        stored_routes = tuple(
+                            updated if item.route_id == updated.route_id else item for item in stored_routes
+                        )
+                return dataclasses.replace(
+                    current,
+                    summary_dispositions=(*retained, disposition),
+                    routes=stored_routes,
+                )
 
             controller.store.update(record)
             return {"status": "recorded", "disposition": disposition.to_dict()}, 0
+        if args.decide_command == "route":
+            if args.action == "open":
+                required = (args.source_pr, args.channel, args.review, args.finding, args.observation)
+                if any(value is None for value in required) or args.route_id or args.reason or args.proof:
+                    raise CliError(
+                        "route open requires --source-pr, --channel, --review, --finding, and --observation"
+                    )
+                return controller.record_route(
+                    source_pr=args.source_pr,
+                    source_channel=args.channel,
+                    source_review=args.review,
+                    source_finding=args.finding,
+                    observation=args.observation,
+                    target_pr=args.target_pr,
+                ), 0
+            if not args.route_id or args.source_pr or args.channel or args.review or args.finding or args.observation:
+                raise CliError("route disposition requires --route-id and no source identity arguments")
+            return controller.decide_route(
+                route_id=args.route_id,
+                decision=args.action,
+                reason=args.reason,
+                proof=args.proof,
+                target_pr=args.target_pr,
+            ), 0
         if args.decide_command == "trigger-recover-prepost":
             if not args.confirmed_not_posted:
                 raise CliError("pre-POST recovery requires --confirmed-not-posted operator assertion")
@@ -423,7 +598,19 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 head=args.head,
                 reason=args.reason,
                 checkpoint=args.checkpoint,
-                validation=args.validation,
+                min_additional_completed=args.min_additional_completed,
+                max_additional_completed=args.max_additional_completed,
+            ), 0
+        if args.decide_command == "stop":
+            return controller.decide_stop(
+                pr=args.pr,
+                channel=args.channel,
+                reason=args.reason,
+                head=args.head,
+                checkpoint=args.checkpoint,
+                retain_ambiguous_fingerprints=args.retain_ambiguous_fingerprint,
+                ambiguity_reason=args.ambiguity_reason,
+                acknowledge_over_ceiling=args.acknowledge_over_ceiling,
             ), 0
         if args.decide_command == "reconcile":
             return controller.decide_reconciliation(

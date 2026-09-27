@@ -31,6 +31,7 @@ public class ScriptEventIngressAudit {
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
+  private Long scriptPatchBaseVersionId;
 
   /** SHA-256 digest of the normalized event-scope request inputs bound to this claim. */
   private String requestDigest = "";

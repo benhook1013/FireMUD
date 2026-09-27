@@ -44,6 +44,17 @@ final class ScriptWorkItemFenceEvaluationSupport {
     if (workItem.getScriptPinEpoch() != state.getScriptPinEpoch()) {
       return "script_pin_epoch_mismatch";
     }
+    String capturedPinRequestId = workItem.getScriptPinControlPlaneRequestId();
+    String runtimePinRequestId = state.getScriptPatchPinnedControlPlaneRequestId();
+    if (capturedPinRequestId == null
+        || capturedPinRequestId.isBlank()
+        || runtimePinRequestId == null
+        || runtimePinRequestId.isBlank()) {
+      return "script_pin_owner_request_unavailable";
+    }
+    if (!capturedPinRequestId.equals(runtimePinRequestId)) {
+      return "script_pin_owner_request_mismatch";
+    }
     if (!Objects.equals(workItem.getRegionId(), state.getRegionId())
         || !workItem.getRegionEpoch().equals(state.getRegionEpoch())) {
       return "runtime_scope_changed";
@@ -56,6 +67,9 @@ final class ScriptWorkItemFenceEvaluationSupport {
     String pluginId = normalize(workItem.getPluginId());
     String pluginVersionId = normalize(workItem.getPluginVersionId());
     if (pluginId.isBlank() && pluginVersionId.isBlank()) {
+      if (workItem.getPluginActivationEpoch() != 0L || workItem.getLifecycleRevision() != 0L) {
+        return "plugin_binding_mismatch";
+      }
       return null;
     }
     if (pluginId.isBlank() || pluginVersionId.isBlank()) {
@@ -74,6 +88,8 @@ final class ScriptWorkItemFenceEvaluationSupport {
       PluginState pluginState,
       long pluginActivationEpoch,
       long lifecycleRevision) {
+    // A predecessor revision alone cannot authorize DRAINING without durable winning-admission
+    // and barrier-order proof, which this local fence evaluation does not receive.
     if (pluginState != PluginState.PLUGIN_STATE_ENABLED) {
       return "plugin_disabled";
     }
