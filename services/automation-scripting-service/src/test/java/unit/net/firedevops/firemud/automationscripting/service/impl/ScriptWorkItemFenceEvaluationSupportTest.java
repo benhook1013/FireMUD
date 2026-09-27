@@ -4,9 +4,51 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.Test;
 
 class ScriptWorkItemFenceEvaluationSupportTest {
+  @Test
+  void acceptsRuntimeStateWhenCapturedPinOwnerRequestMatches() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(
+                workItem, runtimeState("pin-request-1")))
+        .isNull();
+  }
+
+  @Test
+  void rejectsRuntimeStateWhenCapturedPinOwnerRequestIsMissing() {
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(
+                runtimeWorkItem(), runtimeState("pin-request-1")))
+        .isEqualTo("script_pin_owner_request_unavailable");
+  }
+
+  @Test
+  void rejectsRuntimeStateWhenAuthoritativePinOwnerRequestIsMissing() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(workItem, runtimeState(" ")))
+        .isEqualTo("script_pin_owner_request_unavailable");
+  }
+
+  @Test
+  void rejectsRuntimeStateWhenCapturedPinOwnerRequestDiffers() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(
+                workItem, runtimeState("pin-request-2")))
+        .isEqualTo("script_pin_owner_request_mismatch");
+  }
+
   @Test
   void acceptsFirstPartyWorkItemWithoutPluginFence() {
     ScriptWorkItem workItem = runtimeWorkItem();
@@ -160,5 +202,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
     workItem.setScriptPatchVersion("patch-1");
     workItem.setScriptPinEpoch(2L);
     return workItem;
+  }
+
+  private static GetGameInstanceRuntimeStateResponse runtimeState(String pinRequestId) {
+    return GetGameInstanceRuntimeStateResponse.newBuilder()
+        .setRuntimeState(
+            GameInstanceRuntimeState.newBuilder()
+                .setTenantId("tenant-1")
+                .setGameInstanceId("game-1")
+                .setPinnedScriptPatchVersion("patch-1")
+                .setScriptPinEpoch(2L)
+                .setScriptPatchPinnedControlPlaneRequestId(pinRequestId)
+                .setRegionId("region-1")
+                .setRegionEpoch(3L)
+                .build())
+        .build();
   }
 }

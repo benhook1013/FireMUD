@@ -753,7 +753,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         || !blankToEmpty(command.regionId()).isBlank()
         || !blankToEmpty(command.scriptPatchVersion()).isBlank()
         || command.createdAfterMs() > 0
-        || command.createdBeforeMs() > 0) {
+        || command.createdBeforeMs() > 0
+        || command.limit() != 0) {
       throw new IllegalArgumentException("replay_filters_require_preview");
     }
     if (blankToEmpty(command.controlPlaneRequestId()).isBlank()) {

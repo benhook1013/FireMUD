@@ -288,7 +288,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                " 1 ", "", "", List.of("90"), "", 0L, 0L, 10, "req-90", "", ""));
+                " 1 ", "", "", List.of("90"), "", 0L, 0L, 0, "req-90", "", ""));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -345,7 +345,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("90"), "", 0L, 0L, 10, "req-90", "admin", "retry"));
+                "1", "", "", List.of("90"), "", 0L, 0L, 0, "req-90", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -452,6 +452,7 @@ class ScriptWorkItemServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-1")
                         .setPinnedScriptPatchBaseVersionId(7L)
                         .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(3L)
                         .build())
@@ -477,7 +478,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("95"), "", 0L, 0L, 10, "req-95", "admin", "retry"));
+                "1", "", "", List.of("95"), "", 0L, 0L, 0, "req-95", "admin", "retry"));
 
     assertThat(result.replayedCount()).isEqualTo(1L);
     assertThat(originalStage).hasValue("TICK_HANDOFF");
@@ -549,6 +550,7 @@ class ScriptWorkItemServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-1")
                         .setPinnedScriptPatchBaseVersionId(7L)
                         .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(3L)
                         .build())
@@ -574,7 +576,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("96", "97"), "", 0L, 0L, 10, "req-96-97", "admin", "retry"));
+                "1", "", "", List.of("96", "97"), "", 0L, 0L, 0, "req-96-97", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(2L);
@@ -662,7 +664,7 @@ class ScriptWorkItemServiceImplTest {
                 "",
                 0L,
                 0L,
-                10,
+                0,
                 "req-mixed",
                 "admin",
                 "retry"));
@@ -688,7 +690,7 @@ class ScriptWorkItemServiceImplTest {
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        " 1 ", "", "", List.of(), "", 0L, 0L, 10, "req-91", "", "")))
+                        " 1 ", "", "", List.of(), "", 0L, 0L, 0, "req-91", "", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("invalid_work_item_ids");
     verifyNoInteractions(workItemRepository);
@@ -2539,7 +2541,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("77"), "", 0L, 0L, 10, "req-1", "admin", "retry"));
+                "1", "", "", List.of("77"), "", 0L, 0L, 0, "req-1", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2642,7 +2644,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("78"), "", 0L, 0L, 10, "req-1", "admin", "retry"));
+                "1", "", "", List.of("78"), "", 0L, 0L, 0, "req-1", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2714,7 +2716,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("77"), "", 0L, 0L, 10, "req-77", "", ""));
+                "1", "", "", List.of("77"), "", 0L, 0L, 0, "req-77", "", ""));
 
     assertThat(result.replayedCount()).isEqualTo(0L);
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2795,6 +2797,7 @@ class ScriptWorkItemServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-1")
                         .setPinnedScriptPatchBaseVersionId(pinnedBaseVersionId)
                         .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(3L)
                         .build())
@@ -2819,7 +2822,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("79"), "", 0L, 0L, 10, "req-79", "admin", "retry"));
+                "1", "", "", List.of("79"), "", 0L, 0L, 0, "req-79", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2881,7 +2884,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("88"), "", 0L, 0L, 10, "req-1", "admin", "retry"));
+                "1", "", "", List.of("88"), "", 0L, 0L, 0, "req-1", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2938,7 +2941,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("89"), "", 0L, 0L, 10, "req-89", "", ""));
+                "1", "", "", List.of("89"), "", 0L, 0L, 0, "req-89", "", ""));
 
     assertThat(result.replayedCount()).isEqualTo(0L);
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -2985,7 +2988,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("90"), "", 0L, 0L, 10, "req-1", "admin", "retry"));
+                "1", "", "", List.of("90"), "", 0L, 0L, 0, "req-1", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
@@ -3019,7 +3022,7 @@ class ScriptWorkItemServiceImplTest {
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        "1", "", "", List.of("0"), "", 0L, 0L, 10, "", "", "")))
+                        "1", "", "", List.of("0"), "", 0L, 0L, 0, "", "", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("work_item_id must be positive");
     Mockito.verifyNoInteractions(workItemRepository);
@@ -3045,10 +3048,68 @@ class ScriptWorkItemServiceImplTest {
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        "1", "", "", List.of("01", "1"), "", 0L, 0L, 10, "req-duplicate", "", "")))
+                        "1", "", "", List.of("01", "1"), "", 0L, 0L, 0, "req-duplicate", "", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("invalid_work_item_ids");
     Mockito.verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
+  void replayRejectsPreviewLimitBeforeMutationWhenRequestIdIsReusedWithChangedLimit() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptDeadLetterReplayRepository replayRepository =
+        Mockito.mock(ScriptDeadLetterReplayRepository.class);
+    when(replayRepository.insertOrGet(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class)))
+        .thenAnswer(
+            invocation ->
+                new ScriptDeadLetterReplayRepository.ReplayRequest(
+                    1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
+    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            replayRepository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            new SimpleMeterRegistry());
+    List<String> workItemIds = List.of("101", "102");
+
+    service.replayDeadLetters(
+        new ScriptWorkItemService.ReplayDeadLettersCommand(
+            "1", "", "", workItemIds, "", 0L, 0L, 0, "req-limit", "admin", "retry"));
+
+    assertThatThrownBy(
+            () ->
+                service.replayDeadLetters(
+                    new ScriptWorkItemService.ReplayDeadLettersCommand(
+                        "1", "", "", workItemIds, "", 0L, 0L, 1, "req-limit", "admin", "retry")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("replay_filters_require_preview");
+    verify(workItemRepository).findById(101L);
+    verify(workItemRepository).findById(102L);
+    verify(workItemRepository, never()).save(Mockito.any());
+    verify(replayRepository).insertOrGet(
+        Mockito.anyString(),
+        Mockito.eq("req-limit"),
+        Mockito.anyString(),
+        Mockito.anyString(),
+        Mockito.anyString(),
+        Mockito.any(Instant.class));
   }
 
   @Test

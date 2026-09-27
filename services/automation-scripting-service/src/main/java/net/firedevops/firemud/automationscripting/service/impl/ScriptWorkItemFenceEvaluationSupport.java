@@ -44,6 +44,17 @@ final class ScriptWorkItemFenceEvaluationSupport {
     if (workItem.getScriptPinEpoch() != state.getScriptPinEpoch()) {
       return "script_pin_epoch_mismatch";
     }
+    String capturedPinRequestId = workItem.getScriptPinControlPlaneRequestId();
+    String runtimePinRequestId = state.getScriptPatchPinnedControlPlaneRequestId();
+    if (capturedPinRequestId == null
+        || capturedPinRequestId.isBlank()
+        || runtimePinRequestId == null
+        || runtimePinRequestId.isBlank()) {
+      return "script_pin_owner_request_unavailable";
+    }
+    if (!capturedPinRequestId.equals(runtimePinRequestId)) {
+      return "script_pin_owner_request_mismatch";
+    }
     if (!Objects.equals(workItem.getRegionId(), state.getRegionId())
         || !workItem.getRegionEpoch().equals(state.getRegionEpoch())) {
       return "runtime_scope_changed";
