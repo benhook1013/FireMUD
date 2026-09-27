@@ -1615,6 +1615,8 @@ class LiveEvidence:
                     if state.state == "active":
                         anchor = record.get("anchor")
                         observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                        observation["trigger_id"] = state.trigger_comment_id
+                        observation["response_id"] = state.response_id
                     if state.state == "ambiguous":
                         terminal_observation = self._terminal_ambiguous_hosted_observation(
                             pr, record, state, payload
@@ -1631,17 +1633,20 @@ class LiveEvidence:
             (item.comment_id, item.created_at, item.description, item.updated_at)
             for item in scope_changes
         }
-        scope_marker_token = evidence.SCOPE_MARKER.replace("<!--", "").replace("-->", "").strip()
         for comment in comments:
+            author_login = comment.get("author_login")
+            if github.is_coderabbit_login(author_login):
+                continue
             body = comment["body"]
             if not isinstance(body, str):
                 continue
             lines = body.splitlines()
             first = next((line for line in lines if line.strip() and not line[0].isspace()), None)
             scope_heading = evidence.SCOPE_CHANGE.fullmatch(first or "")
+            exact_marker_lines = [line for line in lines[1:] if line == evidence.SCOPE_MARKER]
             looks_like_scope_change = bool(
                 re.match(r"^\*{0,2}review\s+scope\s+changed\b", (first or "").strip(), re.IGNORECASE)
-                or scope_marker_token.casefold() in body.casefold()
+                or any(line == evidence.SCOPE_MARKER for line in lines)
             )
             if not looks_like_scope_change:
                 continue
@@ -1649,7 +1654,11 @@ class LiveEvidence:
             created_at = comment["created_at"]
             updated_at = comment["updated_at"]
             description = scope_heading.group("description") if scope_heading is not None else None
-            valid = (comment_id, created_at, description, updated_at if updated_at != created_at else None) in parsed_scope_changes
+            valid = (
+                len(exact_marker_lines) == 1
+                and (comment_id, created_at, description, updated_at if updated_at != created_at else None)
+                in parsed_scope_changes
+            )
             values.append(
                 {
                     "pr": pr,
@@ -1672,6 +1681,13 @@ class LiveEvidence:
                     "non_counting": True,
                 }
             )
+        global_blockers = self._global_blockers(
+            pr,
+            head,
+            payload,
+            changed_files=live.changed_files,
+            include_hosted_findings=channel == "hosted",
+        )
         values.append(
             {
                 "pr": pr,
@@ -1689,15 +1705,7 @@ class LiveEvidence:
                 "non_counting": True,
             }
         )
-        values.extend(
-            self._global_blockers(
-                pr,
-                head,
-                payload,
-                changed_files=live.changed_files,
-                include_hosted_findings=channel == "hosted",
-            )
-        )
+        values.extend(global_blockers)
         self._histories[key] = values
         return values
 

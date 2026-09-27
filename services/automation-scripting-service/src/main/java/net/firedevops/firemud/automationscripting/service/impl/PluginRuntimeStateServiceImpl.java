@@ -35,7 +35,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @SuppressFBWarnings(
@@ -48,6 +53,14 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private static final String DEFAULT_DISABLED_REASON = "not_activated";
   private static final String OPERATION_ACTIVATE = "ACTIVATE";
   private static final int MAX_CONTROL_PLANE_REQUEST_ID_LENGTH = 128;
+  private static final TransactionOperations DIRECT_TRANSACTION_OPERATIONS =
+      new TransactionOperations() {
+        @Override
+        public <T> T execute(TransactionCallback<T> action) {
+          // Package-private constructors are used by unit tests without a Spring context.
+          return action.doInTransaction(null);
+        }
+      };
 
   private final PluginRuntimeStateRepository repository;
   private final PluginRuntimeEventRepository eventRepository;
@@ -56,6 +69,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final PluginActivationPreflightService pluginActivationPreflightService;
   private final PluginRuntimeRequestHistoryRepository requestHistoryRepository;
+  private final TransactionOperations policyDecisionTransactions;
 
   @Autowired
   public PluginRuntimeStateServiceImpl(
@@ -65,7 +79,28 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       PluginActivationPreflightService pluginActivationPreflightService,
-      PluginRuntimeRequestHistoryRepository requestHistoryRepository) {
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository,
+      PlatformTransactionManager transactionManager) {
+    this(
+        repository,
+        eventRepository,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
+        scriptScheduleInstanceService,
+        pluginActivationPreflightService,
+        requestHistoryRepository,
+        requiresNewTransactions(transactionManager));
+  }
+
+  PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      PluginRuntimeEventRepository eventRepository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      PluginActivationPreflightService pluginActivationPreflightService,
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository,
+      TransactionOperations policyDecisionTransactions) {
     this.repository = repository;
     this.eventRepository = eventRepository;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
@@ -73,6 +108,26 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.pluginActivationPreflightService = pluginActivationPreflightService;
     this.requestHistoryRepository = requestHistoryRepository;
+    this.policyDecisionTransactions = policyDecisionTransactions;
+  }
+
+  PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      PluginRuntimeEventRepository eventRepository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      PluginActivationPreflightService pluginActivationPreflightService,
+      PluginRuntimeRequestHistoryRepository requestHistoryRepository) {
+    this(
+        repository,
+        eventRepository,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
+        scriptScheduleInstanceService,
+        pluginActivationPreflightService,
+        requestHistoryRepository,
+        DIRECT_TRANSACTION_OPERATIONS);
   }
 
   PluginRuntimeStateServiceImpl(
@@ -88,7 +143,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         gameSessionControlPlaneClient,
         scriptScheduleInstanceService,
         (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {},
-        null);
+        null,
+        DIRECT_TRANSACTION_OPERATIONS);
+  }
+
+  private static TransactionOperations requiresNewTransactions(
+      PlatformTransactionManager transactionManager) {
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return template;
   }
 
   @Override
@@ -112,7 +175,30 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(pluginId, "plugin_id");
     return repository
         .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
-        .map(state -> toStatus(state, Map.of()));
+        .map(
+            state -> {
+              try {
+                return toStatus(state, Map.of());
+              } catch (IllegalArgumentException ex) {
+                return new PluginRuntimeStatus(
+                    normalize(state.getActivePluginVersionId()),
+                    normalize(state.getPendingPluginVersionId()),
+                    normalize(state.getRuntimeRegionId()),
+                    zeroIfNull(state.getRuntimeRegionEpoch()),
+                    PluginState.PLUGIN_STATE_UNSPECIFIED,
+                    ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+                    state.getLastChangedAt() == null ? 0L : state.getLastChangedAt().toEpochMilli(),
+                    normalize(state.getControlPlaneRequestId()),
+                    normalize(state.getActorPrincipal()),
+                    state.getLastPolicyCheckedAt() == null
+                        ? 0L
+                        : state.getLastPolicyCheckedAt().toEpochMilli(),
+                    null,
+                    null,
+                    state.getPluginActivationEpoch(),
+                    state.getLifecycleRevision());
+              }
+            });
   }
 
   @Override
@@ -357,7 +443,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   }
 
   @Override
-  @Transactional
   public PolicyReconciliationResult reconcileActivePluginPolicy(int maxItems) {
     int limit = Math.max(1, maxItems);
     List<PluginRuntimeState> activeStates =
@@ -398,17 +483,24 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     .thenComparing(decision -> decision.snapshot().getGameInstanceId())
                     .thenComparing(decision -> decision.snapshot().getPluginId()))
             .toList()) {
-      PluginRuntimeState state = decision.snapshot();
-      if (decision.disableReason().isPresent()) {
-        if (disableForPolicy(
-            state, decision.disableReason().orElseThrow(), decision.runtimeState(), now)) {
-          disabledCount++;
-        }
-      } else {
-        markPolicyCheckedIfCurrent(state, now);
+      boolean disabled =
+          Boolean.TRUE.equals(
+              policyDecisionTransactions.execute(status -> applyPolicyDecision(decision, now)));
+      if (disabled) {
+        disabledCount++;
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
+  }
+
+  private boolean applyPolicyDecision(PolicyDecision decision, Instant now) {
+    PluginRuntimeState state = decision.snapshot();
+    if (decision.disableReason().isPresent()) {
+      return disableForPolicy(
+          state, decision.disableReason().orElseThrow(), decision.runtimeState(), now);
+    }
+    markPolicyCheckedIfCurrent(state, now);
+    return false;
   }
 
   private record PolicyDecision(
