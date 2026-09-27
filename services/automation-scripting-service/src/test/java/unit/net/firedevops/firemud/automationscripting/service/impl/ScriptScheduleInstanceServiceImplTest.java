@@ -252,6 +252,50 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void reconcileObservedRuntimeStateDeletesSchedulesForExactUnpinnedTuple() {
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("")
+            .setScriptPinEpoch(0L)
+            .setPinnedScriptPatchBaseVersionId(0L)
+            .setScriptPatchPinnedControlPlaneRequestId("")
+            .build());
+
+    verify(scheduleInstanceRepository).deleteByTenantIdAndGameInstanceId("1", "game-1");
+    verifyNoInteractions(scheduleDefinitionRepository, bindingRepository);
+  }
+
+  @Test
+  void reconcileObservedRuntimeStateRetainsSchedulesForPartialUnpinnedTuple() {
+    ScriptScheduleInstance retained = wallClockTimerInstance();
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(retained));
+
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("")
+            .setScriptPinEpoch(0L)
+            .setPinnedScriptPatchBaseVersionId(7L)
+            .setScriptPatchPinnedControlPlaneRequestId("")
+            .build());
+
+    verify(scheduleInstanceRepository, never())
+        .deleteByTenantIdAndGameInstanceId("1", "game-1");
+    verify(scheduleInstanceRepository).saveAll(List.of(retained));
+    assertThat(retained.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
+  }
+
+  @Test
   void reconcileObservedRuntimeStateFailsClosedWhenPinnedBaseIsUnknown() {
     GameInstanceRuntimeState runtimeState =
         runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
