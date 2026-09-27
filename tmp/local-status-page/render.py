@@ -825,6 +825,11 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
 .section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}
+.queue-guide {{ margin: -.5rem 0 .65rem; padding: .45rem .65rem; border-left: 3px solid var(--fire); background: var(--paper); color: var(--muted); font-size: .72rem; line-height: 1.35; }}
+.queue-guide h3 {{ margin: 0 0 .3rem; color: var(--ink); font-size: .67rem; letter-spacing: .06em; text-transform: uppercase; }}
+.queue-guide dl {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: .2rem .65rem; margin: 0; }}
+.queue-guide dl > div {{ display: flex; gap: .25rem; min-width: 0; }} .queue-guide dt {{ flex: 0 0 auto; color: var(--ink); font-weight: 800; }} .queue-guide dd {{ margin: 0; }}
+.queue-guide p {{ margin: .3rem 0 0; font-size: .68rem; }}
 .legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.1rem; padding: .7rem .9rem; margin-bottom: .8rem; border-left: 5px solid var(--fire); background: #fff; font-size: .76rem; }}
 .legend strong {{ color: #89182c; }} .legend-dash {{ display: inline-block; width: 1.2rem; margin-right: .3rem; border-top: 2px dashed #9b5760; vertical-align: middle; }}
 .review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
@@ -859,6 +864,15 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 {mast_html}
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
+<div class="queue-guide"><h3>Review request states</h3><dl>
+<div><dt>Ready</dt><dd>selected channel may request</dd></div>
+<div><dt>Waiting turn</dt><dd>another PR is ahead</dd></div>
+<div><dt>Reviewing</dt><dd>request is active</dd></div>
+<div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
+<div><dt>Blocked</dt><dd>controller refuses a new request; row reason explains why</dd></div>
+<div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
+<div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
+</dl><p>These show review-request state, not merge readiness.</p></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
 <div class="review-train">{"".join(train)}</div></section>
 <footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
