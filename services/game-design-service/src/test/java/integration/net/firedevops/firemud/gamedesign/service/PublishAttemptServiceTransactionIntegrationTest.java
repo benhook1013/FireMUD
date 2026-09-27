@@ -86,6 +86,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
+  @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
   @Test
@@ -300,6 +301,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
     AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
     AtomicReference<String> remapSetId = new AtomicReference<>();
+    AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
+    AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
     AtomicBoolean exportCompleted = new AtomicBoolean();
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
@@ -323,25 +326,44 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       null,
                       null));
             });
+    Mockito.doAnswer(
+            invocation -> {
+              try {
+                invocation.callRealMethod();
+              } catch (Throwable failure) {
+                recordedDigestFailure.set(failure);
+                throw failure;
+              }
+              return null;
+            })
+        .when(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(
+            Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
     Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
         .thenAnswer(
             invocation -> {
               exportedVersionNumber.set(invocation.getArgument(1));
-              VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
-              approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
-              approvedRemapSet.setTenantId(tenantId);
-              approvedRemapSet.setSourceVersionId(sourceVersionId);
-              approvedRemapSet.setTargetVersionId(candidateVersionId.get());
-              approvedRemapSet.setStatus(TemplateRemapSetStatus.APPROVED);
-              approvedRemapSet.setCreatedReason("approved remap references publication candidate");
-              approvedRemapSet.setApprovalReason("approved for replacement launch");
-              approvedRemapSet.setApprovedAt(LocalDateTime.now());
-              templateRemapSetRepository.save(approvedRemapSet);
-              remapSetId.set(approvedRemapSet.getRemapSetId());
-              exportCompleted.set(true);
-              return exportedManifest;
+              try {
+                VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
+                approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
+                approvedRemapSet.setTenantId(tenantId);
+                approvedRemapSet.setSourceVersionId(sourceVersionId);
+                approvedRemapSet.setTargetVersionId(candidateVersionId.get());
+                approvedRemapSet.setStatus(TemplateRemapSetStatus.APPROVED);
+                approvedRemapSet.setCreatedReason(
+                    "approved remap references publication candidate");
+                approvedRemapSet.setApprovalReason("approved for replacement launch");
+                approvedRemapSet.setApprovedAt(LocalDateTime.now());
+                templateRemapSetRepository.save(approvedRemapSet);
+                remapSetId.set(approvedRemapSet.getRemapSetId());
+                exportCompleted.set(true);
+                return exportedManifest;
+              } catch (Throwable failure) {
+                exportCallbackFailure.set(failure);
+                throw failure;
+              }
             });
     Mockito.doAnswer(
             invocation -> {
@@ -370,12 +392,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + candidateVersionId.get()
             + ", candidateVersionNumber="
             + candidateVersionNumber.get()
+            + ", exportedVersionNumber="
+            + exportedVersionNumber.get()
             + ", attemptStatus="
             + attempt.getStatus()
             + ", attemptFailureCode="
             + attempt.getFailureCode()
             + ", attemptFailureMessage="
             + attempt.getFailureMessage()
+            + ", recordedDigestFailure="
+            + recordedDigestFailure.get()
+            + ", exportCallbackFailure="
+            + exportCallbackFailure.get()
             + ", failure="
             + publishFailure.getClass().getName()
             + ": "
