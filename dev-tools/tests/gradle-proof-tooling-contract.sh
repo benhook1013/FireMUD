@@ -114,7 +114,10 @@ grep -q '^Strict JUnit proof: passed$' <<<"$strict_green_output"
 grep -Fq "Suite $JOIN_SUITE: tests=2 skipped=0 failures=0 errors=0 outcome=passed" <<<"$strict_green_output"
 grep -Fq "Case $JOIN_CASE: executions=1 outcome=passed" <<<"$strict_green_output"
 grep -Fq "Case $EXCHANGE_CASE: executions=1 outcome=passed" <<<"$strict_green_output"
-! grep -q "STRICT_OUTPUT_SENTINEL" <<<"$strict_green_output"
+if grep -q "STRICT_OUTPUT_SENTINEL" <<<"$strict_green_output"; then
+  echo "Strict inspection leaked test output." >&2
+  exit 1
+fi
 
 STRICT_MISSING_SUITE_ROOT="$TMP_DIR/strict-missing-suite"
 new_strict_fixture "$STRICT_MISSING_SUITE_ROOT"
@@ -196,7 +199,10 @@ if failing_output="$(inspect_strict "$STRICT_FAILING_ROOT" 2>&1)"; then
 fi
 grep -Fq "Required suite is failing, errored, or skipped: $JOIN_SUITE" <<<"$failing_output"
 grep -Fq "Case $JOIN_CASE: executions=1 outcome=failure" <<<"$failing_output"
-! grep -q "SENSITIVE_" <<<"$failing_output"
+if grep -q "SENSITIVE_" <<<"$failing_output"; then
+  echo "Strict inspection leaked failure details." >&2
+  exit 1
+fi
 
 STRICT_DUPLICATE_SUITE_ROOT="$TMP_DIR/strict-duplicate-suite"
 new_strict_fixture "$STRICT_DUPLICATE_SUITE_ROOT"
