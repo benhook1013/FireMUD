@@ -297,6 +297,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     sourceVersion = versionRepository.save(sourceVersion);
     long sourceVersionId = sourceVersion.getId();
     AtomicReference<Long> candidateVersionId = new AtomicReference<>();
+    AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
+    AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
     AtomicReference<String> remapSetId = new AtomicReference<>();
     AtomicBoolean exportCompleted = new AtomicBoolean();
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
@@ -310,6 +312,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             invocation -> {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
+              candidateVersionNumber.set(candidate.versionNumber());
               return List.of(
                   new PublishParticipantDigestDto(
                       "GAME_DESIGN_CONTROL_PLANE",
@@ -322,9 +325,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
             });
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
-    Mockito.when(assetExportService.exportAssets(tenantId, 2))
+    Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
         .thenAnswer(
             invocation -> {
+              exportedVersionNumber.set(invocation.getArgument(1));
               VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
               approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
               approvedRemapSet.setTenantId(tenantId);
@@ -362,6 +366,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String failureContext =
         "publish failed before export/finalization (candidateVersionId="
             + candidateVersionId.get()
+            + ", candidateVersionNumber="
+            + candidateVersionNumber.get()
             + ", failure="
             + publishFailure.getClass().getName()
             + ": "
@@ -369,6 +375,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + ")";
     assertThat(exportCompleted.get()).as(failureContext).isTrue();
     assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
+    assertThat(exportedVersionNumber.get())
+        .as("asset export uses the candidate's persisted version number")
+        .isEqualTo(candidateVersionNumber.get());
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
