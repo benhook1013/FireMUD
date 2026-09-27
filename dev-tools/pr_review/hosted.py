@@ -39,6 +39,10 @@ FAILED_PATTERN = re.compile(
     r"(?:\breview\b.{0,80}\b(?:failed|failure)\b|\b(?:failed|unable)\b.{0,80}\breview\b|\bsomething went wrong\b)",
     re.IGNORECASE | re.DOTALL,
 )
+PROVIDER_FILE_CEILING_SKIP_PATTERN = re.compile(
+    r"\breview\s+skipped:\s*(\d+)\s+files?\s+exceed(?:s)?\s+the\s+limit\s+of\s*(\d+)\b",
+    re.IGNORECASE,
+)
 RATE_LIMIT_PATTERN = re.compile(
     r"(?:next|more)\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in\s*:?\s*(\d+)\s+(seconds?|minutes?|hours?)",
     re.IGNORECASE,
@@ -153,6 +157,15 @@ def utc_now() -> str:
 
 def normalize_command(body: str) -> str:
     return " ".join(body.strip().split()).lower()
+
+
+def provider_file_ceiling_skip(body: Any) -> bool:
+    """Recognize CodeRabbit's explicit over-limit skip response, not generic skipped-file prose."""
+
+    if not isinstance(body, str):
+        return False
+    match = PROVIDER_FILE_CEILING_SKIP_PATTERN.search(body)
+    return match is not None and int(match.group(1)) > int(match.group(2))
 
 
 def _comment_id_floor(payload: dict[str, Any]) -> int:
@@ -1230,6 +1243,8 @@ def trigger_state(
             or body.strip().lower().startswith("review rate limited")
         ):
             candidates.append((created, "rate_limited", item, cooldown))
+        elif provider_file_ceiling_skip(body):
+            candidates.append((created, "failed", item, None))
         elif NOOP_MARKER in body:
             candidates.append((created, "noop", item, None))
         elif _substantive(body) and _matches_head(body, record["head_sha"]):
