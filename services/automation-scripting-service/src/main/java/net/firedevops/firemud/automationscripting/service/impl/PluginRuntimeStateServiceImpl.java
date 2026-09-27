@@ -1,6 +1,5 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -43,9 +42,6 @@ import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private static final Logger logger = LoggerFactory.getLogger(PluginRuntimeStateServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";

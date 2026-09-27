@@ -5079,6 +5079,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     1L, 9L, "region-b", 4L, "rf-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameDesignClient gameDesignClient = gameDesignClient();
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
             repository,
@@ -5087,7 +5088,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             null,
-            gameDesignClient());
+            gameDesignClient);
 
     AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
     service.getRemoteFollowup(
@@ -5113,6 +5114,22 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertTrue(responseRef.get().getFollowup().getIsTargetRoutingBundleStale());
     assertEquals(100L, responseRef.get().getFollowup().getPublication().getBaseVersionId());
     assertEquals("", responseRef.get().getFollowup().getPublication().getLookupErrorCode());
+    Mockito.clearInvocations(gameDesignClient);
+    followup.setScriptPatchBaseVersionId(null);
+    AtomicReference<GetRemoteFollowupResponse> missingBaseResponse = new AtomicReference<>();
+    service.getRemoteFollowup(
+        GetRemoteFollowupRequest.newBuilder().setTenantId("1").setFollowupId("rf-1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResponse value) {
+            missingBaseResponse.set(value);
+          }
+        });
+    assertEquals(
+        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
+        missingBaseResponse.get().getFollowup().getPublication().getLookupErrorCode());
+    Mockito.verify(gameDesignClient, Mockito.never())
+        .getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong());
   }
 
   @Test

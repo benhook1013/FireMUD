@@ -314,7 +314,7 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+  void getDraftDesignDigestRejectsMissingPeerIdentityForInternalCaller() {
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     GameLogicGrpcService service =
         new GameLogicGrpcService(
