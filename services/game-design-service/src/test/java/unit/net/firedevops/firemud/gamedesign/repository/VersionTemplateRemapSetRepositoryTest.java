@@ -76,15 +76,16 @@ class VersionTemplateRemapSetRepositoryTest {
 
       VersionTemplateRemapSet inserted = new VersionTemplateRemapSetRepository(dsl).save(remapSet);
 
-      assertThat(inserted.getRemapEntries()).singleElement().satisfies(
-          savedEntry -> {
-            assertThat(savedEntry.getId()).isNotNull();
-            assertThat(savedEntry.getCreatedAt()).isEqualTo(entryCreatedAt);
-          });
+      assertThat(inserted.getRemapEntries())
+          .singleElement()
+          .satisfies(
+              savedEntry -> {
+                assertThat(savedEntry.getId()).isNotNull();
+                assertThat(savedEntry.getCreatedAt()).isEqualTo(entryCreatedAt);
+              });
       assertThat(executedSql)
           .filteredOn(
-              sql ->
-                  sql.toLowerCase().contains("insert into \"version_template_remap_entry\""))
+              sql -> sql.toLowerCase().contains("insert into \"version_template_remap_entry\""))
           .singleElement()
           .satisfies(
               sql -> {

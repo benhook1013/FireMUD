@@ -241,8 +241,7 @@ class ScriptPatchPinProjectionServiceImplTest {
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);
     ScriptPatchPinProjection[] currentProjection = new ScriptPatchPinProjection[1];
-    ScriptPatchPinProjectionService[] serviceReference =
-        new ScriptPatchPinProjectionService[1];
+    ScriptPatchPinProjectionService[] serviceReference = new ScriptPatchPinProjectionService[1];
     GameInstanceRuntimeState positiveState =
         GameInstanceRuntimeState.newBuilder()
             .setTenantId("1")
@@ -309,12 +308,12 @@ class ScriptPatchPinProjectionServiceImplTest {
     InOrder inOrder =
         Mockito.inOrder(repository, gameSessionControlPlaneClient, scheduleInstanceService);
     inOrder.verify(repository).findByTenantIdAndGameInstanceId("1", "game-1");
-    inOrder.verify(gameSessionControlPlaneClient)
-        .getGameInstanceRuntimeState("1", "game-1", "");
+    inOrder.verify(gameSessionControlPlaneClient).getGameInstanceRuntimeState("1", "game-1", "");
     inOrder.verify(repository).lockPinProjectionScope("1", "game-1");
     inOrder.verify(repository).findByTenantIdAndGameInstanceId("1", "game-1");
     inOrder.verify(repository).save(Mockito.any(ScriptPatchPinProjection.class));
-    inOrder.verify(scheduleInstanceService)
+    inOrder
+        .verify(scheduleInstanceService)
         .reconcileObservedRuntimeState("1", "game-1", positiveState);
     inOrder.verify(repository).lockPinProjectionScope("1", "game-1");
     inOrder.verify(repository).findByTenantIdAndGameInstanceId("1", "game-1");
@@ -351,8 +350,7 @@ class ScriptPatchPinProjectionServiceImplTest {
     Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(Optional.of(existing));
     Mockito.when(
-            gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-                "1", "game-1", "region-1"))
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(unpinnedState)

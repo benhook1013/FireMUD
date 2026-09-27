@@ -41,12 +41,7 @@ public class ScriptPatchPinProjectionRepository {
   /** Serializes pin projection refresh and schedule reconciliation for one instance. */
   public void lockPinProjectionScope(String tenantId, String gameInstanceId) {
     String scope =
-        tenantId.length()
-            + ":"
-            + tenantId
-            + gameInstanceId.length()
-            + ":"
-            + gameInstanceId;
+        tenantId.length() + ":" + tenantId + gameInstanceId.length() + ":" + gameInstanceId;
     dsl.fetch(
         "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, ?))",
         scope,
