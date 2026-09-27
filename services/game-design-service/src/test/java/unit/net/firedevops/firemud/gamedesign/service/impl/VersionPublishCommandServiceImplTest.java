@@ -509,8 +509,7 @@ class VersionPublishCommandServiceImplTest {
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
-    verify(publishGateService, never())
-        .assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
     verify(recordedParticipantDigestService, never())
         .recordVerifiedDigests(
@@ -557,7 +556,8 @@ class VersionPublishCommandServiceImplTest {
     verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(recordedParticipantDigestService, never())
-        .recordVerifiedDigests(any(String.class), any(PublishType.class), any(String.class), any(List.class));
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
   }
 
@@ -567,8 +567,7 @@ class VersionPublishCommandServiceImplTest {
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(null);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L)).thenReturn(null);
 
     assertThrows(
         IllegalStateException.class,
@@ -745,7 +744,8 @@ class VersionPublishCommandServiceImplTest {
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
     verify(recordedParticipantDigestService)
-        .recordVerifiedDigests("tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
+        .recordVerifiedDigests(
+            "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
   }
 

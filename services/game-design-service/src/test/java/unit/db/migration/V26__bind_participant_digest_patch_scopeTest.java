@@ -80,7 +80,7 @@ class V26__bind_participant_digest_patch_scopeTest {
     String guard = extractAttemptScopeGuard(readMigration());
 
     try (Connection connection =
-      DriverManager.getConnection("jdbc:h2:mem:v26_attempt_scope_guard")) {
+        DriverManager.getConnection("jdbc:h2:mem:v26_attempt_scope_guard")) {
       try (Statement statement = connection.createStatement()) {
         statement.execute(
             "CREATE TABLE publish_attempt (id BIGINT, publish_type VARCHAR(32), status VARCHAR(16))");

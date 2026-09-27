@@ -167,6 +167,8 @@ Digest comparison rules:
   - `GetDraftDesignDigestResponse { tenantId, scope, baseVersionId (when scriptPatchVersion is selected), appliedCommitId, contentDigest, digestSchemaVersion }`
   - Unsupported scopes must fail with `UNSUPPORTED_SCOPE`; publish orchestration must treat this as a hard mismatch for required participants.
 
+The typed response wire cutover intentionally reserves legacy field `2` (`scope_value`) and uses the typed scope fields defined by the proto. Mixed old/new Game Design and participant generations must fail closed and must never authorize publication; disable publication during the rollout until the Game Design reader and all four owner readers/producers are upgraded. Do not restore or dual-read the legacy field as compatibility scaffolding.
+
 ### Digest Participants by Publish Type
 
 Publish workflows must use an explicit participant matrix so digest gating is deterministic:

@@ -106,12 +106,7 @@ public final class PublicationDigestRequestBinding {
       String scriptPatchVersion,
       String publishRequestId) {
     return new PublicationDigestRequestBinding(
-        tenantId,
-        scopeKind,
-        versionId,
-        baseVersionId,
-        scriptPatchVersion,
-        publishRequestId);
+        tenantId, scopeKind, versionId, baseVersionId, scriptPatchVersion, publishRequestId);
   }
 
   /** Validates publication identity before a draft or durable workflow is created. */

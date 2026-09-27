@@ -557,8 +557,8 @@ public class VersionPublishCommandServiceImpl {
 
   /**
    * Validates terminal full-version replay using only durable attempt identity and, when present,
-   * the request digest. Legacy terminal rows intentionally have no request digest and may no
-   * longer have a draft version to backfill, so they must not enter the draft-dependent path.
+   * the request digest. Legacy terminal rows intentionally have no request digest and may no longer
+   * have a draft version to backfill, so they must not enter the draft-dependent path.
    */
   private void validateTerminalFullVersionAttempt(
       PublishAttempt attempt, PublishWorkflowRequest request) {

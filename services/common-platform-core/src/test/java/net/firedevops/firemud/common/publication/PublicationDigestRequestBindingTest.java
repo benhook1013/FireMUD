@@ -73,8 +73,7 @@ class PublicationDigestRequestBindingTest {
     assertThat(patch.scriptPatchVersion()).isEqualTo("patch:1");
     assertThatIllegalArgumentException()
         .isThrownBy(() -> patch.requireOwnerScope("other", "patch:1"));
-    assertThatIllegalArgumentException()
-        .isThrownBy(() -> patch.requireOwnerScope("tenant", "7"));
+    assertThatIllegalArgumentException().isThrownBy(() -> patch.requireOwnerScope("tenant", "7"));
   }
 
   @Test

@@ -25,8 +25,8 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
-import net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto;
 import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
@@ -1652,9 +1652,7 @@ class EntityManagementGrpcServiceTest {
   void autowiredConstructorDelegatesCleanupToInjectedRuntimeService() {
     RuntimeInstanceCleanupService runtimeInstanceCleanupService =
         Mockito.mock(RuntimeInstanceCleanupService.class);
-    Mockito.when(
-            runtimeInstanceCleanupService.cleanupRuntimeInstance(
-                1L, "GI-1", "termination-1"))
+    Mockito.when(runtimeInstanceCleanupService.cleanupRuntimeInstance(1L, "GI-1", "termination-1"))
         .thenReturn(new RuntimeInstanceCleanupResultDto(4L, 3L, 2L, 1L));
     SessionContext.setContext(
         "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
@@ -1705,8 +1703,7 @@ class EntityManagementGrpcServiceTest {
       assertEquals(3L, ref.get().getDeletedItemStacks());
       assertEquals(2L, ref.get().getDeletedItemInstances());
       assertEquals(1L, ref.get().getDeletedContainerInstances());
-      verify(runtimeInstanceCleanupService)
-          .cleanupRuntimeInstance(1L, "GI-1", "termination-1");
+      verify(runtimeInstanceCleanupService).cleanupRuntimeInstance(1L, "GI-1", "termination-1");
     } finally {
       SessionContext.clear();
     }
