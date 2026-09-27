@@ -2111,6 +2111,26 @@ require_absent(
         "service startup for each region to converge",
     ],
 )
+for tick_commit_path in (
+    "design/architecture/system-architecture-tick-execution-flows.md",
+    "design/architecture/system-architecture-ticks.md",
+):
+    require_contains(
+        tick_commit_path,
+        [
+            "current-epoch commit predicate: terminal (`APPLIED` or `ABANDONED`) evidence",
+            "every required participant in that tick's complete expected current-epoch participant set",
+            "Inconclusive old-epoch rows remain non-terminal reconciliation work outside this current-epoch commit predicate",
+            "may still block unsafe next-tick progression, reset-scope convergence, or reopening",
+        ],
+    )
+    require_absent(
+        tick_commit_path,
+        [
+            "An inconclusive old-epoch row remains non-terminal and blocks this advancement",
+            "inconclusive old-epoch work remains non-terminal and prevents this boundary",
+        ],
+    )
 
 automation_base = (root / "k8s/base/automation-scripting-service.yaml").read_text(encoding="utf-8")
 game_design_base = (root / "k8s/base/game-design-service.yaml").read_text(encoding="utf-8")

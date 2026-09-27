@@ -377,7 +377,7 @@ require_literal "$CRD" "self.desiredState == oldSelf.desiredState || (oldSelf.de
 forbid_literal "$CRD" "self.metadata.namespace == 'firemud-system'"
 forbid_literal "$CRD" "x-kubernetes-preserve-unknown-fields"
 require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"
-for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc grpcPublication; do
+for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc grpcAccountService grpcGameSessionService grpcPublication; do
   require_literal "$CRD" "$field"
 done
 require_literal "$APPLICATION_CONFIG" "dev-demo-requested-head-annotation: firemud.dev/requested-dev-demo-head-sha"
@@ -396,7 +396,7 @@ import yaml
 
 source = Path(os.environ["CRD"]).read_text(encoding="utf-8")
 assert source.count("&consumer_status_schema") == 1
-assert source.count("*consumer_status_schema") == 5
+assert source.count("*consumer_status_schema") == 7
 crd = yaml.safe_load(source)
 schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
 assert crd["spec"].get("preserveUnknownFields", False) is False
@@ -458,6 +458,8 @@ consumer_schemas = [
     for name in ("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpc")
 ]
 assert all(value == consumer_schemas[0] for value in consumer_schemas[1:])
+assert consumer_properties["grpcAccountService"] == consumer_schemas[0]
+assert consumer_properties["grpcGameSessionService"] == consumer_schemas[0]
 publication_roles = consumer_properties["grpcPublication"]
 assert publication_roles["type"] == "object"
 assert publication_roles["maxProperties"] == 5

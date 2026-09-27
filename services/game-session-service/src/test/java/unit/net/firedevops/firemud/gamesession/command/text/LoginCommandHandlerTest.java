@@ -41,6 +41,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
@@ -775,6 +776,7 @@ class LoginCommandHandlerTest {
     assertEquals(1L, context.gameInstanceId());
     assertEquals("R-2045", context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
   }
 
   @Test
@@ -814,7 +816,11 @@ class LoginCommandHandlerTest {
     handler.handle("1", command, false);
 
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    inOrder.verify(sessionContextService).save(captor.capture());
     SessionContext context = captor.getValue();
     assertEquals(99L, context.accountId());
     assertEquals("other@example.com", context.loginName());
@@ -830,6 +836,32 @@ class LoginCommandHandlerTest {
     assertNull(context.playableStateScope());
     assertNull(context.connectScopeId());
     assertNull(context.connectRequestId());
+  }
+
+  @Test
+  void reloginAsDifferentAccountDoesNotReplaceContextWhenPresenceClearFails() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+    SessionContext existing = staleGameplayContext(1L);
+    stubSessionContext(existing);
+    Mockito.doThrow(new IllegalStateException("presence clear unavailable"))
+        .when(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> handler.handle("1", command, false));
+
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    verify(sessionContextService, never()).save(any(SessionContext.class));
   }
 
   @Test

@@ -203,6 +203,8 @@ spec:
                 gatewayInternalWs: *consumer_status_schema
                 tcpProxyBridge: *consumer_status_schema
                 grpc: *consumer_status_schema
+                grpcAccountService: *consumer_status_schema
+                grpcGameSessionService: *consumer_status_schema
                 grpcPublication:
                   type: object
                   description: Per-publication workload certificate projection and rollout evidence only; this does not prove receiver-method authorization or authorize publication identity activation.
