@@ -26,6 +26,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptDeadLetterReplayRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
@@ -190,6 +191,12 @@ class ScriptWorkItemServiceImplTest {
     return Mockito.mock(ScriptPatchReadinessProjectionService.class);
   }
 
+  private static ScriptDefinitionRepository retainedPatchBase() {
+    ScriptDefinitionRepository repository = Mockito.mock(ScriptDefinitionRepository.class);
+    when(repository.findScriptPatchBaseVersionId("1", "patch-1")).thenReturn(Optional.of(7L));
+    return repository;
+  }
+
   private static ScriptWorkItemService service(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
@@ -227,6 +234,34 @@ class ScriptWorkItemServiceImplTest {
       PluginRuntimeStateService pluginRuntimeStateService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       ScriptPatchReadinessProjectionService readinessProjectionService) {
+    return service(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService,
+        Mockito.mock(ScriptDefinitionRepository.class));
+  }
+
+  private static ScriptWorkItemService service(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptDefinitionRepository scriptDefinitionRepository) {
     return new ScriptWorkItemServiceImpl(
         workItemRepository,
         auditRepository,
@@ -241,7 +276,8 @@ class ScriptWorkItemServiceImplTest {
         readinessProjectionService,
         null,
         null,
-        new SimpleMeterRegistry());
+        new SimpleMeterRegistry(),
+        scriptDefinitionRepository);
   }
 
   private static ScriptWorkItemService service(
@@ -271,7 +307,8 @@ class ScriptWorkItemServiceImplTest {
         readinessProjectionService,
         null,
         null,
-        meterRegistry);
+        meterRegistry,
+        Mockito.mock(ScriptDefinitionRepository.class));
   }
 
   @Test
@@ -340,7 +377,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             Mockito.mock(GameSessionControlPlaneClient.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -473,7 +511,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             gameSessionClient,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -571,7 +610,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             gameSessionClient,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -652,7 +692,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             Mockito.mock(GameSessionControlPlaneClient.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -1084,7 +1125,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             Mockito.mock(GameSessionControlPlaneClient.class),
-            meterRegistry);
+            meterRegistry,
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     service.cleanupTerminalWorkItems();
 
@@ -1917,6 +1959,8 @@ class ScriptWorkItemServiceImplTest {
         Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    ScriptDefinitionRepository patchBaseRepository = retainedPatchBase();
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of());
@@ -1964,7 +2008,9 @@ class ScriptWorkItemServiceImplTest {
             pinProjectionService,
             rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            patchBaseRepository);
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
         service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 0L, null);
@@ -1975,8 +2021,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("runtime_pin_matches_patch");
     assertThat(summary.get().projectionLagMs()).isZero();
     assertThat(summary.get().projectionStale()).isFalse();
-    assertThat(summary.get().publication().versionId()).isZero();
-    assertThat(summary.get().publication().lookupErrorCode()).isEqualTo("NOT_FOUND");
+    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
+    assertThat(summary.get().publication().baseVersionId()).isEqualTo(7L);
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
 
   @Test
@@ -2079,6 +2126,7 @@ class ScriptWorkItemServiceImplTest {
         Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
     ScriptWorkItem ready = workItem("patch-1", "HANDED_OFF", Instant.ofEpochMilli(250));
     ready.setTenantId("1");
     ready.setGameInstanceId("game-1");
@@ -2151,7 +2199,9 @@ class ScriptWorkItemServiceImplTest {
             pinProjectionService,
             rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            retainedPatchBase());
 
     List<ScriptWorkItemService.PatchInstanceRolloutSummary> summaries =
         service.listPatchInstanceRollouts(
@@ -2170,8 +2220,77 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summaries.get(0).rolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
-    assertThat(summaries.get(0).publication().versionId()).isZero();
-    assertThat(summaries.get(0).publication().lookupErrorCode()).isEqualTo("NOT_FOUND");
+    assertThat(summaries.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(summaries.get(0).publication().baseVersionId()).isEqualTo(7L);
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
+  }
+
+  @Test
+  void rolloutEventsUseImmutablePatchBaseWithoutCurrentReadiness() {
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        rolloutProjectionService();
+    when(rolloutProjectionService.listEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            0L,
+            null,
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+            0L,
+            0L,
+            25))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchInstanceRolloutEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    "req-old",
+                    ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
+                    "runtime_pin_matches_patch",
+                    100L,
+                    101L,
+                    null)));
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    ScriptPatchReadinessProjectionService readinessProjectionService = readinessProjectionService();
+    ScriptWorkItemService service =
+        service(
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService,
+            retainedPatchBase());
+
+    List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> events =
+        service.listPatchInstanceRolloutEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            0L,
+            null,
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+            0L,
+            0L,
+            25);
+
+    assertThat(events)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.publication().baseVersionId()).isEqualTo(7L);
+              assertThat(event.publication().versionId()).isEqualTo(17L);
+            });
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
+    verifyNoInteractions(readinessProjectionService);
   }
 
   @Test
@@ -2194,6 +2313,7 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
     when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
@@ -2208,7 +2328,9 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            retainedPatchBase());
 
     List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
         service.listDeadLetters("1", "game-1", "patch-1", 25);
@@ -2221,8 +2343,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
-    assertThat(deadLetters.get(0).publication().versionId()).isZero();
-    assertThat(deadLetters.get(0).publication().lookupErrorCode()).isEqualTo("NOT_FOUND");
+    assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(deadLetters.get(0).publication().baseVersionId()).isEqualTo(7L);
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
     verify(workItemRepository)
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
@@ -2300,6 +2423,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptHandoffEventRepository handoffEventRepository =
         Mockito.mock(ScriptHandoffEventRepository.class);
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
     ScriptHandoffEvent event = new ScriptHandoffEvent();
     event.setEventId("event-1");
     event.setTenantId("1");
@@ -2363,7 +2487,9 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            retainedPatchBase());
 
     List<ScriptWorkItemService.HandoffEventSummary> events =
         service.listHandoffEvents(
@@ -2404,8 +2530,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
-    assertThat(events.get(0).publication().versionId()).isZero();
-    assertThat(events.get(0).publication().lookupErrorCode()).isEqualTo("NOT_FOUND");
+    assertThat(events.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(events.get(0).publication().baseVersionId()).isEqualTo(7L);
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
 
   @Test
@@ -2817,7 +2944,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             null,
             gameSessionControlPlaneClient,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -3086,7 +3214,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             replayRepository,
             Mockito.mock(GameSessionControlPlaneClient.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
     List<String> workItemIds = List.of("101", "102");
 
     service.replayDeadLetters(
@@ -3147,7 +3276,8 @@ class ScriptWorkItemServiceImplTest {
             readinessProjectionService(),
             Mockito.mock(ScriptDeadLetterReplayRepository.class),
             gameSessionControlPlaneClient,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
 
     Method eligibility =
         ScriptWorkItemServiceImpl.class.getDeclaredMethod(
