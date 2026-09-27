@@ -12,6 +12,14 @@ SPEC.loader.exec_module(publisher)
 
 
 class PublishedPageTest(unittest.TestCase):
+    def test_project_map_is_published_with_navigation(self):
+        progress = ('<html><a href="/">PR delivery</a>'
+                    '<h2>Programme tracks</h2><h2>Implementation by domain</h2></html>')
+        _, objects = publisher.resources("<html>status</html>", publisher.progress_public_html(progress))
+        self.assertEqual(objects["items"][0]["data"]["progress.html"], progress)
+        with self.assertRaises(ValueError):
+            publisher.progress_public_html(progress + '/home/ben/private')
+
     def test_public_resources_include_icon_gallery_and_favicon(self):
         _, objects = publisher.resources("<html>status</html>")
         pages = objects["items"][0]["data"]

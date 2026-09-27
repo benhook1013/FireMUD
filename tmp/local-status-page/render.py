@@ -17,6 +17,8 @@ from itertools import groupby
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from render_progress import render_current as render_project_map
+
 ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = ROOT / "status.json"
 DEFAULT_OUTPUT = ROOT / "output" / "index.html"
@@ -720,7 +722,8 @@ header.mast {{ position: sticky; top: 0; z-index: 20; background: var(--smoke); 
 .refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: start; }}
 .mast-content {{ grid-area: title; text-align: center; }}
 .brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
-.mast-inner > .repo-link {{ grid-area: repo; justify-self: end; color: #fff; }}
+.mast-inner > .repo-links {{ grid-area: repo; justify-self: end; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .3rem 1rem; }}
+.repo-links a {{ color: #fff; font-size: .86rem; font-weight: 700; white-space: nowrap; }}
 main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4vw,3.5rem) 4rem; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
 .front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
@@ -773,9 +776,9 @@ main {{ width: 100%; max-width: 1440px; margin: auto; padding: 1rem clamp(1rem,4
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
 a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-offset: 3px; }}
 @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > h3 {{ margin: 0 0 0 3.5rem; }} }}
-@media (max-width: 760px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) minmax(0,1fr); grid-template-areas: "title title" "refresh repo"; row-gap: .6rem; }} .mast-inner > .repo-link {{ white-space: normal; text-align: right; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+@media (max-width: 760px) {{ .mast-inner {{ grid-template-columns: minmax(0,1fr) minmax(0,1fr); grid-template-areas: "title title" "refresh repo"; row-gap: .6rem; }} .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .repo-links a {{ font-size: .73rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
-<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><h1 class="brand">FireMUD delivery status</h1><span class="refresh-time">{header_time}</span></div><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></div></header>
+<header class="mast"><div class="mast-inner"><div class="refresh-space"><form class="refresh-form" action="/refresh" method="post"><span class="refresh-slot"><button type="submit">Refresh review data</button></span><span class="refresh-progress" role="status" aria-live="polite"></span></form></div><div class="mast-content"><h1 class="brand">FireMUD delivery status</h1><span class="refresh-time">{header_time}</span></div><nav class="repo-links"><a href="/progress.html">Project map ↗</a><a class="repo-link" href="{REPO_HOME}">FireMUD on GitHub ↗</a></nav></div></header>
 <main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
@@ -806,6 +809,7 @@ def main() -> None:
     data = controller_stack(data, review, github, now)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
+    progress_rendered = render_project_map(now)
     for name in ASSET_FILES:
         source = ROOT / "assets" / name
         with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=".asset-", delete=False) as asset_temp:
@@ -822,6 +826,14 @@ def main() -> None:
         os.replace(temporary_path, args.output)
     finally:
         temporary_path.unlink(missing_ok=True)
+    progress_output = args.output.parent / "progress.html"
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".progress-", delete=False) as temporary:
+        temporary.write(progress_rendered)
+        progress_temporary = Path(temporary.name)
+    try:
+        os.replace(progress_temporary, progress_output)
+    finally:
+        progress_temporary.unlink(missing_ok=True)
     print(args.output.resolve())
 
 

@@ -1,0 +1,119 @@
+{
+  "reviewed_at": "2026-09-27T03:05:00Z",
+  "headline": "From accepted design decisions to a proved, playable pre-v1 FireMUD",
+  "orientation": "This is the long-range map. The PR delivery page owns the live merge train; the corpus index and implementation trackers own detailed completion claims.",
+  "tracks": [
+    {
+      "id": "decision-foundation",
+      "name": "Decisions and contract ownership",
+      "state": "FOUNDATION SET",
+      "tone": "done",
+      "purpose": "Establish what FireMUD is building and which design source owns each contract.",
+      "now": "The broad human ADR review and accepted-decision application are complete foundations. ADR 0183 remains a pending proposal, so its choice is not settled.",
+      "milestone": "Keep accepted decisions aligned with the owning architecture as implementation exposes gaps.",
+      "return_when": "A consequential new design conflict appears, or the pending ADR 0183 decision is brought for human review.",
+      "phases": [
+        {"name": "Capability map and human ADR review", "state": "DONE"},
+        {"name": "Apply accepted decisions and assign contract owners", "state": "DONE"},
+        {"name": "Pending proposals and new conflicts", "state": "AS NEEDED"}
+      ],
+      "links": [
+        {"label": "Design alignment index", "url": "https://github.com/benhook1013/FireMUD/tree/develop/design/project-management/design-alignment"}
+      ]
+    },
+    {
+      "id": "corpus",
+      "name": "Implementation-first corpus alignment",
+      "state": "ACTIVE · SECTIONS PROVISIONAL",
+      "tone": "active",
+      "purpose": "Bring accepted pre-v1 behavior, architecture, code and proof into agreement across the whole product.",
+      "now": "Document is building Account and Game Session authority prerequisites around Unit 1B. Earlier section reviews and fixes remain useful; sections with required behavior or essential proof open stay provisional.",
+      "milestone": "Implement known prerequisites, then assess each section with two fresh independent whole-section reviews before claiming corpus completion.",
+      "return_when": "Return to every provisional section as its dependency or proof clears; repeat the sweep until the whole corpus is consistent.",
+      "phases": [
+        {"name": "Catch up known required pre-v1 work", "state": "ACTIVE"},
+        {"name": "Implement and assess each section", "state": "ACTIVE"},
+        {"name": "Revisit provisional sections", "state": "LATER"},
+        {"name": "Cross-corpus owner and tracker closeout", "state": "LATER"}
+      ],
+      "links": [
+        {"label": "Corpus status and plan", "url": "https://github.com/benhook1013/FireMUD/tree/develop/design/project-management/design-alignment"},
+        {"label": "Implementation trackers", "url": "https://github.com/benhook1013/FireMUD/tree/develop/design/project-management/implementation-tracking"}
+      ]
+    },
+    {
+      "id": "playable",
+      "name": "Playable delivery and live proof",
+      "state": "REPOSITORY SLICE PUBLISHED · LIVE PROOF OPEN",
+      "tone": "waiting",
+      "purpose": "Make the reviewed build safely reachable and demonstrate a real player journey on hosted infrastructure.",
+      "now": "Gate 1 preview enablement is merged. Gate 2 repository work is published in #2853, but protected credentials and CA setup, certificate and consumer convergence, CNI, and Telnet/WebSocket LOGIN → PLAY → LOOK proof remain open.",
+      "milestone": "Run the protected, exact-deployment player journey and record the live evidence, including post-merge develop and dev-demo confirmation.",
+      "return_when": "The protected environment and its credential/CA prerequisites are available on a coherent deployed head.",
+      "phases": [
+        {"name": "Gate 1 · stacked preview enablement", "state": "DONE"},
+        {"name": "Gate 2 · repository delivery slice", "state": "PUBLISHED"},
+        {"name": "Gate 2 · protected live player proof", "state": "OPEN"}
+      ],
+      "links": [
+        {"label": "Gate 2 PR #2853", "url": "https://github.com/benhook1013/FireMUD/pull/2853"}
+      ]
+    },
+    {
+      "id": "shared-foundations",
+      "name": "Shared foundations and simplification",
+      "state": "PAUSED AT OWNER HANDOFF",
+      "tone": "paused",
+      "purpose": "Converge cross-service pre-v1 contracts after the playable repository slice.",
+      "now": "The dev-demo summary parser and presence/privacy work joined the published tail. Remaining Phase 1 candidates intersect Account, Gameplay and publication work, so there is no independent active slice yet.",
+      "milestone": "Choose the next coherent shared-foundation slice after those owner dependencies settle; service-local maintainability follows in Phase 2.",
+      "return_when": "The overlapping Account and Gameplay boundaries are stable enough to select one shared contract without duplicating their work.",
+      "phases": [
+        {"name": "Phase 1 · parser and presence/privacy slices", "state": "PUBLISHED"},
+        {"name": "Phase 1 · remaining shared contracts", "state": "PAUSED"},
+        {"name": "Phase 2 · service-local maintainability", "state": "LATER"}
+      ],
+      "links": [
+        {"label": "Presence/privacy in #2853", "url": "https://github.com/benhook1013/FireMUD/pull/2853"}
+      ]
+    },
+    {
+      "id": "delivery-train",
+      "name": "Review and merge train",
+      "state": "ACTIVE · CONTINUOUS",
+      "tone": "active",
+      "purpose": "Move published work through review, corrections, CI and human merge in dependency order.",
+      "now": "Gameplay owns the configured Hosted and CLI review queue. General is helping with downstream preparation and the #2879 sizing split; Document owns its implementation tail.",
+      "milestone": "Keep each channel moving to its next safe candidate and present coherent, reviewed heads for human merge.",
+      "return_when": "Continuous while the published stack remains; consult the PR delivery page for the current front and exact queue.",
+      "phases": [
+        {"name": "Review and fix the current front", "state": "ACTIVE"},
+        {"name": "Reconcile and prepare downstream PRs", "state": "ACTIVE"},
+        {"name": "Human merges verified candidates", "state": "ONGOING"}
+      ],
+      "links": [
+        {"label": "Open PR delivery page", "url": "/"}
+      ]
+    }
+  ],
+  "return_points": [
+    {"name": "Provisional corpus sections", "trigger": "An owner prerequisite or essential proof lands; Document reassesses from the current code and contracts.", "state": "REVISIT REPEATEDLY"},
+    {"name": "Protected playable proof", "trigger": "Credential/CA setup and a coherent hosted deployment are available for the Gate 2 player journey.", "state": "PROOF OPEN"},
+    {"name": "Shared-foundation Phase 1", "trigger": "Account and Gameplay owner overlap clears enough to choose a coherent remaining candidate.", "state": "PAUSED"},
+    {"name": "Service-local Phase 2", "trigger": "Shared-foundation Phase 1 is settled and a concrete maintainability slice is selected.", "state": "LATER"},
+    {"name": "ADR 0183", "trigger": "Bring the pending proposal to human review; do not treat it as accepted meanwhile.", "state": "HUMAN DECISION"}
+  ],
+  "parked_note": "Other recovery, replay, scheduler and design-correction candidates are tracked in their owning sections or implementation trackers. They are not a separately approved delivery phase; pull them forward when their owner boundary is reached.",
+  "domains": [
+    {"name":"Player Access and Session","file":"player-access-and-session.md","note":"Account and profile identity work; membership, binding, reconnect, takeover and recovery remain partial."},
+    {"name":"Player Experience","file":"player-experience-commands-and-communication.md","note":"Command paths exist; presentation, social/safety, history and browser experience remain partial."},
+    {"name":"Gameplay Rules","file":"gameplay-rules-entities-and-effects.md","note":"Item and bounded effect paths exist; crafting, broader actions and combat remain incomplete."},
+    {"name":"World Runtime","file":"world-runtime-and-movement.md","note":"Room, movement and draft topology slices exist; authoritative location and lifecycle convergence remain open."},
+    {"name":"Game Authoring","file":"game-authoring-publishing-and-activation.md","note":"Publication control plane is strongest; creator UX, full authoring, readiness and playtest remain open."},
+    {"name":"Realm Routing","file":"realm-routing-and-playable-state.md","note":"Catalog and bootstrap substrate exist; route authority, grants and playtest lifecycle remain incomplete."},
+    {"name":"Automation","file":"automation-and-scheduler-runtime.md","note":"Durable ingress and scheduling slices exist; recovery, handler contracts and wider firing remain gaps."},
+    {"name":"Game Session Runtime","file":"game-session-runtime-and-tick-coordination.md","note":"Session and tick substrate exists; ownership fencing, Redis-loss recovery and canonical status remain open."},
+    {"name":"Shared Runtime","file":"shared-runtime-contracts-and-persistence.md","note":"Shared persistence and auth primitives exist; adoption, replay and retention convergence remain open."},
+    {"name":"Platform Operations","file":"platform-operations-and-delivery.md","note":"Delivery foundations exist; hosted proof, recovery, degraded operations and readiness remain partial."}
+  ]
+}

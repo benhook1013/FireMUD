@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "output" / "index.html"
 PUBLIC_COPY = ROOT / "output" / "public-index.html"
+PROGRESS_SOURCE = ROOT / "output" / "progress.html"
 ASSET_FILES = (
     "icon-options.html", "flame-ember.svg", "flame-monogram.svg", "flame-crest.svg", "flame-pixel.svg",
 )
@@ -71,8 +72,18 @@ def public_html(source: str, local_url: str) -> str:
     return result
 
 
-def resources(document: str) -> tuple[dict, dict]:
+def progress_public_html(source: str) -> str:
+    if ('<h2>Programme tracks</h2>' not in source or '<h2>Implementation by domain</h2>' not in source
+            or 'href="/"' not in source or "<form" in source
+            or "/home/ben/" in source or "../../task-briefs/" in source):
+        raise ValueError("the project map is incomplete or contains a private local path")
+    return source
+
+
+def resources(document: str, progress_document: str | None = None) -> tuple[dict, dict]:
     pages = {"index.html": document}
+    if progress_document is not None:
+        pages["progress.html"] = progress_document
     pages.update({name: (ROOT / "assets" / name).read_text(encoding="utf-8") for name in ASSET_FILES})
     digest = hashlib.sha256(json.dumps(pages, sort_keys=True).encode()).hexdigest()
     labels = {"app": "firemud-status-page"}
@@ -179,8 +190,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="prepare the public copy without remote changes")
     args = parser.parse_args()
     document = public_html(SOURCE.read_text(encoding="utf-8"), local_wifi_url())
+    progress_document = progress_public_html(PROGRESS_SOURCE.read_text(encoding="utf-8"))
     PUBLIC_COPY.write_text(document, encoding="utf-8")
-    namespace, objects = resources(document)
+    namespace, objects = resources(document, progress_document)
     print(f"Prepared {len(document.encode()):,} bytes for https://{HOST}/")
     if args.dry_run:
         return
