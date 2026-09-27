@@ -4632,6 +4632,24 @@ class ReviewController:
     def evidence(self, pr: int | None = None) -> dict[str, Any]:
         state = self._state()
         numbers = (pr,) if pr is not None else state.ordered_prs
+        history_cache: dict[tuple[int, str], list[Any]] = {}
+        eligible_prs = tuple(number for number in numbers if number in state.ordered_prs)
+        canonical_allocations: dict[int, dict[str, Any]] = {}
+        if any(
+            f"{number}:{channel.value}" in state.allocations
+            for number in eligible_prs
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        ):
+            status = self._status_from_state(
+                state,
+                evidence_prs=set(eligible_prs),
+                history_cache=history_cache,
+            )
+            canonical_allocations = {
+                row["pr"]: row.get("allocations", {})
+                for row in status.get("prs", ())
+                if isinstance(row, Mapping) and isinstance(row.get("pr"), int)
+            }
         result: dict[str, Any] = {}
         for number in numbers:
             histories = {
@@ -4641,7 +4659,7 @@ class ReviewController:
                     else dataclasses.asdict(item)
                     if dataclasses.is_dataclass(item)
                     else policy.Evidence.from_value(item).__dict__
-                    for item in _history(self._evidence_provider, number, channel)
+                    for item in self._cached_history(number, channel, history_cache)
                 ]
                 for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
             }
@@ -4654,35 +4672,16 @@ class ReviewController:
                 allocation = state.allocations.get(f"{number}:{channel.value}")
                 if allocation is None:
                     continue
-                snapshot = self._bounded_allocation_evidence(allocation, histories[channel])
-                used = len(snapshot["results"])
-                default_one_result = (
-                    allocation.min_additional_completed is None
-                    and allocation.max_additional_completed is None
-                    and allocation.stop_basis is None
-                )
-                minimum = 1 if default_one_result else (allocation.min_additional_completed or 0)
-                maximum = 1 if default_one_result else allocation.max_additional_completed
-                remaining = max(0, maximum - used - snapshot["in_flight"]) if maximum is not None else None
-                control = (
-                    "maximum"
-                    if maximum is not None and used >= maximum
-                    else "minimum"
-                    if used < minimum
-                    else "taper"
-                )
+                view = canonical_allocations.get(number, {}).get(channel.value)
+                if view is None:
+                    continue
                 allocations[channel.value] = {
+                    **view,
                     "baseline_checkpoint": allocation.baseline_checkpoint,
-                    "used": used,
-                    "min_additional_completed": minimum,
-                    "max_additional_completed": maximum,
-                    "completed_count": used,
-                    "cap": maximum,
-                    "remaining": remaining,
-                    "in_flight": snapshot["in_flight"],
                     "reason": allocation.reason,
-                    "controlling_reason": control,
-                    "evidence_error": snapshot["error"],
+                    "allocation_reason": allocation.reason,
+                    "progress_reason": view.get("reason"),
+                    "evidence_error": view.get("reason") if view.get("status") == "INVALID" else None,
                 }
             if allocations:
                 row["allocations"] = allocations
@@ -4900,14 +4899,6 @@ class ReviewController:
                 raise ControllerError("a stopped allocation cannot be renewed")
             if self._head_repository_problem(item):
                 raise ControllerError(f"PR #{pr} has an unsupported head repository")
-            self._check_stop_evidence(
-                state,
-                pr,
-                selected,
-                current,
-                reconciliation,
-                checkpoint_pin=checkpoint,
-            )
         else:
             assert previous is not None
             progress = self._allocation_progress(

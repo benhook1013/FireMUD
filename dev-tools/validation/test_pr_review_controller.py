@@ -542,6 +542,20 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(allocation["maximum_additional_completed"], 1)
         self.assertEqual(allocation["completed_count"], 0)
         self.assertEqual(allocation["controlling_reason"], allocation["reason"])
+        review_requests = []
+        controller.hosted_adapter = lambda *args, **kwargs: review_requests.append((args, kwargs))
+        evidence_allocation = controller.evidence(1)["1"]["allocations"]["hosted"]
+        self.assertEqual(review_requests, [])
+        for field in (
+            "minimum_additional_completed",
+            "maximum_additional_completed",
+            "completed_count",
+            "taper_complete",
+            "selection_control",
+            "controlling_reason",
+            "status",
+        ):
+            self.assertEqual(evidence_allocation[field], allocation[field], field)
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
@@ -593,6 +607,16 @@ class ControllerTests(unittest.TestCase):
         evidence_readback = controller.evidence(1)["1"]["allocations"]["hosted"]
         self.assertEqual(evidence_readback["baseline_checkpoint"], "5846432587")
         self.assertEqual((evidence_readback["used"], evidence_readback["cap"]), (1, 2))
+        for field in (
+            "minimum_additional_completed",
+            "maximum_additional_completed",
+            "completed_count",
+            "taper_complete",
+            "selection_control",
+            "controlling_reason",
+            "status",
+        ):
+            self.assertEqual(evidence_readback[field], allocation[field], field)
         with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
             controller.resolve_hosted_target()
 
@@ -1384,6 +1408,85 @@ class ControllerTests(unittest.TestCase):
             reason="explicitly remove the cap",
         )
         self.assertEqual(cancelled["allocations"], [])
+
+    def test_bounded_dry_result_can_be_renewed_without_stop_authorization(self):
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="baseline", channel="hosted")
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="baseline",
+            cap=2,
+            evidence=evidence,
+        )
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(checkpoint="allocated-dry", channel="hosted")
+        )
+        provider = controller._evidence_provider
+        provider.stop_audit_calls.clear()
+
+        renewed = controller.decide_allocation(
+            action="renew",
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            checkpoint="allocated-dry",
+            min_additional_completed=1,
+            max_additional_completed=3,
+            reason="explicitly open a fresh bounded review tranche",
+        )
+
+        self.assertEqual(provider.stop_audit_calls, [])
+        self.assertEqual(renewed["progress"]["status"], "CAP_ACTIVE")
+        self.assertTrue(renewed["allocation"]["reopens_taper"])
+
+    def test_bounded_renewal_preserves_accepted_finding_and_active_review_holds(self):
+        for blocker, expected_error in (
+            ("accepted", "unresolved actionable finding or thread"),
+            ("active", "current review evidence is blocked"),
+        ):
+            with self.subTest(blocker=blocker):
+                evidence = {
+                    (1, "hosted"): [
+                        self.allocation_evidence(checkpoint="baseline", channel="hosted")
+                    ]
+                }
+                controller = self.grant_bounded_allocation(
+                    checkpoint="baseline",
+                    cap=2,
+                    evidence=evidence,
+                )
+                provider = controller._evidence_provider
+                if blocker == "accepted":
+                    evidence[(1, "hosted")].append(
+                        self.allocation_evidence(
+                            checkpoint="allocated-findings", channel="hosted", accepted=1
+                        )
+                    )
+                    provider.audit["unresolved_findings"] = ["pending finding"]
+                else:
+                    evidence[(1, "hosted")].append(
+                        {
+                            "pr": 1,
+                            "head": HEAD_1,
+                            "checkpoint": "active-review",
+                            "held": True,
+                            "reason": "unattributed active review",
+                        }
+                    )
+
+                with self.assertRaisesRegex(ControllerError, expected_error):
+                    controller.decide_allocation(
+                        action="renew",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_1,
+                        checkpoint="baseline",
+                        min_additional_completed=1,
+                        max_additional_completed=3,
+                        reason="renew only after current obligations are safe",
+                    )
 
     def test_first_review_can_be_allocated_without_historical_checkpoints(self):
         controller = self.make({1: pr(1, HEAD_1)})
@@ -5036,7 +5139,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
         report = controller.status()
         self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
-        self.assertEqual(report["prs"][0]["channels"]["cli"], "READY")
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "JUDGMENT_REQUIRED")
         self.assertEqual(report["review_targets"]["cli"]["status"], "JUDGMENT_REQUIRED")
         self.assertTrue(report["review_targets"]["cli"]["taper_complete"])
         with self.assertRaisesRegex(ControllerError, "cli review cannot run: JUDGMENT_REQUIRED"):

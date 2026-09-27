@@ -843,7 +843,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, old_history, reconciliation=ReconciliationStatus.PATCH_CHANGED),
-            ReviewStatus.READY,
+            ReviewStatus.JUDGMENT_REQUIRED,
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, old_history, reconciliation=ReconciliationStatus.PARENT_MOVED),
@@ -871,7 +871,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.PATCH_CHANGED),
-            ReviewStatus.READY,
+            ReviewStatus.JUDGMENT_REQUIRED,
         )
         uncorrected_latest = dataclasses.replace(history[-1], corrected_state=False)
         self.assertTrue(taper_satisfied(Channel.CLI, (*history[:-1], uncorrected_latest), 3))
@@ -895,6 +895,39 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(
             completion_status(state, Channel.CLI, descendant, reconciliation=ReconciliationStatus.PATCH_CHANGED),
             ReviewStatus.COMPLETE,
+        )
+
+    def test_changed_patch_requires_judgment_only_after_taper_is_complete(self):
+        state = ReviewState(ordered_prs=(1,))
+        dry_hosted = Evidence(
+            1,
+            "reviewed-head",
+            "hosted-dry",
+            patch_id="reviewed-patch",
+            completed=True,
+            attributable=True,
+            anchored=True,
+            corrected_state=True,
+        )
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.HOSTED,
+                (dry_hosted,),
+                reconciliation=ReconciliationStatus.PATCH_CHANGED,
+            ),
+            ReviewStatus.JUDGMENT_REQUIRED,
+        )
+
+        useful_hosted = dataclasses.replace(dry_hosted, checkpoint="hosted-useful", accepted=1, raw=1)
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.HOSTED,
+                (useful_hosted,),
+                reconciliation=ReconciliationStatus.PATCH_CHANGED,
+            ),
+            ReviewStatus.READY,
         )
 
     def test_cli_accepted_finding_resets_streak_across_heads(self):

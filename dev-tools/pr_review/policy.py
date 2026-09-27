@@ -401,10 +401,6 @@ def completion_status(
     latest = reviews[-1]
     latest_judgment = _judgment(state, selected, latest)
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
-    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
-        selected == Channel.CLI and latest.current_candidate_descendant_proven
-    ):
-        return ReviewStatus.READY
     if selected == Channel.CLI and latest_judgment is not None and latest_judgment.decision == "reopen":
         return ReviewStatus.READY
     retained_equivalent_history = False
@@ -437,6 +433,12 @@ def completion_status(
         )
     else:
         taper_complete = taper_satisfied(selected, taper_history, required)
+    if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
+        selected == Channel.CLI and latest.current_candidate_descendant_proven
+    ):
+        if taper_complete and latest_judgment is None:
+            return ReviewStatus.JUDGMENT_REQUIRED
+        return ReviewStatus.READY
     if _same_head_provisional_barrier(history, reviews):
         return ReviewStatus.READY
     if taper_complete:
