@@ -19,8 +19,7 @@ class ScriptPatchPublicationLinkResolverTest {
   void resolvesPublicationUsingExactVersionAndBase() {
     GameDesignClient gameDesign = mock(GameDesignClient.class);
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-7", 100L))
-        .thenReturn(
-            publishedPatch("1", "patch-7", 7L, 100L));
+        .thenReturn(publishedPatch("1", "patch-7", 7L, 100L));
 
     ScriptPatchPublicationLink result =
         ScriptPatchPublicationLinkResolver.resolve(gameDesign, 1L, "patch-7", 100L);
@@ -72,7 +71,8 @@ class ScriptPatchPublicationLinkResolverTest {
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-7", 100L))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setCode("PUBLICATION_UNAVAILABLE").setMessage("down"))
+                .setError(
+                    ErrorDetail.newBuilder().setCode("PUBLICATION_UNAVAILABLE").setMessage("down"))
                 .build());
 
     ScriptPatchPublicationLink result =
