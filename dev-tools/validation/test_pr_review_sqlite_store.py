@@ -1,0 +1,221 @@
+import concurrent.futures
+import dataclasses
+import hashlib
+import json
+import sqlite3
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.state import (
+    FindingRoute,
+    Judgment,
+    LegacyEvidenceTransition,
+    PolicyOverride,
+    ReviewAllocation,
+    ReviewState,
+    StackReconciliationDecision,
+    StateError,
+    SummaryFindingDisposition,
+)
+
+
+class SqliteStateStoreTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.root = Path(self.temporary_directory.name)
+
+    @staticmethod
+    def representative_state() -> ReviewState:
+        head = "a" * 40
+        parent_head = "b" * 40
+        patch_id = "patch-identity-1"
+        route = FindingRoute(
+            source_pr=2828,
+            source_channel="cli",
+            source_review="run-17",
+            source_finding="finding-3",
+            observations=("owned by the successor", "confirmed after retarget"),
+            target_pr=2879,
+            target_history=(2870,),
+        )
+        fingerprint = hashlib.sha256(b"legacy checkpoint").hexdigest()
+        return ReviewState(
+            ordered_prs=(2828, 2879),
+            policy_overrides={
+                "2828:cli": PolicyOverride(
+                    cli_zero_useful=2,
+                    head=head,
+                    checkpoint="cli-checkpoint-9",
+                    reason="explicit scoped taper",
+                    patch_id=patch_id,
+                )
+            },
+            judgments=(
+                Judgment(
+                    pr=2828,
+                    channel="hosted",
+                    decision="retain",
+                    head=head,
+                    checkpoint="hosted-checkpoint-8",
+                    reason="same patch remains valid",
+                    patch_id=patch_id,
+                ),
+            ),
+            reconciliations=(
+                StackReconciliationDecision(
+                    pr=2828,
+                    channel="cli",
+                    checkpoint="cli-checkpoint-7",
+                    prior_head="c" * 40,
+                    child_head=head,
+                    parent_identity="develop",
+                    parent_head=parent_head,
+                    merge_base="d" * 40,
+                    patch_id=patch_id,
+                    reason="recorded equivalent parent transition",
+                ),
+            ),
+            legacy_transitions=(
+                LegacyEvidenceTransition(
+                    pr=2828,
+                    child_head=head,
+                    parent_identity="develop",
+                    parent_head=parent_head,
+                    merge_base="d" * 40,
+                    patch_id=patch_id,
+                    hosted_fingerprints=(fingerprint,),
+                    reason="preserve audited legacy evidence as non-counting",
+                ),
+            ),
+            summary_dispositions=(
+                SummaryFindingDisposition(
+                    pr=2828,
+                    head=head,
+                    source="comment",
+                    summary_id=99201,
+                    kind="outside_diff",
+                    count=1,
+                    decision="accepted_unfixed",
+                    reason="valid finding remains an obligation",
+                ),
+            ),
+            routes=(route,),
+            allocations={
+                "2828:cli": ReviewAllocation(
+                    pr=2828,
+                    channel="cli",
+                    head=head,
+                    parent_identity="develop",
+                    parent_head=parent_head,
+                    merge_base="d" * 40,
+                    patch_id=patch_id,
+                    baseline_checkpoints=("cli-checkpoint-9",),
+                    reason="one additional independent checkpoint",
+                    baseline_checkpoint="cli-checkpoint-9",
+                    min_additional_completed=1,
+                    max_additional_completed=2,
+                    reopens_taper=True,
+                )
+            },
+        )
+
+    def test_legacy_import_round_trips_all_validated_state_semantics(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "review-state.sqlite3"
+
+        imported_store = SqliteStateStore.import_legacy_json(source, target)
+
+        self.assertEqual(imported_store.load().to_dict(), original.to_dict())
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertTrue(target.exists())
+        self.assertTrue(imported_store.status()["compatible"])
+        self.assertEqual(imported_store.status()["schema_version"], SQLITE_SCHEMA_VERSION)
+
+    def test_import_refuses_existing_target_without_changing_it(self) -> None:
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(ReviewState().to_dict()), encoding="utf-8")
+        target = self.root / "existing.sqlite3"
+        target.write_bytes(b"keep this target exactly")
+        before = target.read_bytes()
+
+        with self.assertRaisesRegex(StateError, "already exists"):
+            SqliteStateStore.import_legacy_json(source, target)
+
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_update_rolls_back_when_mutation_fails(self) -> None:
+        store = SqliteStateStore(self.root / "state.sqlite3")
+        initial = store.update(lambda _: dataclasses.replace(ReviewState(), ordered_prs=(2828,)))
+
+        def fail_after_read(_: ReviewState) -> ReviewState:
+            raise RuntimeError("simulated mutation failure")
+
+        with self.assertRaisesRegex(RuntimeError, "simulated mutation failure"):
+            store.update(fail_after_read)
+
+        self.assertEqual(store.load(), initial)
+
+    def test_too_old_writer_is_refused_without_database_change(self) -> None:
+        database = self.root / "state.sqlite3"
+        newer_store = SqliteStateStore(database, writer_build=2)
+        newer_store.update(lambda _: dataclasses.replace(ReviewState(), ordered_prs=(2828,)))
+        before = database.read_bytes()
+        old_store = SqliteStateStore(database, writer_build=1)
+
+        with self.assertRaisesRegex(StateError, "requires writer build 2"):
+            old_store.update(lambda current: dataclasses.replace(current, ordered_prs=(2879,)))
+
+        self.assertEqual(database.read_bytes(), before)
+        self.assertEqual(newer_store.load().ordered_prs, (2828,))
+        self.assertFalse(old_store.status()["compatible"])
+
+    def test_future_schema_is_refused_without_update_and_status_is_read_only(self) -> None:
+        database = self.root / "future.sqlite3"
+        store = SqliteStateStore(database)
+        store.update(lambda _: dataclasses.replace(ReviewState(), ordered_prs=(2828,)))
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA user_version = 999")
+        before = database.read_bytes()
+
+        with self.assertRaisesRegex(StateError, "unsupported SQLite review-state schema version: 999"):
+            store.update(lambda current: dataclasses.replace(current, ordered_prs=(2879,)))
+
+        status = store.status()
+        self.assertEqual(status["schema_version"], 999)
+        self.assertFalse(status["compatible"])
+        self.assertTrue(status["read_only"])
+        self.assertEqual(database.read_bytes(), before)
+
+    def test_status_does_not_create_a_missing_database(self) -> None:
+        database = self.root / "not-created.sqlite3"
+        status = SqliteStateStore(database).status()
+
+        self.assertEqual(status["format"], "missing")
+        self.assertTrue(status["read_only"])
+        self.assertFalse(status["compatible"])
+        self.assertFalse(database.exists())
+
+    def test_concurrent_updates_are_serialized_without_lost_rows(self) -> None:
+        store = SqliteStateStore(self.root / "concurrent.sqlite3", timeout=20)
+        store.update(lambda _: ReviewState())
+
+        def append(pr: int) -> ReviewState:
+            return store.update(lambda current: dataclasses.replace(current, ordered_prs=current.ordered_prs + (pr,)))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(append, range(1000, 1008)))
+
+        self.assertEqual(sorted(store.load().ordered_prs), list(range(1000, 1008)))
+
+
+if __name__ == "__main__":
+    unittest.main()
