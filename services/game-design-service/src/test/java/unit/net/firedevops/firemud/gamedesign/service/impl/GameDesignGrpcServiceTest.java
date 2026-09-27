@@ -1288,6 +1288,46 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getDesignControlPlaneDigestReturnsNotFoundForMissingScriptPatchScope() {
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
+        .thenThrow(new IllegalArgumentException("script patch version scope not found"));
+
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestKeepsAmbiguousScriptPatchScopeInvalidArgument() {
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
+        .thenThrow(new IllegalArgumentException("script patch version scope is ambiguous"));
+
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
   void getVersionAssetArtifactStateReturnsArtifactProof() {
     Mockito.when(versionAssetArtifactService.getState("tenant-1", 7L))
         .thenReturn(

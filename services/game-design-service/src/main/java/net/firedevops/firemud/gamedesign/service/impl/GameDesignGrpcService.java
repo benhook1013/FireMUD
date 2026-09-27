@@ -659,7 +659,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry,
               logger,
               "GetDesignControlPlaneDigest",
-              "INVALID_ARGUMENT",
+              request.getScopeCase()
+                      == GetDesignControlPlaneDigestRequest.ScopeCase.SCRIPT_PATCH_VERSION
+                  ? scriptPatchPublicationErrorCode(ex.getMessage())
+                  : "INVALID_ARGUMENT",
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(
