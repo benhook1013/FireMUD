@@ -371,6 +371,8 @@ final class AutomationGameplayCommandAdmissionSupport {
         && sameText(existing.getAutomationWorkItemId(), requested.getAutomationWorkItemId())
         && sameText(existing.getScriptId(), requested.getScriptId())
         && sameText(existing.getScriptPatchVersion(), requested.getScriptPatchVersion())
+        && Objects.equals(
+            existing.getScriptPatchBaseVersionId(), requested.getScriptPatchBaseVersionId())
         && sameAutomationScriptPinTuple(existing, requested)
         && sameText(existing.getPluginId(), requested.getPluginId())
         && sameText(existing.getPluginVersionId(), requested.getPluginVersionId())
@@ -481,6 +483,11 @@ final class AutomationGameplayCommandAdmissionSupport {
       requireText(request.automationWorkItemId(), "automation_work_item_id is required");
       requireText(request.scriptId(), "script_id is required");
       requireText(request.scriptPatchVersion(), "script_patch_version is required");
+      if (isLocalAutomation(request)
+          && (request.scriptPatchBaseVersionId() == null
+              || request.scriptPatchBaseVersionId() <= 0L)) {
+        throw new IllegalArgumentException("script_patch_base_version_id must be positive");
+      }
     } else if ("REMOTE_FOLLOWUP".equals(normalizedSourceType)) {
       requireText(request.remoteCoordinatorId(), "remote_coordinator_id is required");
       requireText(request.remoteFollowupId(), "remote_followup_id is required");
@@ -620,6 +627,7 @@ final class AutomationGameplayCommandAdmissionSupport {
         request.automationWorkItemId(),
         request.scriptId(),
         request.scriptPatchVersion(),
+        request.scriptPatchBaseVersionId(),
         request.pluginId(),
         request.pluginVersionId(),
         playableStateScope,
@@ -675,6 +683,21 @@ final class AutomationGameplayCommandAdmissionSupport {
     // binding has a separate owner contract and must not be inferred from the local request.
     if (!isLocalAutomation(request)) {
       return Optional.empty();
+    }
+
+    if (request.scriptPatchBaseVersionId() == null
+        || request.scriptPatchBaseVersionId() <= 0L
+        || instance.getScriptPatchBaseVersionId() == null
+        || instance.getScriptPatchBaseVersionId() <= 0L
+        || !Objects.equals(
+            request.scriptPatchBaseVersionId(), instance.getScriptPatchBaseVersionId())) {
+      return Optional.of(
+          new AdmissionResult(
+              false,
+              "REJECTED",
+              null,
+              "STALE_TIMELINE",
+              "script patch base version does not match current game instance"));
     }
 
     try {
@@ -764,6 +787,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
     command.setScriptId(blankToNull(request.scriptId()));
     command.setScriptPatchVersion(blankToNull(request.scriptPatchVersion()));
+    command.setScriptPatchBaseVersionId(request.scriptPatchBaseVersionId());
     if (isLocalAutomation(request)) {
       command.setScriptPinEpoch(request.scriptPinEpoch());
       command.setScriptPinControlPlaneRequestId(
@@ -854,6 +878,7 @@ final class AutomationGameplayCommandAdmissionSupport {
       String automationWorkItemId,
       String scriptId,
       String scriptPatchVersion,
+      Long scriptPatchBaseVersionId,
       String pluginId,
       String pluginVersionId,
       String playableStateScope,
