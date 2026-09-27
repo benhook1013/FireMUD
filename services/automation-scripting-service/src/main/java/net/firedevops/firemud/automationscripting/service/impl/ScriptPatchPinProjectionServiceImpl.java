@@ -79,6 +79,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                           "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
         if (!hasPositiveScriptPinEpoch(runtimeState)) {
+          if (hasLegacyPositivePinProjection(existing.orElse(null))) {
+            return new PinConvergenceLookup(
+                Optional.empty(),
+                "PIN_PROJECTION_CONFLICT",
+                "GetAutomationPinConvergence failed: unpinned_runtime_conflicts_with_legacy_pin_projection");
+          }
           scheduleInstanceService.reconcileObservedRuntimeState(
               tenantId, gameInstanceId, runtimeState);
           return new PinConvergenceLookup(
@@ -211,6 +217,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
   private static boolean isLegacyProjection(ScriptPatchPinProjection projection) {
     Long epoch = projection.getScriptPinEpoch();
     return epoch == null || epoch == 0L;
+  }
+
+  private static boolean hasLegacyPositivePinProjection(ScriptPatchPinProjection projection) {
+    return projection != null
+        && isLegacyProjection(projection)
+        && !blankToEmpty(projection.getObservedPinnedScriptPatchVersion()).isBlank();
   }
 
   private ScriptPatchPinProjection saveObservation(

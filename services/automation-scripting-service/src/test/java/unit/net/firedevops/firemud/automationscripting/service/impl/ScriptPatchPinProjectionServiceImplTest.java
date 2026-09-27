@@ -229,6 +229,64 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void failsClosedWhenUnpinnedRuntimeConflictsWithLegacyPositiveProjection() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("legacy-patch");
+    existing.setScriptPinEpoch(0L);
+    existing.setRuntimeRegionId("region-1");
+    existing.setProjectionRefreshedAt(Instant.now().minusSeconds(30));
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    GameInstanceRuntimeState unpinnedState =
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("")
+            .setScriptPinEpoch(0L)
+            .setScriptPatchPinnedControlPlaneRequestId("")
+            .setRegionId("region-1")
+            .setRegionEpoch(4L)
+            .build();
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    Mockito.when(
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                "1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(unpinnedState)
+                .build());
+
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.summary()).isEmpty();
+    assertThat(lookup.errorCode()).isEqualTo("PIN_PROJECTION_CONFLICT");
+    assertThat(lookup.errorMessage())
+        .isEqualTo(
+            "GetAutomationPinConvergence failed: unpinned_runtime_conflicts_with_legacy_pin_projection");
+    verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
   void preservesExistingProjectionWhenRuntimePinEpochIsUnavailable() {
     ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
     existing.setTenantId("1");
