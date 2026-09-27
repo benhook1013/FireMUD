@@ -933,9 +933,15 @@ if not (
 ):
     raise SystemExit("dev-demo must re-close Game Design admission after the participant chart and before restore")
 if deploy_run.index("deploy_complete=true") <= second_helm:
-    raise SystemExit("dev-demo must keep Game Design admission fail-closed until the restore Helm upgrade succeeds")
+    raise SystemExit("dev-demo must keep Game Design admission fail-closed until the restore Service selector is verified")
+restore_readback = 'restored_service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)"'
+if not (
+    second_helm < deploy_run.index(restore_readback) < deploy_run.index("deploy_complete=true")
+    and '.spec.selector == {app: $service}' in deploy_run[deploy_run.index(restore_readback):]
+):
+    raise SystemExit("dev-demo must verify the canonical Game Design selector after publication restore")
 if deploy_run.rindex("trap - EXIT") <= second_helm:
-    raise SystemExit("dev-demo must remove its Game Design failure trap only after publication restore succeeds")
+    raise SystemExit("dev-demo must remove its Game Design failure trap only after publication restore verification")
 if "set -euo pipefail" not in deploy_run:
     raise SystemExit("dev-demo staged rollout must stop before restoring Game Design after a failed participant rollout")
 hosted_values = yaml.safe_load(
@@ -2263,13 +2269,15 @@ if [[ ( "${TEST_HELM_RESULT:?}" == failure || "$TEST_HELM_RESULT" == first-insta
 fi
 [[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ||
   "$TEST_HELM_RESULT" == first-install || "$TEST_HELM_RESULT" == terminal-pods ||
-  "$TEST_HELM_RESULT" == preclosed-service ]]
+  "$TEST_HELM_RESULT" == preclosed-service || "$TEST_HELM_RESULT" == restore-selector-quiesced ]]
 if [[ "$invocation" == 0 ]]; then
   rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
   if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
     "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ]]; then
     : >"${TEST_DEPLOYMENT_STATE:?}/service-created"
   fi
+elif [[ "$TEST_HELM_RESULT" != restore-selector-quiesced ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
 fi
 printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
 SH
@@ -2463,6 +2471,20 @@ run_deployment_evidence_fixture() {
     return
   fi
 
+  if [[ "$scenario" == restore-selector-quiesced ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-closed-readback service-closed-readback pods-empty service-closed-readback" ]] || {
+      printf 'restore-selector-quiesced fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "quiesced Game Design selector after restore recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
   if [[ "$scenario" == first-install-failure ]]; then
     [[ "$deploy_status" -eq 42 ]]
     mapfile -t actual <"$deployment_log"
@@ -2477,7 +2499,7 @@ run_deployment_evidence_fixture() {
   if [[ "$scenario" == first-install ]]; then
     [[ "$deploy_status" -eq 0 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
     return
   fi
 
@@ -2505,11 +2527,11 @@ run_deployment_evidence_fixture() {
   [[ ( "$scenario" == success || "$scenario" == terminal-pods || "$scenario" == preclosed-service ) && "$deploy_status" -eq 0 ]]
   mapfile -t actual <"$deployment_log"
   if [[ "$scenario" == terminal-pods ]]; then
-    [[ "${actual[*]}" == "service-canonical-readback pods-terminal-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-terminal-game-design helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-terminal-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-terminal-game-design helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
   elif [[ "$scenario" == preclosed-service ]]; then
-    [[ "${actual[*]}" == "service-closed-readback pods-old-game-design hpa-empty service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    [[ "${actual[*]}" == "service-closed-readback pods-old-game-design hpa-empty service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
   else
-    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
   fi
   grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
 }
@@ -2522,6 +2544,7 @@ run_deployment_evidence_fixture leftover-deployment
 run_deployment_evidence_fixture leftover-pod
 run_deployment_evidence_fixture partial-service
 run_deployment_evidence_fixture success
+run_deployment_evidence_fixture restore-selector-quiesced
 run_deployment_evidence_fixture terminal-pods
 run_deployment_evidence_fixture preclosed-service
 

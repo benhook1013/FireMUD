@@ -285,5 +285,17 @@ helm upgrade --install "$release_name" k8s/helm/firemud \
   --namespace "$runtime_namespace" \
   --wait \
   --timeout 15m
+restored_service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)" || {
+  echo "Game Design Service could not be read after publication restore." >&2
+  exit 1
+}
+jq -e --arg service "$game_design_service" '
+  .kind == "Service" and
+  .metadata.name == $service and
+  .spec.selector == {app: $service}
+' <<<"$restored_service_json" >/dev/null || {
+  echo "Game Design Service selector did not match the canonical chart selector after publication restore." >&2
+  exit 1
+}
 deploy_complete=true
 trap - EXIT
