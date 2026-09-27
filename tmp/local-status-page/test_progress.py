@@ -1,4 +1,6 @@
 import json
+import base64
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -37,6 +39,12 @@ class ProjectMapTest(unittest.TestCase):
         self.assertIn('href="/"', result)
         self.assertIn('Return points', result)
         self.assertIn('FireMUD Project Map', result)
+        self.assertIn('Programme notes checked <time class="relative-age"', result)
+        self.assertIn('Page refreshed <time class="relative-age"', result)
+        age_hash = base64.b64encode(hashlib.sha256(render_progress.AGE_SCRIPT.encode()).digest()).decode()
+        self.assertIn(f"script-src 'sha256-{age_hash}'", result)
+        self.assertIn('PR Delivery Page</a>', result)
+        self.assertNotIn('Long-range progress', result)
         self.assertNotIn('/home/ben/', result)
 
     def test_manual_text_is_escaped_and_external_links_are_restricted(self):

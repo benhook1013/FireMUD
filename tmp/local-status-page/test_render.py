@@ -195,7 +195,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('line-height: 1.2; font-weight: 700;', result)
         self.assertIn('header.mast { position: sticky; top: 0; z-index: 20;', result)
         self.assertIn('.brand { display: block; min-width: 0; margin: 0;', result)
-        self.assertIn('.refresh-form { width: 8.5rem; height: 2.1rem;', result)
+        self.assertIn('.refresh-form { width: 10rem; height: 2.1rem;', result)
         self.assertIn('.refresh-space .refresh-time { margin: 0; white-space: nowrap; }', result)
         self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #37414a;', result)
         self.assertIn('.front-facts { grid-template-columns: 1fr; }', result)

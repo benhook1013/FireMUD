@@ -733,9 +733,9 @@ header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
 header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ width: 8.5rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+.refresh-form {{ width: 10rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
 .refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
-.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .2rem .7rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid #f0e0e6; border-radius: 7px; padding: .2rem .75rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: nowrap; }}
 .refresh-time {{ display: block; margin-top: .55rem; color: #f0e0e6; font-size: .78rem; line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
@@ -778,13 +778,13 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 :root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
 body {{ background: var(--ash); color: var(--ink); }}
-header.mast {{ position: sticky; top: 0; z-index: 20; background: var(--smoke); padding: .8rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
+header.mast {{ position: sticky; top: 0; z-index: 20; min-height: 3.75rem; background: var(--smoke); padding: .75rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
 .mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo"; align-items: center; column-gap: 1rem; max-width: 1440px; margin: auto; }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
 .refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: center; gap: .7rem; }}
-.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .55rem; text-align: left; }}
-.mast-icon {{ width: 1.7rem; height: 1.7rem; flex: none; }}
-.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 850; line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .35rem; text-align: left; }}
+.mast-icon {{ width: 1.7rem; height: 1.7rem; flex: none; transform: translateY(-.25rem); }}
+.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 700; line-height: normal; letter-spacing: -.035em; overflow-wrap: anywhere; }}
 .refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
 .mast-inner > .repo-links {{ grid-area: repo; justify-self: end; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .3rem 1rem; }}
 .repo-links a {{ color: #fff; font-size: .86rem; font-weight: 700; white-space: nowrap; }}

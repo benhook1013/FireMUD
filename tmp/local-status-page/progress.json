@@ -1,7 +1,7 @@
 {
   "reviewed_at": "2026-09-27T03:05:00Z",
   "headline": "Building a playable FireMUD",
-  "orientation": "This is the long-range map. The PR delivery page owns the live merge train; the corpus index and implementation trackers own detailed completion claims.",
+  "orientation": "Follow the main workstreams here and see when paused work should resume. Open PR Delivery for current reviews and merges; follow the linked domain trackers for detailed implementation and proof status.",
   "tracks": [
     {
       "id": "decision-foundation",
