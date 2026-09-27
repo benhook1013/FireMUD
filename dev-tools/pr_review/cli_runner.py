@@ -448,7 +448,7 @@ def _common_dir(
     return path
 
 
-def _assert_no_active_hosted_review(
+def _select_candidate_for_hosted_overlap(
     repo: str,
     pr_number: int,
     common_dir: Path,
@@ -456,12 +456,27 @@ def _assert_no_active_hosted_review(
     published_head_sha: str,
     candidate_sha: str,
     expected_anchor: Mapping[str, Any] | None,
-) -> None:
-    """Allow overlap only for an active Hosted request on the exact same anchor."""
+) -> str:
+    """Select the published head for a proven Hosted overlap, otherwise keep the local candidate."""
 
-    def hold(state: str, count: int = 1) -> ReviewRunnerError:
+    def display_sha(value: Any) -> str:
+        if (
+            isinstance(value, str)
+            and len(value) == 40
+            and all(character in "0123456789abcdefABCDEF" for character in value)
+        ):
+            return value.lower()
+        return "unknown"
+
+    def display_reservation_sha(value: Any) -> str:
+        if isinstance(value, str) and "," in value:
+            return ",".join(display_sha(part) for part in value.split(","))
+        return display_sha(value)
+
+    def hold(state: str, count: int = 1, reservation_sha: Any = None) -> ReviewRunnerError:
         return ReviewRunnerError(
-            f"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count={count}"
+            f"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count={count}; "
+            f"candidate_sha={display_sha(candidate_sha)}; reservation_sha={display_reservation_sha(reservation_sha)}"
         )
 
     def same_sha(value: Any, expected: str) -> bool:
@@ -494,9 +509,17 @@ def _assert_no_active_hosted_review(
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
     if not records:
-        return
+        return candidate_sha
     if len(records) > 1:
-        raise hold("multiple_current_reservations", len(records))
+        reservation_shas: list[str] = []
+        for record_path in records:
+            try:
+                reservation = hosted.load_trigger_reservation(record_path, repo, pr_number)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+                reservation_shas.append("unknown")
+            else:
+                reservation_shas.append(display_sha(reservation.get("head_sha")))
+        raise hold("multiple_current_reservations", len(records), ",".join(reservation_shas))
 
     try:
         payload = github_api.fetch_pull_request(repo, pr_number)
@@ -533,16 +556,15 @@ def _assert_no_active_hosted_review(
                     and state.response_id > 0
                     and same_sha(state.head_sha, published_head_sha)
                     and same_sha(state.current_head_sha, published_head_sha)
-                    and same_sha(candidate_sha, published_head_sha)
                     and same_anchor(record.get("anchor"))
                 )
                 if immutable_active_identity:
-                    continue
-                raise hold("active_unverified")
+                    return published_head_sha
+                raise hold("active_unverified", reservation_sha=state.head_sha)
             if state.state == "awaiting_response":
-                raise hold("awaiting_response")
+                raise hold("awaiting_response", reservation_sha=state.head_sha)
             if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
-                raise hold(state.state)
+                raise hold(state.state, reservation_sha=state.head_sha)
             if terminal_attribution_ambiguity:
                 continue
             if state.state not in {
@@ -552,11 +574,15 @@ def _assert_no_active_hosted_review(
                 "retired",
                 "rate_limited",
             }:
-                raise hold(state.state)
+                raise hold(state.state, reservation_sha=state.head_sha)
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
-        raise ReviewRunnerError("current Hosted reservation cannot be safely classified") from error
+        raise ReviewRunnerError(
+            "current Hosted reservation cannot be safely classified; "
+            f"candidate_sha={display_sha(candidate_sha)}; reservation_sha=unknown"
+        ) from error
+    return candidate_sha
 
 
 def _ensure_commit(
@@ -871,13 +897,31 @@ def run_cli_review(
             )
             if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
-            selected_patch_matches = (
-                target.patch_identity == candidate_patch_identity
-                and bool(target.patch_identity)
+            published_merge_base = (
+                merge_base
+                if candidate_sha == child_head
+                else _unique_merge_base(
+                    runner,
+                    source_root,
+                    target.parent.head_sha,
+                    child_head,
+                    timeout=git_timeout_seconds,
+                )
             )
-            selected_merge_base_matches = (
-                bool(target.merge_base)
-                and _sha(target.merge_base, "selected merge base") == merge_base
+            published_patch_identity = (
+                candidate_patch_identity
+                if candidate_sha == child_head
+                else _patch_identity(
+                    runner,
+                    source_root,
+                    published_merge_base,
+                    child_head,
+                    timeout=git_timeout_seconds,
+                )
+            )
+            selected_patch_matches = bool(target.patch_identity) and target.patch_identity == published_patch_identity
+            selected_merge_base_matches = bool(target.merge_base) and (
+                _sha(target.merge_base, "selected merge base") == published_merge_base
             )
             expected_anchor = None
             if selected_patch_matches and selected_merge_base_matches:
@@ -886,10 +930,10 @@ def run_cli_review(
                     "child_head": child_head,
                     "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
                     "parent_head": target.parent.head_sha,
-                    "merge_base": merge_base,
-                    "patch_id": candidate_patch_identity,
+                    "merge_base": published_merge_base,
+                    "patch_id": published_patch_identity,
                 }
-            _assert_no_active_hosted_review(
+            selected_candidate_sha = _select_candidate_for_hosted_overlap(
                 repository,
                 target.snapshot.number,
                 common_dir,
@@ -897,6 +941,20 @@ def run_cli_review(
                 candidate_sha=candidate_sha,
                 expected_anchor=expected_anchor,
             )
+            if selected_candidate_sha != candidate_sha:
+                candidate_sha = selected_candidate_sha
+                merge_base, published_files, candidate_files, child_head, review_context_sha = _validate_target(
+                    target,
+                    live,
+                    live_files,
+                    parent_tip,
+                    candidate_sha,
+                    runner,
+                    source_root,
+                    allow_unreconciled=allow_unreconciled,
+                    git_timeout_seconds=git_timeout_seconds,
+                )
+                candidate_patch_identity = published_patch_identity
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:

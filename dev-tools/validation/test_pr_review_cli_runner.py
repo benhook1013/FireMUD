@@ -262,8 +262,16 @@ class FakeCommands:
                 return CompletedProcess(args, 0, f"{self.candidate}\n", "")
             if git_args[:3] == ["diff", "--name-only", "-z"]:
                 return CompletedProcess(args, 0, "\0".join(self.files) + "\0", "")
-            if git_args == list(patch_diff_args(PARENT, self.candidate)):
-                output = self.patch_bytes if not text else self.patch_bytes.decode("utf-8")
+            patch_args = tuple(git_args)
+            candidate_patch_args = tuple(patch_diff_args(PARENT, self.candidate))
+            published_patch_args = tuple(patch_diff_args(PARENT, HEAD))
+            if patch_args in {candidate_patch_args, published_patch_args}:
+                patch_bytes = (
+                    self.patch_bytes
+                    if patch_args == candidate_patch_args
+                    else f"candidate patch {HEAD}\n".encode()
+                )
+                output = patch_bytes if not text else patch_bytes.decode("utf-8")
                 return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
@@ -961,7 +969,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
             self.assertEqual(json.loads(record_path.read_text()), original_record)
 
-    def test_active_hosted_review_holds_cli_for_unpublished_candidate(self):
+    def test_active_hosted_review_selects_published_head_for_local_ahead_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             common_dir = root / ".git"
@@ -973,15 +981,18 @@ class CliReviewRunnerTests(unittest.TestCase):
                     "pr_review.cli_runner.github_api.fetch_pull_request",
                     return_value=hosted_payload("Full review triggered"),
                 ),
-                self.assertRaisesRegex(ReviewRunnerError, HOSTED_CLI_OVERLAP_HOLD_REASON),
             ):
-                run_cli_review(
+                result = run_cli_review(
                     target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
                     github=FakeGitHub(),
                     source_root=root,
                     runner=commands,
                 )
-            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            self.assertEqual(metadata["candidate_sha"], HEAD)
+            self.assertEqual(metadata["published_head_sha"], HEAD)
+            self.assertEqual(metadata["published_status"], "published-head")
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_active_hosted_review_same_head_with_changed_anchor_holds_cli(self):
         target_anchor = cli_anchor()
@@ -1007,7 +1018,8 @@ class CliReviewRunnerTests(unittest.TestCase):
                     ),
                     self.assertRaisesRegex(
                         ReviewRunnerError,
-                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; reservation_count=1",
+                        rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; "
+                        rf"reservation_count=1; candidate_sha={HEAD}; reservation_sha={HEAD}",
                     ),
                 ):
                     run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
@@ -1169,7 +1181,8 @@ class CliReviewRunnerTests(unittest.TestCase):
                 patch("pr_review.cli_runner.github_api.fetch_pull_request") as fetch,
                 self.assertRaisesRegex(
                     ReviewRunnerError,
-                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=multiple_current_reservations; reservation_count=2",
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=multiple_current_reservations; "
+                    rf"reservation_count=2; candidate_sha={HEAD}; reservation_sha={HEAD},{HEAD}",
                 ),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
@@ -1188,13 +1201,43 @@ class CliReviewRunnerTests(unittest.TestCase):
                     "pr_review.cli_runner.github_api.fetch_pull_request",
                     return_value=hosted_payload(),
                 ),
-                patch("pr_review.cli_runner.hosted.trigger_state", return_value=Mock(state="future_state")),
+                patch(
+                    "pr_review.cli_runner.hosted.trigger_state",
+                    return_value=Mock(state="future_state", head_sha=HEAD),
+                ),
                 self.assertRaisesRegex(
                     ReviewRunnerError,
-                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=future_state; reservation_count=1",
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=future_state; reservation_count=1; "
+                    rf"candidate_sha={HEAD}; reservation_sha={HEAD}",
                 ),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_active_hosted_review_with_mismatched_reservation_head_reports_both_shas(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir, head_sha=CANDIDATE, anchor=cli_anchor())
+            commands = FakeCommands(root, candidate=CANDIDATE)
+            with (
+                patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload("Full review triggered"),
+                ),
+                self.assertRaisesRegex(
+                    ReviewRunnerError,
+                    rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; reservation_count=1; "
+                    rf"candidate_sha={CANDIDATE}; reservation_sha={CANDIDATE}",
+                ),
+            ):
+                run_cli_review(
+                    target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_hosted_posting_lock_blocks_cli_before_live_lookup(self):
