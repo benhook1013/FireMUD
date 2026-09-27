@@ -892,13 +892,20 @@ if not first_helm < second_helm:
 for required in (
     'closed_selector="firemud-game-design-migration-quiesced"',
     "trap leave_game_design_closed_on_failure EXIT",
-    'get service "$game_design_service" -o json',
+    'get service "$game_design_service"',
+    'if [[ -z "$service_json" ]]; then',
+    'get deployment "$game_design_service"',
+    '--ignore-not-found -o json',
+    'Game Design Service is absent but a Deployment remains',
+    'Game Design Service is absent but old Pods remain',
+    '(.spec.selector == {app: $service} or .spec.selector == {app: $selector})',
     "admission_mutation_started=true",
     'patch service "$game_design_service"',
     '.spec.selector == {app: $selector}',
     "get endpointslices.discovery.k8s.io",
     'deployment/$game_design_service" --replicas=0',
-    'get deployment "$game_design_service" -o json',
+    '(.status.phase // "Unknown") != "Succeeded"',
+    '(.status.phase // "Unknown") != "Failed"',
     'old_pod_count="$(jq -er --arg service "$game_design_service"',
 ):
     if required not in deploy_run or deploy_run.index(required) >= first_helm:
@@ -2246,13 +2253,23 @@ for index in "${!expected[@]}"; do
   [[ "${actual[$index]}" == "${expected[$index]}" ]]
 done
 printf 'helm-start\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-if [[ "${TEST_HELM_RESULT:?}" == failure && "$invocation" == 0 ]]; then
+if [[ ( "${TEST_HELM_RESULT:?}" == failure || "$TEST_HELM_RESULT" == first-install-failure ) && "$invocation" == 0 ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  if [[ "$TEST_HELM_RESULT" == first-install-failure ]]; then
+    : >"${TEST_DEPLOYMENT_STATE:?}/service-created"
+  fi
   printf 'helm-failure\n' >>"$TEST_DEPLOYMENT_LOG"
   exit 42
 fi
-[[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ]]
+[[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ||
+  "$TEST_HELM_RESULT" == first-install || "$TEST_HELM_RESULT" == terminal-pods ||
+  "$TEST_HELM_RESULT" == preclosed-service ]]
 if [[ "$invocation" == 0 ]]; then
   rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ]]; then
+    : >"${TEST_DEPLOYMENT_STATE:?}/service-created"
+  fi
 fi
 printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
 SH
@@ -2261,12 +2278,30 @@ cat >"$deployment_stub_dir/kubectl" <<'SH'
 set -euo pipefail
 
 if [[ "$1" == -n && "$3" == get && "$4" == service ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ]] &&
+    [[ ! -e "${TEST_DEPLOYMENT_STATE:?}/service-created" ]]; then
+    printf 'service-absent\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    exit 0
+  fi
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == partial-service ]]; then
+    if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+      printf 'service-closed-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+      printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
+      exit 0
+    fi
+    printf 'service-partial-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"unexpected"}}}\n'
+    exit 0
+  fi
   if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
     printf 'service-closed-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-    printf '{"metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
   else
     printf 'service-canonical-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-    printf '{"metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"game-design-service"}}}\n'
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"game-design-service"}}}\n'
   fi
   exit 0
 fi
@@ -2276,7 +2311,21 @@ if [[ "$1" == -n && "$3" == get && "$4" == hpa ]]; then
   exit 0
 fi
 if [[ "$1" == -n && "$3" == get && "$4" == pods ]]; then
-  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/scaled" ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ]]; then
+    printf 'pods-leftover-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"other","image":"registry/game-design-service:old"}]}}]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == terminal-pods ]]; then
+    printf 'pods-terminal-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"other","image":"registry/game-design-service:old"}]},"status":{"phase":"Succeeded"}},{"metadata":{"labels":{"app":"game-design-service"}},"spec":{"containers":[{"name":"game-design-service","image":"game-design-service:old"}]},"status":{"phase":"Failed"}}]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  elif [[ -e "${TEST_DEPLOYMENT_STATE:?}/scaled" ]]; then
     printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
     printf '{"kind":"PodList","items":[]}\n'
   else
@@ -2286,8 +2335,19 @@ if [[ "$1" == -n && "$3" == get && "$4" == pods ]]; then
   exit 0
 fi
 if [[ "$1" == -n && "$3" == get && "$4" == deployment ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ]]; then
+    printf 'deployment-absent\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    exit 0
+  fi
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ]]; then
+    printf 'deployment-leftover\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Deployment","metadata":{"name":"game-design-service"},"spec":{"replicas":1}}\n'
+    exit 0
+  fi
   printf 'deployment-zero-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-  printf '{"kind":"Deployment","spec":{"replicas":0}}\n'
+  printf '{"kind":"Deployment","metadata":{"name":"game-design-service"},"spec":{"replicas":0}}\n'
   exit 0
 fi
 if [[ "$1" == -n && "$3" == patch && "$4" == service ]]; then
@@ -2307,7 +2367,10 @@ if [[ "$1" == -n && "$3" == scale && "$4" == deployment/game-design-service ]]; 
   exit 0
 fi
 if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; then
-  if [[ "${TEST_HELM_RESULT:?}" == quiescence-failure ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ]]; then
+    printf 'endpoints-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"EndpointSliceList","items":[]}\n'
+  elif [[ "${TEST_HELM_RESULT:?}" == quiescence-failure ]]; then
     printf 'endpoints-invalid\n' >>"${TEST_DEPLOYMENT_LOG:?}"
     printf '{"kind":"InvalidEndpointSliceList","items":[]}\n'
   else
@@ -2338,6 +2401,9 @@ run_deployment_evidence_fixture() {
   local deployment_state="$fixture_dir/deployment-${scenario}.state"
   rm -rf "$deployment_state"
   mkdir -p "$deployment_state"
+  if [[ "$scenario" == preclosed-service ]]; then
+    : >"$deployment_state/service-closed"
+  fi
   : >"$github_env"
   set +e
   (
@@ -2347,6 +2413,7 @@ run_deployment_evidence_fixture() {
       GITHUB_ENV="$github_env" \
       TEST_DEPLOYMENT_LOG="$deployment_log" \
       TEST_DEPLOYMENT_STATE="$deployment_state" \
+      TEST_DEPLOYMENT_SCENARIO="$scenario" \
       TEST_RENDERED_VALUES_PATH="$deployment_values_path" \
       TEST_GAME_DESIGN_INDEX=1 \
       TEST_HELM_RESULT="$scenario" \
@@ -2371,7 +2438,10 @@ run_deployment_evidence_fixture() {
   if [[ "$scenario" == failure ]]; then
     [[ "$deploy_status" -eq 42 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-failure service-reclosed" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-failure service-canonical-readback pods-empty service-closed service-closed-readback" ]] || {
+      printf 'failure fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
     if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
       echo "failed Helm attempt recorded deployed-head evidence" >&2
       exit 1
@@ -2382,7 +2452,10 @@ run_deployment_evidence_fixture() {
   if [[ "$scenario" == quiescence-failure ]]; then
     [[ "$deploy_status" -ne 0 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-invalid service-reclosed" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-invalid service-closed-readback pods-old-game-design service-closed-readback" ]] || {
+      printf 'quiescence fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
     if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
       echo "uncertain Game Design quiescence recorded deployed-head evidence" >&2
       exit 1
@@ -2390,15 +2463,67 @@ run_deployment_evidence_fixture() {
     return
   fi
 
-  [[ "$scenario" == success && "$deploy_status" -eq 0 ]]
+  if [[ "$scenario" == first-install-failure ]]; then
+    [[ "$deploy_status" -eq 42 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-failure service-canonical-readback pods-empty service-closed service-closed-readback" ]]
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "failed first-install Helm attempt recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ "$scenario" == first-install ]]; then
+    [[ "$deploy_status" -eq 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    return
+  fi
+
+  if [[ "$scenario" == leftover-deployment || "$scenario" == leftover-pod || "$scenario" == partial-service ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    case "$scenario" in
+      leftover-deployment)
+        [[ "${actual[*]}" == "service-absent pods-empty deployment-leftover endpoints-empty" ]]
+        ;;
+      leftover-pod)
+        [[ "${actual[*]}" == "service-absent pods-leftover-game-design deployment-absent endpoints-empty" ]]
+        ;;
+      partial-service)
+        [[ "${actual[*]}" == "service-partial-readback pods-old-game-design service-partial-readback pods-old-game-design service-closed service-closed-readback" ]]
+        ;;
+    esac
+    if grep -q '^helm-start$' "$deployment_log"; then
+      echo "partial Game Design state reached Helm deployment" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  [[ ( "$scenario" == success || "$scenario" == terminal-pods || "$scenario" == preclosed-service ) && "$deploy_status" -eq 0 ]]
   mapfile -t actual <"$deployment_log"
-  [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  if [[ "$scenario" == terminal-pods ]]; then
+    [[ "${actual[*]}" == "service-canonical-readback pods-terminal-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-terminal-game-design helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  elif [[ "$scenario" == preclosed-service ]]; then
+    [[ "${actual[*]}" == "service-closed-readback pods-old-game-design hpa-empty service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  else
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  fi
   grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
 }
 
 run_deployment_evidence_fixture failure
 run_deployment_evidence_fixture quiescence-failure
+run_deployment_evidence_fixture first-install
+run_deployment_evidence_fixture first-install-failure
+run_deployment_evidence_fixture leftover-deployment
+run_deployment_evidence_fixture leftover-pod
+run_deployment_evidence_fixture partial-service
 run_deployment_evidence_fixture success
+run_deployment_evidence_fixture terminal-pods
+run_deployment_evidence_fixture preclosed-service
 
 # Execute the Ready waiter against strict bounded Kubernetes fixtures so each
 # requested/deployed head component and the complete projection evidence are
