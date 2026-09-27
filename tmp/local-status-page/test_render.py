@@ -20,6 +20,31 @@ HEAD = "a" * 40
 
 
 class StatusPageTest(unittest.TestCase):
+    def test_refresh_uses_controller_order_and_adds_new_pr_from_github(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 44, "title": "old child"})
+        review = {"available": True, "ordered_prs": [42, 43, 44]}
+        github = {"available": True, "identity": {
+            42: {"title": "parent", "base": "develop", "head": "a" * 40},
+            43: {"title": "new child", "base": "parent-branch", "head": "b" * 40},
+            44: {"title": "moved child", "base": "new-child-branch", "head": "c" * 40},
+        }}
+        updated = page.controller_stack(data, review, github, NOW)
+        self.assertEqual([42, 43, 44], [item["number"] for item in updated["stack"]])
+        self.assertEqual("<stage> & purpose", updated["stack"][1]["stage"])
+        self.assertEqual("new child", updated["stack"][1]["title"])
+        self.assertEqual("new-child-branch", updated["stack"][2]["base"])
+        self.assertEqual("<unsafe> & status", data["stack"][0]["title"])
+
+    def test_refresh_refuses_incomplete_controller_queue_identity(self):
+        data = self.fixture()
+        review = {"available": True, "ordered_prs": [42, 43]}
+        github = {"available": True, "identity": {
+            42: {"title": "parent", "base": "develop", "head": "a" * 40},
+        }}
+        with self.assertRaisesRegex(ValueError, "GitHub identities missing"):
+            page.controller_stack(data, review, github, NOW)
+
     def test_channel_labels_distinguish_request_permission_from_cooldown_and_human_stop(self):
         targets = {"hosted": {"pr": 42, "status": "READY"}}
         self.assertEqual("Hosted ready to request", page.channel_label("hosted", "READY", 42, targets))
@@ -783,7 +808,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         round_result = {"raw": 3, "accepted": 2, "attributable": True,
                         "current_head": True, "non_counting": False,
                         "completed_at": (NOW - timedelta(minutes=31)).isoformat()}
-        report = {"prs": [{"pr": 42, "head": HEAD,
+        report = {"ordered_prs": [42], "prs": [{"pr": 42, "head": HEAD,
                            "review_activity": {"hosted": {"total": 1, "recent": [round_result]}}}]}
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps(report), "")
         snapshot = page.review_snapshot(Path("/tmp/pr-review"), 42, HEAD, NOW)
@@ -798,6 +823,7 @@ Promise.all([failure(502), failure(503)]).then(result => process.stdout.write(JS
         data = self.fixture()
         data["stack"].extend([{**data["stack"][0], "number": 43}, {**data["stack"][0], "number": 44}])
         report = {
+            "ordered_prs": [42, 43, 44],
             "status": "PARTIAL", "mode": "windowed", "detail_window": {"deep_prs": [42]},
             "prs": [
                 {"pr": 42, "head": HEAD, "detail_level": "deep", "evidence_status": "current",

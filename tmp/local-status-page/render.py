@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the private, manually maintained FireMUD stack snapshot as static HTML."""
+"""Render the controller queue with manually maintained programme and lane notes."""
 
 from __future__ import annotations
 
@@ -310,6 +310,11 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
         report = json.loads(run.stdout)
         if not isinstance(report["prs"], list):
             raise ValueError("invalid review stack")
+        ordered_prs = report["ordered_prs"]
+        if (not isinstance(ordered_prs, list)
+                or any(type(number) is not int for number in ordered_prs)
+                or len(ordered_prs) != len(set(ordered_prs))):
+            raise ValueError("invalid review queue order")
         queue = {}
         for item in report["prs"]:
             number = item["pr"]
@@ -318,6 +323,8 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
             queue[number] = item
         if pr not in queue:
             raise ValueError("review front missing from stack")
+        if set(ordered_prs) != set(queue):
+            raise ValueError("review queue and status records disagree")
         live_head = queue[pr]["head"]
         return {
             "available": True,
@@ -330,6 +337,7 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
             "detail_window": report.get("detail_window", {}),
             "review_targets": report.get("review_targets", {}),
             "queue": queue,
+            "ordered_prs": ordered_prs,
         }
     except (ValueError, KeyError, TypeError, AttributeError):
         return {**unavailable, "reason": "Status fetch malformed or review front missing"}
@@ -339,7 +347,7 @@ def github_stages(now: datetime) -> dict:
     """Fetch live GitHub PR stage and diff size once for the open queue."""
     try:
         run = subprocess.run(
-            ["gh", "pr", "list", "--repo", REPO, "--state", "all", "--limit", "200", "--json", "number,state,isDraft,mergedAt,changedFiles,additions,deletions"],
+            ["gh", "pr", "list", "--repo", REPO, "--state", "all", "--limit", "200", "--json", "number,state,isDraft,mergedAt,changedFiles,additions,deletions,title,baseRefName,headRefOid"],
             capture_output=True,
             text=True,
             timeout=20,
@@ -354,19 +362,47 @@ def github_stages(now: datetime) -> dict:
         lifecycle = {}
         merged_at = {}
         stats = {}
+        identity = {}
         for item in items:
             if (type(item["number"]) is not int or type(item["isDraft"]) is not bool
                     or item["state"] not in ("OPEN", "MERGED", "CLOSED")):
                 raise ValueError("GitHub query returned an invalid PR stage")
             states[item["number"]] = item["isDraft"]
             lifecycle[item["number"]] = item["state"]
+            if (isinstance(item.get("title"), str) and item["title"].strip()
+                    and isinstance(item.get("baseRefName"), str) and item["baseRefName"]
+                    and isinstance(item.get("headRefOid"), str) and item["headRefOid"]):
+                identity[item["number"]] = {
+                    "title": item["title"], "base": item["baseRefName"], "head": item["headRefOid"],
+                }
             if item["state"] == "MERGED" and isinstance(item.get("mergedAt"), str):
                 merged_at[item["number"]] = item["mergedAt"]
             if all(type(item.get(key)) is int and item[key] >= 0 for key in ("changedFiles", "additions", "deletions")):
                 stats[item["number"]] = {key: item[key] for key in ("changedFiles", "additions", "deletions")}
-        return {"available": True, "as_of": now.isoformat(), "states": states, "lifecycle": lifecycle, "merged_at": merged_at, "stats": stats}
+        return {"available": True, "as_of": now.isoformat(), "states": states, "lifecycle": lifecycle, "merged_at": merged_at, "stats": stats, "identity": identity}
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
-        return {"available": False, "as_of": now.isoformat(), "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
+        return {"available": False, "as_of": now.isoformat(), "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}, "identity": {}}
+
+
+def controller_stack(data: dict, review: dict, github: dict, now: datetime) -> dict:
+    """Use the live queue for PR order while retaining manual programme labels."""
+    if not review["available"] or not github["available"]:
+        return data
+    saved = {item["number"]: item for item in data["stack"]}
+    ordered = review["ordered_prs"]
+    identities = github.get("identity", {})
+    if not ordered or any(number not in identities for number in ordered):
+        raise ValueError("GitHub identities missing for a configured PR; existing page preserved")
+    entries = []
+    for position, number in enumerate(ordered):
+        old = saved.get(number)
+        stage = old["stage"] if old else (
+            entries[-1]["stage"] if entries else
+            next((saved[later]["stage"] for later in ordered[position + 1:] if later in saved), "Review queue")
+        )
+        entries.append({"number": number, **identities[number], "stage": stage,
+                        "verified_at": now.isoformat()})
+    return {**data, "stack": entries}
 
 
 def render(data: dict, review: dict, now: datetime, github: dict | None = None) -> str:
@@ -744,7 +780,7 @@ a:focus-visible, button:focus-visible {{ outline: 3px solid #f6aa61; outline-off
 <section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
 <div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
 <div class="review-train">{"".join(train)}</div></section>
-<footer>Stack and lane notes are maintained in status.json. The Refresh review data button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
+<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh review data button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:
@@ -767,6 +803,7 @@ def main() -> None:
     if not github["available"] and args.output.exists():
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
     now = datetime.now(timezone.utc)
+    data = controller_stack(data, review, github, now)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
     for name in ASSET_FILES:
