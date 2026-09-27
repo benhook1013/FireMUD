@@ -415,7 +415,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                     raise CliError("--corrected-head must equal the live PR head")
                 if args.head.casefold() == live_head.casefold():
                     raise CliError("accepted-fixed disposition must refer to a prior reviewed head")
-            elif args.head.casefold() != live_head.casefold():
+            elif decision in {"rejected", "accepted_unfixed"} and args.head.casefold() != live_head.casefold():
                 raise CliError("rejected and accepted-unfixed dispositions require the live PR head")
             selected = status_module._summary_evidence(payload, args.head)
             if (
