@@ -414,6 +414,50 @@ class ControllerTests(unittest.TestCase):
         )["route"]
         self.assertEqual(len(accepted["observations"][-1]), 500)
 
+    def test_route_terminal_text_rejects_controls_and_overlong_values_before_state_update(self):
+        controller = self.make({})
+        routes = {
+            decision: controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding=f"terminal-text-{decision}",
+                observation="target-owned behavior",
+                target_pr=2879,
+            )["route"]
+            for decision in ("accepted-fixed", "rejected")
+        }
+        invalid_values = {
+            "accepted-fixed": ("verified\nin commit " + "a" * 40, "x" * 501),
+            "rejected": ("duplicate\nreport", "x" * 501),
+        }
+
+        for decision, values in invalid_values.items():
+            for value in values:
+                with self.subTest(decision=decision, value_length=len(value)):
+                    before = controller.store.load()
+                    kwargs = {"proof": value} if decision == "accepted-fixed" else {"reason": value}
+                    with self.assertRaisesRegex(ControllerError, "control characters|500 characters"):
+                        controller.decide_route(
+                            route_id=routes[decision]["route_id"],
+                            decision=decision,
+                            **kwargs,
+                        )
+                    self.assertEqual(controller.store.load(), before)
+
+        accepted = controller.decide_route(
+            route_id=routes["accepted-fixed"]["route_id"],
+            decision="accepted-fixed",
+            proof="verified in commit " + "a" * 40,
+        )["route"]
+        rejected = controller.decide_route(
+            route_id=routes["rejected"]["route_id"],
+            decision="rejected",
+            reason="the observation is outside this route's scope",
+        )["route"]
+        self.assertEqual(accepted["status"], "accepted_fixed")
+        self.assertEqual(rejected["status"], "rejected")
+
     def test_stop_uses_the_hosted_request_runner_lock_path(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
