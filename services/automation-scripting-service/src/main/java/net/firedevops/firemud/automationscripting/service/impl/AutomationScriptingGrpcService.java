@@ -69,31 +69,7 @@ public class AutomationScriptingGrpcService
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
-  private PublicationReadGuard publicationReadGuard;
-
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
-  public AutomationScriptingGrpcService(
-      PingService pingService,
-      ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
-      ScriptVersionService scriptVersionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService,
-      ScriptEventIngressService scriptEventIngressService,
-      ScriptWorkItemRepository workItemRepository,
-      NpcFormationService formationService,
-      MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.scriptService = scriptService;
-    this.scriptDesignDigestService = scriptDesignDigestService;
-    this.scriptVersionService = scriptVersionService;
-    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
-    this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
-    this.workItemRepository = Objects.requireNonNull(workItemRepository);
-    this.formationService = Objects.requireNonNull(formationService);
-    this.meterRegistry = meterRegistry;
-  }
+  private final PublicationReadGuard publicationReadGuard;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -110,44 +86,16 @@ public class AutomationScriptingGrpcService
       NpcFormationService formationService,
       MeterRegistry meterRegistry,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        scriptScheduleInstanceService,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
+    this.pingService = pingService;
+    this.scriptService = scriptService;
+    this.scriptDesignDigestService = scriptDesignDigestService;
+    this.scriptVersionService = scriptVersionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
+    this.workItemRepository = Objects.requireNonNull(workItemRepository);
+    this.formationService = Objects.requireNonNull(formationService);
+    this.meterRegistry = meterRegistry;
     this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
-  }
-
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
-  public AutomationScriptingGrpcService(
-      PingService pingService,
-      ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
-      ScriptVersionService scriptVersionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService,
-      ScriptEventIngressService scriptEventIngressService,
-      ScriptWorkItemRepository workItemRepository,
-      NpcFormationService formationService,
-      MeterRegistry meterRegistry,
-      PublicationReadGuard publicationReadGuard) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        scriptScheduleInstanceService,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
-    this.publicationReadGuard = publicationReadGuard;
   }
 
   @Override

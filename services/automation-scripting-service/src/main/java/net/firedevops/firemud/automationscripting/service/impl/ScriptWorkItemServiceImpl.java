@@ -944,7 +944,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .orElse(null);
     if (retainedBaseVersionId == null || retainedBaseVersionId <= 0L) {
       return PublicationMetadata.lookupFailure(
-          scriptPatchVersion, "NOT_FOUND", "immutable script-patch base binding is unavailable");
+          scriptPatchVersion,
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "immutable script-patch base binding is unavailable for exact publication lookup");
     }
     return publicationMetadata(tenantId, retainedBaseVersionId, scriptPatchVersion);
   }
@@ -954,8 +956,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (requestedBaseVersionId <= 0L) {
       return PublicationMetadata.lookupFailure(
           scriptPatchVersion,
-          "INVALID_ARGUMENT",
-          "base_version_id is required for exact script-patch publication lookup");
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "base_version_id is unavailable for exact script-patch publication lookup");
     }
     GetPublishedScriptPatchVersionResponse scriptPatchResponse =
         gameDesignControlPlaneClient.getPublishedScriptPatchVersion(

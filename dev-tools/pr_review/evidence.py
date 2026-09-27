@@ -16,21 +16,21 @@ from typing import Any
 
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
-    r"(?P<raw_found>\d+) found / (?P<accepted>\d+) accepted"
-    r"(?: / (?P<routed>\d+) routed)?"
+    r"(?P<raw_found>[0-9]+) found / (?P<accepted>[0-9]+) accepted"
+    r"(?: / (?P<routed>[0-9]+) routed)?"
     r"(?(bold)\*\*|)(?P<suffix>.*)$"
 )
 CHECKPOINT_SUFFIX = re.compile(
     r"^(?: · (?P<sha>`?[0-9a-fA-F]{7,40}`?))?"
-    r"(?: · (?P<files>\d+) files)?"
-    r"(?: · (?P<duration>(?:\d+h \d{2}m \d{2}s|\d+m \d{2}s|\d+s)))?$"
+    r"(?: · (?P<files>[0-9]+) files)?"
+    r"(?: · (?P<duration>(?:[0-9]+h [0-9]{2}m [0-9]{2}s|[0-9]+m [0-9]{2}s|[0-9]+s)))?$"
 )
 CHECKPOINT_CANDIDATE = re.compile(r"^(?:\*\*)?(?:Correction — )?(?:Hosted|CLI):")
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 HOSTED_MARKER = re.compile(r"^<!-- firemud-hosted-review: (?P<review_id>[1-9][0-9]*) -->$")
 DURATION_MARKER = re.compile(r"^<!-- firemud-review-duration-seconds: (?P<seconds>0|[1-9][0-9]*) -->$")
 HUMAN_DURATION = re.compile(
-    r"^(?:(?P<hours>\d+)h )?(?:(?P<minutes>\d+)m )?(?P<seconds>\d+)s$"
+    r"^(?:(?P<hours>[0-9]+)h )?(?:(?P<minutes>[0-9]+)m )?(?P<seconds>[0-9]+)s$"
 )
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
@@ -122,7 +122,7 @@ def format_checkpoint_counts(found: int, accepted: int, routed: int) -> str:
 def _visible_duration_seconds(value: str) -> int | None:
     """Parse legacy Ns or the canonical human-readable duration form."""
 
-    if value.endswith("s") and " " not in value and value[:-1].isdigit():
+    if re.fullmatch(r"[0-9]+s", value):
         return int(value[:-1])
     match = HUMAN_DURATION.fullmatch(value)
     if match is None:
@@ -555,7 +555,7 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
     routed = sum(disposition == "routed" for disposition, _ in capture.decisions.values())
     if accepted != checkpoint.accepted:
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")
-    if routed != (checkpoint.routed or 0):
+    if checkpoint.routed is not None and routed != checkpoint.routed:
         raise CaptureInvalid("CLI checkpoint routed count does not match linked findings decisions")
 
 
