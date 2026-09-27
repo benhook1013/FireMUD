@@ -2683,10 +2683,10 @@ class RuntimeTest(unittest.TestCase):
             current_record = self._trigger_record(HEAD)
             self._bind_trigger(Path(directory), current_payload, current_record)
             for changed_files in (100, 101):
-                within_ceiling_history = self._history(
+                cli_history = self._history(
                     Path(directory), current_payload, "cli", changed_files=changed_files
                 )
-                self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_history))
+                self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
             within_ceiling_hosted = self._history(Path(directory), current_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_hosted))
 
