@@ -1089,6 +1089,23 @@ class RuntimeTest(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _bind_trigger(common: Path, payload: dict[str, Any], record: dict[str, Any]) -> None:
+        trigger = record["trigger"]
+        payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].insert(
+            0,
+            {
+                "databaseId": trigger["id"],
+                "author": {"login": "reviewer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": trigger["created_at"],
+                "url": trigger["url"],
+            },
+        )
+        path = hosted.default_trigger_record_path("owner/repo", 42, common)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+
     def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, current_head, "feature", changed_files)
         live = LiveGitHub("owner/repo")
@@ -2594,6 +2611,7 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
+            self._bind_trigger(Path(directory), payload, self._trigger_record())
             hosted_history = self._history(Path(directory), payload, "hosted", changed_files=100)
             cli_history = self._history(Path(directory), payload, "cli", changed_files=111)
         self.assertTrue(
@@ -2610,7 +2628,7 @@ class RuntimeTest(unittest.TestCase):
         )
         self.assertFalse(any(item.get("checkpoint", "").startswith("review-threads:") for item in cli_history))
         self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
-        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in hosted_history))
         self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
 
     def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
@@ -2647,11 +2665,13 @@ class RuntimeTest(unittest.TestCase):
             stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
             stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            self._bind_trigger(Path(directory), stale_payload, self._trigger_record(old_head))
             stale_history = self._history(Path(directory), stale_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            self._bind_trigger(Path(directory), stale_over_ceiling_payload, self._trigger_record(old_head))
             stale_over_ceiling_history = self._history(
                 Path(directory), stale_over_ceiling_payload, "hosted", changed_files=121
             )
@@ -2660,11 +2680,15 @@ class RuntimeTest(unittest.TestCase):
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            for changed_files in (100, 111):
+            current_record = self._trigger_record(HEAD)
+            self._bind_trigger(Path(directory), current_payload, current_record)
+            for changed_files in (100, 101):
                 within_ceiling_history = self._history(
                     Path(directory), current_payload, "cli", changed_files=changed_files
                 )
                 self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_history))
+            within_ceiling_hosted = self._history(Path(directory), current_payload, "hosted", changed_files=100)
+            self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_hosted))
 
             current_history = self._history(Path(directory), current_payload, "hosted", changed_files=121)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
@@ -2680,6 +2704,7 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            self._bind_trigger(Path(directory), completed_payload, current_record)
             completed_history = self._history(Path(directory), completed_payload, "hosted", changed_files=121)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
 
@@ -2701,14 +2726,16 @@ class RuntimeTest(unittest.TestCase):
             "body": "Docstring Coverage: 31 skipped files over the file limit.",
         }
         with tempfile.TemporaryDirectory() as directory:
-            hosted_history = self._history(
-                Path(directory), self._payload([provider_skip]), "hosted", changed_files=121
-            )
+            provider_payload = self._payload([provider_skip])
+            self._bind_trigger(Path(directory), provider_payload, self._trigger_record())
+            hosted_history = self._history(Path(directory), provider_payload, "hosted", changed_files=121)
             cli_history = self._history(
-                Path(directory), self._payload([provider_skip]), "cli", changed_files=121
+                Path(directory), provider_payload, "cli", changed_files=121
             )
+            docstring_payload = self._payload([docstring_skip])
+            self._bind_trigger(Path(directory), docstring_payload, self._trigger_record())
             docstring_history = self._history(
-                Path(directory), self._payload([docstring_skip]), "hosted", changed_files=121
+                Path(directory), docstring_payload, "hosted", changed_files=121
             )
 
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
@@ -2914,6 +2941,41 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(state.summary_dispositions[0].decision, "routed")
             self.assertEqual(state.routes[0].target_pr, 2879)
             self.assertEqual(state.routes[0].source_review, "summary:review:77")
+            first_route_id = state.routes[0].route_id
+
+            review["body"] = review["body"].replace("Duplicate comments (1)", "Duplicate comments (2)")
+            args.count = 2
+            args.route_finding = ["automation-base-observation", "new-follow-up-finding"]
+            args.route_observation = [
+                "same source finding, with a later observation",
+                "separate finding in the updated bucket",
+            ]
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                repeated, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(repeated["status"], "recorded")
+            state = store.load()
+            self.assertEqual([item.count for item in state.summary_dispositions], [1, 2])
+            self.assertEqual(state.routes[0].route_id, first_route_id)
+            self.assertEqual(
+                state.routes[0].source_finding,
+                "duplicate:ref:automation-base-observation",
+            )
+            self.assertEqual(len(state.routes[0].observations), 2)
+            state_before_conflict = store.load()
+            args.target_pr = 2880
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "explicitly retargeted"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_conflict)
+            args.target_pr = 2879
 
             # A wrong summary identity or head remains non-attributable.
             args.summary_id = 78
@@ -2960,7 +3022,7 @@ class RuntimeTest(unittest.TestCase):
                 self.assertRaisesRegex(review_cli.CliError, "require the live PR head"),
             ):
                 review_cli._dispatch(rejected_args)
-            self.assertEqual(len(store.load().summary_dispositions), 1)
+            self.assertEqual(len(store.load().summary_dispositions), 2)
 
     def test_accepted_fixed_summary_disposition_uses_hyphenated_cli_choice(self) -> None:
         corrected_head = "d" * 40

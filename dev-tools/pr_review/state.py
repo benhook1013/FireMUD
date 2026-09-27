@@ -308,7 +308,12 @@ class FindingRoute:
             "route_id", "source_pr", "source_channel", "source_review", "source_finding", "observations",
             "target_pr", "status", "disposition", "proof", "target_history",
         }
-        if set(value) - allowed or not isinstance(value.get("observations"), list):
+        target_history = value.get("target_history", [])
+        if (
+            set(value) - allowed
+            or not isinstance(value.get("observations"), list)
+            or not isinstance(target_history, list)
+        ):
             raise StateError("route record contains fields outside its schema")
         route = cls(
             source_pr=value.get("source_pr"),
@@ -320,11 +325,55 @@ class FindingRoute:
             status=value.get("status", "open"),
             disposition=value.get("disposition"),
             proof=value.get("proof"),
-            target_history=tuple(value.get("target_history", ())),
+            target_history=tuple(target_history),
         )
         if value.get("route_id") not in (None, route.route_id):
             raise StateError("route ID does not match its stable source finding identity")
         return route
+
+
+def merge_open_route(existing: FindingRoute, incoming: FindingRoute) -> FindingRoute:
+    """Merge an observation into an open route without changing its identity."""
+
+    if not isinstance(existing, FindingRoute) or not isinstance(incoming, FindingRoute):
+        raise StateError("route merge requires validated route records")
+    if existing.identity != incoming.identity:
+        raise StateError("route merge requires the same stable source finding identity")
+    if existing.status != "open" or incoming.status != "open":
+        raise StateError("only open routes can merge observations")
+    if existing.target_pr is not None and incoming.target_pr not in (None, existing.target_pr):
+        raise StateError("an existing route must be explicitly retargeted")
+    observations = list(existing.observations)
+    observations.extend(value for value in incoming.observations if value not in observations)
+    return dataclasses.replace(
+        existing,
+        observations=tuple(observations),
+        target_pr=existing.target_pr if existing.target_pr is not None else incoming.target_pr,
+    )
+
+
+def _summary_route_matches_disposition(
+    route: FindingRoute,
+    disposition: SummaryFindingDisposition,
+) -> bool:
+    if (
+        route.source_pr != disposition.pr
+        or route.source_channel != "hosted"
+        or route.source_review != f"summary:{disposition.source}:{disposition.summary_id}"
+    ):
+        return False
+    prefix = f"{disposition.kind}:"
+    if not route.source_finding.startswith(prefix):
+        return False
+    reference = route.source_finding[len(prefix) :]
+    if reference.startswith("ref:"):
+        return bool(reference[4:].strip())
+    legacy = re.fullmatch(r"(?P<count>[1-9][0-9]*):(?P<reference>.+)", reference)
+    return bool(
+        legacy
+        and int(legacy.group("count")) == disposition.count
+        and legacy.group("reference").strip()
+    )
 
 
 def adjudicate_summary_findings(
@@ -950,12 +999,19 @@ class ReviewState:
         route_ids = [item.route_id for item in self.routes]
         if len(set(route_ids)) != len(route_ids):
             raise StateError("routes must have unique stable source finding identities")
-        available_route_ids = set(route_ids)
-        if any(
-            item.decision == "routed" and not set(item.route_ids) <= available_route_ids
-            for item in self.summary_dispositions
-        ):
-            raise StateError("routed summary dispositions must link to a durable route")
+        routes_by_id = {item.route_id: item for item in self.routes}
+        for disposition in self.summary_dispositions:
+            if disposition.decision != "routed":
+                continue
+            if not set(disposition.route_ids) <= routes_by_id.keys():
+                raise StateError("routed summary dispositions must link to a durable route")
+            if any(
+                not _summary_route_matches_disposition(routes_by_id[route_id], disposition)
+                for route_id in disposition.route_ids
+            ):
+                raise StateError(
+                    "routed summary disposition routes must match its source PR, hosted summary identity, and finding bucket"
+                )
         identities = [item.identity for item in self.summary_dispositions]
         if len(set(identities)) != len(identities):
             raise StateError("summary dispositions must have unique exact finding identities")
