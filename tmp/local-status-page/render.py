@@ -779,12 +779,12 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 :root {{ --ash: #e9eef0; --paper: #f9faf9; --ink: #242832; --muted: #57636c; --line: #bfccd0; --smoke: #a51f27; --fire: #b71d35; --ember: #e85137; --blush: #fff0eb; --plum: #7042a0; --plum-wash: #f2ebf8; }}
 body {{ background: var(--ash); color: var(--ink); }}
 header.mast {{ position: sticky; top: 0; z-index: 20; min-height: 3.75rem; background: var(--smoke); padding: .75rem clamp(1rem,4vw,3.5rem); border-bottom: 1px solid #671820; box-shadow: 0 3px 10px #252b3933; }}
-.mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo"; align-items: center; column-gap: 1rem; max-width: 1440px; margin: auto; }}
+.mast-inner {{ display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); grid-template-areas: "title refresh repo"; align-items: center; column-gap: 1rem; min-height: calc(3.75rem - 1.5rem - 1px); }}
 .mast-inner > .refresh-space, .mast-inner > .mast-content {{ min-width: 0; max-width: none; margin: 0; }}
 .refresh-space {{ grid-area: refresh; display: flex; align-items: center; justify-self: center; gap: .7rem; }}
-.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .35rem; text-align: left; }}
+.mast-content {{ grid-area: title; display: flex; align-items: flex-end; gap: .1rem; text-align: left; }}
 .mast-icon {{ width: 1.7rem; height: 1.7rem; flex: none; transform: translateY(-.25rem); }}
-.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 700; line-height: normal; letter-spacing: -.035em; overflow-wrap: anywhere; }}
+.brand {{ display: block; min-width: 0; margin: 0; color: #fff; font-size: clamp(1rem,2.2vw,1.4rem); font-weight: 600; line-height: normal; letter-spacing: -.01em; overflow-wrap: anywhere; }}
 .refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
 .mast-inner > .repo-links {{ grid-area: repo; justify-self: end; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .3rem 1rem; }}
 .repo-links a {{ color: #fff; font-size: .86rem; font-weight: 700; white-space: nowrap; }}
