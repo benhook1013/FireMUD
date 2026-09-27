@@ -335,6 +335,15 @@ class ControllerTests(unittest.TestCase):
             observation="same finding observed again",
             target_pr=2879,
         )["route"]
+        with self.assertRaisesRegex(ControllerError, "explicitly retargeted"):
+            controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding="thread-77",
+                observation="conflicting target observation",
+                target_pr=2880,
+            )
 
         self.assertEqual(first["route_id"], repeated["route_id"])
         self.assertEqual(len(repeated["observations"]), 2)
@@ -361,6 +370,46 @@ class ControllerTests(unittest.TestCase):
         )["route"]
         self.assertEqual(resolved["status"], "accepted_fixed")
         self.assertEqual(controller.list_routes(target_pr=2880)["count"], 0)
+        dispositioned_state = controller.store.load()
+        with self.assertRaisesRegex(ControllerError, "already dispositioned"):
+            controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding="thread-77",
+                observation="late duplicate observation",
+                target_pr=2880,
+            )
+        self.assertEqual(controller.store.load(), dispositioned_state)
+
+    def test_retarget_reason_limit_includes_prefix_and_fails_before_state_update(self):
+        controller = self.make({})
+        route = controller.record_route(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="901",
+            source_finding="thread-88",
+            observation="target-owned behavior",
+            target_pr=2879,
+        )["route"]
+        before = controller.store.load()
+
+        with self.assertRaisesRegex(ControllerError, "fit within a 500-character"):
+            controller.decide_route(
+                route_id=route["route_id"],
+                decision="retargeted",
+                target_pr=2880,
+                reason="x" * 489,
+            )
+        self.assertEqual(controller.store.load(), before)
+
+        accepted = controller.decide_route(
+            route_id=route["route_id"],
+            decision="retargeted",
+            target_pr=2880,
+            reason="x" * 488,
+        )["route"]
+        self.assertEqual(len(accepted["observations"][-1]), 500)
 
     def test_stop_uses_the_hosted_request_runner_lock_path(self):
         with tempfile.TemporaryDirectory() as directory:

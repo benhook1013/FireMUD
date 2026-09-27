@@ -43,7 +43,9 @@ from .state import (
     ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
+    StateError,
     StateStore,
+    merge_open_route,
     observation_fingerprint,
 )
 
@@ -4021,18 +4023,11 @@ class ReviewController:
                 selected = candidate
                 return dataclasses.replace(state, routes=(*state.routes, candidate))
             if existing.status != "open":
-                selected = existing
-                return state
-            if existing.target_pr is not None and target_pr not in (None, existing.target_pr):
-                raise ControllerError("an existing route must be explicitly retargeted")
-            observations = existing.observations
-            if observation not in observations:
-                observations = (*observations, observation)
-            selected = dataclasses.replace(
-                existing,
-                observations=observations,
-                target_pr=target_pr if existing.target_pr is None else existing.target_pr,
-            )
+                raise ControllerError(f"route {existing.route_id} is already dispositioned")
+            try:
+                selected = merge_open_route(existing, candidate)
+            except StateError as exc:
+                raise ControllerError(str(exc)) from exc
             return dataclasses.replace(
                 state,
                 routes=tuple(selected if item.route_id == selected.route_id else item for item in state.routes),
@@ -4071,6 +4066,11 @@ class ReviewController:
                 or proof is not None
             ):
                 raise ControllerError("retargeted route disposition requires --target-pr and --reason")
+            if (
+                len(f"Retargeted: {reason}") > 500
+                or any(ord(character) < 0x20 for character in reason)
+            ):
+                raise ControllerError("retarget reason must fit within a 500-character route observation")
         else:
             raise ControllerError("route disposition must be accepted-fixed, rejected, or retargeted")
         selected: FindingRoute | None = None

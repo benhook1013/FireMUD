@@ -15,7 +15,7 @@ from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
 from .runtime import default_controller
-from .state import FindingRoute, SummaryFindingDisposition
+from .state import FindingRoute, StateError, SummaryFindingDisposition, merge_open_route
 
 
 class CliError(RuntimeError):
@@ -440,7 +440,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                         source_pr=args.pr,
                         source_channel="hosted",
                         source_review=f"summary:{args.source}:{args.summary_id}",
-                        source_finding=f"{args.kind}:{args.count}:{finding_ref}",
+                        source_finding=f"{args.kind}:ref:{finding_ref}",
                         observations=(observation,),
                         target_pr=args.target_pr,
                     )
@@ -469,17 +469,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                     elif existing.status != "open":
                         raise CliError(f"stable summary route {route.route_id} is already dispositioned")
                     else:
-                        if existing.target_pr is not None and args.target_pr not in (None, existing.target_pr):
-                            raise CliError("an existing route must be explicitly retargeted")
-                        observations = existing.observations
-                        for observation in route.observations:
-                            if observation not in observations:
-                                observations = (*observations, observation)
-                        updated = dataclasses.replace(
-                            existing,
-                            observations=observations,
-                            target_pr=args.target_pr if existing.target_pr is None else existing.target_pr,
-                        )
+                        try:
+                            updated = merge_open_route(existing, route)
+                        except StateError as exc:
+                            raise CliError(str(exc)) from exc
                         stored_routes = tuple(
                             updated if item.route_id == updated.route_id else item for item in stored_routes
                         )
