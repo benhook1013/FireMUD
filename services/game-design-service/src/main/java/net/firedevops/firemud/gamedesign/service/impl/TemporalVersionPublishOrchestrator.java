@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,9 @@ import org.springframework.stereotype.Component;
 @ConditionalOnBean({WorkflowClient.class, TemporalTaskQueueResolver.class})
 public class TemporalVersionPublishOrchestrator {
   static final String PENDING_RECONCILIATION_REQUIRED_CODE =
-      "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED";
+      PublishAttemptPendingReconciliationException.ERROR_CODE;
+  private static final String VERSION_PUBLISH_WORKFLOW_FAILED =
+      "VERSION_PUBLISH_WORKFLOW_FAILED";
   private static final Duration QUERY_WAIT_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration QUERY_WAIT_INTERVAL = Duration.ofMillis(100);
 
@@ -53,6 +56,9 @@ public class TemporalVersionPublishOrchestrator {
 
   static RuntimeException failureForSnapshot(PublishWorkflowSnapshot snapshot) {
     String failureCode = snapshot.failureCode();
+    if (PublishAttemptPendingReconciliationException.ERROR_CODE.equals(failureCode)) {
+      return new PublishAttemptPendingReconciliationException();
+    }
     if (failureCode != null && !failureCode.isBlank()) {
       try {
         PublishGateFailureCode gateFailureCode = PublishGateFailureCode.valueOf(failureCode);
@@ -61,10 +67,14 @@ public class TemporalVersionPublishOrchestrator {
         // Unknown snapshot codes remain generic failures.
       }
     }
-    return new IllegalStateException(
-        snapshot.failureMessage() == null || snapshot.failureMessage().isBlank()
-            ? snapshot.failureCode()
-            : snapshot.failureMessage());
+    String failureMessage = snapshot.failureMessage();
+    if (failureMessage != null && !failureMessage.isBlank()) {
+      return new IllegalStateException(failureMessage);
+    }
+    if (failureCode != null && !failureCode.isBlank()) {
+      return new IllegalStateException(failureCode);
+    }
+    return new IllegalStateException(VERSION_PUBLISH_WORKFLOW_FAILED);
   }
 
   private TemporalVersionPublishWorkflow newWorkflowStub(String workflowId) {
@@ -92,18 +102,12 @@ public class TemporalVersionPublishOrchestrator {
     throw timeoutException(lastSnapshot, workflowId);
   }
 
-  static IllegalStateException timeoutException(
+  static RuntimeException timeoutException(
       PublishWorkflowSnapshot lastSnapshot, String workflowId) {
     String timeoutDetail = "version publish workflow did not converge for workflowId=" + workflowId;
     if (lastSnapshot != null
         && PENDING_RECONCILIATION_REQUIRED_CODE.equals(lastSnapshot.failureCode())) {
-      String failureMessage = lastSnapshot.failureMessage();
-      return new IllegalStateException(
-          PENDING_RECONCILIATION_REQUIRED_CODE
-              + ": "
-              + (failureMessage == null || failureMessage.isBlank()
-                  ? timeoutDetail
-                  : failureMessage + "; " + timeoutDetail));
+      return new PublishAttemptPendingReconciliationException();
     }
     return new IllegalStateException("TEMPORAL_WORKFLOW_TIMEOUT: " + timeoutDetail);
   }
