@@ -256,6 +256,20 @@ def channel_label(channel: str, state: str, pr: int, targets: dict) -> str:
     return f"{name} {detail}"
 
 
+def held_request_reason(review: dict, channel: str, pr: int, state: str) -> str | None:
+    """Return a specific selected-target hold reason when the controller provides one."""
+    if state != "HELD":
+        return None
+    targets = review.get("review_targets", {})
+    target = targets.get(channel, {}) if isinstance(targets, dict) else {}
+    if not isinstance(target, dict) or target.get("pr") != pr or target.get("status") != "HELD":
+        return None
+    reason = target.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or reason.strip().casefold() == f"{pr} is held":
+        return None
+    return reason.strip()
+
+
 def local_time(value: datetime) -> str:
     local = value.astimezone(LOCAL_TIMEZONE)
     return f"{local.day} {local.strftime('%b %H:%M %Z')}"
@@ -516,11 +530,13 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         queue_item = review.get("queue", {}).get(number) if review["available"] else None
         channels = queue_item.get("channels", {}) if queue_item else {}
         states = [channels.get(channel) for channel in ("hosted", "cli")] if isinstance(channels, dict) else []
-        named_states = [
-            channel_label(channel, state, number, review.get("review_targets", {}))
-            for channel, state in zip(("hosted", "cli"), states)
-            if isinstance(state, str) and state
-        ]
+        named_states = []
+        for channel, state in zip(("hosted", "cli"), states):
+            if not isinstance(state, str) or not state:
+                continue
+            label = channel_label(channel, state, number, review.get("review_targets", {}))
+            reason = held_request_reason(review, channel, number, state)
+            named_states.append(f"{label} · {reason}" if reason else label)
         has_controller_states = len(named_states) == 2
         if has_controller_states:
             controller_text = " · ".join(named_states)
@@ -682,8 +698,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         front_html = (
             f'<section class="front-board" id="review-front" aria-labelledby="front-title">'
             f'<div class="front-copy">'
-            f'<h2 id="front-title"><span class="front-number">#{front_item["number"]}</span>'
-            f'<a href="{REPO_URL}{front_item["number"]}">{safe(front_item["title"])}</a></h2>'
+            f'<h2><a href="{REPO_URL}{front_item["number"]}"><span id="front-title"><span class="front-number">#{front_item["number"]}</span>'
+            f'{safe(front_item["title"])}</span></a></h2>'
             f'</div><div class="front-evidence">'
             f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
             f'<span class="sub front-fact-value">{front_size_html}</span></div>'
@@ -830,8 +846,6 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .queue-guide dl {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: .2rem .65rem; margin: 0; }}
 .queue-guide dl > div {{ display: flex; gap: .25rem; min-width: 0; }} .queue-guide dt {{ flex: 0 0 auto; color: var(--ink); font-weight: 800; }} .queue-guide dd {{ margin: 0; }}
 .queue-guide p {{ margin: .3rem 0 0; font-size: .68rem; }}
-.legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.1rem; padding: .7rem .9rem; margin-bottom: .8rem; border-left: 5px solid var(--fire); background: #fff; font-size: .76rem; }}
-.legend strong {{ color: #89182c; }} .legend-dash {{ display: inline-block; width: 1.2rem; margin-right: .3rem; border-top: 2px dashed #9b5760; vertical-align: middle; }}
 .review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
 .queue-stage {{ display: grid; grid-template-columns: minmax(150px,.4fr) minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem; border-top: 1px solid var(--line); }}
 .queue-stage:first-child {{ border-top: 0; }} .queue-stage > h3 {{ margin: .3rem 1rem 0 0; color: #37414a; font-size: 1.05rem; font-weight: 850; line-height: 1.2; }}
@@ -869,11 +883,10 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 <div><dt>Waiting turn</dt><dd>another PR is ahead</dd></div>
 <div><dt>Reviewing</dt><dd>request is active</dd></div>
 <div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
-<div><dt>Blocked</dt><dd>controller refuses a new request; row reason explains why</dd></div>
+<div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
 <div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
 <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
-</dl><p>These show review-request state, not merge readiness.</p></div>
-<div class="legend"><strong>Read the results</strong><span>Pills show raw/useful results and their age.</span><span><span class="legend-dash" aria-hidden="true"></span>Dashed border: older PR head</span></div>
+</dl><p>Request states are not merge readiness. Result pills show raw/useful counts and age; dashed borders mark older PR heads.</p></div>
 <div class="review-train">{"".join(train)}</div></section>
 <footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
