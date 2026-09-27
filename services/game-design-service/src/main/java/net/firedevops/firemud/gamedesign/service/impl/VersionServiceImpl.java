@@ -653,7 +653,11 @@ public class VersionServiceImpl implements VersionService {
     requireText(pluginVersionId, "pluginVersionId");
     return publishedPluginVersionRepository
         .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
-        .filter(entity -> entity.getPublicationState() == VersionLifecycleState.PUBLISHED)
+        .filter(
+            entity ->
+                entity.getPublicationState() == VersionLifecycleState.PUBLISHED
+                    || entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
+                    || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN)
         .map(this::toPublishedPluginVersionDto)
         .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
   }

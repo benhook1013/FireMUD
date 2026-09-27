@@ -423,7 +423,49 @@ jobs:
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
+          set -euo pipefail
           echo "DEV_DEMO_STAGE=deploy" >> "$GITHUB_ENV"
+          # Keep the publication coordinator unavailable until every digest
+          # participant has rolled to this image. A single chart apply can
+          # otherwise make Game Design ready while participants are mixed.
+          helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
+            -f /tmp/dev-demo-values.yaml \
+            --set 'previewStack.services[3].replicaCount=0' \
+            --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            --wait \
+            --timeout 15m
+          deadline=$((SECONDS + 300))
+          while :; do
+            pods_json="$(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" \
+              get pods -l app=game-design-service -o json)"
+            pod_count="$(jq -er '
+              if .kind != "PodList" or ((.items | type) != "array") then
+                error("invalid Game Design PodList")
+              else
+                .items | length
+              end
+            ' <<<"$pods_json")"
+            endpoint_slices_json="$(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" \
+              get endpointslices.discovery.k8s.io \
+              --selector kubernetes.io/service-name=game-design-service -o json)"
+            endpoint_count="$(jq -er '
+              if .kind != "EndpointSliceList" or ((.items | type) != "array") then
+                error("invalid Game Design EndpointSliceList")
+              elif any(.items[]?; (.metadata.labels["kubernetes.io/service-name"] // "") != "game-design-service") then
+                error("Game Design EndpointSlice service label mismatch")
+              else
+                [.items[]? | (.endpoints // [])[]?] | length
+              end
+            ' <<<"$endpoint_slices_json")"
+            if [[ "$pod_count" == 0 && "$endpoint_count" == 0 ]]; then
+              break
+            fi
+            (( SECONDS < deadline )) || {
+              echo "Game Design pods or publication endpoints remain after 300 seconds." >&2
+              exit 1
+            }
+            sleep 2
+          done
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
