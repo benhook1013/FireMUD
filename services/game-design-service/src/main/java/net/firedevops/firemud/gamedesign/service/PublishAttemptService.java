@@ -8,8 +8,16 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 
 public interface PublishAttemptService {
+  /**
+   * Runs the script-patch operation with Spring {@code REQUIRES_NEW} semantics, committing its
+   * transaction independently of any caller transaction.
+   */
   <T> T executeScriptPatchTransaction(Supplier<T> operation);
 
+  /**
+   * Runs the full-version operation with Spring {@code REQUIRES_NEW} semantics, committing its
+   * transaction independently of any caller transaction.
+   */
   <T> T executeFullVersionTransaction(Supplier<T> operation);
 
   final class ScriptPatchTransactionException extends RuntimeException {

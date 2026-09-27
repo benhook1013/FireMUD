@@ -2235,6 +2235,7 @@ require_contains(
         "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
         "# V3 changes the persisted plugin lifecycle fence; executor generations",
         "# V26 changes the persisted publication participant scope; old and new",
+        "# publication writers/readers must not overlap across the migration boundary.",
         "# Account and Game Session writers must not overlap across the V2 migration boundary.",
     ],
 )

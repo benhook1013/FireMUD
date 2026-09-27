@@ -292,8 +292,9 @@ def target(
     merge_base="",
     patch_identity="",
     default_base_front=False,
+    changed_files=1,
 ):
-    snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
+    snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=changed_files)
     return ReviewTarget(
         snapshot,
         EffectiveParent("develop", PARENT),
@@ -389,6 +390,21 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_cli_review_accepts_111_changed_files(self):
+        files = [f"src/File{index}.java" for index in range(111)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            result = run_cli_review(
+                target(changed_files=len(files)),
+                github=FakeGitHub(files=files),
+                source_root=root,
+                runner=FakeCommands(root, files=files),
+            )
+
+        self.assertEqual(result.published_files, 111)
+        self.assertEqual(result.candidate_files, 111)
+
     def test_git_timeout_is_translated_to_review_runner_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1032,6 +1048,38 @@ class CliReviewRunnerTests(unittest.TestCase):
                 return_value=hosted_payload("Full review finished."),
             ):
                 run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_terminal_provider_file_ceiling_skip_allows_cli_on_same_published_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir, anchor=cli_anchor())
+            original_record = json.loads(record_path.read_text())
+            files = [f"src/provider-ceiling-{index:03}.java" for index in range(121)]
+            commands = FakeCommands(root, files=files)
+            body = (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+                "<details><summary>⚠️ Action not completed</summary>\n\n"
+                "Review skipped: 121 files exceed the limit of 100.\n\n</details>"
+            )
+            with patch(
+                "pr_review.cli_runner.github_api.fetch_pull_request",
+                return_value=hosted_payload(body),
+            ):
+                run_cli_review(
+                    target(
+                        merge_base=PARENT,
+                        patch_identity=cli_anchor()["patch_id"],
+                        changed_files=len(files),
+                    ),
+                    github=FakeGitHub(files=files),
+                    source_root=root,
+                    runner=commands,
+                )
             self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
             self.assertEqual(json.loads(record_path.read_text()), original_record)
 
