@@ -779,7 +779,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
     GameInstance instance = automationInstance();
-    instance.setScriptPatchBaseVersionId(41L);
+    instance.setScriptPatchBaseVersionId(42L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
 
     AdmissionRequest originalRequest = automationRequestWithScriptPatchBase(41L);
