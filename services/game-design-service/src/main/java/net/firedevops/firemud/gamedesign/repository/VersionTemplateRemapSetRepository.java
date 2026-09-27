@@ -117,20 +117,22 @@ public class VersionTemplateRemapSetRepository {
     LocalDateTime updatedAt = now;
     if (remapSet.getId() == null) {
       Record record =
-          Objects.requireNonNull(
-              dsl.insertInto(SET_TABLE)
-                  .set(REMAP_SET_ID, remapSet.getRemapSetId())
-                  .set(TENANT_ID, remapSet.getTenantId())
-                  .set(SOURCE_VERSION_ID, remapSet.getSourceVersionId())
-                  .set(TARGET_VERSION_ID, remapSet.getTargetVersionId())
-                  .set(STATUS, remapSet.getStatus().name())
-                  .set(CREATED_REASON, remapSet.getCreatedReason())
-                  .set(APPROVAL_REASON, remapSet.getApprovalReason())
-                  .set(CREATED_AT, createdAt)
-                  .set(APPROVED_AT, remapSet.getApprovedAt())
-                  .set(UPDATED_AT, updatedAt)
-                  .returning()
-                  .fetchOne());
+          dsl.insertInto(SET_TABLE)
+              .set(REMAP_SET_ID, remapSet.getRemapSetId())
+              .set(TENANT_ID, remapSet.getTenantId())
+              .set(SOURCE_VERSION_ID, remapSet.getSourceVersionId())
+              .set(TARGET_VERSION_ID, remapSet.getTargetVersionId())
+              .set(STATUS, remapSet.getStatus().name())
+              .set(CREATED_REASON, remapSet.getCreatedReason())
+              .set(APPROVAL_REASON, remapSet.getApprovalReason())
+              .set(CREATED_AT, createdAt)
+              .set(APPROVED_AT, remapSet.getApprovedAt())
+              .set(UPDATED_AT, updatedAt)
+              .returning(SET_ID, CREATED_AT, UPDATED_AT)
+              .fetchOne();
+      if (record == null || record.get(SET_ID) == null) {
+        throw new IllegalStateException("VERSION_TEMPLATE_REMAP_SET_INSERT_FAILED");
+      }
       remapSet.setId(record.get(SET_ID));
       remapSet.setCreatedAt(record.get(CREATED_AT));
       remapSet.setUpdatedAt(record.get(UPDATED_AT));
