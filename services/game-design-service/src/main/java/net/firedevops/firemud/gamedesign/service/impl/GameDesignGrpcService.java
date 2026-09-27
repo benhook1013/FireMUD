@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -230,6 +231,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", ex.failureCode().name(), ex.getMessage()));
+    } catch (PublishAttemptPendingReconciliationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
@@ -253,6 +258,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         PublishScriptPatchVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
+      if (request.getBaseVersionId() <= 0L) {
+        throw new IllegalArgumentException("base_version_id must be positive");
+      }
       if (request.getPublishRequestId().isBlank()) {
         throw new IllegalArgumentException("publish_request_id is required");
       }
@@ -324,7 +332,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
       DesignControlPlaneDigestDto digest =
           versionService.getDesignControlPlaneDigestForScriptPatch(
-              request.getTenantId(), request.getScriptPatchVersion(), version.baseVersionId());
+              request.getTenantId(), version.baseVersionId(), request.getScriptPatchVersion());
       builder.setScriptPatch(toProtoPublishedScriptPatch(version, digest));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -667,7 +675,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }
     return versionService.getDesignControlPlaneDigestForScriptPatch(
-        request.getTenantId(), request.getScriptPatchVersion(), request.getBaseVersionId());
+        request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
   }
 
   @Override

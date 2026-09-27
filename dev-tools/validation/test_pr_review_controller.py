@@ -335,6 +335,15 @@ class ControllerTests(unittest.TestCase):
             observation="same finding observed again",
             target_pr=2879,
         )["route"]
+        with self.assertRaisesRegex(ControllerError, "explicitly retargeted"):
+            controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding="thread-77",
+                observation="conflicting target observation",
+                target_pr=2880,
+            )
 
         self.assertEqual(first["route_id"], repeated["route_id"])
         self.assertEqual(len(repeated["observations"]), 2)
@@ -343,12 +352,15 @@ class ControllerTests(unittest.TestCase):
         # A source PR need not remain in the live stack for its route to stay queryable.
         self.assertEqual(controller.status_for_pr(2828)["routes_out"][0]["route_id"], first["route_id"])
 
-        moved = controller.decide_route(
+        moved_result = controller.decide_route(
             route_id=first["route_id"],
             decision="retargeted",
             target_pr=2880,
             reason="the observed code now belongs to the shared transport PR",
-        )["route"]
+        )
+        self.assertEqual(moved_result["status"], "recorded")
+        self.assertEqual(moved_result["decision"], "retargeted")
+        moved = moved_result["route"]
         self.assertEqual(moved["status"], "open")
         self.assertEqual(moved["target_history"], [2879])
         self.assertEqual(controller.list_routes(target_pr=2879)["count"], 0)
@@ -361,6 +373,90 @@ class ControllerTests(unittest.TestCase):
         )["route"]
         self.assertEqual(resolved["status"], "accepted_fixed")
         self.assertEqual(controller.list_routes(target_pr=2880)["count"], 0)
+        dispositioned_state = controller.store.load()
+        with self.assertRaisesRegex(ControllerError, "already dispositioned"):
+            controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding="thread-77",
+                observation="late duplicate observation",
+                target_pr=2880,
+            )
+        self.assertEqual(controller.store.load(), dispositioned_state)
+
+    def test_retarget_reason_limit_includes_prefix_and_fails_before_state_update(self):
+        controller = self.make({})
+        route = controller.record_route(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="901",
+            source_finding="thread-88",
+            observation="target-owned behavior",
+            target_pr=2879,
+        )["route"]
+        before = controller.store.load()
+
+        with self.assertRaisesRegex(ControllerError, "fit within a 500-character"):
+            controller.decide_route(
+                route_id=route["route_id"],
+                decision="retargeted",
+                target_pr=2880,
+                reason="x" * 489,
+            )
+        self.assertEqual(controller.store.load(), before)
+
+        accepted = controller.decide_route(
+            route_id=route["route_id"],
+            decision="retargeted",
+            target_pr=2880,
+            reason="x" * 488,
+        )["route"]
+        self.assertEqual(len(accepted["observations"][-1]), 500)
+
+    def test_route_terminal_text_rejects_controls_and_overlong_values_before_state_update(self):
+        controller = self.make({})
+        routes = {
+            decision: controller.record_route(
+                source_pr=2828,
+                source_channel="hosted",
+                source_review="901",
+                source_finding=f"terminal-text-{decision}",
+                observation="target-owned behavior",
+                target_pr=2879,
+            )["route"]
+            for decision in ("accepted-fixed", "rejected")
+        }
+        invalid_values = {
+            "accepted-fixed": ("verified\nin commit " + "a" * 40, "x" * 501),
+            "rejected": ("duplicate\nreport", "x" * 501),
+        }
+
+        for decision, values in invalid_values.items():
+            for value in values:
+                with self.subTest(decision=decision, value_length=len(value)):
+                    before = controller.store.load()
+                    kwargs = {"proof": value} if decision == "accepted-fixed" else {"reason": value}
+                    with self.assertRaisesRegex(ControllerError, "control characters|500 characters"):
+                        controller.decide_route(
+                            route_id=routes[decision]["route_id"],
+                            decision=decision,
+                            **kwargs,
+                        )
+                    self.assertEqual(controller.store.load(), before)
+
+        accepted = controller.decide_route(
+            route_id=routes["accepted-fixed"]["route_id"],
+            decision="accepted-fixed",
+            proof="verified in commit " + "a" * 40,
+        )["route"]
+        rejected = controller.decide_route(
+            route_id=routes["rejected"]["route_id"],
+            decision="rejected",
+            reason="the observation is outside this route's scope",
+        )["route"]
+        self.assertEqual(accepted["status"], "accepted_fixed")
+        self.assertEqual(rejected["status"], "rejected")
 
     def test_stop_uses_the_hosted_request_runner_lock_path(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -576,6 +672,154 @@ class ControllerTests(unittest.TestCase):
             reason="bounded additional review allowance",
         )
         return controller
+
+    def hosted_judgment_allocation_fixture(self, *, audit=None, hosted_patch_id=None, cli_patch_id=None):
+        values = {1: pr(1, HEAD_3)}
+        hosted_review = self.allocation_evidence(
+            head=HEAD_2,
+            checkpoint="hosted-old-head",
+            channel="hosted",
+            raw=0,
+        )
+        if hosted_patch_id is not None:
+            hosted_review["patch_id"] = hosted_patch_id
+        cli_review = self.allocation_evidence(
+            head=HEAD_3,
+            checkpoint="cli-current-head",
+            channel="cli",
+            raw=0,
+        )
+        if cli_patch_id is not None:
+            cli_review["patch_id"] = cli_patch_id
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    hosted_review,
+                    self.scope_timeline_evidence(1, "hosted", HEAD_2),
+                ],
+                (1, "cli"): [
+                    cli_review,
+                    self.scope_timeline_evidence(1, "cli", HEAD_3),
+                ],
+            },
+            audit=audit,
+        )
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_3})
+        controller.set_stack([1])
+        return controller, evidence
+
+    @staticmethod
+    def grant_judgment_hosted_review(controller):
+        return controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_3,
+            reason="one more hosted review after the corrected head",
+            min_additional_completed=1,
+            max_additional_completed=1,
+        )
+
+    def test_bounded_hosted_allocation_reopens_judgment_required_after_full_stop_audit(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+
+        _, reconciliation = controller._reconciliation(controller._state())
+        self.assertEqual(
+            reconciliation.status_for(1, "hosted"),
+            stack.ReconciliationStatus.PATCH_CHANGED,
+        )
+        target = controller.status()["review_targets"]["hosted"]
+        self.assertEqual((target["pr"], target["status"]), (1, "JUDGMENT_REQUIRED"))
+
+        result = self.grant_judgment_hosted_review(controller)
+
+        allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertEqual(allocation["minimum_additional_completed"], 1)
+        self.assertEqual(allocation["maximum_additional_completed"], 1)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
+
+    def test_bounded_hosted_allocation_reopens_equivalent_old_head_identity(self):
+        controller, _ = self.hosted_judgment_allocation_fixture(
+            hosted_patch_id=f"patch-{HEAD_3[:4]}"
+        )
+
+        _, reconciliation = controller._reconciliation(controller._state())
+        self.assertEqual(
+            reconciliation.status_for(1, "hosted"),
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+        )
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+
+        self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+
+    def test_bounded_hosted_allocation_rejects_current_cli_patch_mismatch(self):
+        controller, _ = self.hosted_judgment_allocation_fixture(cli_patch_id="stale-cli-patch")
+
+        self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+        with self.assertRaisesRegex(ControllerError, "hosted review cannot run: JUDGMENT_REQUIRED"):
+            controller.resolve_hosted_target()
+
+    def test_bounded_hosted_allocation_still_refuses_judgment_required_with_open_findings(self):
+        audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": ["thread:77"],
+        }
+        controller, evidence = self.hosted_judgment_allocation_fixture(audit=audit)
+
+        with self.assertRaisesRegex(
+            ControllerError,
+            "review stop is blocked by an unresolved actionable finding or thread",
+        ):
+            self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(len(evidence.stop_audit_calls), 1)
+        self.assertNotIn("1:hosted", controller._state().allocations)
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+
+    def test_bounded_hosted_target_stays_judgment_required_when_request_audit_finds_open_threads(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+        self.grant_judgment_hosted_review(controller)
+        evidence.audit["unresolved_findings"] = ["thread:77"]
+
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "HELD",
+        )
+        with self.assertRaisesRegex(
+            ControllerError,
+            "review stop is blocked by an unresolved actionable finding or thread",
+        ):
+            controller.resolve_hosted_target()
+
+    def test_bounded_hosted_allocation_does_not_reopen_a_moved_parent(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+        evidence[(1, "hosted")][0]["parent_head"] = "9" * 40
+
+        with self.assertRaisesRegex(ControllerError, "allocation requires a coherent current stack identity"):
+            self.grant_judgment_hosted_review(controller)
+
+        self.assertNotIn("1:hosted", controller._state().allocations)
 
     def test_allocation_is_promised_before_review_and_does_not_make_pr_complete(self):
         controller = self.grant_allocation()
