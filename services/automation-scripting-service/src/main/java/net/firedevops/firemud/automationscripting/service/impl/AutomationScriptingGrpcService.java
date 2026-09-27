@@ -446,7 +446,8 @@ public class AutomationScriptingGrpcService
       if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
           && (digest.baseVersionId() <= 0L
               || Long.parseLong(binding.baseVersionId()) != digest.baseVersionId())) {
-        throw new IllegalArgumentException("owner digest base_version_id does not match publication binding");
+        throw new IllegalArgumentException(
+            "owner digest base_version_id does not match publication binding");
       }
       GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
