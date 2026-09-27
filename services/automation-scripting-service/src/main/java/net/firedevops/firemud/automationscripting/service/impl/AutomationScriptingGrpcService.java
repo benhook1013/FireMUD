@@ -120,7 +120,7 @@ public class AutomationScriptingGrpcService
         workItemRepository,
         formationService,
         meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   @SuppressFBWarnings(
@@ -439,14 +439,7 @@ public class AutomationScriptingGrpcService
                   binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
                   binding.tenantId(), binding.scriptPatchVersion());
-      String expectedScope =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? binding.versionId()
-              : binding.scriptPatchVersion();
-      if (!binding.tenantId().equals(digest.tenantId())
-          || !expectedScope.equals(digest.scopeValue())) {
-        throw new IllegalArgumentException("owner digest scope does not match publication binding");
-      }
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
       GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
@@ -492,10 +485,19 @@ public class AutomationScriptingGrpcService
   private static PublicationDigestRequestBinding publicationBinding(
       GetDraftDesignDigestRequest request) {
     return switch (request.getScopeCase()) {
-      case VERSION_ID -> fullPublicationBinding(request);
-      case SCRIPT_PATCH_VERSION ->
-          PublicationDigestRequestBinding.patch(
+      case VERSION_ID ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
               request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+              request.getTenantId(),
+              request.getVersionId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getPublishRequestId());
@@ -509,31 +511,6 @@ public class AutomationScriptingGrpcService
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      logger.warn(
-          "firemud.grpc.workload-namespace is unset or blank; publication digest reads will be denied");
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      logger.warn(
-          "firemud.grpc.workload-namespace is invalid; publication digest reads will be denied: {}",
-          ex.getMessage());
-      return null;
-    }
-  }
-
-  private static PublicationDigestRequestBinding fullPublicationBinding(
-      GetDraftDesignDigestRequest request) {
-    if (!request.getBaseVersionId().isEmpty()) {
-      throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-    }
-    return PublicationDigestRequestBinding.full(
-        request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
   }
 
   @Override

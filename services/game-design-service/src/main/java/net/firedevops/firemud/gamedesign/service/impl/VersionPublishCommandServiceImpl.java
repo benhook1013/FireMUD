@@ -102,12 +102,13 @@ public class VersionPublishCommandServiceImpl {
       attempt = reserveDraftAttempt(request);
     }
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
-      validateSucceededFullVersionAttempt(attempt, request);
+      validateTerminalFullVersionAttempt(attempt, request);
       return replaySucceededAttempt(request, attempt);
     }
-    attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
-    validateFullVersionAttempt(attempt, request);
     if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
+      // Validate their stable scope before entering the draft-dependent compatibility backfill.
+      validateTerminalFullVersionAttempt(attempt, request);
       return new PublishWorkflowSnapshot(
           attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
           attempt.getVersionNumber(),
@@ -116,6 +117,8 @@ public class VersionPublishCommandServiceImpl {
           emptyIfNull(attempt.getFailureCode()),
           emptyIfNull(attempt.getFailureMessage()));
     }
+    attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
+    validateFullVersionAttempt(attempt, request);
 
     Version version = requireAttemptVersion(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
@@ -552,7 +555,12 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
-  private void validateSucceededFullVersionAttempt(
+  /**
+   * Validates terminal full-version replay using only durable attempt identity and, when present,
+   * the request digest. Legacy terminal rows intentionally have no request digest and may no
+   * longer have a draft version to backfill, so they must not enter the draft-dependent path.
+   */
+  private void validateTerminalFullVersionAttempt(
       PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
     if (attempt.getRequestDigest() == null) {

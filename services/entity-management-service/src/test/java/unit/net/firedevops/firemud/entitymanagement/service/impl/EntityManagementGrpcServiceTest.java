@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
+import net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
@@ -94,6 +95,7 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(InventoryService.class),
         Mockito.mock(ContainerService.class),
         Mockito.mock(RoomEntityService.class),
+        Mockito.mock(RuntimeInstanceCleanupService.class),
         effectReplayService(),
         Mockito.mock(EntityUpgradeValidationService.class),
         Mockito.mock(EntityTemplateReferenceService.class),
@@ -1644,6 +1646,70 @@ class EntityManagementGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(runtimeInstanceCleanupService);
+  }
+
+  @Test
+  void autowiredConstructorDelegatesCleanupToInjectedRuntimeService() {
+    RuntimeInstanceCleanupService runtimeInstanceCleanupService =
+        Mockito.mock(RuntimeInstanceCleanupService.class);
+    Mockito.when(
+            runtimeInstanceCleanupService.cleanupRuntimeInstance(
+                1L, "GI-1", "termination-1"))
+        .thenReturn(new RuntimeInstanceCleanupResultDto(4L, 3L, 2L, 1L));
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    try {
+      EntityManagementGrpcService service =
+          new EntityManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(CharacterService.class),
+              Mockito.mock(ActorStateService.class),
+              Mockito.mock(ActorConditionMutationService.class),
+              Mockito.mock(EntityDraftDesignDigestService.class),
+              Mockito.mock(EquipmentService.class),
+              Mockito.mock(InventoryService.class),
+              Mockito.mock(ContainerService.class),
+              Mockito.mock(RoomEntityService.class),
+              runtimeInstanceCleanupService,
+              effectReplayService(),
+              Mockito.mock(EntityUpgradeValidationService.class),
+              Mockito.mock(EntityTemplateReferenceService.class),
+              attestationService(),
+              new SimpleMeterRegistry(),
+              new EffectPayloadParser(new ObjectMapper()),
+              TEST_NAMESPACE);
+
+      AtomicReference<net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse>
+          ref = new AtomicReference<>();
+      service.cleanupRuntimeInstance(
+          net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest.newBuilder()
+              .setTenantId("1")
+              .setGameInstanceId("GI-1")
+              .setTerminationRequestId("termination-1")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(
+                net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {}
+
+            @Override
+            public void onCompleted() {}
+          });
+
+      assertEquals(4L, ref.get().getDeletedRoomGroundEntries());
+      assertEquals(3L, ref.get().getDeletedItemStacks());
+      assertEquals(2L, ref.get().getDeletedItemInstances());
+      assertEquals(1L, ref.get().getDeletedContainerInstances());
+      verify(runtimeInstanceCleanupService)
+          .cleanupRuntimeInstance(1L, "GI-1", "termination-1");
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   @Test

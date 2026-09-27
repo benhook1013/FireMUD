@@ -396,6 +396,8 @@ class WorldManagementGrpcServiceTest {
             new SimpleMeterRegistry(),
             new ObjectMapper(),
             publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());

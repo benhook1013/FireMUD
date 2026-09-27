@@ -115,7 +115,47 @@ Direct replacements that take blocking DDL or change writer uniqueness require a
 
 ### Game Design script-patch identity migration preflight
 
-Game Design migrations V26 and V27 are coordinated/recreate and roll-forward-only. Close and drain Game Design writers under the procedure above before activation; a pre-V26 binary must not overlap either migration or be restarted after V26 has changed participant-digest identity. Before applying V27, run these read-only queries against the target Game Design schema and retain their results with the deployment record. V27 rejects every retained script-only version with an incomplete effective identity, including `DRAFT` rows, and every duplicate `(tenant_id, base_version_id, script_patch_version)` tuple, also including `DRAFT` rows. Neither migration chooses a retained winner or deletes conflicting evidence.
+Game Design migrations V26 and V27 are coordinated/recreate and roll-forward-only. Close and drain Game Design writers under the procedure above before activation; a pre-V26 binary must not overlap either migration or be restarted after V26 has changed participant-digest identity. Before either migration, use the deployed Game Design `SERVICE_SCHEMA` value (the `application.yml` default is `public`) to select and verify the target schema in the same `psql` session. Replace the example value with the exact deployed setting, then run the read-only preflight queries below and retain their results with the deployment record:
+
+```sql
+\set service_schema 'public'
+SET search_path TO :"service_schema";
+SELECT current_schema() AS selected_schema, current_schemas(false) AS search_path_schemas;
+```
+
+Confirm `selected_schema` matches the deployed Game Design `SERVICE_SCHEMA` before continuing. V26 requires exactly one distinct positive base candidate for each retained script-patch recorded-digest row. Run this diagnostic before V26; it lists rows with zero or multiple candidate bases, along with candidate base and script-only version IDs. V27 rejects every retained script-only version with an incomplete effective identity, including `DRAFT` rows, and every duplicate `(tenant_id, base_version_id, script_patch_version)` tuple, also including `DRAFT` rows. Neither migration chooses a retained winner or deletes conflicting evidence.
+
+List unresolved V26 recorded-patch base mappings:
+
+```sql
+SELECT recorded.id AS recorded_digest_id,
+       recorded.tenant_id,
+       recorded.scope_value AS script_patch_version,
+       COUNT(DISTINCT version_row.base_version_id) AS positive_base_count,
+       COALESCE(
+           ARRAY_AGG(DISTINCT version_row.base_version_id ORDER BY version_row.base_version_id)
+               FILTER (WHERE version_row.id IS NOT NULL),
+           ARRAY[]::BIGINT[]
+       ) AS candidate_base_version_ids,
+       COALESCE(
+           ARRAY_AGG(DISTINCT version_row.id ORDER BY version_row.id)
+               FILTER (WHERE version_row.id IS NOT NULL),
+           ARRAY[]::BIGINT[]
+       ) AS candidate_script_version_ids
+FROM publish_recorded_participant_digest AS recorded
+LEFT JOIN version AS version_row
+  ON version_row.tenant_id = recorded.tenant_id
+ AND version_row.script_patch_version = recorded.scope_value
+ AND version_row.is_script_only = TRUE
+ AND version_row.base_version_id IS NOT NULL
+ AND version_row.base_version_id > 0
+WHERE recorded.publish_type = 'SCRIPT_PATCH'
+GROUP BY recorded.id, recorded.tenant_id, recorded.scope_value
+HAVING COUNT(DISTINCT version_row.base_version_id) <> 1
+ORDER BY recorded.tenant_id, recorded.id;
+```
+
+For every returned row, the Game Design data owner must adjudicate the exact recorded digest against authoritative retained publication evidence and identify the one correct positive base. Zero candidates or multiple candidates remain unresolved until that owner records a justified disposition; do not infer a base from lifecycle state or choose among candidates automatically. Resolve the retained evidence under owner authority before retrying V26, then rerun the diagnostic and require zero rows. Do not rewrite either migration to bypass unresolved history.
 
 List incomplete identities with their lifecycle state:
 

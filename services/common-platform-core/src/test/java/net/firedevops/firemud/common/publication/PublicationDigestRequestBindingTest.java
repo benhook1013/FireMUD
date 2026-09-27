@@ -47,6 +47,61 @@ class PublicationDigestRequestBindingTest {
   }
 
   @Test
+  void typedScopeFactoryPreservesScopeFieldsAndOwnerScopeProof() {
+    PublicationDigestRequestBinding full =
+        PublicationDigestRequestBinding.forScope(
+            PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+            "tenant",
+            "7",
+            "",
+            "",
+            "request-full");
+    PublicationDigestRequestBinding patch =
+        PublicationDigestRequestBinding.forScope(
+            PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+            "tenant",
+            "",
+            "7",
+            "patch:1",
+            "request-patch");
+
+    full.requireOwnerScope("tenant", "7");
+    patch.requireOwnerScope("tenant", "patch:1");
+    assertThat(full.scopeKind()).isEqualTo(PublicationDigestRequestBinding.ScopeKind.FULL_VERSION);
+    assertThat(patch.scopeKind()).isEqualTo(PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH);
+    assertThat(patch.baseVersionId()).isEqualTo("7");
+    assertThat(patch.scriptPatchVersion()).isEqualTo("patch:1");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> patch.requireOwnerScope("other", "patch:1"));
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> patch.requireOwnerScope("tenant", "7"));
+  }
+
+  @Test
+  void typedScopeFactoryRejectsInactiveFieldsBeforeOwnerRead() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublicationDigestRequestBinding.forScope(
+                    PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+                    "tenant",
+                    "7",
+                    "6",
+                    "",
+                    "request"));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublicationDigestRequestBinding.forScope(
+                    PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+                    "tenant",
+                    "7",
+                    "6",
+                    "patch",
+                    "request"));
+  }
+
+  @Test
   void changedOrOmittedBindingEvidenceFailsClosed() {
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full("tenant", "1", "request");

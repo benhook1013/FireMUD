@@ -661,6 +661,36 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void legacyFailedAttemptReplaysAfterItsDraftWasDeleted() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.FAILED, 10L, 1, workflowId);
+    attempt.setRequestDigest(null);
+    attempt.setFailureCode("PUBLISH_FAILED");
+    attempt.setFailureMessage("legacy publish failure");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+
+    PublishWorkflowSnapshot snapshot =
+        service.reconcileFullVersionPublish(
+            new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
+
+    assertEquals("FAILED", snapshot.status());
+    assertEquals("PUBLISH_FAILED", snapshot.failureCode());
+    assertEquals("legacy publish failure", snapshot.failureMessage());
+    verify(publishAttemptRepository, never())
+        .backfillFullVersionRequestDigestIfAbsent(
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class));
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
   void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
