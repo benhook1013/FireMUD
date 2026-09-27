@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -86,10 +87,15 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   @Override
   @Transactional(readOnly = true)
   public PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId) {
-    return repository
-        .findByTenantIdAndVersionId(tenantId, versionId)
-        .map(this::toDto)
+    return findPublishedReleaseBundle(tenantId, versionId)
         .orElseThrow(() -> new PublishedReleaseBundleNotFoundException(tenantId, versionId));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<PublishedReleaseBundleDto> findPublishedReleaseBundle(
+      String tenantId, long versionId) {
+    return repository.findByTenantIdAndVersionId(tenantId, versionId).map(this::toDto);
   }
 
   private PublishedReleaseBundleDto toDto(PublishedReleaseBundle entity) {

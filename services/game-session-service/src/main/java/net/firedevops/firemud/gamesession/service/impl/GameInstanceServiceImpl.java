@@ -556,6 +556,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getTenantId(),
         instance.getRuntimeVersion(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPatchBaseVersionId(),
         instance.getScriptPinEpoch(),
         instance.getScriptPatchPinnedControlPlaneRequestId(),
         instance.getGameTemplateId(),
@@ -573,6 +574,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
     instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
+    instance.setScriptPatchBaseVersionId(snapshot.scriptPatchBaseVersionId());
     instance.setScriptPinEpoch(snapshot.scriptPinEpoch());
     instance.setScriptPatchPinnedControlPlaneRequestId(snapshot.scriptPinControlPlaneRequestId());
     instance.setGameTemplateId(snapshot.gameTemplateId());
@@ -593,6 +595,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.tenantId(),
         snapshot.runtimeVersion(),
         snapshot.scriptPatchVersion(),
+        snapshot.scriptPatchBaseVersionId(),
         snapshot.scriptPinEpoch(),
         snapshot.scriptPinControlPlaneRequestId(),
         snapshot.gameTemplateId(),

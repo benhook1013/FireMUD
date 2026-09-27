@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted
+from pr_review.cli_runner import ReviewResult
 
 REPO = "owner/repo"
 PR = 42
@@ -35,14 +36,20 @@ def comment(item_id: int, author: str, body: str, created: str, *, url: str | No
     }
 
 
-def review_payload(comments: list[dict] | None = None, reviews: list[dict] | None = None, *, head: str = HEAD):
+def review_payload(
+    comments: list[dict] | None = None,
+    reviews: list[dict] | None = None,
+    *,
+    head: str = HEAD,
+    threads: list[dict] | None = None,
+):
     return {
         "data": {
             "repository": {
                 "pullRequest": {
                     "headRefOid": head,
                     "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-09-23T00:00:00Z"}}]},
-                    "reviewThreads": {"nodes": []},
+                    "reviewThreads": {"nodes": threads or []},
                     "comments": {"nodes": comments or []},
                     "reviews": {"nodes": reviews or []},
                 }
@@ -69,6 +76,27 @@ def trigger_record(head: str = HEAD):
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_cli_result_exposes_human_duration_without_changing_seconds_or_marker(self):
+        result = ReviewResult(
+            run_id="run.A1",
+            pull_request=PR,
+            candidate_sha=HEAD,
+            parent_sha=BASE,
+            merge_base=BASE,
+            published_files=3,
+            candidate_files=3,
+            published_status="current",
+            provisional=False,
+            duration_seconds=487,
+            exit_status=0,
+            capture_dir=Path("/tmp/review-capture"),
+        )
+
+        rendered = result.as_dict()
+        self.assertEqual(rendered["duration_seconds"], 487)
+        self.assertEqual(rendered["duration_display"], "8m 07s")
+        self.assertEqual(rendered["duration_marker"], "<!-- firemud-review-duration-seconds: 487 -->")
+
     def test_summary_counts_require_anchored_canonical_lines(self):
         body = (
             "The review discusses Outside diff range comments and Duplicate comments in prose.\n"
@@ -279,11 +307,29 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "body": "CLI: 1 found / 1 accepted · `abcdef1` · 3 files · 9s\n<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
                 "created_at": "2026-09-23T00:01:00Z",
             },
+            {
+                "id": 3,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 3 files · 1h 08m 07s\n"
+                "<!-- firemud-hosted-review: 11 -->\n<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:02:00Z",
+            },
+            {
+                "id": 4,
+                "body": "CLI: 3 found / 1 accepted / 1 routed · `abcdef1` · 3 files · 9s\n"
+                "<!-- firemud-cli-run: run.A2 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
         self.assertEqual(unparsed, 0)
         self.assertIsNone(parsed[0].duration_seconds)
         self.assertEqual(parsed[1].duration_seconds, 9)
+        self.assertEqual(parsed[2].duration_seconds, 4087)
+        self.assertEqual(parsed[2].as_json()["duration_display"], "1h 08m 07s")
+        self.assertIsNone(parsed[0].routed)
+        self.assertEqual(parsed[3].routed, 1)
+        self.assertEqual(parsed[3].as_json()["routed"], 1)
+        self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
 
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
@@ -341,6 +387,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "<!-- firemud-review-duration-seconds: 4 -->",
                 "created_at": "2026-09-23T00:06:00Z",
             },
+            {
+                "id": 8,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 487 -->",
+                "created_at": "2026-09-23T00:07:00Z",
+            },
+            {
+                "id": 9,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 1h 08m 07s\n"
+                "<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:08:00Z",
+            },
+            {
+                "id": 10,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 486 -->",
+                "created_at": "2026-09-23T00:09:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
 
@@ -350,13 +414,19 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[1].duration_seconds, 4)
         self.assertEqual(parsed[2].duration_seconds, 4)
         self.assertFalse(parsed[2].duration_invalid)
-        self.assertTrue(all(item.duration_invalid for item in parsed[3:]))
+        self.assertTrue(all(item.duration_invalid for item in parsed[3:7]))
+        self.assertEqual(parsed[7].duration_seconds, 487)
+        self.assertEqual(parsed[8].duration_seconds, 4087)
+        self.assertIsNone(parsed[9].duration_seconds)
+        self.assertTrue(parsed[9].duration_invalid)
+        self.assertEqual(evidence.format_duration_seconds(487), "8m 07s")
+        self.assertEqual(evidence.format_duration_seconds(4087), "1h 08m 07s")
         self.assertTrue(evidence.hosted_checkpoint_evidence(parsed[5], [], HEAD)["status"] == "missing")
         report = evidence.collect_evidence(comments)
         self.assertEqual(report["duration_audit"]["malformed_count"], 1)
         self.assertEqual(report["duration_audit"]["duplicate_count"], 1)
         self.assertEqual(report["duration_audit"]["missing_count"], 2)
-        self.assertEqual(report["duration_audit"]["mismatch_count"], 1)
+        self.assertEqual(report["duration_audit"]["mismatch_count"], 2)
 
     def test_malformed_private_capture_fails_closed(self):
         checkpoint = evidence.Checkpoint(
@@ -380,6 +450,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         decision_text: str | None,
         rejection_text: str | None = None,
         accepted: int = 0,
+        routed: int | None = None,
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -401,7 +472,18 @@ class GithubAndEvidenceTests(unittest.TestCase):
         if rejection_text is not None:
             (run / "rejections.tsv").write_text(rejection_text, encoding="utf-8")
         checkpoint = evidence.Checkpoint(
-            1, "2026-09-23T00:00:00Z", "CLI", 1, accepted, HEAD[:12], 1, False, None, run_id, None
+            1,
+            "2026-09-23T00:00:00Z",
+            "CLI",
+            1,
+            accepted,
+            HEAD[:12],
+            1,
+            False,
+            None,
+            run_id,
+            None,
+            routed=routed,
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
@@ -461,6 +543,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            capture = self._cli_capture(
+                common,
+                decision_text="1\trouted\towner PR #2879\n",
+                routed=1,
+            )
+            self.assertEqual(capture.decisions, {1: ("routed", "owner PR #2879")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "routed count"):
+                self._cli_capture(
+                    common,
+                    decision_text="1\trouted\towner PR #2879\n",
+                    routed=0,
+                )
 
     def test_uncheckpointed_raw_positive_capture_is_discovered_without_decision_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -679,6 +779,121 @@ class HostedEvidenceTests(unittest.TestCase):
             hosted.prepare_full_trigger(PR, PR + 1)
         self.assertEqual(hosted.prepare_full_trigger(PR)["command"], hosted.FULL_COMMAND)
 
+    def test_positive_finding_count_overrides_incidental_zero_finding_phrase(self):
+        contradictory_summaries = (
+            (
+                "Actionable comments posted: 2\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "Actionable comments posted: 02\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+            (
+                "02 findings\n"
+                "No issues found in tests.\n"
+                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+            ),
+        )
+        legitimate_zero = (
+            "Actionable comments posted: 0\n"
+            "No issues found.\n"
+            "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
+        )
+
+        for summary in contradictory_summaries:
+            with self.subTest(summary=summary.splitlines()[0]):
+                self.assertFalse(hosted._summary_proves_complete_zero_findings(summary))
+        self.assertTrue(hosted._summary_proves_complete_zero_findings(legitimate_zero))
+
+    def test_not_reviewed_label_is_excluded_from_reviewed_count(self):
+        summary = (
+            "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. "
+            "Files reviewed: 61."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), {61})
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_not_reviewed_only_label_does_not_supply_a_reviewed_count(self):
+        summary = "Files selected: 89. Files not reviewed: 28."
+
+        self.assertEqual(hosted._reviewed_label_counts(summary), set())
+        self.assertTrue(hosted._summary_has_explicit_incomplete_coverage(summary))
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertFalse(hosted._summary_proves_complete_file_coverage(summary))
+
+    def test_skipped_or_omitted_files_are_explicit_incomplete_coverage(self):
+        for summary in (
+            "Files skipped due to moderation.",
+            "Files were skipped due to moderation.",
+            "Files are omitted during processing.",
+            "2 files skipped during processing.",
+            "Files (31) omitted due to moderation.",
+            "Files skipped: 2.",
+            "2 files omitted.",
+            "Files (2) skipped during processing.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_file_processing_noncoverage_is_explicit_without_review_wording(self):
+        for summary in (
+            "Files not processed: 2.",
+            "Files excluded due to moderation.",
+            "Files encountered processing errors.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_zero_file_processing_noncoverage_is_not_incomplete(self):
+        for summary in (
+            "Files not processed: 0.",
+            "Files encountered processing errors: 0.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_zero_skipped_or_omitted_files_are_not_explicit_incomplete_coverage(self):
+        for summary in (
+            "Files skipped: 0.",
+            "0 files omitted.",
+            "Files (0) skipped during processing.",
+            "Review files skipped: 0.",
+        ):
+            with self.subTest(summary=summary):
+                self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+        self.assertTrue(
+            hosted._summary_has_explicit_incompleteness(
+                "Review files skipped: 0, but other files could not be reviewed."
+            )
+        )
+
+    def test_docstring_skipped_files_are_not_incomplete_review_coverage(self):
+        summary = (
+            "Docstring Coverage: Analyzed 255 functions across 50 files "
+            "(31 skipped: 24 unsupported, 7 over the file limit.)"
+        )
+
+        self.assertFalse(hosted._summary_has_explicit_incompleteness(summary))
+
+    def test_reviewed_count_still_proves_complete_coverage_and_conflicts_fail_closed(self):
+        complete = "Files selected: 89. Files not reviewed: 0. Files reviewed: 89."
+        inconsistent = (
+            "Files selected: 89. Files not reviewed: 28. "
+            "Files reviewed: 61. Files reviewed: 60."
+        )
+
+        self.assertEqual(hosted._reviewed_label_counts(complete), {89})
+        self.assertFalse(hosted._summary_has_explicit_incompleteness(complete))
+        self.assertTrue(hosted._summary_proves_complete_file_coverage(complete))
+        self.assertEqual(hosted._reviewed_label_counts(inconsistent), {60, 61})
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(inconsistent))
+
     def test_rate_limit_cannot_count_as_completed_review(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         reply = comment(
@@ -692,9 +907,230 @@ class HostedEvidenceTests(unittest.TestCase):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         finished = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), trigger_record())
-        self.assertEqual(state.state, "awaiting_response")
+        self.assertEqual(state.state, "ambiguous")
+        self.assertTrue(state.terminal)
+        self.assertFalse(state.attributed)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_url, "https://example.test/comments/11")
+        self.assertIn("without a head-attributed result", state.reason)
+        self.assertNotEqual(state.state, "completed")
         checkpoint = evidence.Checkpoint(1, "2026-09-23T00:03:00Z", "Hosted", 0, 0, HEAD[:7], 1, False, None, None, 99)
         self.assertEqual(evidence.hosted_checkpoint_evidence(checkpoint, [], HEAD)["status"], "missing")
+
+    def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
+        trigger_at = "2026-09-23T00:01:00Z"
+        summary_at = "2026-09-23T00:03:20Z"
+        reply_at = "2026-09-23T00:03:00Z"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 89.\n"
+                "Files not reviewed due to moderation or processing errors: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = summary_at
+        reply = comment(11, "coderabbitai", "Full review finished.", reply_at)
+        reply["updatedAt"] = "2026-09-23T00:03:30Z"
+
+        def state_for(selected_summary=summary, selected_reply=reply, *, extra_comments=None, threads=None):
+            return hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload(
+                    [trigger, selected_summary, selected_reply, *(extra_comments or [])],
+                    reviews=[],
+                    threads=threads,
+                ),
+                trigger_record(),
+            )
+
+        self.assertEqual(state_for().state, "completed")
+
+        strict_but_incomplete = {
+            **summary,
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        self.assertNotEqual(state_for(strict_but_incomplete).state, "completed")
+
+        incomplete = {
+            **summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                "3 reported issues remain open.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        stale = {**summary, "updatedAt": trigger_at}
+        mismatched_head = {
+            **summary,
+            "body": summary["body"].replace(HEAD, "d" * 40),
+        }
+        inline_finding = {
+            "databaseId": 21,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A post-trigger inline finding.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        extra_issue_comment = comment(22, "coderabbitai", "A post-trigger bot comment.", "2026-09-23T00:02:30Z")
+        incomplete_state = state_for(incomplete)
+        self.assertEqual(incomplete_state.state, "failed")
+        self.assertTrue(incomplete_state.terminal)
+        self.assertTrue(incomplete_state.attributed)
+        self.assertEqual(incomplete_state.head_sha, HEAD)
+        self.assertEqual(incomplete_state.response_id, 11)
+        self.assertIn("incomplete file coverage", incomplete_state.reason)
+
+        for invalid_summary in (stale, mismatched_head):
+            with self.subTest(summary=invalid_summary["body"]):
+                self.assertEqual(state_for(invalid_summary).state, "ambiguous")
+        self.assertEqual(
+            state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
+            "ambiguous",
+        )
+        self.assertEqual(state_for(extra_comments=[extra_issue_comment]).state, "ambiguous")
+
+        intervening_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:45Z")
+        self.assertEqual(state_for(extra_comments=[intervening_trigger]).state, "ambiguous")
+
+        bot_review = {
+            "databaseId": 23,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:30Z",
+            "commit": {"oid": HEAD},
+        }
+        self.assertEqual(
+            hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, incomplete, reply], [bot_review]),
+                trigger_record(),
+            ).state,
+            "ambiguous",
+        )
+
+        missing_threads = review_payload([trigger, incomplete, reply])
+        del missing_threads["data"]["repository"]["pullRequest"]["reviewThreads"]
+        self.assertEqual(hosted.trigger_state(REPO, PR, missing_threads, trigger_record()).state, "ambiguous")
+
+        summary_after_reply = {**incomplete, "updatedAt": "2026-09-23T00:03:40Z"}
+        post_reply_incomplete_state = state_for(summary_after_reply)
+        self.assertEqual(post_reply_incomplete_state.state, "failed")
+        self.assertTrue(post_reply_incomplete_state.terminal)
+        self.assertTrue(post_reply_incomplete_state.attributed)
+
+        wrapped_reply = {
+            **reply,
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: "
+                "v2:6a355c47ffcf4ddd532604823fb155b76256a51f568b7e5a4e92ef6f3565c6f9 -->\n"
+                "<details>\n"
+                "<summary>✅ Action performed</summary>\n"
+                "Full review finished.\n"
+                "</details>"
+            ),
+        }
+        self.assertEqual(
+            state_for(summary_after_reply, selected_reply=wrapped_reply).state,
+            "failed",
+        )
+        self.assertEqual(state_for(summary, selected_reply=wrapped_reply).state, "ambiguous")
+
+        altered_action = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace("✅ Action performed", "✅ Review complete"),
+        }
+        extra_text = {
+            **wrapped_reply,
+            "body": wrapped_reply["body"].replace(
+                "Full review finished.", "Full review finished.\nAn issue requires attention."
+            ),
+        }
+        self.assertEqual(state_for(summary_after_reply, selected_reply=altered_action).state, "ambiguous")
+        self.assertEqual(state_for(summary_after_reply, selected_reply=extra_text).state, "ambiguous")
+
+        later_bot_output = comment(24, "coderabbitai[bot]", "Another review update.", "2026-09-23T00:03:45Z")
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[intervening_trigger]).state,
+            "ambiguous",
+        )
+        self.assertEqual(
+            state_for(summary_after_reply, extra_comments=[later_bot_output]).state,
+            "ambiguous",
+        )
+
+        limited = {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}
+        active = {**reply, "body": "Full review triggered"}
+        unattributed = {key: value for key, value in reply.items() if key != "databaseId"}
+        self.assertEqual(state_for(selected_reply=limited).state, "rate_limited")
+        self.assertEqual(state_for(selected_reply=active).state, "active")
+        self.assertNotEqual(state_for(selected_reply=unattributed).state, "completed")
+
+    def test_zero_finding_summary_ignores_unrelated_docstring_skipped_files(self):
+        trigger_at = "2026-09-23T00:01:00Z"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.\n"
+                "📒 Files selected for processing (81)\n"
+                "Docstring Coverage: Analyzed 255 functions across 50 files. "
+                "(31 skipped: 24 unsupported, 7 over the file limit.)"
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = "2026-09-23T00:03:20Z"
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:03:00Z")
+
+        def state_for(selected_summary):
+            return hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, selected_summary, reply]),
+                trigger_record(),
+            )
+
+        self.assertEqual(state_for(summary).state, "completed")
+
+        genuinely_incomplete = {
+            **summary,
+            "body": summary["body"].replace(
+                "📒 Files selected for processing (81)",
+                "Files selected: 81. Files reviewed: 79. Files not reviewed: 2.",
+            ),
+        }
+        incomplete_state = state_for(genuinely_incomplete)
+        self.assertEqual(incomplete_state.state, "failed")
+        self.assertIn("incomplete file coverage", incomplete_state.reason)
+        self.assertTrue(incomplete_state.terminal)
+        self.assertTrue(incomplete_state.attributed)
+
+        nonquantitative_incomplete = {
+            **summary,
+            "body": summary["body"].replace(
+                "📒 Files selected for processing (81)",
+                "Review files were skipped during processing.",
+            ),
+        }
+        self.assertTrue(hosted._summary_has_explicit_incompleteness(nonquantitative_incomplete["body"]))
+        self.assertEqual(state_for(nonquantitative_incomplete).state, "ambiguous")
 
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

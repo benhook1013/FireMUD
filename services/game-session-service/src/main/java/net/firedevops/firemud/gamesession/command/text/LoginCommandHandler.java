@@ -15,7 +15,6 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
@@ -49,7 +48,6 @@ public final class LoginCommandHandler {
   private final SessionContextService sessionContextService;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final AccountClient accountClient;
-  private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
@@ -61,7 +59,6 @@ public final class LoginCommandHandler {
       SessionContextService sessionContextService,
       SessionAuthenticationService sessionAuthenticationService,
       AccountClient accountClient,
-      CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       SessionRoutingNormalizationService sessionRoutingNormalizationService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
@@ -75,7 +72,6 @@ public final class LoginCommandHandler {
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
-    this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
@@ -107,7 +103,7 @@ public final class LoginCommandHandler {
             LoginCommandConstants.INVALID_ARGUMENTS_CODE,
             LoginCommandConstants.INVALID_ARGUMENTS_MESSAGE);
       }
-      return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
+      return handleVerifiedFirstPartyLogin(sessionId, command);
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
     String canonicalLoginName = EmailCanonicalization.normalize(credentials.loginName());
@@ -148,11 +144,6 @@ public final class LoginCommandHandler {
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
     }
-    CommandEnqueueResult enqueueResult =
-        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
-    if (!enqueueResult.accepted()) {
-      return fromCommandResult(enqueueResult);
-    }
     persistSessionContext(
         numericSessionId,
         instance.getTenantId(),
@@ -161,7 +152,7 @@ public final class LoginCommandHandler {
         authResponse.getAuthToken(),
         bootstrapGameInstanceId);
     return new LoginCommandHandlingResult(
-        enqueueResult,
+        CommandEnqueueResult.success(),
         List.of(
             PlayerOutput.message(
                 "Logged in as " + canonicalLoginName,
@@ -199,7 +190,7 @@ public final class LoginCommandHandler {
   }
 
   private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
-      String sessionId, TextCommand command, boolean requiresSoloTick) {
+      String sessionId, TextCommand command) {
     SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
     if (!parsedSessionId.valid()) {
       return invalidSessionFailure(parsedSessionId.errorMessage());
@@ -264,11 +255,6 @@ public final class LoginCommandHandler {
       return failure("CONNECT_SCOPE_MISMATCH", "Connect scope invalid");
     }
 
-    CommandEnqueueResult enqueueResult =
-        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
-    if (!enqueueResult.accepted()) {
-      return fromCommandResult(enqueueResult);
-    }
     persistSessionContext(
         numericSessionId,
         verifiedContext.tenantId(),
@@ -278,7 +264,7 @@ public final class LoginCommandHandler {
         verifiedContext.gameInstanceId(),
         verifiedContext);
     return new LoginCommandHandlingResult(
-        enqueueResult,
+        CommandEnqueueResult.success(),
         List.of(
             PlayerOutput.message(
                 "Logged in as first-party account " + verifiedContext.accountId(),
@@ -308,11 +294,14 @@ public final class LoginCommandHandler {
     if (sessionContextService == null) {
       return;
     }
-    SessionContext existing =
+    SessionContext projectedExisting =
         sessionRoutingNormalizationService
             .resolveProjectedSessionContext(Long.toString(sessionId))
-            .filter(context -> context.tenantId() == tenantId)
             .orElse(null);
+    SessionContext existing =
+        projectedExisting != null && projectedExisting.tenantId() == tenantId
+            ? projectedExisting
+            : null;
     boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
     boolean unauthenticatedBootstrap =
         existing != null && existing.accountId() == 0L && !existing.hasGameplayBinding();
@@ -384,6 +373,10 @@ public final class LoginCommandHandler {
                 existing.playableStateScope(),
                 existing.connectScopeId(),
                 existing.connectRequestId());
+    if (!sameAuthenticatedAccount && projectedExisting != null) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(
+          projectedExisting, "LOGIN_ACCOUNT_CHANGED");
+    }
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",
@@ -550,13 +543,6 @@ public final class LoginCommandHandler {
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.failure(code, message),
         List.of(PlayerOutput.error(code, message, messageKey, arguments)));
-  }
-
-  private LoginCommandHandlingResult fromCommandResult(CommandEnqueueResult result) {
-    if (result.accepted()) {
-      return new LoginCommandHandlingResult(result, List.of());
-    }
-    return failure(result.errorCode(), result.errorMessage());
   }
 
   private String loginErrorMessageKey(String code) {

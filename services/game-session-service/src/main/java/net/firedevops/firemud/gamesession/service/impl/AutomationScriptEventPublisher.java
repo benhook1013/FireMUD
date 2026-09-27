@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
 import java.util.List;
@@ -122,6 +124,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                           "onCommand",
                           "v1",
                           scope.scriptPatchVersion(),
+                          scope.scriptPatchBaseVersionId(),
                           scope.scriptPinEpoch(),
                           scope.scriptPinControlPlaneRequestId(),
                           command.getCommandId(),
@@ -189,29 +192,29 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
               || previousRoomId.equals(currentRoomId)) {
             return;
           }
-          publishLifecycleEvent(
-              scope,
-              "onLeaveRegion",
-              effectId + ":leave",
-              "game-session:onLeaveRegion:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + effectId,
-              regionTransitionPayload(previousRoomId, currentRoomId));
-          publishLifecycleEvent(
-              scope,
-              "onEnterRegion",
-              effectId + ":enter",
-              "game-session:onEnterRegion:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + effectId,
-              regionTransitionPayload(previousRoomId, currentRoomId));
+          String payload = regionTransitionPayload(previousRoomId, currentRoomId);
+          publishRegionTransitionEvent(scope, effectId, "leave", "onLeaveRegion", payload);
+          publishRegionTransitionEvent(scope, effectId, "enter", "onEnterRegion", payload);
         });
+  }
+
+  private void publishRegionTransitionEvent(
+      PublishingScope scope, String effectId, String transition, String eventType, String payload) {
+    runBestEffort(
+        () ->
+            publishLifecycleEvent(
+                scope,
+                eventType,
+                effectId + ":" + transition,
+                "game-session:"
+                    + eventType
+                    + ":"
+                    + scope.gameInstanceId()
+                    + ":"
+                    + scope.regionEpoch()
+                    + ":"
+                    + effectId,
+                payload));
   }
 
   @Override
@@ -341,6 +344,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                     eventType,
                     "v1",
                     scope.scriptPatchVersion(),
+                    scope.scriptPatchBaseVersionId(),
                     scope.scriptPinEpoch(),
                     scope.scriptPinControlPlaneRequestId(),
                     scriptEventId,
@@ -374,16 +378,27 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private void submitBestEffort(Runnable publishAction) {
     try {
-      scriptEventExecutor.execute(
-          () -> {
-            try {
-              publishAction.run();
-            } catch (RuntimeException ex) {
-              LOG.warn("Script event publish task failed", ex);
-            }
-          });
+      scriptEventExecutor.execute(() -> runBestEffort(publishAction));
     } catch (RuntimeException ex) {
       LOG.warn("Script event publish submission failed", ex);
+    }
+  }
+
+  private void runBestEffort(Runnable publishAction) {
+    try {
+      publishAction.run();
+    } catch (StatusRuntimeException ex) {
+      Status.Code code = ex.getStatus().getCode();
+      if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
+        LOG.warn(
+            "Script event publish terminally rejected status={} description={}",
+            code,
+            ex.getStatus().getDescription());
+      } else {
+        LOG.warn("Script event publish task failed", ex);
+      }
+    } catch (RuntimeException ex) {
+      LOG.warn("Script event publish task failed", ex);
     }
   }
 
@@ -406,6 +421,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     }
     GameInstance instance = gameInstanceRepository.findById(gameInstanceId).orElse(null);
     String scriptPatchVersion = instance == null ? "" : instance.getScriptPatchVersion();
+    Long scriptPatchBaseVersionId =
+        instance == null ? null : instance.getScriptPatchBaseVersionId();
     long scriptPinEpoch =
         instance == null || instance.getScriptPinEpoch() == null
             ? 0L
@@ -413,10 +430,11 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     String scriptPinControlPlaneRequestId =
         instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
     boolean hasPatch = StringUtils.hasText(scriptPatchVersion);
+    boolean hasBase = scriptPatchBaseVersionId != null && scriptPatchBaseVersionId > 0L;
     boolean hasEpoch = scriptPinEpoch > 0L;
     boolean hasOwnerRequest = StringUtils.hasText(scriptPinControlPlaneRequestId);
-    if (!(hasPatch && hasEpoch && hasOwnerRequest)) {
-      if (hasPatch || hasEpoch || hasOwnerRequest) {
+    if (!(hasPatch && hasBase && hasEpoch && hasOwnerRequest)) {
+      if (hasPatch || hasBase || hasEpoch || hasOwnerRequest) {
         meterRegistry
             .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "partial_tuple")
             .increment();
@@ -463,6 +481,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         entityId,
         playableStateScope,
         scriptPatchVersion,
+        scriptPatchBaseVersionId,
         scriptPinEpoch,
         scriptPinControlPlaneRequestId,
         resolveRoutingBundle(context, command));
@@ -608,6 +627,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
+      Long scriptPatchBaseVersionId,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}

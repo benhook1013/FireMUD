@@ -257,7 +257,7 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestReturnsVersionScopedDigest() {
+  void getDraftDesignDigestMapsUnavailableManifestToErrorResponse() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
@@ -268,9 +268,9 @@ class GameLogicGrpcServiceTest {
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
-        .thenReturn(
-            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
-                "1", "7", "version:7", "digest-logic", 1));
+        .thenThrow(
+            new UnsupportedOperationException(
+                "Game Logic owner-local manifest and provenance are unavailable"));
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     GameLogicGrpcService service =
@@ -306,12 +306,18 @@ class GameLogicGrpcServiceTest {
                   public void onCompleted() {}
                 }));
 
-    assertEquals("7", ref.get().getVersionId());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    assertTrue(ref.get().hasError());
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    assertEquals(
+        "Game Logic cannot attest the requested full-version digest scope",
+        ref.get().getError().getMessage());
+    assertEquals("", ref.get().getAppliedCommitId());
+    assertEquals("", ref.get().getContentDigest());
+    assertEquals(0, ref.get().getDigestSchemaVersion());
   }
 
   @Test
-  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+  void getDraftDesignDigestRejectsMissingPeerIdentityForInternalCaller() {
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     GameLogicGrpcService service =
         new GameLogicGrpcService(
@@ -330,20 +336,24 @@ class GameLogicGrpcServiceTest {
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    service.getDraftDesignDigest(
-        fullDigestRequest("1", "7"),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetDraftDesignDigestResponse value) {
-            ref.set(value);
-          }
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, null)
+        .run(
+            () ->
+                service.getDraftDesignDigest(
+                    fullDigestRequest("1", "7"),
+                    new StreamObserver<>() {
+                      @Override
+                      public void onNext(GetDraftDesignDigestResponse value) {
+                        ref.set(value);
+                      }
 
-          @Override
-          public void onError(Throwable t) {}
+                      @Override
+                      public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                      @Override
+                      public void onCompleted() {}
+                    }));
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(digestService);
   }
@@ -376,6 +386,11 @@ class GameLogicGrpcServiceTest {
   }
 
   private GameLogicGrpcService newDigestService(GameLogicDraftDesignDigestService digestService) {
+    return newDigestService(digestService, TEST_NAMESPACE);
+  }
+
+  private GameLogicGrpcService newDigestService(
+      GameLogicDraftDesignDigestService digestService, String workloadNamespace) {
     return new GameLogicGrpcService(
         new PingServiceImpl(),
         new CommandServiceImpl(
@@ -388,7 +403,40 @@ class GameLogicGrpcServiceTest {
         digestService,
         mockAttestationService(),
         new SimpleMeterRegistry(),
-        publicationReadGuard());
+        workloadNamespace);
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      GameLogicGrpcService service = newDigestService(digestService, workloadNamespace);
+
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    }
+    Mockito.verifyNoInteractions(digestService);
+
+    GameLogicDraftDesignDigestService configuredDigestService = mockDigestService();
+    Mockito.when(configuredDigestService.getDraftDesignDigest("1", "7"))
+        .thenReturn(
+            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
+                "1", "7", "version:7", "digest-game-logic", 1));
+    GameLogicGrpcService configuredService =
+        newDigestService(configuredDigestService, TEST_NAMESPACE);
+    AtomicReference<GetDraftDesignDigestResponse> configuredResponse = new AtomicReference<>();
+    runAsGameDesign(
+        () -> configuredResponse.set(invokeDigest(configuredService, fullDigestRequest("1", "7"))));
+
+    assertTrue(configuredResponse.get().getError().getCode().isEmpty());
+    assertEquals("1", configuredResponse.get().getTenantId());
+    assertEquals("7", configuredResponse.get().getVersionId());
+    Mockito.verify(configuredDigestService).getDraftDesignDigest("1", "7");
   }
 
   private GetDraftDesignDigestResponse invokeDigest(
