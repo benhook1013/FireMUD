@@ -305,6 +305,156 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.assertNotIn(line.split("=", 1)[1], rendered)
         self.assertLessEqual(len(receipt.canonical_bytes), MATERIALIZER.MAX_RECEIPT_BYTES)
 
+    def verify_receipt(self, receipt_bytes: bytes, **expected_overrides) -> dict:
+        receipt = self.run_materializer()
+        expected = {
+            "expected_environment_id": ENVIRONMENT_ID,
+            "expected_namespace": TARGET_NAMESPACE,
+            "expected_source_generation": "custody-generation-1",
+            "expected_predecessor_generation": None,
+            "expected_manifest_digest": MATERIALIZER._sha256_digest(self.source_manifest),
+            "expected_materializer_username": MATERIALIZER_USERNAME,
+            "expected_secret_name": MATERIALIZER.SECRET_NAME,
+            "expected_secret_uid": receipt["secret"]["uid"],
+            "expected_secret_resource_version": receipt["secret"]["resourceVersion"],
+        }
+        expected.update(expected_overrides)
+        return MATERIALIZER.verify_materialization_receipt(receipt_bytes, **expected)
+
+    @staticmethod
+    def canonical_receipt(record: dict) -> bytes:
+        record["immutableArtifactId"] = MATERIALIZER.canonical_evidence_digest(record)
+        return (
+            json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+
+    def test_read_side_receipt_verifier_accepts_exact_canonical_receipt(self) -> None:
+        receipt = self.run_materializer()
+        parsed = self.verify_receipt(receipt.canonical_bytes)
+
+        self.assertEqual(receipt.as_dict(), parsed)
+        self.assertEqual(receipt.content_digest, parsed["immutableArtifactId"])
+
+    def test_read_side_receipt_verifier_rejects_duplicate_wrong_shape_and_jwt_shape(self) -> None:
+        receipt = self.run_materializer()
+        duplicate_member = receipt.canonical_bytes.replace(
+            b'"environmentId":', b'"environmentId":"duplicate","environmentId":', 1
+        )
+        jwt_shape = json.dumps(
+            {"credentialClass": "jwt-signing-keys-jwks", "immutableArtifactId": "sha256:" + "0" * 64}
+        ).encode("utf-8")
+        malformed = (
+            duplicate_member,
+            b'{"receiptType":"account-response-envelope-ring-materialization-v1"}\n',
+            jwt_shape,
+        )
+        for evidence in malformed:
+            with self.subTest(evidence=evidence[:48]), self.assertRaises(
+                MATERIALIZER.MaterializationError
+            ):
+                self.verify_receipt(evidence)
+
+    def test_read_side_receipt_verifier_rejects_tampered_digest_and_noncanonical_bytes(self) -> None:
+        receipt = self.run_materializer()
+        tampered = receipt.as_dict()
+        tampered["secret"]["resourceVersion"] = "999"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "digest does not match"):
+            self.verify_receipt(
+                json.dumps(tampered, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            )
+
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "not canonical"):
+            self.verify_receipt(receipt.canonical_bytes + b" ")
+
+    def test_read_side_receipt_verifier_rejects_wrong_writer_generation_and_secret_bindings(self) -> None:
+        receipt = self.run_materializer()
+        mutations = (
+            ("materializerUsername", "system:serviceaccount:account-prod:other-writer"),
+            ("environmentId", "different-environment"),
+            ("targetNamespace", "different-namespace"),
+        )
+        for field, wrong_value in mutations:
+            with self.subTest(field=field):
+                changed = receipt.as_dict()
+                changed[field] = wrong_value
+                with self.assertRaises(MATERIALIZER.MaterializationError):
+                    self.verify_receipt(self.canonical_receipt(changed))
+
+        for field, wrong_value in (
+            ("generation", "different-generation"),
+            ("predecessorGeneration", "unexpected-predecessor"),
+            ("manifestDigest", "sha256:" + "0" * 64),
+        ):
+            with self.subTest(source_field=field):
+                changed = receipt.as_dict()
+                changed["source"][field] = wrong_value
+                with self.assertRaises(MATERIALIZER.MaterializationError):
+                    self.verify_receipt(self.canonical_receipt(changed))
+
+        for field, wrong_value in (
+            ("name", "other-secret"),
+            ("uid", "other-secret-uid"),
+            ("resourceVersion", "99"),
+        ):
+            with self.subTest(secret_field=field):
+                changed = receipt.as_dict()
+                changed["secret"][field] = wrong_value
+                with self.assertRaises(MATERIALIZER.MaterializationError):
+                    self.verify_receipt(self.canonical_receipt(changed))
+
+    def test_read_side_receipt_verifier_rejects_matching_malformed_expected_bindings(self) -> None:
+        receipt = self.run_materializer()
+        cases = (
+            (
+                "source generation",
+                "expected_source_generation",
+                "generation\ninvalid",
+                lambda changed, value: changed["source"].update(generation=value),
+            ),
+            (
+                "environment",
+                "expected_environment_id",
+                "environment\ninvalid",
+                lambda changed, value: changed.update(environmentId=value),
+            ),
+            (
+                "namespace",
+                "expected_namespace",
+                "Invalid_Namespace",
+                lambda changed, value: (
+                    changed.update(targetNamespace=value),
+                    changed["secret"].update(namespace=value),
+                    changed["freshnessAnnotations"].update(
+                        {MATERIALIZER.ANNOTATION_TARGET_NAMESPACE: value}
+                    ),
+                ),
+            ),
+            (
+                "predecessor generation",
+                "expected_predecessor_generation",
+                "predecessor\ninvalid",
+                lambda changed, value: (
+                    changed["source"].update(predecessorGeneration=value),
+                    changed["freshnessAnnotations"].update(
+                        {MATERIALIZER.ANNOTATION_PREVIOUS_SOURCE_GENERATION: value}
+                    ),
+                ),
+            ),
+        )
+        for label, expected_name, malformed_value, update_record in cases:
+            with self.subTest(binding=label):
+                changed = receipt.as_dict()
+                update_record(changed, malformed_value)
+                evidence = self.canonical_receipt(changed)
+                with self.assertRaises(MATERIALIZER.MaterializationError):
+                    self.verify_receipt(evidence, **{expected_name: malformed_value})
+
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "Secret name is not canonical"):
+            self.verify_receipt(
+                receipt.canonical_bytes,
+                expected_secret_name="jwt-signing-keys",
+            )
+
     def test_existing_secret_requires_valid_uid_and_resource_version(self) -> None:
         self.run_materializer()
         for field, invalid_value, expected_message in (

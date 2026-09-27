@@ -652,6 +652,179 @@ def _sha256_digest(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
 
 
+def _receipt_json_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise MaterializationError("materialization receipt contains duplicate JSON fields")
+        result[key] = value
+    return result
+
+
+def verify_materialization_receipt(
+    canonical_bytes: bytes,
+    *,
+    expected_environment_id: str,
+    expected_namespace: str,
+    expected_source_generation: str,
+    expected_predecessor_generation: str | None,
+    expected_manifest_digest: str,
+    expected_materializer_username: str,
+    expected_secret_name: str = SECRET_NAME,
+    expected_secret_uid: str,
+    expected_secret_resource_version: str,
+) -> dict[str, Any]:
+    """Strictly parse and compare local receipt bytes against caller-supplied bindings.
+
+    This verifies receipt structure and consistency only.  It does not authenticate a transport,
+    prove who published the bytes, or establish Secret freshness/readiness.
+    """
+
+    if not isinstance(canonical_bytes, bytes) or not canonical_bytes:
+        raise MaterializationError("materialization receipt must be non-empty bytes")
+    if len(canonical_bytes) > MAX_RECEIPT_BYTES:
+        raise MaterializationError("materialization receipt exceeds the format size limit")
+    try:
+        text = canonical_bytes.decode("utf-8")
+        record = json.loads(text, object_pairs_hook=_receipt_json_members)
+    except MaterializationError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise MaterializationError("materialization receipt is not valid UTF-8 JSON") from exc
+    if not isinstance(record, dict):
+        raise MaterializationError("materialization receipt must be a JSON object")
+
+    expected_fields = {
+        "version",
+        "receiptType",
+        "operation",
+        "source",
+        "environmentId",
+        "targetNamespace",
+        "secret",
+        "materializerUsername",
+        "freshnessAnnotations",
+        "immutableArtifactId",
+    }
+    if set(record) != expected_fields:
+        raise MaterializationError("materialization receipt fields do not match the typed format")
+    if type(record["version"]) is not int or record["version"] != RECEIPT_VERSION:
+        raise MaterializationError("materialization receipt version is unsupported")
+    if record["receiptType"] != RECEIPT_TYPE:
+        raise MaterializationError("materialization receipt type is not the Account ring format")
+    if not isinstance(record["operation"], str) or record["operation"] not in {
+        "create",
+        "rotate",
+        "retry",
+    }:
+        raise MaterializationError("materialization receipt operation is invalid")
+
+    source = record["source"]
+    secret = record["secret"]
+    freshness = record["freshnessAnnotations"]
+    if not isinstance(source, dict) or set(source) != {
+        "generation",
+        "predecessorGeneration",
+        "manifestDigest",
+    }:
+        raise MaterializationError("materialization receipt source fields do not match the typed format")
+    if not isinstance(secret, dict) or set(secret) != {
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "uid",
+        "resourceVersion",
+    }:
+        raise MaterializationError("materialization receipt Secret fields do not match the typed format")
+    if not isinstance(freshness, dict) or set(freshness) != set(REQUIRED_ANNOTATIONS):
+        raise MaterializationError("materialization receipt freshness fields do not match the typed format")
+    for name in ("environmentId", "targetNamespace", "materializerUsername", "immutableArtifactId"):
+        if not isinstance(record[name], str):
+            raise MaterializationError("materialization receipt contains an invalid field value")
+    try:
+        validate_environment_id(record["environmentId"])
+        validate_namespace(record["targetNamespace"])
+        validate_source_generation(source["generation"])
+        if source["predecessorGeneration"] is not None:
+            validate_source_generation(source["predecessorGeneration"])
+    except (MaterializationError, AttributeError) as exc:
+        raise MaterializationError("materialization receipt source or target binding is invalid") from exc
+    if not isinstance(source["manifestDigest"], str) or not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", source["manifestDigest"]
+    ):
+        raise MaterializationError("materialization receipt manifest digest is invalid")
+    if any(not isinstance(value, str) for value in secret.values()):
+        raise MaterializationError("materialization receipt Secret identity is invalid")
+    if any(not isinstance(value, str) for value in freshness.values()):
+        raise MaterializationError("materialization receipt freshness annotation is invalid")
+    parse_rfc3339_utc(freshness[ANNOTATION_MATERIALIZED_AT], "receipt materialized-at")
+    parse_rfc3339_utc(freshness[ANNOTATION_EXPIRES_AT], "receipt expires-at")
+
+    digest = record["immutableArtifactId"]
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise MaterializationError("materialization receipt immutable digest is invalid")
+    try:
+        calculated_digest = canonical_evidence_digest(record)
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise MaterializationError("materialization receipt digest preimage is invalid") from exc
+    if digest != calculated_digest:
+        raise MaterializationError("materialization receipt immutable digest does not match")
+
+    try:
+        validate_environment_id(expected_environment_id)
+        validate_namespace(expected_namespace)
+        validate_source_generation(expected_source_generation)
+        if expected_predecessor_generation is not None:
+            validate_source_generation(expected_predecessor_generation)
+        validate_materializer_username(expected_materializer_username, expected_namespace)
+        validate_kubernetes_metadata_value(expected_secret_uid, "UID")
+        validate_kubernetes_metadata_value(expected_secret_resource_version, "resource version")
+    except (MaterializationError, AttributeError) as exc:
+        raise MaterializationError("expected materialization receipt binding is invalid") from exc
+    if expected_secret_name != SECRET_NAME:
+        raise MaterializationError("expected materialization receipt Secret name is not canonical")
+
+    exact_bindings = (
+        (record["environmentId"], expected_environment_id, "environment"),
+        (record["targetNamespace"], expected_namespace, "namespace"),
+        (source["generation"], expected_source_generation, "source generation"),
+        (source["predecessorGeneration"], expected_predecessor_generation, "predecessor generation"),
+        (source["manifestDigest"], expected_manifest_digest, "manifest digest"),
+        (record["materializerUsername"], expected_materializer_username, "materializer identity"),
+        (secret["apiVersion"], "v1", "Secret apiVersion"),
+        (secret["kind"], "Secret", "Secret kind"),
+        (secret["name"], SECRET_NAME, "Secret name"),
+        (secret["namespace"], expected_namespace, "Secret namespace"),
+        (secret["uid"], expected_secret_uid, "Secret UID"),
+        (secret["resourceVersion"], expected_secret_resource_version, "Secret resource version"),
+        (freshness[ANNOTATION_SOURCE_GENERATION], expected_source_generation, "freshness generation"),
+        (
+            freshness[ANNOTATION_ENVIRONMENT_ID],
+            expected_environment_id,
+            "freshness environment",
+        ),
+        (
+            freshness[ANNOTATION_TARGET_NAMESPACE],
+            expected_namespace,
+            "freshness namespace",
+        ),
+        (
+            freshness[ANNOTATION_PREVIOUS_SOURCE_GENERATION],
+            expected_predecessor_generation or "",
+            "freshness predecessor",
+        ),
+    )
+    for actual, expected, label in exact_bindings:
+        if actual != expected:
+            raise MaterializationError(f"materialization receipt {label} does not match expected value")
+
+    canonical_text = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    if canonical_text.encode("utf-8") != canonical_bytes:
+        raise MaterializationError("materialization receipt bytes are not canonical")
+    return record
+
+
 def _materialization_receipt(
     *,
     changed: bool,
