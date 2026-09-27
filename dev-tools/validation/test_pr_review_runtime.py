@@ -2613,7 +2613,7 @@ class RuntimeTest(unittest.TestCase):
             payload = self._payload(comments, threads=threads)
             self._bind_trigger(Path(directory), payload, self._trigger_record())
             hosted_history = self._history(Path(directory), payload, "hosted", changed_files=100)
-            cli_history = self._history(Path(directory), payload, "cli", changed_files=111)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=100)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -2966,8 +2966,34 @@ class RuntimeTest(unittest.TestCase):
                 "duplicate:ref:automation-base-observation",
             )
             self.assertEqual(len(state.routes[0].observations), 2)
+            state_before_idempotent_repeat = store.load()
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_idempotent_repeat)
+
             state_before_conflict = store.load()
+            args.route_finding = ["automation-base-observation", "replacement-finding"]
+            args.route_observation = [
+                "would replace the source observation",
+                "replacement route must not orphan the original",
+            ]
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "retain its exact route IDs"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_conflict)
+
             args.target_pr = 2880
+            args.route_finding = ["automation-base-observation", "new-follow-up-finding"]
+            args.route_observation = [
+                "same source finding, with a later observation",
+                "separate finding in the updated bucket",
+            ]
             with (
                 patch.object(review_cli, "default_controller", return_value=controller),
                 patch.object(github, "fetch_pull_request", return_value=payload),

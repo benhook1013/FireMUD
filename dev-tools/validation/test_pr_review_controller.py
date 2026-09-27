@@ -352,12 +352,15 @@ class ControllerTests(unittest.TestCase):
         # A source PR need not remain in the live stack for its route to stay queryable.
         self.assertEqual(controller.status_for_pr(2828)["routes_out"][0]["route_id"], first["route_id"])
 
-        moved = controller.decide_route(
+        moved_result = controller.decide_route(
             route_id=first["route_id"],
             decision="retargeted",
             target_pr=2880,
             reason="the observed code now belongs to the shared transport PR",
-        )["route"]
+        )
+        self.assertEqual(moved_result["status"], "recorded")
+        self.assertEqual(moved_result["decision"], "retargeted")
+        moved = moved_result["route"]
         self.assertEqual(moved["status"], "open")
         self.assertEqual(moved["target_history"], [2879])
         self.assertEqual(controller.list_routes(target_pr=2879)["count"], 0)
