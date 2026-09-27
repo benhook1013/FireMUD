@@ -11,7 +11,7 @@ public class GameLogicDraftDesignDigestServiceImpl implements GameLogicDraftDesi
     if (versionId == null || versionId.isBlank()) {
       throw new IllegalArgumentException("version_id is required");
     }
-    throw new UnsupportedOperationException(
+    throw new UnsupportedDigestScopeException(
         "Game Logic owner-local manifest and provenance are unavailable");
   }
 }

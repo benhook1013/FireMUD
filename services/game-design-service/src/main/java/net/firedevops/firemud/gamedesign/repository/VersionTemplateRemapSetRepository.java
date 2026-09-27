@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -117,20 +118,22 @@ public class VersionTemplateRemapSetRepository {
     LocalDateTime updatedAt = now;
     if (remapSet.getId() == null) {
       Record record =
-          Objects.requireNonNull(
-              dsl.insertInto(SET_TABLE)
-                  .set(REMAP_SET_ID, remapSet.getRemapSetId())
-                  .set(TENANT_ID, remapSet.getTenantId())
-                  .set(SOURCE_VERSION_ID, remapSet.getSourceVersionId())
-                  .set(TARGET_VERSION_ID, remapSet.getTargetVersionId())
-                  .set(STATUS, remapSet.getStatus().name())
-                  .set(CREATED_REASON, remapSet.getCreatedReason())
-                  .set(APPROVAL_REASON, remapSet.getApprovalReason())
-                  .set(CREATED_AT, createdAt)
-                  .set(APPROVED_AT, remapSet.getApprovedAt())
-                  .set(UPDATED_AT, updatedAt)
-                  .returning()
-                  .fetchOne());
+          dsl.insertInto(SET_TABLE)
+              .set(REMAP_SET_ID, remapSet.getRemapSetId())
+              .set(TENANT_ID, remapSet.getTenantId())
+              .set(SOURCE_VERSION_ID, remapSet.getSourceVersionId())
+              .set(TARGET_VERSION_ID, remapSet.getTargetVersionId())
+              .set(STATUS, remapSet.getStatus().name())
+              .set(CREATED_REASON, remapSet.getCreatedReason())
+              .set(APPROVAL_REASON, remapSet.getApprovalReason())
+              .set(CREATED_AT, createdAt)
+              .set(APPROVED_AT, remapSet.getApprovedAt())
+              .set(UPDATED_AT, updatedAt)
+              .returning(SET_ID, CREATED_AT, UPDATED_AT)
+              .fetchOne();
+      if (record == null || record.get(SET_ID) == null) {
+        throw new IllegalStateException("VERSION_TEMPLATE_REMAP_SET_INSERT_FAILED");
+      }
       remapSet.setId(record.get(SET_ID));
       remapSet.setCreatedAt(record.get(CREATED_AT));
       remapSet.setUpdatedAt(record.get(UPDATED_AT));
@@ -192,9 +195,9 @@ public class VersionTemplateRemapSetRepository {
     remapSet.setStatus(TemplateRemapSetStatus.valueOf(record.get(STATUS)));
     remapSet.setCreatedReason(record.get(CREATED_REASON));
     remapSet.setApprovalReason(record.get(APPROVAL_REASON));
-    remapSet.setCreatedAt(record.get(CREATED_AT));
-    remapSet.setApprovedAt(record.get(APPROVED_AT));
-    remapSet.setUpdatedAt(record.get(UPDATED_AT));
+    remapSet.setCreatedAt(readLocalDateTime(record, CREATED_AT));
+    remapSet.setApprovedAt(readLocalDateTime(record, APPROVED_AT));
+    remapSet.setUpdatedAt(readLocalDateTime(record, UPDATED_AT));
     remapSet.setRemapEntries(loadEntries(remapSet));
     return remapSet;
   }
@@ -212,8 +215,27 @@ public class VersionTemplateRemapSetRepository {
               entry.setMappingType(record.get(ENTRY_MAPPING_TYPE));
               entry.setSourceTemplateKey(record.get(ENTRY_SOURCE_TEMPLATE_KEY));
               entry.setTargetTemplateKey(record.get(ENTRY_TARGET_TEMPLATE_KEY));
-              entry.setCreatedAt(record.get(ENTRY_CREATED_AT));
+              entry.setCreatedAt(readLocalDateTime(record, ENTRY_CREATED_AT));
               return entry;
             });
+  }
+
+  private static LocalDateTime readLocalDateTime(Record record, Field<LocalDateTime> field) {
+    Object value = record.get(field.getName());
+    if (value == null) {
+      return null;
+    }
+    if (value instanceof LocalDateTime localDateTime) {
+      return localDateTime;
+    }
+    if (value instanceof Timestamp timestamp) {
+      return timestamp.toLocalDateTime();
+    }
+    throw new IllegalStateException(
+        "VERSION_TEMPLATE_REMAP_SET_TIMESTAMP_TYPE_UNSUPPORTED: "
+            + field.getName()
+            + " ("
+            + value.getClass().getName()
+            + ")");
   }
 }
