@@ -271,8 +271,7 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals(
-        PublishAttemptPendingReconciliationException.ERROR_CODE,
-        ref.get().getError().getCode());
+        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
     assertEquals(
         PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
         ref.get().getError().getMessage());
