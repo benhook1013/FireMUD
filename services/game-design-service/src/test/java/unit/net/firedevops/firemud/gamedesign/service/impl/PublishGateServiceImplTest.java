@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -91,6 +93,13 @@ class PublishGateServiceImplTest {
     assertEquals(5, digests.size());
     assertEquals("WORLD_MANAGEMENT", digests.get(0).participantKey());
     assertDoesNotThrow(() -> service.assertGatePassed(version, digests));
+
+    PublicationDigestRequestBinding expectedBinding =
+        PublicationDigestRequestBinding.full("tenant-1", "7", "publish-request-1");
+    assertBinding(captureVersionBinding(worldManagementClient), expectedBinding);
+    assertBinding(captureVersionBinding(entityManagementClient), expectedBinding);
+    assertBinding(captureVersionBinding(gameLogicClient), expectedBinding);
+    assertBinding(captureVersionBinding(automationScriptingClient), expectedBinding);
   }
 
   @Test
@@ -398,6 +407,56 @@ class PublishGateServiceImplTest {
 
     assertEquals(2, digests.size());
     assertDoesNotThrow(() -> service.assertGatePassed(version, digests));
+
+    ArgumentCaptor<PublicationDigestRequestBinding> bindingCaptor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(automationScriptingClient).getDraftDesignDigestForScriptPatch(bindingCaptor.capture());
+    assertBinding(
+        bindingCaptor.getValue(),
+        PublicationDigestRequestBinding.patch("tenant-1", "7", "patch-1", "publish-request-1"));
+  }
+
+  private static PublicationDigestRequestBinding captureVersionBinding(
+      WorldManagementClient client) {
+    ArgumentCaptor<PublicationDigestRequestBinding> captor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(client).getDraftDesignDigestForVersion(captor.capture());
+    return captor.getValue();
+  }
+
+  private static PublicationDigestRequestBinding captureVersionBinding(
+      EntityManagementClient client) {
+    ArgumentCaptor<PublicationDigestRequestBinding> captor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(client).getDraftDesignDigestForVersion(captor.capture());
+    return captor.getValue();
+  }
+
+  private static PublicationDigestRequestBinding captureVersionBinding(GameLogicClient client) {
+    ArgumentCaptor<PublicationDigestRequestBinding> captor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(client).getDraftDesignDigestForVersion(captor.capture());
+    return captor.getValue();
+  }
+
+  private static PublicationDigestRequestBinding captureVersionBinding(
+      AutomationScriptingClient client) {
+    ArgumentCaptor<PublicationDigestRequestBinding> captor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(client).getDraftDesignDigestForVersion(captor.capture());
+    return captor.getValue();
+  }
+
+  private static void assertBinding(
+      PublicationDigestRequestBinding actual, PublicationDigestRequestBinding expected) {
+    assertEquals(expected.tenantId(), actual.tenantId());
+    assertEquals(expected.scopeKind(), actual.scopeKind());
+    assertEquals(expected.versionId(), actual.versionId());
+    assertEquals(expected.baseVersionId(), actual.baseVersionId());
+    assertEquals(expected.scriptPatchVersion(), actual.scriptPatchVersion());
+    assertEquals(expected.publishRequestId(), actual.publishRequestId());
+    assertEquals(expected.derivedWorkflowIdentity(), actual.derivedWorkflowIdentity());
+    assertEquals(expected.requestDigest(), actual.requestDigest());
   }
 
   @Test
