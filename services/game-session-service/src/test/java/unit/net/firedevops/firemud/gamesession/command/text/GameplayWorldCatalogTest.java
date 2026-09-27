@@ -28,6 +28,20 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void visibleWorldsDropsCaseInsensitiveRealmSlugCollisions() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
+                pointer("demo", "Demo World", "PRODUCTION", "Live Realm", 1L, 12L, 8L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
   void visibleWorldsSuppressesCaseInsensitiveWorldSlugCollisionsAcrossTenants() {
     when(authorityService.listPointers())
         .thenReturn(
@@ -43,12 +57,47 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void publicBrowseDropsCaseInsensitiveRealmSlugCollisions() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(realm("production", true), realm("PRODUCTION", true)))));
+
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.browseRealms("demo")).isEmpty();
+  }
+
+  @Test
+  void explicitRealmSelectorFailsClosedOnCaseInsensitiveCollision() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(
+                        realm("production", true),
+                        realm("PRODUCTION", false),
+                        realm("event", false)))));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
+
+    assertThat(catalog.resolveRealm(world, "production")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, " production ")).isEmpty();
+    assertThat(catalog.resolveRealmTarget("demo", "production")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, "event")).isPresent();
+  }
+
+  @Test
   void resolveWorldFailsClosedWhenNormalizedSlugMatchesMultipleWorldViews() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(worldWithTargetRealm("preview", true), worldWithTargetRealm("preview", true)));
 
     assertThat(catalog.resolveWorld(" DeMo ")).isEmpty();
+    assertThat(catalog.resolveRealmTarget(" DeMo ", "production")).isEmpty();
   }
 
   @Test
@@ -322,6 +371,12 @@ class GameplayWorldCatalogTest {
                 false,
                 "SHARED",
                 "ALLOW_NEW")));
+  }
+
+  private static GameplayWorldCatalog.RealmView realm(
+      String realmSlug, boolean publicProductionRealm) {
+    return new GameplayWorldCatalog.RealmView(
+        realmSlug, "Realm", 7L, 11L, 1L, true, publicProductionRealm, false, "SHARED", "ALLOW_NEW");
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(

@@ -56,12 +56,6 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId) {
-    createAttempt(version, publishType, publishWorkflowId, null, null);
-  }
-
-  @Override
   @Transactional
   public void createFullVersionAttempt(
       VersionDto version, String publishWorkflowId, String requestDigest) {
@@ -109,13 +103,6 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void recordParticipantDigests(
-      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
-    recordParticipantDigestsInCurrentTransaction(publishWorkflowId, participantDigests);
-  }
-
-  @Override
   @Transactional
   public void recordFullVersionParticipantDigests(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
@@ -133,12 +120,6 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   @Override
   @Transactional
   public void markScriptPatchSucceeded(String publishWorkflowId) {
-    markSucceededInCurrentTransaction(publishWorkflowId);
-  }
-
-  @Override
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void markSucceeded(String publishWorkflowId) {
     markSucceededInCurrentTransaction(publishWorkflowId);
   }
 
@@ -161,12 +142,6 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   @Transactional
   public void markScriptPatchFailed(
       String publishWorkflowId, String failureCode, String failureMessage) {
-    markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
-  }
-
-  @Override
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void markFailed(String publishWorkflowId, String failureCode, String failureMessage) {
     markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
   }
 

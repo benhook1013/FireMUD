@@ -7,6 +7,7 @@ public class ScriptEventBinding {
   private Long id;
   private Long tenantId;
   private String scriptPatchVersion;
+  private Long baseVersionId;
   private String eventType;
   private String eventSchemaVersion;
   private String scriptId;

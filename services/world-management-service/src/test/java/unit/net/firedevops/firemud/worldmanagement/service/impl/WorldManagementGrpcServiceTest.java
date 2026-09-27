@@ -84,6 +84,7 @@ class WorldManagementGrpcServiceTest {
   private static GetDraftDesignDigestResponse invokeDigest(
       WorldManagementGrpcService service, GetDraftDesignDigestRequest request) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
     service.getDraftDesignDigest(
         request,
         new StreamObserver<>() {
@@ -93,11 +94,16 @@ class WorldManagementGrpcServiceTest {
           }
 
           @Override
-          public void onError(Throwable t) {}
+          public void onError(Throwable t) {
+            error.set(t);
+          }
 
           @Override
           public void onCompleted() {}
         });
+    if (error.get() != null) {
+      throw new AssertionError("Digest RPC failed", error.get());
+    }
     return ref.get();
   }
 
@@ -140,7 +146,8 @@ class WorldManagementGrpcServiceTest {
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
-        new ObjectMapper());
+        new ObjectMapper(),
+        (PublicationReadGuard) null);
   }
 
   private WorldManagementGrpcService newServiceWithoutContext(
@@ -161,7 +168,8 @@ class WorldManagementGrpcServiceTest {
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
-        new ObjectMapper());
+        new ObjectMapper(),
+        (PublicationReadGuard) null);
   }
 
   @Test
@@ -190,29 +198,14 @@ class WorldManagementGrpcServiceTest {
             publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
-
-                  @Override
-                  public void onError(Throwable t) {}
-
-                  @Override
-                  public void onCompleted() {}
-                }));
+    runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
 
     assertEquals("7", ref.get().getVersionId());
     assertEquals("version:7", ref.get().getAppliedCommitId());
   }
 
   @Test
-  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+  void getDraftDesignDigestRejectsForgedInternalSessionClaimWithoutPeerIdentity() {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
@@ -228,23 +221,38 @@ class WorldManagementGrpcServiceTest {
             publicationReadGuard());
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    service.getDraftDesignDigest(
-        fullDigestRequest("1", "7"),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetDraftDesignDigestResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    GetDraftDesignDigestResponse response = invokeDigest(service, fullDigestRequest("1", "7"));
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
     Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      WorldManagementGrpcService service =
+          new WorldManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              Mockito.mock(WorldInstanceActivationService.class),
+              digestService,
+              Mockito.mock(WorldDesignMutationService.class),
+              Mockito.mock(WorldUpgradeValidationService.class),
+              Mockito.mock(GameplaySessionAttestationService.class),
+              new SimpleMeterRegistry(),
+              new ObjectMapper(),
+              workloadNamespace);
+
+      assertEquals(
+          "PERMISSION_DENIED",
+          invokeDigestWithPeer(service, fullDigestRequest("1", "7"), peer("game-design-service"))
+              .getError()
+              .getCode(),
+          "workload namespace: " + workloadNamespace);
+      Mockito.verifyNoInteractions(digestService);
+    }
   }
 
   @Test
@@ -388,23 +396,10 @@ class WorldManagementGrpcServiceTest {
             new SimpleMeterRegistry(),
             new ObjectMapper(),
             publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
-
-                  @Override
-                  public void onError(Throwable t) {}
-
-                  @Override
-                  public void onCompleted() {}
-                }));
+    runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }
@@ -430,7 +425,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
     service.applyWorldDesignMutation(
@@ -483,7 +479,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
     service.applyWorldDesignMutation(
@@ -554,7 +551,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
     service.prepareWorldInstance(
@@ -607,7 +605,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
     service.prepareWorldInstance(
@@ -661,7 +660,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<ActivatePreparedWorldInstanceResponse> ref = new AtomicReference<>();
     service.activatePreparedWorldInstance(
@@ -718,7 +718,8 @@ class WorldManagementGrpcServiceTest {
             validationService,
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<ValidateWorldUpgradeMappingsResponse> ref = new AtomicReference<>();
     service.validateWorldUpgradeMappings(
@@ -768,7 +769,8 @@ class WorldManagementGrpcServiceTest {
             validationService,
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<ValidateWorldUpgradeMappingsResponse> ref = new AtomicReference<>();
     service.validateWorldUpgradeMappings(
@@ -953,7 +955,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -1005,7 +1008,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -1204,7 +1208,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -1254,7 +1259,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -1307,7 +1313,8 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
-            new ObjectMapper());
+            new ObjectMapper(),
+            (PublicationReadGuard) null);
 
     InvocationTargetException thrown =
         assertThrows(

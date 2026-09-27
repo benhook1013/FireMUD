@@ -9,6 +9,7 @@ public record ScriptDefinitionDto(
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String name,
     @NotNull @Size(max = 20) String version,
+    @NotNull Long baseVersionId,
     @NotNull String definition,
     List<EventBindingDto> eventBindings) {
   public ScriptDefinitionDto {

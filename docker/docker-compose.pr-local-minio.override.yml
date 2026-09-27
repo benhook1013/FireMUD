@@ -1,0 +1,17 @@
+---
+# Explicit PR full-stack smoke overlay. The caller must pass the unique local
+# tags whose image IDs match dev-tools/minio/build-and-smoke-images.sh outputs.
+services:
+  minio:
+    image: "${SMOKE_MINIO_SERVER_IMAGE:?server tag required}"
+    pull_policy: never
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          busybox wget -q -T 3 -O /dev/null
+          http://localhost:9000/minio/health/live
+
+  minio-setup:
+    image: "${SMOKE_MINIO_CLIENT_IMAGE:?client tag required}"
+    pull_policy: never

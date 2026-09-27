@@ -10,23 +10,26 @@ class V4__execution_replay_and_retentionTest {
 
   @Test
   void declaresTheTenantScopedExecutionReplayAndRetentionContract() throws IOException {
-    String migration;
-    try (var stream =
-        getClass()
-            .getClassLoader()
-            .getResourceAsStream("db/migration/V4__execution_replay_and_retention.sql")) {
-      assertThat(stream).isNotNull();
-      migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-    }
+    String normalized =
+        readMigration("db/migration/V4__execution_replay_and_retention.sql")
+            .replaceAll("\\s+", " ")
+            .trim();
+    String v3Normalized =
+        readMigration("db/migration/V3__persist_plugin_lifecycle_fences.sql")
+            .replaceAll("\\s+", " ")
+            .trim();
 
-    String normalized = migration.replaceAll("\\s+", " ").trim();
+    assertThat(v3Normalized)
+        .contains(
+            "ADD COLUMN next_eligible_at TIMESTAMP NOT NULL DEFAULT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP)",
+            "CREATE INDEX idx_script_work_items_status_eligible_created ON script_work_items(status, next_eligible_at, created_at, id)");
 
     assertThat(normalized)
         .contains(
             "ADD COLUMN failure_generation BIGINT NOT NULL DEFAULT 0",
             "ADD COLUMN authority_unavailable_since TIMESTAMP",
             "ADD COLUMN authority_unavailable_count INTEGER NOT NULL DEFAULT 0",
-            "ADD COLUMN next_eligible_at TIMESTAMP",
+            "ALTER COLUMN next_eligible_at DROP NOT NULL",
             "CREATE TABLE script_dead_letter_replay_requests",
             "CREATE TABLE script_dead_letter_replay_results",
             "requested_work_item_id BIGINT NOT NULL",
@@ -44,14 +47,20 @@ class V4__execution_replay_and_retentionTest {
             "CONSTRAINT ck_script_dead_letter_replay_result_nonnegative_evidence CHECK ( script_pin_epoch >= 0 AND failure_generation >= 0 )",
             "ADD COLUMN retention_hold_until TIMESTAMPTZ NULL",
             "idx_script_work_items_execution_fences",
-            "idx_script_work_items_retry_eligibility",
             "idx_script_dead_letter_replay_results_request",
             "idx_script_dead_letter_replay_results_work_item",
             "idx_script_event_audit_retention",
             "idx_script_handoff_events_retention",
             "idx_script_dead_letter_replay_requests_retention",
             "idx_script_dead_letter_replay_results_retention")
-        .doesNotContain("IF NOT EXISTS", "DROP TABLE", "DROP COLUMN", "DELETE FROM");
+        .doesNotContain(
+            "ADD COLUMN next_eligible_at",
+            "CREATE INDEX idx_script_work_items_status_eligible_created",
+            "DROP INDEX idx_script_work_items_status_eligible_created",
+            "IF NOT EXISTS",
+            "DROP TABLE",
+            "DROP COLUMN",
+            "DELETE FROM");
 
     assertThat(normalized)
         .contains(
@@ -77,5 +86,12 @@ class V4__execution_replay_and_retentionTest {
     assertThat(start).isGreaterThanOrEqualTo(0);
     int end = normalized.indexOf("CREATE TABLE ", start + marker.length());
     return normalized.substring(start, end < 0 ? normalized.length() : end);
+  }
+
+  private String readMigration(String resourcePath) throws IOException {
+    try (var stream = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+      assertThat(stream).isNotNull();
+      return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+    }
   }
 }

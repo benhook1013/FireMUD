@@ -48,6 +48,8 @@ helm upgrade --install pr-123 ./firemud \
   --create-namespace
 ```
 
+Before applying the full-stack chart with publication workloads enabled, the trusted environment setup must provision these namespace-scoped leaf Secrets: `firemud-grpc-game-design-service`, `firemud-grpc-world-management-service`, `firemud-grpc-entity-management-service`, `firemud-grpc-game-logic-service`, and `firemud-grpc-automation-scripting-service`. It must also provision the shared `firemud-grpc-tls` trust bundle. Standalone hosted setup uses the trusted [`ensure-standalone-grpc-certificates.sh`](../../dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh) Certificate writer for the five leaves; hosted-controller setup must wait for all five projections. Other environments must follow the approved issuance and bootstrap process in the [deployment runbook](../../design/architecture/system-architecture-deployment-runbook.md). Direct `helm template` only renders Secret references; it does not prove that the Secrets exist or are ready. Keep certificate material and secret credentials out of PR-controlled values and workflows.
+
 The hosted chart owns public `jwt-jwks` as a `ConfigMap`. Helm treats a same-name legacy Secret and the target ConfigMap as distinct resource identities, so the upgrade creates the ConfigMap and removes the obsolete Secret without a manual pre-delete. The `dev-tools/tests/helm-jwks-contract.sh` test proves the target rendered resource and workload wiring; it is not a live-cluster upgrade or downtime proof.
 
 `firemud/values-hosted-shared.example.yaml` is the shared source template for the hosted deployment contract. `dev-tools/hosted/preview/render-preview-values.py` materializes preview-specific values from it:
