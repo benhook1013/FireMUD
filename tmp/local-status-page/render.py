@@ -153,7 +153,7 @@ AGE_SCRIPT = """(() => {
       label.textContent = minutes === 0 ? 'just now'
         : minutes < 60 ? `${minutes}m ago`
         : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
-        : `${Math.floor(minutes / 1440)}d ago`;
+        : `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h ago`;
     }
     for (const round of rounds) {
       round.textContent = roundAge(Date.parse(round.dateTime), now);
@@ -283,7 +283,8 @@ def relative_time(value: datetime, now: datetime) -> str:
         return f"{minutes}m ago"
     if minutes < 24 * 60:
         return f"{minutes // 60}h {minutes % 60}m ago"
-    return f"{minutes // (24 * 60)}d ago"
+    days, remaining = divmod(minutes, 24 * 60)
+    return f"{days}d {remaining // 60}h ago"
 
 
 def round_age(value: datetime, now: datetime) -> str:

@@ -347,6 +347,9 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("status stale", page.time_label((NOW - timedelta(hours=25)).isoformat(), NOW))
         self.assertIn("status future-dated", page.time_label((NOW + timedelta(hours=1)).isoformat(), NOW))
         self.assertIn("Manual status checked 1h 0m ago", page.time_label((NOW - timedelta(hours=1)).isoformat(), NOW))
+        self.assertEqual("23h 59m ago", page.relative_time(NOW - timedelta(minutes=1439), NOW))
+        self.assertEqual("1d 0h ago", page.relative_time(NOW - timedelta(days=1), NOW))
+        self.assertEqual("1d 4h ago", page.relative_time(NOW - timedelta(days=1, hours=4), NOW))
         self.assertEqual("25 Sep 00:00 NZST", page.local_time(NOW))
 
     def test_round_age_uses_compact_bounded_units(self):
@@ -378,7 +381,7 @@ vm.runInNewContext(process.argv[1], {
 });
 const states = [labels.map(label => label.textContent)];
 const roundStates = [rounds.map(label => label.textContent)];
-for (const minutes of [7, 99, 100, 5999, 6000, 144000]) {
+for (const minutes of [7, 99, 100, 1439, 1440, 1680, 5999, 6000, 144000]) {
   now = stamp + minutes * 60000;
   tick();
   states.push(labels.map(label => label.textContent));
@@ -389,10 +392,11 @@ process.stdout.write(JSON.stringify({states, roundStates, interval}));
         run = subprocess.run(["node", "-e", javascript, page.AGE_SCRIPT], capture_output=True, text=True, check=True)
         result = json.loads(run.stdout)
         self.assertEqual([[value, value] for value in (
-            "just now", "7m ago", "1h 39m ago", "1h 40m ago", "4d ago", "4d ago", "100d ago"
+            "just now", "7m ago", "1h 39m ago", "1h 40m ago", "23h 59m ago", "1d 0h ago",
+            "1d 4h ago", "4d 3h ago", "4d 4h ago", "100d 0h ago"
         )], result["states"])
         self.assertEqual([[value, value] for value in (
-            "<1m", "7m", "99m", "1h", "99h", "4d", "99d+"
+            "<1m", "7m", "99m", "1h", "23h", "24h", "28h", "99h", "4d", "99d+"
         )], result["roundStates"])
         self.assertEqual(30000, result["interval"])
 
