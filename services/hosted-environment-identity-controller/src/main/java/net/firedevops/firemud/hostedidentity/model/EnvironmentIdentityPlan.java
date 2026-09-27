@@ -47,10 +47,10 @@ public record EnvironmentIdentityPlan(
                     HostedIdentityContract.GRPC_ACCOUNT_ROLE,
                     HostedIdentityContract.GRPC_GAME_SESSION_ROLE))
             .collect(Collectors.toUnmodifiableSet());
-    if (!grpcWorkloadIdentityCertificateNames.keySet()
-            .equals(expectedGrpcWorkloadIdentityRoles)
+    if (!grpcWorkloadIdentityCertificateNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
         || !grpcWorkloadIdentitySecretNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
-        || !grpcWorkloadIdentitySourceSecretNames.keySet()
+        || !grpcWorkloadIdentitySourceSecretNames
+            .keySet()
             .equals(expectedGrpcWorkloadIdentityRoles)) {
       throw new IllegalArgumentException(
           "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");

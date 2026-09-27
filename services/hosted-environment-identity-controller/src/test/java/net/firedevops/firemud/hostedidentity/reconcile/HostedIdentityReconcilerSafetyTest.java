@@ -1629,8 +1629,7 @@ class HostedIdentityReconcilerSafetyTest {
         assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
         assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
         assertEquals(expectedMessage, blocked.getConditions().get(0).getMessage());
-        HostedEnvironmentIdentityStatus.RoleStatus retained =
-            grpcWorkloadRoleStatus(blocked, role);
+        HostedEnvironmentIdentityStatus.RoleStatus retained = grpcWorkloadRoleStatus(blocked, role);
         assertNotNull(retained);
         assertEquals(4L, retained.getSourceGeneration());
         assertEquals(2L, retained.getSourceObjectGeneration());
@@ -2352,11 +2351,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   private static CertificateMaterialService.RoleMaterial roleMaterial(
-      String role,
-      long generation,
-      long objectGeneration,
-      String spki,
-      String certificate) {
+      String role, long generation, long objectGeneration, String spki, String certificate) {
     return new CertificateMaterialService.RoleMaterial(
         role,
         new SecretBuilder()

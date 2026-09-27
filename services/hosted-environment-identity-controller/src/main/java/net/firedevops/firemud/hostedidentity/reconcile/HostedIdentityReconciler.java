@@ -1144,8 +1144,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           resource.getStatus().getGatewayInternalWs();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> resource.getStatus().getTcpProxyBridge();
       case HostedIdentityContract.GRPC_ROLE -> resource.getStatus().getGrpc();
-      case HostedIdentityContract.GRPC_ACCOUNT_ROLE ->
-          resource.getStatus().getGrpcAccountService();
+      case HostedIdentityContract.GRPC_ACCOUNT_ROLE -> resource.getStatus().getGrpcAccountService();
       case HostedIdentityContract.GRPC_GAME_SESSION_ROLE ->
           resource.getStatus().getGrpcGameSessionService();
       default -> throw new IllegalArgumentException("unsupported identity role: " + role);
