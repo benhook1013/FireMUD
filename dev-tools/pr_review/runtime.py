@@ -1313,6 +1313,7 @@ class LiveEvidence:
         payload: dict[str, Any],
         *,
         include_hosted_findings: bool = True,
+        changed_file_count: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return blockers shared by review channels and Hosted-only obligations.
 
@@ -1391,6 +1392,47 @@ class LiveEvidence:
                 )
         all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
         latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
+        bound_failed_response_ids: set[int] = set()
+        bound_legacy_skip_response_ids: set[int] = set()
+        if (
+            include_hosted_findings
+            and isinstance(changed_file_count, int)
+            and not isinstance(changed_file_count, bool)
+            and changed_file_count > _HOSTED_CODERABBIT_FILE_CEILING
+        ):
+            for path in hosted.trigger_record_paths(self.repo, pr):
+                try:
+                    record = hosted.load_trigger_record(path, self.repo, pr)
+                    state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if (
+                    record["head_sha"].casefold() == head.casefold()
+                    and state.current_head_sha.casefold() == head.casefold()
+                ):
+                    if (
+                        state.state == "failed"
+                        and isinstance(state.response_id, int)
+                        and not isinstance(state.response_id, bool)
+                    ):
+                        bound_failed_response_ids.add(state.response_id)
+                    elif state.state == "awaiting_response":
+                        trigger_at = hosted.parse_timestamp(record["trigger"].get("created_at"))
+                        if trigger_at is None:
+                            continue
+                        for response in (pull.get("comments") or {}).get("nodes", []):
+                            response_body = response.get("body") or ""
+                            response_time = hosted.parse_timestamp(response.get("createdAt"))
+                            if (
+                                github.is_coderabbit_login((response.get("author") or {}).get("login", ""))
+                                and "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->"
+                                in response_body
+                                and _PLAN_CEILING_PATTERN.search(response_body)
+                                and response_time is not None
+                                and response_time > trigger_at
+                                and (response_id := github.immutable_database_id(response)) is not None
+                            ):
+                                bound_legacy_skip_response_ids.add(response_id)
         # Hosted and CLI use different provider paths. The Hosted endpoint has
         # a verified hard cap; the CLI has completed successfully above 100
         # files, so a Hosted skip must not become a global CLI blocker.
@@ -1416,11 +1458,14 @@ class LiveEvidence:
                 "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->" in body
                 and _PLAN_CEILING_PATTERN.search(body)
             )
+            response_id = github.immutable_database_id(item)
             if (
-                (legacy_skip or provider_skip)
+                (
+                    provider_skip and response_id in bound_failed_response_ids
+                    or legacy_skip and response_id in bound_legacy_skip_response_ids
+                )
                 and timestamp is not None
                 and timestamp >= latest_exact_completion
-                and include_hosted_findings
             ):
                 values.append(
                     {
@@ -1691,6 +1736,7 @@ class LiveEvidence:
             head,
             payload,
             include_hosted_findings=channel == "hosted",
+            changed_file_count=live.changed_files,
         )
         values.append(
             {

@@ -331,6 +331,35 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[3].as_json()["routed"], 1)
         self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
 
+    def test_checkpoint_counts_file_counts_and_visible_durations_require_ascii_digits(self):
+        comments = [
+            {"body": "Hosted: １ found / 0 accepted", "created_at": "2026-09-23T00:00:00Z"},
+            {"body": "Hosted: 1 found / １ accepted", "created_at": "2026-09-23T00:01:00Z"},
+            {"body": "Hosted: 1 found / 0 accepted / １ routed", "created_at": "2026-09-23T00:02:00Z"},
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · １ files",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · 1 files · １s",
+                "created_at": "2026-09-23T00:04:00Z",
+            },
+            {
+                "body": "CLI: 1 found / 1 accepted · `abcdef1` · 1 files · 9s\n"
+                "<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:05:00Z",
+            },
+        ]
+
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 5)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].duration_seconds, 9)
+        self.assertEqual(evidence._visible_duration_seconds("9s"), 9)
+        self.assertIsNone(evidence._visible_duration_seconds("９s"))
+        self.assertIsNone(evidence._visible_duration_seconds("１m 09s"))
+
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
             {
