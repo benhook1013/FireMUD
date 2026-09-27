@@ -68,8 +68,11 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
               "RUNTIME_SCOPE_MISMATCH",
               "GetAutomationPinConvergence failed: runtime_scope_mismatch");
         }
-        if (!acceptObservation(existing.orElse(null), runtimeState)) {
-          return existing
+        repository.lockPinProjectionScope(tenantId, gameInstanceId);
+        Optional<ScriptPatchPinProjection> current =
+            repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+        if (!acceptObservation(current.orElse(null), runtimeState)) {
+          return current
               .map(value -> new PinConvergenceLookup(Optional.of(toSummary(value, now)), "", ""))
               .orElseGet(
                   () ->
@@ -79,7 +82,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                           "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
         if (!hasPositiveScriptPinEpoch(runtimeState)) {
-          if (hasLegacyPositivePinProjection(existing.orElse(null))) {
+          if (hasLegacyPositivePinProjection(current.orElse(null))) {
             return new PinConvergenceLookup(
                 Optional.empty(),
                 "PIN_PROJECTION_CONFLICT",
@@ -92,7 +95,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         }
         ScriptPatchPinProjection refreshed =
             saveObservation(
-                existing.orElseGet(ScriptPatchPinProjection::new),
+                current.orElseGet(ScriptPatchPinProjection::new),
                 tenantId,
                 gameInstanceId,
                 runtimeState,
@@ -128,6 +131,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!hasPositiveScriptPinEpoch(runtimeState)) {
       return;
     }
+    repository.lockPinProjectionScope(tenantId, gameInstanceId);
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     if (!acceptObservation(existing.orElse(null), runtimeState)) {
