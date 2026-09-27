@@ -254,18 +254,20 @@ public class ScriptGameplayCommandHandoffServiceImpl
     String dispatchId = dispatchId(workItem, command.ordinal());
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
-    HandoffPreflight preflight =
-        aggregateSnapshot == null ? preflight(workItem) : HandoffPreflight.from(aggregateSnapshot);
     HandoffPreparation preparation;
     try {
+      HandoffPreflight preflight =
+          aggregateSnapshot == null
+              ? preflight(workItem)
+              : HandoffPreflight.from(aggregateSnapshot);
       preparation = executeIntentTransaction(workItem, command, dispatchId, preflight);
     } catch (RuntimeException ex) {
       LOGGER.warn(
-          "Unable to durably prepare script handoff for workItemId={} commandOrdinal={}",
+          "Unable to prepare script handoff for workItemId={} commandOrdinal={}",
           workItem.getId(),
           command.ordinal(),
           ex);
-      return retryablePreparationResult(ex);
+      return retryablePreparationResult();
     }
     if (preparation.result() != null) {
       return preparation.result();
@@ -648,7 +650,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         failure == null || failure.getMessage() == null ? "" : failure.getMessage());
   }
 
-  private static HandoffResult retryablePreparationResult(Throwable failure) {
+  private static HandoffResult retryablePreparationResult() {
     return new HandoffResult(
         false,
         ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
@@ -656,7 +658,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         "",
         "",
         "UNAVAILABLE",
-        failure == null || failure.getMessage() == null ? "" : failure.getMessage());
+        "handoff preparation unavailable");
   }
 
   private static boolean isReconciliationRequired(HandoffResult result) {

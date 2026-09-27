@@ -527,8 +527,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItem workItem, List<ScriptGameplayCommandHandoffService.EmittedCommand> commands) {
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     String terminalFenceFailure = null;
-    handoffService.beginAggregateFanout(workItem);
     try {
+      try {
+        handoffService.beginAggregateFanout(workItem);
+      } catch (RuntimeException ex) {
+        LOGGER.warn(
+            "Unable to preflight script handoff fanout for workItemId={}; scheduling retry",
+            workItem.getId(),
+            ex);
+        return new HandoffExecutionResult(null, retryableHandoffPreflightResult());
+      }
       for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
         PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
         if (handoffPluginFence != null) {
@@ -555,6 +563,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       handoffService.endAggregateFanout(workItem);
     }
     return new HandoffExecutionResult(terminalFenceFailure, firstRejectedHandoff);
+  }
+
+  private static ScriptGameplayCommandHandoffService.HandoffResult
+      retryableHandoffPreflightResult() {
+    return new ScriptGameplayCommandHandoffService.HandoffResult(
+        false,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        "",
+        "",
+        "",
+        "UNAVAILABLE",
+        "handoff preparation unavailable");
   }
 
   private boolean executeHandoffFinalization(
@@ -818,19 +838,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean finalizeHandoff(ScriptWorkItem workItem, HandoffExecutionResult handoffResult) {
     Instant now = Instant.now();
+    ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff =
+        handoffResult.firstRejectedHandoff();
+    if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
+      // An earlier child may already have been accepted. Keep the parent active until that
+      // exact-identity handoff is reconciled, even if a later sibling hits a terminal fence.
+      return false;
+    }
     if (handoffResult.terminalFenceFailure() != null) {
       cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffResult.terminalFenceFailure(), now);
       return false;
     }
-    ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff =
-        handoffResult.firstRejectedHandoff();
     if (firstRejectedHandoff != null) {
-      if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
-        // The durable child intent is already committed. An ambiguous downstream response must
-        // remain active for exact-identity reconciliation; requeueing or dead-lettering here would
-        // erase the distinction between unknown outcome and a definitive handoff failure.
-        return false;
-      }
       if (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
         requeueAfterRetryableHandoff(workItem);
         return false;

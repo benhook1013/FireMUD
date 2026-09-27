@@ -1284,6 +1284,50 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void aggregatePreflightFailureRequeuesAndAlwaysEndsFanout() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Mockito.doThrow(new IllegalStateException("admission store unavailable"))
+        .when(handoffService)
+        .beginAggregateFanout(item);
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.claimedCount()).isEqualTo(1);
+    assertThat(result.completedCount()).isZero();
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    verify(handoffService).beginAggregateFanout(item);
+    verify(handoffService).endAggregateFanout(item);
+    verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+  }
+
+  @Test
   void rechecksPluginFenceBeforeEveryHandoff() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
@@ -1330,6 +1374,61 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(pluginRepository, Mockito.times(4))
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
     verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+  }
+
+  @Test
+  void ambiguousChildOutcomeRemainsInFlightWhenLaterPluginFenceIsTerminal() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PluginRuntimeStateRepository pluginRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    ScriptWorkItem item = pluginWorkItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
+    PluginRuntimeState current = pluginState(1L, 1L);
+    PluginRuntimeState changed = pluginState(2L, 1L);
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
+        .thenReturn(
+            Optional.of(current), Optional.of(current), Optional.of(current), Optional.of(changed));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("HANDOFF_IN_FLIGHT");
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
+            });
+
+    ScriptWorkItemExecutionService service =
+        pluginFenceService(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            allowingTenantBudgetService(),
+            pluginRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(audit.getFinalStage()).isNull();
+    assertThat(audit.getFinalOutcome()).isNull();
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+    verify(pluginRepository, Mockito.times(4))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
   }
 
   @Test
