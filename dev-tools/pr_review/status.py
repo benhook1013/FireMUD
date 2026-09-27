@@ -1258,7 +1258,8 @@ def emit_text(report: Mapping[str, Any]) -> str:
     ]
     for route in report.get("incoming_routes", []):
         source = f"PR #{route['source_pr']} {route['source_channel']} {route['source_review']} finding {route['source_finding']}"
-        observation = route.get("observations", [""])[-1]
+        observations = route.get("observations") or []
+        observation = observations[-1] if observations else ""
         lines.append(f"incoming route: {route['route_id']} · {source} · {observation}")
     for reason in report["reasons"]:
         lines.append(f"reason: {reason}")

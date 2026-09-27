@@ -39,6 +39,10 @@ FAILED_PATTERN = re.compile(
     r"(?:\breview\b.{0,80}\b(?:failed|failure)\b|\b(?:failed|unable)\b.{0,80}\breview\b|\bsomething went wrong\b)",
     re.IGNORECASE | re.DOTALL,
 )
+PROVIDER_FILE_CEILING_SKIP_PATTERN = re.compile(
+    r"\breview\s+skipped:\s*(\d+)\s+files?\s+exceed(?:s)?\s+the\s+limit\s+of\s*(\d+)\b",
+    re.IGNORECASE,
+)
 RATE_LIMIT_PATTERN = re.compile(
     r"(?:next|more)\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in\s*:?\s*(\d+)\s+(seconds?|minutes?|hours?)",
     re.IGNORECASE,
@@ -153,6 +157,15 @@ def utc_now() -> str:
 
 def normalize_command(body: str) -> str:
     return " ".join(body.strip().split()).lower()
+
+
+def provider_file_ceiling_skip(body: Any) -> bool:
+    """Recognize CodeRabbit's explicit over-limit skip response, not generic skipped-file prose."""
+
+    if not isinstance(body, str):
+        return False
+    match = PROVIDER_FILE_CEILING_SKIP_PATTERN.search(body)
+    return match is not None and int(match.group(1)) > int(match.group(2))
 
 
 def _comment_id_floor(payload: dict[str, Any]) -> int:
@@ -1230,6 +1243,8 @@ def trigger_state(
             or body.strip().lower().startswith("review rate limited")
         ):
             candidates.append((created, "rate_limited", item, cooldown))
+        elif provider_file_ceiling_skip(body):
+            candidates.append((created, "failed", item, None))
         elif NOOP_MARKER in body:
             candidates.append((created, "noop", item, None))
         elif _substantive(body) and _matches_head(body, record["head_sha"]):
@@ -1366,7 +1381,21 @@ def trigger_state(
             ),
         )
     response_dt = parse_timestamp(response_at)
-    elapsed = math.ceil((response_dt - trigger_dt).total_seconds()) if response_dt and trigger_dt else None
+    terminal_dt = response_dt
+    if (
+        state == "completed"
+        and response in comments
+        and FINISHED_REVIEW_PATTERN.search(_unquoted(response.get("body") or ""))
+    ):
+        created_dt = parse_timestamp(response.get("createdAt"))
+        updated_dt = parse_timestamp(response.get("updatedAt"))
+        if created_dt and updated_dt and updated_dt > created_dt:
+            # A finished-review reply can be created as an acknowledgment and
+            # edited when the review actually completes. Use that terminal
+            # edit for duration only while it remains inside this trigger's
+            # window; response identity and displayed creation time stay fixed.
+            terminal_dt = updated_dt if next_dt is None or updated_dt < next_dt else None
+    elapsed = math.ceil((terminal_dt - trigger_dt).total_seconds()) if terminal_dt and trigger_dt else None
     if response_id is None:
         return TriggerState(
             "unattributed",

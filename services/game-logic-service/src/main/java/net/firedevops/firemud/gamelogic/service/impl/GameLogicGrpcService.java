@@ -116,7 +116,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         PublicationReadGuard.configured(workloadNamespace));
   }
 
-  public GameLogicGrpcService(
+  GameLogicGrpcService(
       PingService pingService,
       CommandService commandService,
       LookAggregationService lookAggregationService,
@@ -217,7 +217,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
-    } catch (UnsupportedOperationException ex) {
+    } catch (GameLogicDraftDesignDigestService.UnsupportedDigestScopeException ex) {
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setError(

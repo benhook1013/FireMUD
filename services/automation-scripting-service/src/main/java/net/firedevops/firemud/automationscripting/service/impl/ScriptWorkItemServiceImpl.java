@@ -690,8 +690,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (requestedBaseVersionId <= 0L) {
       return PublicationMetadata.lookupFailure(
           scriptPatchVersion,
-          "INVALID_ARGUMENT",
-          "base_version_id is required for exact script-patch publication lookup");
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "base_version_id is unavailable for exact script-patch publication lookup");
     }
     GetPublishedScriptPatchVersionResponse scriptPatchResponse =
         gameDesignControlPlaneClient.getPublishedScriptPatchVersion(

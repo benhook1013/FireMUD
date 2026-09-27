@@ -40,7 +40,6 @@ import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -55,10 +54,6 @@ class AutomationScriptingGrpcServiceTest {
           "spiffe://firemud/ns/test/sa/world-management-service",
           TEST_NAMESPACE,
           "world-management-service");
-
-  private static PublicationReadGuard publicationReadGuard() {
-    return new PublicationReadGuard(TEST_NAMESPACE);
-  }
 
   private static void runAsGameDesign(Runnable action) {
     Context.current()
@@ -150,7 +145,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), null);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     runAsGameDesign(
@@ -187,7 +182,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry(),
-            publicationReadGuard());
+            TEST_NAMESPACE);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(
@@ -237,7 +232,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry(),
-            publicationReadGuard());
+            TEST_NAMESPACE);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(
@@ -293,7 +288,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
             new SimpleMeterRegistry(),
-            publicationReadGuard());
+            TEST_NAMESPACE);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
@@ -329,7 +324,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
             new SimpleMeterRegistry(),
-            publicationReadGuard());
+            TEST_NAMESPACE);
     GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
 
     SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
@@ -363,7 +358,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
             new SimpleMeterRegistry(),
-            publicationReadGuard());
+            TEST_NAMESPACE);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
@@ -430,7 +425,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -471,7 +466,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -514,7 +509,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -558,7 +553,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<TriggerScriptEventResponse> ref = new AtomicReference<>();
     service.triggerScriptEvent(
@@ -611,7 +606,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -654,7 +649,7 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
     AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
     service.triggerScriptEvent(
@@ -697,7 +692,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             workItemRepository,
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
     AtomicReference<GetScriptStatusResponse> ref = new AtomicReference<>();
 
     service.getScriptStatus(
@@ -736,7 +731,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
     AtomicReference<NotifyScriptVersionUpdateResponse> ref = new AtomicReference<>();
 
     service.notifyScriptVersionUpdate(
@@ -780,7 +775,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
     AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
 
@@ -830,7 +825,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
     AtomicReference<ObserveRuntimeTickProgressResponse> ref = new AtomicReference<>();
 
     service.observeRuntimeTickProgress(
@@ -873,7 +868,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
     service.updateScript(
@@ -918,7 +913,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(), "");
 
     AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
     service.updateScript(
