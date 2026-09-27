@@ -335,7 +335,7 @@ public class VersionPublishCommandServiceImpl {
       PublishWorkflowRequest request, PublishAttempt attempt) {
     PublishedReleaseBundleDto bundle;
     try {
-      bundle = tryGetPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
+      bundle = readPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
     } catch (RuntimeException ex) {
       throw pendingReconciliation(
           "succeeded full-version attempt release bundle read is uncertain", ex);
@@ -612,9 +612,9 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     PublishedReleaseBundleDto bundle =
-        tryGetPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
+        readPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
     VersionAssetArtifactStateDto artifact =
-        tryGetVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
+        readVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
     if (bundle == null
         && artifact == null
         && version.get().getVersionState() == VersionLifecycleState.DRAFT) {
@@ -678,13 +678,9 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
-  private VersionAssetArtifactStateDto tryGetVersionAssetArtifactState(
+  private VersionAssetArtifactStateDto readVersionAssetArtifactState(
       String tenantId, long versionId) {
-    try {
-      return versionAssetArtifactService.getState(tenantId, versionId);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+    return versionAssetArtifactService.findState(tenantId, versionId).orElse(null);
   }
 
   private PublishWorkflowSnapshot succeededSnapshot(PublishAttempt attempt) {
@@ -761,12 +757,10 @@ public class VersionPublishCommandServiceImpl {
         + 1;
   }
 
-  private PublishedReleaseBundleDto tryGetPublishedReleaseBundle(String tenantId, long versionId) {
-    try {
-      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, versionId);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+  private PublishedReleaseBundleDto readPublishedReleaseBundle(String tenantId, long versionId) {
+    return publishedReleaseBundleService
+        .findPublishedReleaseBundle(tenantId, versionId)
+        .orElse(null);
   }
 
   private String generationConfigRevision(

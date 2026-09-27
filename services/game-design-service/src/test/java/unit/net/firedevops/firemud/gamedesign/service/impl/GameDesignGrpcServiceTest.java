@@ -21,11 +21,13 @@ import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -295,6 +297,35 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("PUBLISH_ATTEMPT_SCOPE_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
+    PublishGateFailureException gateFailure =
+        (PublishGateFailureException)
+            TemporalVersionPublishOrchestrator.failureForSnapshot(
+                new PublishWorkflowSnapshot(
+                    0L,
+                    0,
+                    "publish:tenant-1:publish-request:publish-request-1",
+                    "FAILED",
+                    PublishGateFailureCode.PARTICIPANT_SET_MISMATCH.name(),
+                    "participant set mismatch"));
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(gateFailure);
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PARTICIPANT_SET_MISMATCH", ref.get().getError().getCode());
   }
 
   @Test
