@@ -2108,6 +2108,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
                     PublishedScriptPatchVersion.newBuilder()
+                        .setTenantId("1")
                         .setScriptPatchVersion("patch-1")
                         .setVersionId(17L)
                         .setBaseVersionId(7L)
@@ -3085,6 +3086,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
                     PublishedScriptPatchVersion.newBuilder()
+                        .setTenantId("1")
                         .setScriptPatchVersion("patch-2")
                         .setVersionId(23L)
                         .setBaseVersionId(7L)

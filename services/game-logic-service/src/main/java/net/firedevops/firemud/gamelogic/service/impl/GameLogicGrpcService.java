@@ -217,6 +217,18 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
+    } catch (UnsupportedOperationException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "UNSUPPORTED_SCOPE",
+                      "Game Logic cannot attest the requested full-version digest scope"))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()

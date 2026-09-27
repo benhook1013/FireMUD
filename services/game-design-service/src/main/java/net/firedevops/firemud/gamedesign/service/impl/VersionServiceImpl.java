@@ -582,7 +582,7 @@ public class VersionServiceImpl implements VersionService {
     if (entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
         || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN) {
       throw new IllegalArgumentException(
-          "CONFLICT: terminal plugin version cannot be republished; create a new plugin version");
+          "PLUGIN_VERSION_IMMUTABLE: terminal plugin version cannot be republished; create a new plugin version");
     }
 
     requireRequestedUploadMatchesStoredBundle(

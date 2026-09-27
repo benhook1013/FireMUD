@@ -21,11 +21,13 @@ import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -298,6 +300,35 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
+    PublishGateFailureException gateFailure =
+        (PublishGateFailureException)
+            TemporalVersionPublishOrchestrator.failureForSnapshot(
+                new PublishWorkflowSnapshot(
+                    0L,
+                    0,
+                    "publish:tenant-1:publish-request:publish-request-1",
+                    "FAILED",
+                    PublishGateFailureCode.PARTICIPANT_SET_MISMATCH.name(),
+                    "participant set mismatch"));
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(gateFailure);
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PARTICIPANT_SET_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
   void publishVersionMapsKnownIllegalArgumentPublishAttemptCode() throws Exception {
     Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
         .thenThrow(
@@ -556,6 +587,51 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("", ref.get().getError().getCode());
     assertEquals(15L, ref.get().getPublicationId());
+  }
+
+  @Test
+  void publishPluginVersionMapsImmutableTerminalConflictToTypedError() {
+    Mockito.doThrow(
+            new IllegalArgumentException(
+                "PLUGIN_VERSION_IMMUTABLE: terminal plugin version cannot be republished; create a new plugin version"))
+        .when(versionService)
+        .publishPluginVersion(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v1",
+            7L,
+            "ability-1",
+            "bundle-1",
+            1,
+            "dist-hash",
+            "dist-path",
+            "signer-1",
+            false,
+            "ALLOWED",
+            "notes");
+
+    AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishPluginVersion(
+          PublishPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setBaseVersionId(7L)
+              .setAbilitySchemaDigest("ability-1")
+              .setBundleDigest("bundle-1")
+              .setManifestSchemaVersion(1)
+              .setDistributionManifestHash("dist-hash")
+              .setDistributionManifestPath("dist-path")
+              .setSignerKeyId("signer-1")
+              .setComponentPolicyDecision(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PLUGIN_VERSION_IMMUTABLE", ref.get().getError().getCode());
   }
 
   @Test

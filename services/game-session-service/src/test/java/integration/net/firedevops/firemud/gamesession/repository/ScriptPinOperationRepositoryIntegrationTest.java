@@ -430,6 +430,89 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void recoveredAuthorityReplaysFailureForSameRequestWithKnownValidatedBase() {
+    ScriptPinMutationResult failure =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-recovered-known-base",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            1L,
+            100L,
+            "SCRIPT_PATCH_NOT_READY");
+
+    ScriptPinMutationResult retry =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-recovered-known-base",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            1L,
+            100L);
+
+    assertThat(failure.errorCode()).isEqualTo("SCRIPT_PATCH_NOT_READY");
+    assertThat(retry).isEqualTo(failure);
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(
+                    SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq(
+                        "request-recovered-known-base"))
+                .fetchOne(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID))
+        .isEqualTo(100L);
+  }
+
+  @Test
+  void recoveredAuthorityReplaysUnknownBaseFailureWhenRetryResolvesBase() {
+    ScriptPinMutationResult failure =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-recovered-unknown-base",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+
+    ScriptPinMutationResult retry =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-recovered-unknown-base",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            1L,
+            100L);
+
+    assertThat(failure.errorCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    assertThat(retry).isEqualTo(failure);
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(
+                    SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq(
+                        "request-recovered-unknown-base"))
+                .fetchOne(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID))
+        .isNull();
+  }
+
+  @Test
   void pinAdmissionBaseMustStillMatchTheRowLockedRuntimeAndIsBoundToTheReceipt() {
     ScriptPinMutationResult mismatch =
         repository.applyScriptPin(

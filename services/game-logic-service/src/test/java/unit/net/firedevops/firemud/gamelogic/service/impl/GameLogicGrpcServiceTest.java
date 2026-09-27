@@ -307,7 +307,10 @@ class GameLogicGrpcServiceTest {
                 }));
 
     assertTrue(ref.get().hasError());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    assertEquals(
+        "Game Logic cannot attest the requested full-version digest scope",
+        ref.get().getError().getMessage());
     assertEquals("", ref.get().getAppliedCommitId());
     assertEquals("", ref.get().getContentDigest());
     assertEquals(0, ref.get().getDigestSchemaVersion());
