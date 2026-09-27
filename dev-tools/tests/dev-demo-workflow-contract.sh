@@ -834,13 +834,22 @@ with tempfile.NamedTemporaryFile() as destroy_output:
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
-deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
+workflow_deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
+staged_rollout_script = repository_root / "dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh"
+deploy_run = staged_rollout_script.read_text(encoding="utf-8")
 quiesced_upgrade = '--set "previewStack.services[${game_design_service_index}].replicaCount=0"'
+if (
+    "deploy-staged-dev-demo.sh" not in workflow_deploy_run
+    or "${{ needs.dev-demo-plan.outputs.namespace }}" not in workflow_deploy_run
+    or "${{ needs.dev-demo-plan.outputs.release_name }}" not in workflow_deploy_run
+    or "/tmp/dev-demo-values.yaml" not in workflow_deploy_run
+):
+    raise SystemExit("dev-demo must invoke the staged rollout script with namespace, release, and values path")
 if deploy_run.count("helm upgrade --install") != 2:
     raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
 if deploy_run.count("game_design_service_index=") != 1 or "previewStack.services[3].replicaCount=0" in deploy_run:
     raise SystemExit("dev-demo must derive the Game Design chart index from rendered values")
-resolver_start = 'game_design_service_index="$(python3 - /tmp/dev-demo-values.yaml <<\'PY\'\n'
+resolver_start = 'game_design_service_index="$(python3 - "$values_file" <<\'PY\'\n'
 resolver_end = "\nPY\n)\""
 resolver_start_index = deploy_run.find(resolver_start)
 resolver_end_index = deploy_run.find(resolver_end, resolver_start_index)
@@ -892,6 +901,9 @@ if not first_helm < second_helm:
 for required in (
     'closed_selector="firemud-game-design-migration-quiesced"',
     "trap leave_game_design_closed_on_failure EXIT",
+    "assert_no_reserved_selector_pods()",
+    "count_old_game_design_pods()",
+    "close_game_design_admission()",
     'get service "$game_design_service"',
     'if [[ -z "$service_json" ]]; then',
     'get deployment "$game_design_service"',
@@ -906,7 +918,7 @@ for required in (
     'deployment/$game_design_service" --replicas=0',
     '(.status.phase // "Unknown") != "Succeeded"',
     '(.status.phase // "Unknown") != "Failed"',
-    'old_pod_count="$(jq -er --arg service "$game_design_service"',
+    'old_pod_count="$(count_old_game_design_pods "$pods_json")"',
 ):
     if required not in deploy_run or deploy_run.index(required) >= first_helm:
         raise SystemExit(f"dev-demo must prove Game Design admission closure and drain before participants: {required}")
@@ -2185,22 +2197,8 @@ PY
 # command stubs. The static `if`/ordering assertions above establish which
 # block GitHub selects; these fixtures prove the selected blocks preserve the
 # required command order and mutation boundary.
-deploy_release_step="$fixture_dir/deploy-release-step.sh"
 record_deployed_head_step="$fixture_dir/record-deployed-head-step.sh"
-python3 - "$workflow" >"$deploy_release_step" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
-run = next(step["run"] for step in steps if step.get("name") == "Deploy dev-demo release")
-run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
-run = run.replace("${{ needs.dev-demo-plan.outputs.namespace }}", "dev")
-run = run.replace("/tmp/dev-demo-values.yaml", '"$TEST_RENDERED_VALUES_PATH"')
-print(run)
-PY
+deploy_release_step="$ROOT_DIR/dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh"
 python3 - "$workflow" >"$record_deployed_head_step" <<'PY'
 import sys
 from pathlib import Path
@@ -2417,7 +2415,7 @@ run_deployment_evidence_fixture() {
       TEST_RENDERED_VALUES_PATH="$deployment_values_path" \
       TEST_GAME_DESIGN_INDEX=1 \
       TEST_HELM_RESULT="$scenario" \
-      bash "$deploy_script"
+      bash "$deploy_script" dev dev "$deployment_values_path"
   )
   deploy_status=$?
   set -e
