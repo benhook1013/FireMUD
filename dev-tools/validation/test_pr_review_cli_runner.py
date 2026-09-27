@@ -292,8 +292,9 @@ def target(
     merge_base="",
     patch_identity="",
     default_base_front=False,
+    changed_files=1,
 ):
-    snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
+    snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=changed_files)
     return ReviewTarget(
         snapshot,
         EffectiveParent("develop", PARENT),
@@ -389,6 +390,21 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_cli_review_accepts_111_changed_files(self):
+        files = [f"src/File{index}.java" for index in range(111)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            result = run_cli_review(
+                target(changed_files=len(files)),
+                github=FakeGitHub(files=files),
+                source_root=root,
+                runner=FakeCommands(root, files=files),
+            )
+
+        self.assertEqual(result.published_files, 111)
+        self.assertEqual(result.candidate_files, 111)
+
     def test_git_timeout_is_translated_to_review_runner_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

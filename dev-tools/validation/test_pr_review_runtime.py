@@ -693,7 +693,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(completed[0]["accepted"], 0)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 100)
         target = ReviewTarget(
             snapshot,
             EffectiveParent("develop", BASE),
@@ -751,6 +751,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
             self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 101)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+            ):
+                with self.assertRaisesRegex(ControllerError, "at most 100 changed files"):
+                    HostedRunner("owner/repo", live)(target, expect_pr=42)
+            self.assertFalse(path.exists())
 
     def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -2538,7 +2559,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(pending[0]["held"])
             self.assertIn("older head", pending[0]["reason"])
 
-    def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
+    def test_hosted_findings_and_provider_skip_hold_hosted_but_not_cli(self) -> None:
         comments = [
             {
                 "databaseId": 20,
@@ -2566,8 +2587,8 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
-            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=301)
-            cli_history = self._history(Path(directory), payload, "cli", changed_files=301)
+            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=100)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=111)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -2583,7 +2604,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(any(item.get("checkpoint", "").startswith("review-threads:") for item in cli_history))
         self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
-        self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
 
     def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
         old_head = "d" * 40
@@ -2619,26 +2640,26 @@ class RuntimeTest(unittest.TestCase):
             stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
             stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=300)
+            stale_history = self._history(Path(directory), stale_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             stale_over_ceiling_history = self._history(
-                Path(directory), stale_over_ceiling_payload, "cli", changed_files=301
+                Path(directory), stale_over_ceiling_payload, "hosted", changed_files=121
             )
             self.assertFalse(any(item.get("over_ceiling") for item in stale_over_ceiling_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            for changed_files in (101, 300):
+            for changed_files in (100, 111):
                 within_ceiling_history = self._history(
                     Path(directory), current_payload, "cli", changed_files=changed_files
                 )
                 self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_history))
 
-            current_history = self._history(Path(directory), current_payload, "cli", changed_files=301)
+            current_history = self._history(Path(directory), current_payload, "hosted", changed_files=121)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
             later_completion = {
@@ -2652,7 +2673,7 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=301)
+            completed_history = self._history(Path(directory), completed_payload, "hosted", changed_files=121)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
 
     def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:
