@@ -388,7 +388,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
-        "publish failed before export/finalization (candidateVersionId="
+        "publish failure context (candidateVersionId="
             + candidateVersionId.get()
             + ", candidateVersionNumber="
             + candidateVersionNumber.get()

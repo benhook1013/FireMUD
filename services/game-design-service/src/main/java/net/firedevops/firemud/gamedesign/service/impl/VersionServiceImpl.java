@@ -255,7 +255,9 @@ public class VersionServiceImpl implements VersionService {
           existingAttempt, patchBinding, tenantId, baseVersionId, scriptPatchVersion);
       if (existingAttempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
         Version publishedVersion = requireAttemptVersion(existingAttempt, patchBinding);
-        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED) {
+        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED
+            && publishedVersion.getVersionState() != VersionLifecycleState.ACTIVE
+            && publishedVersion.getVersionState() != VersionLifecycleState.RETIRED) {
           throw new IllegalStateException(
               "PUBLISH_ATTEMPT_INCONSISTENT: succeeded attempt does not reference a published version");
         }
@@ -763,7 +765,7 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   public DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion, Long baseVersionId) {
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
     if (baseVersionId == null || baseVersionId <= 0L) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }

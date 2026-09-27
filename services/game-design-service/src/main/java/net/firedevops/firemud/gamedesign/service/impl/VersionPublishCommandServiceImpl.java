@@ -91,6 +91,7 @@ public class VersionPublishCommandServiceImpl {
   }
 
   public PublishWorkflowSnapshot reconcileFullVersionPublish(PublishWorkflowRequest request) {
+    request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
         "Reconciling full-version publish workflow tenant={} workflowId={}",
@@ -172,9 +173,10 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
 
+    PublishWorkflowRequest effectiveRequest = request;
     try {
       return publishAttemptService.executeFullVersionTransaction(
-          () -> finalizeFullVersion(request, participantDigests, exportedManifest));
+          () -> finalizeFullVersion(effectiveRequest, participantDigests, exportedManifest));
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       RuntimeException operationFailure = ex.causeException();
       if (operationFailure instanceof PendingReconciliationException) {
@@ -465,9 +467,13 @@ public class VersionPublishCommandServiceImpl {
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
-      throw ex.causeException();
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ex.causeException());
     } catch (RuntimeException ambiguousFailure) {
-      throw ambiguousFailure;
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ambiguousFailure);
     }
     cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
     return new PublishWorkflowSnapshot(

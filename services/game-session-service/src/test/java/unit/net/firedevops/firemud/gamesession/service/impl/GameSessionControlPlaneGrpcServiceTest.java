@@ -6018,6 +6018,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setCurrentTargetRuntimeRegionEpoch(14L)
             .setCurrentTargetRuntimeGameInstanceId("9")
             .setState("PENDING_REMOTE")
+            .setFollowupId("filter-followup-1")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
             .setScriptPatchVersion("patch-1")
@@ -6051,6 +6052,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setLatestResultOutcome("REMOTE_APPLIED")
             .setLatestResultErrorCode("RATE_LIMIT")
             .setAutomationDispatchId("dispatch-1")
+            .setCommandId("filter-command-1")
+            .setTargetCommandId("filter-target-command-1")
             .setLimit(25)
             .build(),
         new NoopObserver<>() {
@@ -6154,7 +6157,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             14L,
             9L,
             "PENDING_REMOTE",
-            "",
+            "filter-followup-1",
             "script-1",
             "plugin-1",
             "patch-1",
@@ -6184,8 +6187,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             55L,
             1700L,
             "dispatch-1",
-            "",
-            "",
+            "filter-command-1",
+            "filter-target-command-1",
             "APPLIED",
             "SUCCESS",
             "REMOTE_APPLIED",

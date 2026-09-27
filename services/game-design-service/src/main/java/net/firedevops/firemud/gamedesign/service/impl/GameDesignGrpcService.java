@@ -332,7 +332,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
       DesignControlPlaneDigestDto digest =
           versionService.getDesignControlPlaneDigestForScriptPatch(
-              request.getTenantId(), request.getScriptPatchVersion(), version.baseVersionId());
+              request.getTenantId(), version.baseVersionId(), request.getScriptPatchVersion());
       builder.setScriptPatch(toProtoPublishedScriptPatch(version, digest));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -675,7 +675,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }
     return versionService.getDesignControlPlaneDigestForScriptPatch(
-        request.getTenantId(), request.getScriptPatchVersion(), request.getBaseVersionId());
+        request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
   }
 
   @Override
