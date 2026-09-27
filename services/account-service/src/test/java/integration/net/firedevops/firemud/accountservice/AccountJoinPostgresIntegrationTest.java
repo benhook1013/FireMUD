@@ -38,6 +38,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -855,7 +857,9 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(snapshot.tenantId()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(snapshot.membershipLifecycleState()).isEqualTo("ACTIVE");
     assertThat(snapshot.gameplayAdmissionAllowed()).isTrue();
-    assertThat(snapshot.membershipVersion()).isEqualTo(Long.toString(joined.membershipVersion()));
+    assertThat(snapshot.membershipVersion())
+        .isEqualTo(
+            Map.of(fixture.tenantUuid().toString(), Long.toString(joined.membershipVersion())));
     assertThat(snapshot.authorityEvent().membershipVersion())
         .isEqualTo(
             Map.of(fixture.tenantUuid().toString(), Long.toString(joined.membershipVersion())));
@@ -868,15 +872,17 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(snapshot.authorityEvent().requestId()).isEqualTo(fixture.requestId());
     assertThat(snapshot.transitionReceipt().requestId()).isEqualTo(fixture.requestId());
     assertThat(snapshot.transitionReceipt().membershipId()).isEqualTo(joined.membershipId());
-    assertThat(snapshot.outboxCheckpoints()).hasSize(1);
-    assertThat(snapshot.outboxCheckpoints().getFirst().outboxStreamKey())
-        .isEqualTo(authorityStreamKey(fixture));
-    assertThat(snapshot.outboxCheckpoints().getFirst().outboxSequence())
-        .isEqualTo(Long.parseLong(snapshot.authorityEvent().outboxSequence()));
-    assertThat(snapshot.outboxCheckpoints().getFirst().sourceEventId())
-        .isEqualTo(snapshot.authorityEvent().eventId());
-    assertThat(snapshot.outboxCheckpoints().getFirst().sourceEventDigest())
-        .isEqualTo(snapshot.authorityEvent().eventDigest());
+    assertThat(snapshot.outboxCheckpoints())
+        .containsExactlyElementsOf(
+            expectedMembershipOutboxCheckpoints(
+                fixture, snapshot.authorityEvent().outboxSequence()));
+    assertThat(snapshot.outboxSourceEvidence())
+        .containsExactly(
+            new OutboxSourceEvidence(
+                authorityStreamKey(fixture),
+                snapshot.authorityEvent().outboxSequence(),
+                snapshot.authorityEvent().eventId(),
+                snapshot.authorityEvent().eventDigest()));
   }
 
   @Test
@@ -977,9 +983,11 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(absence.gameplayAdmissionAllowed()).isFalse();
     assertThat(absence.accountId()).isEqualTo(fixture.accountUuid().toString());
     assertThat(absence.tenantId()).isEqualTo(fixture.tenantUuid().toString());
-    assertThat(absence.membershipVersion()).isEqualTo("1");
+    assertThat(absence.membershipVersion()).isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
     assertThat(absence.membershipAuthorityGeneration()).isEqualTo("1");
-    assertThat(absence.outboxSequence()).isZero();
+    assertThat(absence.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "0"));
+    assertThat(absence.outboxSourceEvidence()).isEmpty();
     assertThat(absence.outboxStreamKey()).isEqualTo(authorityStreamKey(fixture));
     assertThat(absence.authorityTuple().membershipAuthorityGeneration())
         .containsEntry(fixture.tenantUuid().toString(), "1");
@@ -1002,9 +1010,12 @@ class AccountJoinPostgresIntegrationTest {
 
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(baselineRow);
     var retriedAbsence = readNeverJoinedMembershipSnapshot(fixture);
-    assertThat(retriedAbsence.membershipVersion()).isEqualTo("1");
+    assertThat(retriedAbsence.membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
     assertThat(retriedAbsence.membershipAuthorityGeneration()).isEqualTo("1");
-    assertThat(retriedAbsence.outboxSequence()).isZero();
+    assertThat(retriedAbsence.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "0"));
+    assertThat(retriedAbsence.outboxSourceEvidence()).isEmpty();
     assertThat(countAuthorityMembershipEvents(fixture)).isZero();
 
     JoinPublicProductionResult joined = join(fixture);
@@ -1016,17 +1027,21 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(joined.membershipAuthorityGeneration()).isEqualTo(1L);
     assertThat(positive.membershipExists()).isTrue();
     assertThat(positive.gameplayAdmissionAllowed()).isTrue();
-    assertThat(positive.membershipVersion()).isEqualTo("2");
+    assertThat(positive.membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
     assertThat(positive.membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(positive.authorityEvent().outboxSequence()).isEqualTo("1");
     assertThat(positive.authorityEvent().eventId()).isNotBlank();
     assertThat(positive.authorityEvent().eventDigest()).matches("sha256:[0-9a-f]{64}");
-    assertThat(positive.outboxCheckpoints()).hasSize(1);
-    var checkpoint = positive.outboxCheckpoints().getFirst();
-    assertThat(checkpoint.outboxStreamKey()).isEqualTo(authorityStreamKey(fixture));
-    assertThat(checkpoint.outboxSequence()).isEqualTo(1L);
-    assertThat(checkpoint.sourceEventId()).isEqualTo(positive.authorityEvent().eventId());
-    assertThat(checkpoint.sourceEventDigest()).isEqualTo(positive.authorityEvent().eventDigest());
+    assertThat(positive.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "1"));
+    assertThat(positive.outboxSourceEvidence())
+        .containsExactly(
+            new OutboxSourceEvidence(
+                authorityStreamKey(fixture),
+                "1",
+                positive.authorityEvent().eventId(),
+                positive.authorityEvent().eventDigest()));
     assertThat(joinedPairRow)
         .containsEntry("membership_exists", true)
         .containsEntry("membership_version", 2L)
@@ -1080,6 +1095,28 @@ class AccountJoinPostgresIntegrationTest {
     assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(mismatchedBaseline))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("differs from its positive pair baseline");
+  }
+
+  @Test
+  void neverJoinedSnapshotRejectsAdvancedUpstreamGenerationWithoutSourceEvent() {
+    JoinFixture advancedTenant = fixture("active");
+    preparePairAuthorityBaseline(advancedTenant);
+    dsl.execute(
+        "UPDATE account_authority_generations SET generation = generation + 1, "
+            + "source_version = source_version + 1 WHERE scope_kind = 'TENANT' "
+            + "AND tenant_uuid = ?",
+        advancedTenant.tenantUuid());
+
+    assertThat(
+            countAuthorityStreamEvents(
+                MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                    + "tenant/"
+                    + advancedTenant.tenantUuid()))
+        .isZero();
+    assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(advancedTenant))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "tenant authority generation cannot prove its sequence-zero baseline");
   }
 
   private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot
@@ -1732,12 +1769,40 @@ class AccountJoinPostgresIntegrationTest {
         + fixture.tenantUuid();
   }
 
+  private List<OutboxCheckpointEntry> expectedMembershipOutboxCheckpoints(
+      JoinFixture fixture, String membershipSequence) {
+    return List.of(
+        new OutboxCheckpointEntry(
+            MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                + "account/"
+                + fixture.accountUuid(),
+            "0"),
+        new OutboxCheckpointEntry(
+            MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                + "issuer/"
+                + AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+            "0"),
+        new OutboxCheckpointEntry(authorityStreamKey(fixture), membershipSequence),
+        new OutboxCheckpointEntry(
+            MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + fixture.tenantUuid(),
+            "0"));
+  }
+
   private long countAuthorityMembershipEvents(JoinFixture fixture) {
     return Objects.requireNonNull(
         dsl.resultQuery(
                 "SELECT COUNT(*) FROM account_authority_outbox_events "
                     + "WHERE outbox_stream_key = ?",
                 authorityStreamKey(fixture))
+            .fetchOne(0, Long.class));
+  }
+
+  private long countAuthorityStreamEvents(String streamKey) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ?",
+                streamKey)
             .fetchOne(0, Long.class));
   }
 

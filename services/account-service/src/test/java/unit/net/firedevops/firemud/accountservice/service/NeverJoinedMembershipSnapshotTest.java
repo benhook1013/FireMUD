@@ -7,6 +7,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
@@ -25,15 +28,35 @@ class NeverJoinedMembershipSnapshotTest {
 
   @Test
   void constructsEventFreeNonAdmittingSnapshotWithCompleteTuple() {
-    var snapshot = snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "9", STREAM_KEY);
+    var snapshot = snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "1", STREAM_KEY);
 
     assertThat(snapshot.membershipExists()).isFalse();
     assertThat(snapshot.membershipLifecycleState()).isEqualTo("MISSING");
     assertThat(snapshot.roles()).isEmpty();
     assertThat(snapshot.gameplayAdmissionAllowed()).isFalse();
-    assertThat(snapshot.outboxSequence()).isZero();
+    assertThat(snapshot.membershipVersion()).containsOnly(Map.entry(TENANT_ID, "1"));
+    assertThat(snapshot.outboxCheckpoints())
+        .containsExactly(
+            new OutboxCheckpointEntry("account:auth-authority:v1:account/" + ACCOUNT_ID, "0"),
+            new OutboxCheckpointEntry(
+                "account:auth-authority:v1:issuer/" + AccountServiceImpl.ACCOUNT_JWT_ISSUER, "0"),
+            new OutboxCheckpointEntry(STREAM_KEY, "0"),
+            new OutboxCheckpointEntry("account:auth-authority:v1:tenant/" + TENANT_ID, "0"));
+    assertThat(snapshot.outboxSourceEvidence()).isEmpty();
     assertThat(snapshot.authorityTuple().membershipAuthorityGeneration())
         .containsEntry(TENANT_ID, "1");
+    assertThatThrownBy(() -> snapshot.membershipVersion().put(TENANT_ID, "2"))
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  void retainsAnAdvancedAccountIssuanceFenceWithoutInventingUpstreamEvents() {
+    var snapshot = snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "7", STREAM_KEY);
+
+    assertThat(snapshot.issuanceFence()).isEqualTo("7");
+    assertThat(snapshot.outboxCheckpoints())
+        .allMatch(checkpoint -> checkpoint.outboxSequence().equals("0"));
+    assertThat(snapshot.outboxSourceEvidence()).isEmpty();
   }
 
   @Test
@@ -46,14 +69,14 @@ class NeverJoinedMembershipSnapshotTest {
                     "1",
                     "1",
                     completeTuple(),
-                    "9",
+                    "1",
                     STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
-            () -> snapshot(ACCOUNT_ID, TENANT_ID, "0", "1", completeTuple(), "9", STREAM_KEY))
+            () -> snapshot(ACCOUNT_ID, TENANT_ID, "0", "1", completeTuple(), "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
-            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "0", completeTuple(), "9", STREAM_KEY))
+            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "0", completeTuple(), "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "0", STREAM_KEY))
@@ -82,12 +105,12 @@ class NeverJoinedMembershipSnapshotTest {
             Optional.empty());
 
     assertThatThrownBy(
-            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", wrongTenant, "9", STREAM_KEY))
+            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", wrongTenant, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 snapshot(
-                    ACCOUNT_ID, TENANT_ID, "1", "1", wrongMembershipGeneration, "9", STREAM_KEY))
+                    ACCOUNT_ID, TENANT_ID, "1", "1", wrongMembershipGeneration, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -139,17 +162,17 @@ class NeverJoinedMembershipSnapshotTest {
             Optional.of(new AccountSecurityCutoff("6", "account-stream", "1")),
             Optional.empty());
 
-    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", zeroIssuer, "9", STREAM_KEY))
+    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", zeroIssuer, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
-            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", nonCanonicalAccount, "9", STREAM_KEY))
+            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", nonCanonicalAccount, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", zeroTenant, "9", STREAM_KEY))
+    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", zeroTenant, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", extraGrant, "9", STREAM_KEY))
+    assertThatThrownBy(() -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", extraGrant, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
-            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", presentCutoff, "9", STREAM_KEY))
+            () -> snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", presentCutoff, "1", STREAM_KEY))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -163,8 +186,69 @@ class NeverJoinedMembershipSnapshotTest {
                     "1",
                     "1",
                     completeTuple(),
-                    "9",
+                    "1",
                     STREAM_KEY + "/unexpected"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsUpstreamGenerationThatCannotProveSequenceZero() {
+    AuthorityTuple changedIssuerGeneration =
+        new AuthorityTuple(
+            "2",
+            "1",
+            Map.of(TENANT_ID, "1"),
+            Map.of(TENANT_ID, "1"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", changedIssuerGeneration, "1", STREAM_KEY))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsSequenceZeroSnapshotWithMissingCheckpointOrSourceEvent() {
+    var valid = snapshot(ACCOUNT_ID, TENANT_ID, "1", "1", completeTuple(), "1", STREAM_KEY);
+    var withoutTenantCheckpoint =
+        valid.outboxCheckpoints().subList(0, valid.outboxCheckpoints().size() - 1);
+    var positiveSourceEvidence =
+        List.of(
+            new OutboxSourceEvidence(
+                STREAM_KEY,
+                "1",
+                "04ef66b4-c0ad-3d5b-b3b2-0e8510e72002",
+                "sha256:" + "a".repeat(64)));
+
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipAuthorityEventProducer.NeverJoinedMembershipSnapshot(
+                    valid.accountId(),
+                    valid.tenantId(),
+                    valid.membershipVersion(),
+                    valid.membershipAuthorityGeneration(),
+                    valid.authorityTuple(),
+                    valid.issuanceFence(),
+                    valid.evaluatedAt(),
+                    valid.outboxStreamKey(),
+                    withoutTenantCheckpoint,
+                    List.of()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipAuthorityEventProducer.NeverJoinedMembershipSnapshot(
+                    valid.accountId(),
+                    valid.tenantId(),
+                    valid.membershipVersion(),
+                    valid.membershipAuthorityGeneration(),
+                    valid.authorityTuple(),
+                    valid.issuanceFence(),
+                    valid.evaluatedAt(),
+                    valid.outboxStreamKey(),
+                    valid.outboxCheckpoints(),
+                    positiveSourceEvidence))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -179,19 +263,26 @@ class NeverJoinedMembershipSnapshotTest {
     return new AccountMembershipAuthorityEventProducer.NeverJoinedMembershipSnapshot(
         accountId,
         tenantId,
-        membershipVersion,
+        Map.of(tenantId, membershipVersion),
         membershipAuthorityGeneration,
         authorityTuple,
         issuanceFence,
         Instant.parse("2026-09-27T00:00:00Z"),
-        streamKey);
+        streamKey,
+        List.of(
+            new OutboxCheckpointEntry("account:auth-authority:v1:account/" + accountId, "0"),
+            new OutboxCheckpointEntry(
+                "account:auth-authority:v1:issuer/" + AccountServiceImpl.ACCOUNT_JWT_ISSUER, "0"),
+            new OutboxCheckpointEntry(streamKey, "0"),
+            new OutboxCheckpointEntry("account:auth-authority:v1:tenant/" + tenantId, "0")),
+        List.of());
   }
 
   private static AuthorityTuple completeTuple() {
     return new AuthorityTuple(
-        "4",
-        "6",
-        Map.of(TENANT_ID, "8"),
+        "1",
+        "1",
+        Map.of(TENANT_ID, "1"),
         Map.of(TENANT_ID, "1"),
         List.of(),
         Optional.empty(),
