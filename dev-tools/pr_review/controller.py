@@ -3745,6 +3745,132 @@ class ReviewController:
             return dataclasses.replace(decision, reason=HOSTED_CLI_OVERLAP_HOLD_REASON)
         return decision
 
+    def _reopen_hosted_cross_channel_judgment(
+        self,
+        state: ReviewState,
+        channel: policy.Channel,
+        decision: policy.ChannelDecision,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        allocations: Mapping[int, Mapping[str, Any]],
+    ) -> policy.ChannelDecision:
+        """Let an audited bounded Hosted allocation reopen its exact old/new-head mismatch."""
+
+        if (
+            channel != policy.Channel.HOSTED
+            or decision.status not in {
+                policy.ReviewStatus.READY,
+                policy.ReviewStatus.JUDGMENT_REQUIRED,
+            }
+            or decision.target is None
+        ):
+            return decision
+        pr = decision.target
+        allocation = state.allocations.get(f"{pr}:{policy.Channel.HOSTED.value}")
+        view = allocations.get(pr, {})
+        if (
+            allocation is None
+            or (allocation.min_additional_completed is None and allocation.max_additional_completed is None)
+            or allocation.reopens_taper is not True
+            or allocation.stop_basis is not None
+            or allocation.handoff_checkpoint is not None
+            or view.get("status") != "CAP_ACTIVE"
+            or view.get("selection_control") not in {"minimum", "taper"}
+            or (view.get("remaining") is not None and view.get("remaining", 0) <= 0)
+        ):
+            return decision
+
+        item = live.get(pr)
+        link = reconciliation.links.get(pr)
+        if item is None or link is None:
+            return decision
+        current = self._anchor(pr, item, link)
+        hosted_latest = _latest_review(histories[policy.Channel.HOSTED].get(pr, ()))
+        cli_latest = _latest_review(histories[policy.Channel.CLI].get(pr, ()))
+        if hosted_latest is None or cli_latest is None:
+            return decision
+        hosted_head = _field(hosted_latest, "head", "reviewed_head")
+        cli_head = _field(cli_latest, "head", "reviewed_head")
+        if not (
+            isinstance(hosted_head, str)
+            and hosted_head.casefold() != current.child_head.casefold()
+            and cli_head == current.child_head
+        ):
+            return decision
+
+        def judgment_hold(reason: str) -> policy.ChannelDecision:
+            return dataclasses.replace(
+                decision,
+                status=policy.ReviewStatus.JUDGMENT_REQUIRED,
+                reason=reason,
+            )
+
+        if not (
+            allocation.head.casefold() == current.child_head.casefold()
+            and allocation.parent_identity == current.parent_identity
+            and allocation.parent_head.casefold() == current.parent_head.casefold()
+            and allocation.merge_base.casefold() == current.merge_base.casefold()
+            and allocation.patch_id == current.patch_id
+            and reconciliation.status_for(pr) == stack.ReconciliationStatus.COHERENT
+        ):
+            return judgment_hold("bounded Hosted allocation no longer matches the current stack identity")
+
+        allowed_channel_statuses = {
+            stack.ReconciliationStatus.COHERENT,
+            stack.ReconciliationStatus.PATCH_CHANGED,
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+        }
+        if any(
+            reconciliation.status_for(pr, selected.value) not in allowed_channel_statuses
+            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+        ):
+            return judgment_hold("cross-channel review evidence is not anchored to the current stack identity")
+
+        def shares_current_parent(value: Any) -> bool:
+            parent_head = _field(value, "parent_head", "parent_sha", "base_tip_sha")
+            merge_base = _field(value, "merge_base")
+            return (
+                _field(value, "anchored") is True
+                and _field(value, "child_head") == _field(value, "head", "reviewed_head")
+                and _field(value, "parent_identity") == current.parent_identity
+                and isinstance(parent_head, str)
+                and parent_head.casefold() == current.parent_head.casefold()
+                and isinstance(merge_base, str)
+                and merge_base.casefold() == current.merge_base.casefold()
+            )
+
+        if not (
+            shares_current_parent(hosted_latest)
+            and shares_current_parent(cli_latest)
+            and type(_field(hosted_latest, "raw", "raw_found")) is int
+            and _field(hosted_latest, "raw", "raw_found") == 0
+            and type(_field(hosted_latest, "accepted")) is int
+            and _field(hosted_latest, "accepted") == 0
+        ):
+            return judgment_hold("bounded Hosted allocation cannot reopen a different cross-channel review identity")
+
+        try:
+            self._check_stop_evidence(
+                state,
+                pr,
+                policy.Channel.HOSTED,
+                current,
+                reconciliation,
+                checkpoint_pin=None,
+            )
+        except ControllerError as error:
+            return dataclasses.replace(
+                decision,
+                status=policy.ReviewStatus.HELD,
+                reason=str(error),
+            )
+        return dataclasses.replace(
+            decision,
+            status=policy.ReviewStatus.READY,
+            reason="explicit bounded Hosted allocation reopens the audited cross-channel head mismatch",
+        )
+
     @staticmethod
     def _hosted_head_mismatch_is_proven_cli_descendant(
         pr: int,
@@ -3808,6 +3934,15 @@ class ReviewController:
                 allocations[channel],
                 candidate_prs,
             )
+            decision = self._reopen_hosted_cross_channel_judgment(
+                state,
+                channel,
+                decision,
+                live,
+                reconciliation,
+                histories,
+                allocations[channel],
+            )
             if decision.target is None and not selection_complete:
                 result[channel.value] = {
                     "channel": channel.value,
@@ -3869,12 +4004,13 @@ class ReviewController:
         else:
             other_history = projected_cli_history
         allocations = self._allocation_views(state, live, reconciliation, selected, history)
+        candidate_histories = {selected: history, other: other_history}
         decision = self._select_review_decision(
             state,
             selected,
             live,
             reconciliation,
-            {selected: history, other: other_history},
+            candidate_histories,
             allocations,
             state.ordered_prs,
             allocation_reopen_prs=(
@@ -3882,6 +4018,15 @@ class ReviewController:
                 if allow_completed_allocation and expected_pr is not None
                 else ()
             ),
+        )
+        decision = self._reopen_hosted_cross_channel_judgment(
+            state,
+            selected,
+            decision,
+            live,
+            reconciliation,
+            candidate_histories,
+            allocations,
         )
         completed_allocation_override = False
         if decision.target is None:
@@ -5026,6 +5171,7 @@ class ReviewController:
                 and _field(value, "checkpoint") == f"trigger:{trigger_id}"
                 and self._hosted_anchor_matches(value, pr, current)
             )
+        stop_evidence_checked = False
         if bounded_replacement and not any(provable_posted_hosted_request(value) for value in history) and any(
             _field(value, "completed") is True
             and _field(value, "attributable") is True
@@ -5042,6 +5188,7 @@ class ReviewController:
                 reconciliation,
                 checkpoint_pin=None,
             )
+            stop_evidence_checked = True
         if action == "grant":
             target = self._target(
                 selected,
@@ -5051,7 +5198,22 @@ class ReviewController:
             try:
                 self._ensure_runnable(target)
             except ControllerError:
-                if not (
+                if (
+                    bounded_replacement
+                    and selected == policy.Channel.HOSTED
+                    and target.pr == pr
+                    and target.status == policy.ReviewStatus.JUDGMENT_REQUIRED
+                ):
+                    if not stop_evidence_checked:
+                        self._check_stop_evidence(
+                            state,
+                            pr,
+                            selected,
+                            current,
+                            reconciliation,
+                            checkpoint_pin=None,
+                        )
+                elif not (
                     bounded_replacement
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.HELD

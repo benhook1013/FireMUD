@@ -673,6 +673,139 @@ class ControllerTests(unittest.TestCase):
         )
         return controller
 
+    def hosted_judgment_allocation_fixture(self, *, audit=None, hosted_patch_id=None):
+        values = {1: pr(1, HEAD_3)}
+        hosted_review = self.allocation_evidence(
+            head=HEAD_2,
+            checkpoint="hosted-old-head",
+            channel="hosted",
+            raw=0,
+        )
+        if hosted_patch_id is not None:
+            hosted_review["patch_id"] = hosted_patch_id
+        evidence = AuditedEvidence(
+            {
+                (1, "hosted"): [
+                    hosted_review,
+                    self.scope_timeline_evidence(1, "hosted", HEAD_2),
+                ],
+                (1, "cli"): [
+                    self.allocation_evidence(
+                        head=HEAD_3,
+                        checkpoint="cli-current-head",
+                        channel="cli",
+                        raw=0,
+                    ),
+                    self.scope_timeline_evidence(1, "cli", HEAD_3),
+                ],
+            },
+            audit=audit,
+        )
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_3})
+        controller.set_stack([1])
+        return controller, evidence
+
+    @staticmethod
+    def grant_judgment_hosted_review(controller):
+        return controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_3,
+            reason="one more hosted review after the corrected head",
+            min_additional_completed=1,
+            max_additional_completed=1,
+        )
+
+    def test_bounded_hosted_allocation_reopens_judgment_required_after_full_stop_audit(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+
+        _, reconciliation = controller._reconciliation(controller._state())
+        self.assertEqual(
+            reconciliation.status_for(1, "hosted"),
+            stack.ReconciliationStatus.PATCH_CHANGED,
+        )
+        target = controller.status()["review_targets"]["hosted"]
+        self.assertEqual((target["pr"], target["status"]), (1, "JUDGMENT_REQUIRED"))
+
+        result = self.grant_judgment_hosted_review(controller)
+
+        allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertEqual(allocation["minimum_additional_completed"], 1)
+        self.assertEqual(allocation["maximum_additional_completed"], 1)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
+
+    def test_bounded_hosted_allocation_reopens_equivalent_old_head_identity(self):
+        controller, _ = self.hosted_judgment_allocation_fixture(
+            hosted_patch_id=f"patch-{HEAD_3[:4]}"
+        )
+
+        _, reconciliation = controller._reconciliation(controller._state())
+        self.assertEqual(
+            reconciliation.status_for(1, "hosted"),
+            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+        )
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+
+        self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+
+    def test_bounded_hosted_allocation_still_refuses_judgment_required_with_open_findings(self):
+        audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": ["thread:77"],
+        }
+        controller, evidence = self.hosted_judgment_allocation_fixture(audit=audit)
+
+        with self.assertRaisesRegex(
+            ControllerError,
+            "review stop is blocked by an unresolved actionable finding or thread",
+        ):
+            self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(len(evidence.stop_audit_calls), 1)
+        self.assertNotIn("1:hosted", controller._state().allocations)
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+
+    def test_bounded_hosted_target_stays_judgment_required_when_request_audit_finds_open_threads(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+        self.grant_judgment_hosted_review(controller)
+        evidence.audit["unresolved_findings"] = ["thread:77"]
+
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "HELD",
+        )
+        with self.assertRaisesRegex(
+            ControllerError,
+            "review stop is blocked by an unresolved actionable finding or thread",
+        ):
+            controller.resolve_hosted_target()
+
+    def test_bounded_hosted_allocation_does_not_reopen_a_moved_parent(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture()
+        evidence[(1, "hosted")][0]["parent_head"] = "9" * 40
+
+        with self.assertRaisesRegex(ControllerError, "allocation requires a coherent current stack identity"):
+            self.grant_judgment_hosted_review(controller)
+
+        self.assertNotIn("1:hosted", controller._state().allocations)
+
     def test_allocation_is_promised_before_review_and_does_not_make_pr_complete(self):
         controller = self.grant_allocation()
         result = controller.status()["prs"][0]
