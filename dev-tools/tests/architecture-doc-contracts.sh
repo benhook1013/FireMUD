@@ -2081,7 +2081,8 @@ automation_recreate_condition = (
     '{{- if or (eq $service.name "tcp-proxy-service") '
     '(eq $service.name "account-service") '
     '(eq $service.name "game-session-service") '
-    '(eq $service.name "automation-scripting-service") }}'
+    '(eq $service.name "automation-scripting-service") '
+    '(eq $service.name "game-design-service") }}'
 )
 
 
