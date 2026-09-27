@@ -1042,7 +1042,8 @@ class VersionServiceImplTest {
 
       assertEquals(
           state,
-          service.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1")
+          service
+              .getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1")
               .publicationState());
     }
   }

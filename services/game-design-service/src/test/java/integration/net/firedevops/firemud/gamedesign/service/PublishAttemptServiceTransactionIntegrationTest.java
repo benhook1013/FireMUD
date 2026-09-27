@@ -27,8 +27,6 @@ import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleReposi
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
-import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
-import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
