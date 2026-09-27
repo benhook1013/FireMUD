@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
@@ -63,6 +64,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptPatchReadinessProjectionService readinessProjectionService;
+  private final ScriptDefinitionRepository scriptDefinitionRepository;
 
   @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemServiceImpl(
@@ -76,7 +78,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
-      ScriptPatchReadinessProjectionService readinessProjectionService) {
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptDefinitionRepository scriptDefinitionRepository) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -88,6 +91,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.readinessProjectionService = readinessProjectionService;
+    this.scriptDefinitionRepository = scriptDefinitionRepository;
   }
 
   @Override
@@ -668,13 +672,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
-    ScriptPatchReadinessProjectionService.ReadinessStatusSummary readiness =
-        readinessProjectionService.getProjection(tenantId, scriptPatchVersion).orElse(null);
-    if (readiness == null || readiness.baseVersionId() <= 0L) {
+    // The authored patch identity is bound once to an immutable base. A later readiness
+    // projection cannot rewrite the base used to render a historical rollout or handoff.
+    Long retainedBaseVersionId =
+        scriptDefinitionRepository
+            .findScriptPatchBaseVersionId(tenantId, scriptPatchVersion)
+            .orElse(null);
+    if (retainedBaseVersionId == null || retainedBaseVersionId <= 0L) {
       return PublicationMetadata.lookupFailure(
-          scriptPatchVersion, "NOT_FOUND", "owner-retained script-patch base is unavailable");
+          scriptPatchVersion, "NOT_FOUND", "immutable script-patch base binding is unavailable");
     }
-    return publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
+    return publicationMetadata(tenantId, retainedBaseVersionId, scriptPatchVersion);
   }
 
   private PublicationMetadata publicationMetadata(

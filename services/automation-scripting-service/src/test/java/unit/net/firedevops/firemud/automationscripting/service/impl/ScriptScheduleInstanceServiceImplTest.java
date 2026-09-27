@@ -949,6 +949,7 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     ScriptScheduleInstance materialized = captor.getValue().getFirst();
     assertThat(materialized.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(materialized.getScriptPatchBaseVersionId()).isEqualTo(7L);
     assertThat(materialized.getPinObservedAt()).isEqualTo(Instant.ofEpochMilli(3_000L));
     assertThat(materialized.getWorldSlug()).isEqualTo("demo");
     assertThat(materialized.getRealmSlug()).isEqualTo("production");
@@ -3890,7 +3891,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setRequiresExclusiveEvent(false);
     instance.setMaterializationStatus("READY");
     instance.setNextDueAt(Instant.ofEpochMilli(5555L));
-    instance.setObservedRuntimeVersionId("7");
+    instance.setObservedRuntimeVersionId("999");
     instance.setLastObservedControlPlaneRequestId("req-9");
     instance.setPinObservedAt(Instant.ofEpochMilli(1234L));
     instance.setMaterializedAt(Instant.ofEpochMilli(1235L));
