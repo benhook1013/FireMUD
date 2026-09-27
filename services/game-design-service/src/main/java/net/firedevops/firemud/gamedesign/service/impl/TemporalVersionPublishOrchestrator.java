@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnBean({WorkflowClient.class, TemporalTaskQueueResolver.class})
 public class TemporalVersionPublishOrchestrator {
+  static final String PENDING_RECONCILIATION_REQUIRED_CODE =
+      "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED";
   private static final Duration QUERY_WAIT_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration QUERY_WAIT_INTERVAL = Duration.ofMillis(100);
 
@@ -45,11 +47,20 @@ public class TemporalVersionPublishOrchestrator {
     if (snapshot.isSucceeded()) {
       return commandService.publishFullVersion(tenantId, notes, workflowId);
     }
-    if (snapshot.failureCode() != null && snapshot.failureCode().startsWith("DIGEST_")) {
-      throw new PublishGateFailureException(
-          PublishGateFailureCode.valueOf(snapshot.failureCode()), snapshot.failureMessage());
+    throw failureForSnapshot(snapshot);
+  }
+
+  static RuntimeException failureForSnapshot(PublishWorkflowSnapshot snapshot) {
+    String failureCode = snapshot.failureCode();
+    if (failureCode != null && !failureCode.isBlank()) {
+      try {
+        PublishGateFailureCode gateFailureCode = PublishGateFailureCode.valueOf(failureCode);
+        return new PublishGateFailureException(gateFailureCode, snapshot.failureMessage());
+      } catch (IllegalArgumentException ignored) {
+        // Unknown snapshot codes remain generic failures.
+      }
     }
-    throw new IllegalStateException(
+    return new IllegalStateException(
         snapshot.failureMessage() == null || snapshot.failureMessage().isBlank()
             ? snapshot.failureCode()
             : snapshot.failureMessage());
@@ -68,16 +79,32 @@ public class TemporalVersionPublishOrchestrator {
   private PublishWorkflowSnapshot waitForSnapshot(
       TemporalVersionPublishWorkflow workflow, String workflowId) {
     long deadline = System.nanoTime() + QUERY_WAIT_TIMEOUT.toNanos();
+    PublishWorkflowSnapshot lastSnapshot = null;
     while (System.nanoTime() < deadline) {
       PublishWorkflowSnapshot snapshot = workflow.currentSnapshot();
+      lastSnapshot = snapshot;
       if (snapshot != null && snapshot.isTerminal()) {
         return snapshot;
       }
       sleepQuietly();
     }
-    throw new IllegalStateException(
-        "TEMPORAL_WORKFLOW_TIMEOUT: version publish workflow did not converge for workflowId="
-            + workflowId);
+    throw timeoutException(lastSnapshot, workflowId);
+  }
+
+  static IllegalStateException timeoutException(
+      PublishWorkflowSnapshot lastSnapshot, String workflowId) {
+    String timeoutDetail = "version publish workflow did not converge for workflowId=" + workflowId;
+    if (lastSnapshot != null
+        && PENDING_RECONCILIATION_REQUIRED_CODE.equals(lastSnapshot.failureCode())) {
+      String failureMessage = lastSnapshot.failureMessage();
+      return new IllegalStateException(
+          PENDING_RECONCILIATION_REQUIRED_CODE
+              + ": "
+              + (failureMessage == null || failureMessage.isBlank()
+                  ? timeoutDetail
+                  : failureMessage + "; " + timeoutDetail));
+    }
+    return new IllegalStateException("TEMPORAL_WORKFLOW_TIMEOUT: " + timeoutDetail);
   }
 
   private void sleepQuietly() {

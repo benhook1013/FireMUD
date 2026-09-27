@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.model;
 
 public enum PublishGateFailureCode {
+  PARTICIPANT_SET_MISMATCH,
   PARTICIPANT_UNAVAILABLE,
   PARTICIPANT_SCOPE_MISMATCH,
   UNSUPPORTED_DIGEST_SCHEMA,
