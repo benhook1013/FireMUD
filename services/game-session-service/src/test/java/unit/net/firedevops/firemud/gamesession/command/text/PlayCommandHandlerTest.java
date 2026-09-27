@@ -1464,6 +1464,30 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
+  @Test
+  void evidencedInactiveMembershipRequiresExplicitJoinWithoutReadingEntityRoster() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .inactive(123L, 22L, "4"),
+                        invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"ENTITLEMENT_UNAVAILABLE", "AUTH_UNAVAILABLE"})
   void playEntitlementFailureMasksMissingPublicMembership(String errorCode) {

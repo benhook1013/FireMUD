@@ -185,11 +185,24 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (exists && admitted && "ACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountSelector, tenantSelector, request.getPlayerContext().getRequestId(), true);
+              accountSelector,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle);
+    } else if (exists && !admitted && "INACTIVE".equals(lifecycle)) {
+      response =
+          completeMembershipSnapshot(
+              accountSelector,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle);
     } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountSelector, tenantSelector, request.getPlayerContext().getRequestId(), false);
+              accountSelector,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle);
     } else {
       response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
@@ -209,7 +222,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
-      String accountSelector, String tenantSelector, String requestId, boolean exists) {
+      String accountSelector, String tenantSelector, String requestId, String lifecycle) {
+    boolean exists = !"MISSING".equals(lifecycle);
+    boolean admitted = "ACTIVE".equals(lifecycle);
     String accountUuid = canonicalUuid(accountSelector);
     String tenantUuid = canonicalUuid(tenantSelector);
     String membershipStream =
@@ -232,7 +247,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .build();
     RuntimeMembershipBaseline baseline =
         RuntimeMembershipBaseline.newBuilder()
-            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
+            .setMembershipLifecycleState(lifecycle)
             .putMembershipVersion(tenantUuid, "1")
             .setMembershipAuthorityGeneration("1")
             .build();
@@ -244,8 +259,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRequestTenantId(tenantSelector)
             .setRequestId(requestId)
             .setMembershipExists(exists)
-            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
-            .setGameplayAdmissionAllowed(exists)
+            .setMembershipLifecycleState(lifecycle)
+            .setGameplayAdmissionAllowed(admitted)
             .putMembershipVersion(tenantUuid, "1")
             .setMembershipAuthorityGeneration("1")
             .setMembershipBaseline(baseline)
@@ -253,8 +268,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
             .setEvaluatedAt(EVALUATED_AT);
-    if (exists) {
+    if (admitted) {
       response.addRoles("player");
+    }
+    if (exists) {
       response.addOutboxSourceEvidence(
           RuntimeOutboxSourceEvidence.newBuilder()
               .setOutboxStreamKey(membershipStream)

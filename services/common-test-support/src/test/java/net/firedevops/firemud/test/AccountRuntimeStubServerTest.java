@@ -49,6 +49,10 @@ class AccountRuntimeStubServerTest {
         assertThat(inactive.getMembershipExists()).isTrue();
         assertThat(inactive.getGameplayAdmissionAllowed()).isFalse();
         assertThat(inactive.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+        assertThat(inactive.hasMembershipBaseline()).isTrue();
+        assertThat(inactive.hasAuthorityTuple()).isTrue();
+        assertThat(inactive.getOutboxCheckpointsCount()).isEqualTo(4);
+        assertThat(inactive.getOutboxSourceEvidenceCount()).isEqualTo(1);
 
         server.setMembershipExists(false);
         var membership = stub.getTenantMembershipForRuntime(request);

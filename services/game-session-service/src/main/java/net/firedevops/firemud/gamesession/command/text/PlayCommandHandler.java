@@ -798,6 +798,10 @@ public class PlayCommandHandler {
               && response.getGameplayAdmissionAllowed()
               && response.getRolesList().contains("player")
               && hasPositiveMembershipVersion(response);
+      case "INACTIVE" ->
+          response.getMembershipExists()
+              && !response.getGameplayAdmissionAllowed()
+              && hasPositiveMembershipVersion(response);
       default -> false;
     };
   }
@@ -880,18 +884,18 @@ public class PlayCommandHandler {
     if (!actualStreamKeys.equals(expectedStreamKeys)) {
       return false;
     }
-    boolean positive = "ACTIVE".equals(response.getMembershipLifecycleState());
+    boolean committedMembership = !"MISSING".equals(response.getMembershipLifecycleState());
     for (String streamKey : expectedStreamKeys) {
       String sequence = checkpointSequences.get(streamKey);
       if (streamKey.equals(membershipStream)) {
-        if (positive != isPositiveCanonicalDecimal(sequence)) {
+        if (committedMembership != isPositiveCanonicalDecimal(sequence)) {
           return false;
         }
       } else if (!"0".equals(sequence)) {
         return false;
       }
     }
-    if (!positive) {
+    if (!committedMembership) {
       return "MISSING".equals(response.getMembershipLifecycleState())
           && !response.getMembershipExists()
           && !response.getGameplayAdmissionAllowed()
@@ -906,7 +910,8 @@ public class PlayCommandHandler {
 
     if (response.getOutboxSourceEvidenceCount() != 1
         || !response.getMembershipExists()
-        || !response.getGameplayAdmissionAllowed()
+        || (response.getGameplayAdmissionAllowed()
+            != "ACTIVE".equals(response.getMembershipLifecycleState()))
         || response.getMembershipVersionCount() != 1
         || !hasPositiveMembershipVersion(response)) {
       return false;
