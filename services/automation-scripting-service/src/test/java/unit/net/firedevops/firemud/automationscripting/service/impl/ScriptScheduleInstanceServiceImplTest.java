@@ -289,8 +289,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setScriptPatchPinnedControlPlaneRequestId("")
             .build());
 
-    verify(scheduleInstanceRepository, never())
-        .deleteByTenantIdAndGameInstanceId("1", "game-1");
+    verify(scheduleInstanceRepository, never()).deleteByTenantIdAndGameInstanceId("1", "game-1");
     verify(scheduleInstanceRepository).saveAll(List.of(retained));
     assertThat(retained.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
   }

@@ -126,8 +126,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       return;
     }
     if (isSemanticUnpinned(runtimeState)) {
-      scheduleInstanceService.reconcileObservedRuntimeState(
-          tenantId, gameInstanceId, runtimeState);
+      scheduleInstanceService.reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState);
       return;
     }
     if (!hasPositiveScriptPinEpoch(runtimeState)) {
