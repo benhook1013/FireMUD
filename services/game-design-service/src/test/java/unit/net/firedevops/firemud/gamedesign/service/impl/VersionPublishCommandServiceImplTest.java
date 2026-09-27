@@ -440,84 +440,18 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
-  void sameRequestReplayRequiresAndReconcilesExactCommittedEvidence() {
+  void succeededReplayUsesStoredBundleAfterLifecycleDriftWithoutWritesOrGates() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
-    Version version = fullVersion(10L, 1, VersionLifecycleState.PUBLISHED);
-    Game game = new Game();
-    game.setTenantId("tenant-1");
-    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
-    List<PublishParticipantDigestDto> participantDigests = participantDigests();
-    PublishedReleaseBundleDto bundle =
-        new PublishedReleaseBundleDto(
-            1L,
-            "tenant-1",
-            10L,
-            1,
-            "v1",
-            workflowId,
-            "manifest-hash",
-            List.of("manifest.json"),
-            participantDigests,
-            "generation-revision",
-            false,
-            null,
-            LocalDateTime.now());
-    VersionAssetArtifactStateDto artifact =
-        new VersionAssetArtifactStateDto(
-            "tenant-1",
-            10L,
-            1,
-            "PUBLISHED",
-            2L,
-            "manifest-hash",
-            workflowId,
-            null,
-            null,
-            LocalDateTime.now(),
-            List.of("manifest.json"));
-    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
-        .thenReturn(Optional.of(attempt));
-    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
-    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
-        .thenReturn(bundle);
-    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(artifact);
-
-    PublishWorkflowSnapshot snapshot =
-        service.reconcileFullVersionPublish(
-            new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
-
-    assertEquals("SUCCEEDED", snapshot.status());
-    verify(publishGateService, never())
-        .collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class));
-    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
-    verify(recordedParticipantDigestService)
-        .recordVerifiedDigests(
-            "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
-    verify(publishGateService)
-        .assertGatePassed(
-            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
-    verify(recordedParticipantDigestService)
-        .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
-  }
-
-  @Test
-  void replayWithInvalidCommittedParticipantEvidenceRemainsReconciliationRequired() {
-    String workflowId = "publish:tenant-1:publish-request:workflow-1";
-    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
-    Version version = fullVersion(10L, 1, VersionLifecycleState.PUBLISHED);
-    Game game = new Game();
-    game.setTenantId("tenant-1");
-    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
-    List<PublishParticipantDigestDto> malformedParticipantDigests =
+    Version version = fullVersion(10L, 1, VersionLifecycleState.RETIRED);
+    List<PublishParticipantDigestDto> driftedParticipantDigests =
         List.of(
             new PublishParticipantDigestDto(
                 "GAME_DESIGN_CONTROL_PLANE",
                 "wrong-version",
-                "version:10",
-                "digest",
-                1,
+                "wrong-scope",
+                "changed",
+                99,
                 null,
                 null));
     PublishedReleaseBundleDto bundle =
@@ -530,20 +464,20 @@ class VersionPublishCommandServiceImplTest {
             workflowId,
             "manifest-hash",
             List.of("manifest.json"),
-            malformedParticipantDigests,
+            driftedParticipantDigests,
             "generation-revision",
             false,
             null,
             LocalDateTime.now());
-    VersionAssetArtifactStateDto artifact =
+    VersionAssetArtifactStateDto driftedArtifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
             10L,
             1,
-            "PUBLISHED",
-            2L,
-            "manifest-hash",
-            workflowId,
+            "PURGED",
+            8L,
+            "different-manifest-hash",
+            "different-workflow",
             null,
             null,
             LocalDateTime.now(),
@@ -553,14 +487,65 @@ class VersionPublishCommandServiceImplTest {
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(bundle);
-    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(artifact);
-    org.mockito.Mockito.doThrow(
-            new PublishGateFailureException(
-                PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
-                "publish gate failed: wrong scope from GAME_DESIGN_CONTROL_PLANE"))
-        .when(publishGateService)
-        .assertGatePassed(
-            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(malformedParticipantDigests));
+    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(driftedArtifact);
+
+    PublishWorkflowSnapshot snapshot =
+        service.reconcileFullVersionPublish(
+            new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
+
+    assertEquals("SUCCEEDED", snapshot.status());
+    verify(publishedReleaseBundleService).getPublishedReleaseBundle("tenant-1", 10L);
+    verify(publishAttemptRepository, never())
+        .backfillFullVersionRequestDigestIfAbsent(
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class));
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishGateService, never())
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(recordedParticipantDigestService, never())
+        .assertMatchesRecordedDigests(any(String.class), any(PublishType.class), any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
+    verify(publishAttemptService, never())
+        .recordFullVersionParticipantDigests(any(String.class), any(List.class));
+  }
+
+  @Test
+  void succeededReplayRejectsMismatchedCommittedBundleIdentity() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
+    PublishedReleaseBundleDto bundle =
+        new PublishedReleaseBundleDto(
+            1L,
+            "tenant-1",
+            11L,
+            1,
+            "v1",
+            workflowId,
+            "manifest-hash",
+            List.of("manifest.json"),
+            participantDigests(),
+            "generation-revision",
+            false,
+            null,
+            LocalDateTime.now());
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(bundle);
 
     assertThrows(
         IllegalStateException.class,
@@ -568,43 +553,118 @@ class VersionPublishCommandServiceImplTest {
             service.reconcileFullVersionPublish(
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
     verify(recordedParticipantDigestService, never())
-        .recordVerifiedDigests(
-            any(String.class), any(PublishType.class), any(String.class), any(List.class));
-    verify(recordedParticipantDigestService, never())
-        .assertMatchesRecordedDigests(any(String.class), any(PublishType.class), any(List.class));
+        .recordVerifiedDigests(any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
   }
 
   @Test
-  void canonicalLegacyFullAttemptBackfillsDigestBeforeRetryValidation() {
+  void succeededReplayRejectsAbsentCommittedBundle() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
-    attempt.setId(101L);
-    attempt.setRequestDigest(null);
-    Version version = fullVersion(10L, 1, VersionLifecycleState.PUBLISHED);
-    Game game = new Game();
-    game.setTenantId("tenant-1");
-    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
-    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
-    when(publishAttemptRepository.backfillFullVersionRequestDigestIfAbsent(
-            org.mockito.ArgumentMatchers.eq(101L),
-            org.mockito.ArgumentMatchers.eq("tenant-1"),
-            org.mockito.ArgumentMatchers.eq(workflowId),
-            org.mockito.ArgumentMatchers.eq(10L),
-            org.mockito.ArgumentMatchers.eq(1),
-            org.mockito.ArgumentMatchers.eq(
-                PublicationDigestRequestBinding.full("tenant-1", "10", "workflow-1")
-                    .requestDigest())))
-        .thenAnswer(
-            invocation -> {
-              attempt.setRequestDigest(
-                  PublicationDigestRequestBinding.full("tenant-1", "10", "workflow-1")
-                      .requestDigest());
-              return Optional.of(attempt);
-            });
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(null);
 
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
+  void succeededReplayFailsClosedWhenBundleReadIsUncertain() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+        .thenThrow(new IllegalStateException("bundle read unavailable"));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
+  void legacySucceededAttemptReplaysWithoutBackfillOrMutableReads() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
+    attempt.setRequestDigest(null);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    PublishedReleaseBundleDto bundle =
+        new PublishedReleaseBundleDto(
+            1L,
+            "tenant-1",
+            10L,
+            1,
+            "v1",
+            workflowId,
+            "manifest-hash",
+            List.of("manifest.json"),
+            participantDigests(),
+            "generation-revision",
+            false,
+            null,
+            LocalDateTime.now());
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(bundle);
+
+    PublishWorkflowSnapshot snapshot =
+        service.reconcileFullVersionPublish(
+            new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
+
+    assertEquals("SUCCEEDED", snapshot.status());
+    verify(publishAttemptRepository, never())
+        .backfillFullVersionRequestDigestIfAbsent(
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class));
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+    verify(versionAssetArtifactService, never()).getState(any(String.class), any(Long.class));
+    verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
+  void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.PUBLISHED);
     List<PublishParticipantDigestDto> participantDigests = participantDigests();
     PublishedReleaseBundleDto bundle =
         new PublishedReleaseBundleDto(
@@ -634,6 +694,12 @@ class VersionPublishCommandServiceImplTest {
             null,
             LocalDateTime.now(),
             List.of("manifest.json"));
+    Game game = new Game();
+    game.setTenantId("tenant-1");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(bundle);
     when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(artifact);
@@ -643,17 +709,14 @@ class VersionPublishCommandServiceImplTest {
             new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
 
     assertEquals("SUCCEEDED", snapshot.status());
-    verify(publishAttemptRepository)
-        .backfillFullVersionRequestDigestIfAbsent(
-            101L,
-            "tenant-1",
-            workflowId,
-            10L,
-            1,
-            PublicationDigestRequestBinding.full("tenant-1", "10", "workflow-1").requestDigest());
-    verify(publishGateService, never())
-        .collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
+    verify(recordedParticipantDigestService)
+        .recordVerifiedDigests("tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
+    verify(publishAttemptService).markFullVersionSucceeded(workflowId);
   }
 
   @Test

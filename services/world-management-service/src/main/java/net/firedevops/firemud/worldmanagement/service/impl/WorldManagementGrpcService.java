@@ -6,7 +6,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -77,7 +76,6 @@ import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
 @GrpcService
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected services and registry remain internal")
@@ -93,7 +91,30 @@ public class WorldManagementGrpcService
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
-  private PublicationReadGuard publicationReadGuard;
+  private final PublicationReadGuard publicationReadGuard;
+
+  private WorldManagementGrpcService(
+      PublicationReadGuard publicationReadGuard,
+      PingService pingService,
+      RoomService roomService,
+      WorldInstanceActivationService worldInstanceActivationService,
+      WorldDraftDesignDigestService worldDraftDesignDigestService,
+      WorldDesignMutationService worldDesignMutationService,
+      WorldUpgradeValidationService worldUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper) {
+    this.pingService = pingService;
+    this.roomService = roomService;
+    this.worldInstanceActivationService = worldInstanceActivationService;
+    this.worldDraftDesignDigestService = worldDraftDesignDigestService;
+    this.worldDesignMutationService = worldDesignMutationService;
+    this.worldUpgradeValidationService = worldUpgradeValidationService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
+    this.meterRegistry = meterRegistry;
+    this.objectMapper = objectMapper;
+    this.publicationReadGuard = publicationReadGuard;
+  }
 
   @Autowired
   public WorldManagementGrpcService(
@@ -108,6 +129,7 @@ public class WorldManagementGrpcService
       ObjectMapper objectMapper,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this(
+        configuredPublicationReadGuard(workloadNamespace),
         pingService,
         roomService,
         worldInstanceActivationService,
@@ -117,7 +139,6 @@ public class WorldManagementGrpcService
         gameplaySessionAttestationService,
         meterRegistry,
         objectMapper);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
   }
 
   public WorldManagementGrpcService(
@@ -132,6 +153,7 @@ public class WorldManagementGrpcService
       ObjectMapper objectMapper,
       PublicationReadGuard publicationReadGuard) {
     this(
+        publicationReadGuard,
         pingService,
         roomService,
         worldInstanceActivationService,
@@ -141,7 +163,6 @@ public class WorldManagementGrpcService
         gameplaySessionAttestationService,
         meterRegistry,
         objectMapper);
-    this.publicationReadGuard = publicationReadGuard;
   }
 
   @Override
