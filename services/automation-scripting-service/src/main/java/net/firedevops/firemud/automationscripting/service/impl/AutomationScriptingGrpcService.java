@@ -120,7 +120,7 @@ public class AutomationScriptingGrpcService
         workItemRepository,
         formationService,
         meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   @SuppressFBWarnings(
@@ -377,6 +377,7 @@ public class AutomationScriptingGrpcService
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
               request.getVersion(),
+              request.getBaseVersionId(),
               request.getDefinition(),
               request.getEventBindingsList().stream()
                   .map(
@@ -438,14 +439,15 @@ public class AutomationScriptingGrpcService
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
                   binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(), binding.scriptPatchVersion());
-      String expectedScope =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? binding.versionId()
-              : binding.scriptPatchVersion();
-      if (!binding.tenantId().equals(digest.tenantId())
-          || !expectedScope.equals(digest.scopeValue())) {
-        throw new IllegalArgumentException("owner digest scope does not match publication binding");
+                  binding.tenantId(),
+                  Long.parseLong(binding.baseVersionId()),
+                  binding.scriptPatchVersion());
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
+          && (digest.baseVersionId() <= 0L
+              || Long.parseLong(binding.baseVersionId()) != digest.baseVersionId())) {
+        throw new IllegalArgumentException(
+            "owner digest base_version_id does not match publication binding");
       }
       GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
@@ -458,7 +460,7 @@ public class AutomationScriptingGrpcService
       } else {
         response
             .setScriptPatchVersion(binding.scriptPatchVersion())
-            .setBaseVersionId(binding.baseVersionId());
+            .setBaseVersionId(Long.toString(digest.baseVersionId()));
       }
       responseObserver.onNext(response.build());
       responseObserver.onCompleted();
@@ -492,10 +494,19 @@ public class AutomationScriptingGrpcService
   private static PublicationDigestRequestBinding publicationBinding(
       GetDraftDesignDigestRequest request) {
     return switch (request.getScopeCase()) {
-      case VERSION_ID -> fullPublicationBinding(request);
-      case SCRIPT_PATCH_VERSION ->
-          PublicationDigestRequestBinding.patch(
+      case VERSION_ID ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
               request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+              request.getTenantId(),
+              request.getVersionId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getPublishRequestId());
@@ -509,26 +520,6 @@ public class AutomationScriptingGrpcService
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
-  }
-
-  private static PublicationDigestRequestBinding fullPublicationBinding(
-      GetDraftDesignDigestRequest request) {
-    if (!request.getBaseVersionId().isEmpty()) {
-      throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-    }
-    return PublicationDigestRequestBinding.full(
-        request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
   }
 
   @Override
@@ -562,7 +553,10 @@ public class AutomationScriptingGrpcService
     try {
       requireAdminRole();
       scriptVersionService.notifyUpdate(
-          request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+          request.getTenantId(),
+          request.getBaseVersionId(),
+          request.getScriptPatchVersion(),
+          request.getAffectedScriptsList());
       response.setSuccess(true);
     } catch (IllegalArgumentException ex) {
       response

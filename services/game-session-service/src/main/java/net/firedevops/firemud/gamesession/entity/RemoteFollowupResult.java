@@ -26,6 +26,7 @@ public class RemoteFollowupResult {
   private String realmSlug;
   private Long pointerVersion;
   private String scriptPatchVersion;
+  private Long scriptPatchBaseVersionId;
   private String pluginId;
   private String pluginVersionId;
   private String commandId;

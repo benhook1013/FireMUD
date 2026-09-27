@@ -20,6 +20,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventRegistrySer
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,7 +42,30 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   @Transactional(rollbackFor = SagaException.class)
   @Timed(value = "script.update")
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
+    if (dto.tenantId() == null || dto.tenantId() <= 0L) {
+      throw new IllegalArgumentException("tenant_id must be positive");
+    }
+    if (dto.baseVersionId() == null || dto.baseVersionId() <= 0L) {
+      throw new IllegalArgumentException("base_version_id must be positive");
+    }
+    requiredText(dto.name(), "script name");
+    requiredText(dto.version(), "script version");
     validateBindings(dto);
+    repository.requireExistingScriptPatchRowsMatchBase(
+        dto.tenantId().toString(), dto.version(), dto.baseVersionId());
+    bindingRepository
+        .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+            RequestIdValidation.requirePositiveLong(dto.tenantId().toString(), "tenantId"),
+            dto.version())
+        .forEach(
+            binding -> {
+              if (binding.getBaseVersionId() == null
+                  || binding.getBaseVersionId().longValue() != dto.baseVersionId()) {
+                throw new IllegalArgumentException("script_patch_base_version_conflict");
+              }
+            });
+    repository.bindScriptPatchBaseVersionId(
+        dto.tenantId().toString(), dto.version(), dto.baseVersionId());
     ScriptDefinition entity = mapper.toEntity(dto);
     ScriptDefinition previousDefinition =
         repository
@@ -147,6 +171,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     copy.setTenantId(source.getTenantId());
     copy.setName(source.getName());
     copy.setScriptVersion(source.getScriptVersion());
+    copy.setBaseVersionId(source.getBaseVersionId());
     copy.setDefinition(source.getDefinition());
     copy.setRowVersion(source.getRowVersion());
     return copy;
@@ -156,6 +181,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     ScriptEventBinding copy = new ScriptEventBinding();
     copy.setTenantId(source.getTenantId());
     copy.setScriptPatchVersion(source.getScriptPatchVersion());
+    copy.setBaseVersionId(source.getBaseVersionId());
     copy.setEventType(source.getEventType());
     copy.setEventSchemaVersion(source.getEventSchemaVersion());
     copy.setScriptId(source.getScriptId());
@@ -172,7 +198,8 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private static boolean sameIdentity(ScriptDefinition left, ScriptDefinition right) {
     return Objects.equals(left.getTenantId(), right.getTenantId())
         && Objects.equals(left.getName(), right.getName())
-        && Objects.equals(left.getScriptVersion(), right.getScriptVersion());
+        && Objects.equals(left.getScriptVersion(), right.getScriptVersion())
+        && Objects.equals(left.getBaseVersionId(), right.getBaseVersionId());
   }
 
   private static boolean sameDefinition(ScriptDefinition left, ScriptDefinition right) {
@@ -188,12 +215,16 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
             + existing.getTenantId()
             + ", version="
             + existing.getScriptVersion()
+            + ", baseVersionId="
+            + existing.getBaseVersionId()
             + ", name="
             + existing.getName()
             + "), requested=(tenantId="
             + requested.getTenantId()
             + ", version="
             + requested.getScriptVersion()
+            + ", baseVersionId="
+            + requested.getBaseVersionId()
             + ", name="
             + requested.getName()
             + ")");
@@ -237,6 +268,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     ScriptEventBinding entity = new ScriptEventBinding();
     entity.setTenantId(dto.tenantId());
     entity.setScriptPatchVersion(dto.version());
+    entity.setBaseVersionId(dto.baseVersionId());
     entity.setScriptId(requiredText(dto.name(), "script name"));
     entity.setEventType(normalized.eventType());
     entity.setEventSchemaVersion(normalized.eventSchemaVersion());

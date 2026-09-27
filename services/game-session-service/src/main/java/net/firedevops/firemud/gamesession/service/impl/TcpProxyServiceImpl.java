@@ -126,6 +126,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             instance.getTenantId(),
             instance.getRuntimeVersion(),
             instance.getScriptPatchVersion(),
+            instance.getScriptPatchBaseVersionId(),
             instance.getScriptPinEpoch(),
             instance.getScriptPatchPinnedControlPlaneRequestId(),
             instance.getGameTemplateId(),
