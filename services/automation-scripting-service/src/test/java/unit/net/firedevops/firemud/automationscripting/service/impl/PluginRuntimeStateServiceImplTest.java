@@ -415,6 +415,38 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void localLifecycleStatusFailsClosedForUnknownPersistedPluginState() {
+    PluginRuntimeState existing = new PluginRuntimeState();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setPluginId("plugin-1");
+    existing.setPluginState("PLUGIN_STATE_FUTURE_VALUE");
+    existing.setLastChangedAt(Instant.ofEpochMilli(123L));
+    existing.setLastPolicyCheckedAt(Instant.ofEpochMilli(456L));
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            gameDesignClient,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
+        service.getLocalLifecycleStatus("1", "game-1", "plugin-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_UNSPECIFIED);
+    assertThat(status.get().statusReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE);
+    Mockito.verifyNoInteractions(gameDesignClient);
+  }
+
+  @Test
   void alreadyDisabledReasonOnlyCommandIsMutationFree() {
     PluginRuntimeState existing = new PluginRuntimeState();
     existing.setTenantId("1");

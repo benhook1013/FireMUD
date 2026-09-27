@@ -416,7 +416,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (routingAdmission != null) {
       return validation(routingAdmission);
     }
-    PinValidation pinValidation = validatePinnedPatch(request, claim, authority);
+    PinValidation pinValidation = validatePinnedPatch(request, claim);
     TriggerAdmission pinAdmission = pinValidation.admission();
     if (pinAdmission != null) {
       return new ValidationResult(pinAdmission, pinValidation.scriptPinEpoch());
@@ -576,8 +576,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private PinValidation validatePinnedPatch(
       TriggerScriptEventRequest request,
-      ScriptEventIngressAudit claim,
-      AdmissionAuthority authority) {
+      ScriptEventIngressAudit claim) {
     if (request.getGameInstanceId().isBlank()) {
       return new PinValidation(null, 0L);
     }
@@ -680,10 +679,26 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!hasPluginId || !hasPluginVersion || request.getGameInstanceId().isBlank()) {
       return rejected("missing_plugin_identity");
     }
-    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
-        resolvePluginStatus(authority, request, request.getPluginId());
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status;
+    try {
+      status = resolvePluginStatus(authority, request, request.getPluginId());
+    } catch (IllegalArgumentException ex) {
+      return new TriggerAdmission(
+          false,
+          OUTCOME_VERSION_UNAVAILABLE,
+          ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+          0);
+    }
     if (status.isEmpty()) {
       return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_not_active", 0);
+    }
+    if (ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE.equals(
+        status.get().statusReason())) {
+      return new TriggerAdmission(
+          false,
+          OUTCOME_VERSION_UNAVAILABLE,
+          ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+          0);
     }
     if (status.get().pluginState() != PluginState.PLUGIN_STATE_ENABLED) {
       return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_disabled", 0);

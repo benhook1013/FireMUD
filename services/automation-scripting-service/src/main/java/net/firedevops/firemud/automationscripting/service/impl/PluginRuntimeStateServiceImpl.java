@@ -112,7 +112,32 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(pluginId, "plugin_id");
     return repository
         .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
-        .map(state -> toStatus(state, Map.of()));
+        .map(
+            state -> {
+              try {
+                return toStatus(state, Map.of());
+              } catch (IllegalArgumentException ex) {
+                return new PluginRuntimeStatus(
+                    normalize(state.getActivePluginVersionId()),
+                    normalize(state.getPendingPluginVersionId()),
+                    normalize(state.getRuntimeRegionId()),
+                    zeroIfNull(state.getRuntimeRegionEpoch()),
+                    PluginState.PLUGIN_STATE_UNSPECIFIED,
+                    ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+                    state.getLastChangedAt() == null
+                        ? 0L
+                        : state.getLastChangedAt().toEpochMilli(),
+                    normalize(state.getControlPlaneRequestId()),
+                    normalize(state.getActorPrincipal()),
+                    state.getLastPolicyCheckedAt() == null
+                        ? 0L
+                        : state.getLastPolicyCheckedAt().toEpochMilli(),
+                    null,
+                    null,
+                    state.getPluginActivationEpoch(),
+                    state.getLifecycleRevision());
+              }
+            });
   }
 
   @Override

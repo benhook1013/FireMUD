@@ -1096,18 +1096,61 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": "2026-09-26T00:00:00Z",
             "author": {"login": "maintainer"},
         }
+        mid_body_marker = {
+            "databaseId": 94,
+            "body": "The marker is only mentioned here <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-27T00:00:00Z",
+            "updatedAt": "2026-09-27T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        indented_marker = {
+            "databaseId": 95,
+            "body": "**Review scope changed:** indentation is not accepted\n <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-28T00:00:00Z",
+            "updatedAt": "2026-09-28T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        indented_marker_only = {
+            "databaseId": 97,
+            "body": " <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-28T12:00:00Z",
+            "updatedAt": "2026-09-28T12:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        coderabbit_marker = {
+            "databaseId": 96,
+            "body": (
+                "**Review scope changed:** bot-authored marker is ignored\n"
+                "<!-- firemud-review-scope-change -->"
+            ),
+            "createdAt": "2026-09-29T00:00:00Z",
+            "updatedAt": "2026-09-29T00:00:00Z",
+            "author": {"login": "coderabbitai[bot]"},
+        }
         with tempfile.TemporaryDirectory() as directory:
-            history = self._history(Path(directory), self._payload([valid, malformed, malformed_marker]))
+            history = self._history(
+                Path(directory),
+                self._payload(
+                    [
+                        valid,
+                        malformed,
+                        malformed_marker,
+                        mid_body_marker,
+                        indented_marker,
+                        coderabbit_marker,
+                        indented_marker_only,
+                    ]
+                ),
+            )
 
         markers = [item for item in history if item.get("scope_changed") is True]
         self.assertEqual(len(markers), 3)
+        self.assertEqual([marker["comment_id"] for marker in markers], [90, 91, 95])
         self.assertEqual(markers[0]["kind"], "scope_change")
         self.assertFalse(markers[0]["scope_change_malformed"])
         self.assertEqual(markers[0]["observed_at"], "2026-09-24T00:00:00Z")
-        self.assertEqual(markers[1]["kind"], "scope_change_malformed")
-        self.assertTrue(markers[1]["scope_change_malformed"])
-        self.assertEqual(markers[2]["kind"], "scope_change_malformed")
-        self.assertTrue(markers[2]["scope_change_malformed"])
+        self.assertEqual([marker["kind"] for marker in markers[1:]], ["scope_change_malformed"] * 2)
+        self.assertTrue(all(marker["scope_change_malformed"] for marker in markers[1:]))
         for marker in markers:
             self.assertFalse(marker["completed"])
             self.assertFalse(marker["attributable"])
@@ -1622,6 +1665,8 @@ class RuntimeTest(unittest.TestCase):
 
         observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
         self.assertEqual(observation["anchor"], record["anchor"])
+        self.assertEqual(observation["trigger_id"], 10)
+        self.assertEqual(observation["response_id"], 11)
 
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
