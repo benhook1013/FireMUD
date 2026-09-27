@@ -104,7 +104,8 @@ public final class GameDesignClient
           .setError(
               ErrorDetail.newBuilder()
                   .setCode("INVALID_ARGUMENT")
-                  .setMessage("base_version_id must be positive for script-patch publication lookup")
+                  .setMessage(
+                      "base_version_id must be positive for script-patch publication lookup")
                   .build())
           .build();
     }
