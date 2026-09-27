@@ -461,9 +461,7 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
-            // A failed candidate may be abandoned only while no bundle references it. The
-            // readback above is in this same locked transaction, so never delete a bundled version.
-            versionRepository.delete(currentVersion);
+            // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {

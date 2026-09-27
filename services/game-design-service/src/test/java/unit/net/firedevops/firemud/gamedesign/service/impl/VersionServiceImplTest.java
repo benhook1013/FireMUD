@@ -1033,7 +1033,8 @@ class VersionServiceImplTest {
   void getPublishedPluginVersionReadsHistoricalTerminalVersions() {
     for (VersionLifecycleState state :
         List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
-      PublishedPluginVersion historical = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+      PublishedPluginVersion historical =
+          uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
       historical.setPublicationState(state);
       when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
               "tenant-1", "plugin-1", "plugin-v1"))
@@ -1041,7 +1042,8 @@ class VersionServiceImplTest {
 
       assertEquals(
           state,
-          service.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1").publicationState());
+          service.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1")
+              .publicationState());
     }
   }
 

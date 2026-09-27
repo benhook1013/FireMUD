@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
@@ -67,8 +66,6 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
@@ -80,27 +77,6 @@ import org.mockito.Mockito;
 class AutomationScriptingControlPlaneGrpcServiceTest {
   private static AutomationAdmissionStateService admissionStateService() {
     return Mockito.mock(AutomationAdmissionStateService.class);
-  }
-
-  private static GameDesignControlPlaneClient gameDesignClient() {
-    GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
-    Mockito.when(
-            client.getPublishedScriptPatchVersion(
-                Mockito.anyString(), Mockito.anyLong(), Mockito.anyString()))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setScriptPatchVersion("patch-2")
-                        .setVersionId(17L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setLastChangedAtMs(150L)
-                        .build())
-                .build());
-    return client;
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -115,7 +91,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         new ScriptRuntimeProperties(),
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient(),
         Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
@@ -132,7 +107,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient(),
         Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
@@ -150,7 +124,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         scriptScheduleInstanceService,
-        gameDesignClient(),
         Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
@@ -161,7 +134,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptRuntimeProperties runtimeProperties,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     AutomationEventControlPlaneService eventControlPlaneService =
         new AutomationEventControlPlaneService(new BuiltInScriptEventRegistryService());
@@ -171,7 +143,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             automationAdmissionStateService,
             scriptPatchPinProjectionService,
             scriptScheduleInstanceService,
-            gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             runtimeProperties,
             new TemporalScriptPatchReadinessWorkflowMetadataResolver(
@@ -592,7 +563,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             scheduleInstanceService,
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptScheduleInstancesResponse> ref = new AtomicReference<>();
 
@@ -809,7 +779,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             scheduleInstanceService,
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
 
@@ -1143,7 +1112,61 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getPublication().getVersionId()).isZero();
+    assertThat(ref.get().getPublication().getScriptPatchVersion()).isEqualTo("PATCH-2");
+    assertThat(ref.get().getPublication().getLookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(ref.get().getPublication().getLookupErrorMessage())
+        .isEqualTo(
+            "base_version_id is unavailable in the pin projection required for exact "
+                + "script-patch publication lookup");
+  }
+
+  @Test
+  void reportsMissingScriptPatchVersionAsInvalidArgument() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    Mockito.when(pinProjectionService.getPinConvergence("1", "game-1"))
+        .thenReturn(
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1",
+                        "game-1",
+                        "",
+                        0L,
+                        "",
+                        222L,
+                        230L,
+                        4L,
+                        false,
+                        "region-7",
+                        22L,
+                        "demo",
+                        "production",
+                        "17")),
+                "",
+                ""));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            pinProjectionService);
+    AtomicReference<GetAutomationPinConvergenceResponse> ref = new AtomicReference<>();
+
+    service.getAutomationPinConvergence(
+        GetAutomationPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getPublication().getScriptPatchVersion()).isEmpty();
     assertThat(ref.get().getPublication().getLookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getPublication().getLookupErrorMessage())
+        .isEqualTo("script_patch_version is required");
   }
 
   @Test
@@ -1589,7 +1612,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             Mockito.mock(ScriptScheduleInstanceService.class),
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
 
@@ -1746,7 +1768,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             Mockito.mock(ScriptScheduleInstanceService.class),
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
 
@@ -1843,7 +1864,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             Mockito.mock(ScriptScheduleInstanceService.class),
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
 
@@ -1953,7 +1973,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
             Mockito.mock(ScriptScheduleInstanceService.class),
-            gameDesignClient(),
             gameSessionClient);
     AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
 

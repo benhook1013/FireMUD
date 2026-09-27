@@ -8,14 +8,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
+import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapSet;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
@@ -23,6 +26,9 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
@@ -36,11 +42,12 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof that final full-version publication writes share one rollback boundary. */
+/** PostgreSQL proof for full-version publication transactions and failure retention. */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
@@ -76,8 +83,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
+  @Autowired private TemplateRemapSetService templateRemapSetService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
+  @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {
@@ -149,6 +159,58 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
+  void fullVersionRequestDigestBackfillReturnsEmptyForMismatchedAttemptIdentity() {
+    String tenantId = "9004";
+    String publishWorkflowId = "full-version-digest-backfill-integration-test";
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("digest-backfill-proof-game");
+    gameRepository.save(game);
+
+    Version version = new Version();
+    version.setTenantId(tenantId);
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    version.setNotes("digest backfill proof");
+    Version savedVersion = versionRepository.save(version);
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId(tenantId);
+    attempt.setPublishWorkflowId(publishWorkflowId);
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setStatus(PublishAttemptStatus.PENDING);
+    attempt.setVersionId(savedVersion.getId());
+    attempt.setVersionNumber(savedVersion.getVersionNumber());
+    PublishAttempt savedAttempt = publishAttemptRepository.save(attempt);
+
+    PublishAttempt backfilled =
+        publishAttemptRepository
+            .backfillFullVersionRequestDigestIfAbsent(
+                savedAttempt.getId(),
+                tenantId,
+                publishWorkflowId,
+                savedVersion.getId(),
+                savedVersion.getVersionNumber(),
+                "exact-identity-digest")
+            .orElseThrow();
+
+    assertThat(backfilled.getRequestDigest()).isEqualTo("exact-identity-digest");
+    assertThat(
+            publishAttemptRepository.backfillFullVersionRequestDigestIfAbsent(
+                savedAttempt.getId(),
+                "wrong-tenant",
+                publishWorkflowId,
+                savedVersion.getId(),
+                savedVersion.getVersionNumber(),
+                "mismatched-identity-digest"))
+        .isEmpty();
+    PublishAttempt storedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
+  }
+
+  @Test
   void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
     String tenantId = "9002";
     String publishRequestId = "successful-reconcile-request";
@@ -208,5 +270,103 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
     assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
+  }
+
+  @Test
+  void finalizationFailureAfterExportRetainsCandidateReferencedByApprovedRemapSet() {
+    String tenantId = "9003";
+    String publishRequestId = "failed-remap-request";
+    String publishWorkflowId =
+        FiremudWorkflowIds.workflowId(
+            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
+            tenantId,
+            "publish-request",
+            publishRequestId);
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("failed-remap-proof-game");
+    gameRepository.save(game);
+
+    Version sourceVersion = new Version();
+    sourceVersion.setTenantId(tenantId);
+    sourceVersion.setVersionNumber(1);
+    sourceVersion.setVersionState(VersionLifecycleState.PUBLISHED);
+    sourceVersion.setVersionStateEpoch(2L);
+    sourceVersion.setNotes("remap source");
+    sourceVersion = versionRepository.save(sourceVersion);
+    long sourceVersionId = sourceVersion.getId();
+    AtomicReference<Long> candidateVersionId = new AtomicReference<>();
+    AtomicReference<String> remapSetId = new AtomicReference<>();
+
+    Mockito.when(
+            publishGateService.collectFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(publishRequestId),
+                Mockito.eq(publishWorkflowId)))
+        .thenAnswer(
+            invocation -> {
+              VersionDto candidate = invocation.getArgument(0);
+              candidateVersionId.set(candidate.id());
+              TemplateRemapSetDto draftRemapSet =
+                  templateRemapSetService.createTemplateRemapSet(
+                      tenantId,
+                      sourceVersionId,
+                      candidate.id(),
+                      "approved remap references publication candidate",
+                      List.of());
+              remapSetId.set(draftRemapSet.remapSetId());
+              templateRemapSetService.approveTemplateRemapSet(
+                  tenantId, draftRemapSet.remapSetId(), "approved for replacement launch");
+              return List.of(
+                  new PublishParticipantDigestDto(
+                      "GAME_DESIGN_CONTROL_PLANE",
+                      String.valueOf(candidate.id()),
+                      "version:" + candidate.id(),
+                      "failed-remap-design-digest",
+                      1,
+                      null,
+                      null));
+            });
+    ExportedAssetManifest exportedManifest =
+        new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
+    Mockito.when(assetExportService.exportAssets(tenantId, 2)).thenReturn(exportedManifest);
+    Mockito.doThrow(new IllegalStateException("forced finalization failure"))
+        .when(versionAssetArtifactService)
+        .markPublished(
+            Mockito.eq(tenantId),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(publishWorkflowId),
+            Mockito.eq(exportedManifest.manifestHash()));
+
+    assertThatThrownBy(
+            () ->
+                versionPublishCommandService.publishFullVersion(
+                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId))
+        .isInstanceOf(RuntimeException.class);
+
+    Mockito.verify(assetExportService).exportAssets(tenantId, 2);
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    Version retainedCandidate =
+        versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
+    assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(
+            publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                tenantId, candidateVersionId.get()))
+        .isEmpty();
+    VersionAssetArtifact failedArtifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
+            .orElseThrow();
+    assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    VersionTemplateRemapSet retainedRemapSet =
+        templateRemapSetRepository
+            .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
+            .orElseThrow();
+    assertThat(retainedRemapSet.getStatus()).isEqualTo(TemplateRemapSetStatus.APPROVED);
+    assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
+    assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
   }
 }

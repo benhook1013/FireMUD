@@ -835,9 +835,50 @@ deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
 deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
-quiesced_upgrade = "--set 'previewStack.services[3].replicaCount=0'"
+quiesced_upgrade = '--set "previewStack.services[${game_design_service_index}].replicaCount=0"'
 if deploy_run.count("helm upgrade --install") != 2:
     raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
+if deploy_run.count("game_design_service_index=") != 1 or "previewStack.services[3].replicaCount=0" in deploy_run:
+    raise SystemExit("dev-demo must derive the Game Design chart index from rendered values")
+resolver_start = 'game_design_service_index="$(python3 - /tmp/dev-demo-values.yaml <<\'PY\'\n'
+resolver_end = "\nPY\n)\""
+resolver_start_index = deploy_run.find(resolver_start)
+resolver_end_index = deploy_run.find(resolver_end, resolver_start_index)
+if resolver_start_index < 0 or resolver_end_index < 0:
+    raise SystemExit("dev-demo must use a bounded inline resolver for rendered Game Design values")
+resolver_python = deploy_run[
+    resolver_start_index + len(resolver_start) : resolver_end_index
+]
+with tempfile.TemporaryDirectory() as resolver_dir:
+    resolver_dir_path = Path(resolver_dir)
+    resolver_script = resolver_dir_path / "resolve-game-design-index.py"
+    resolver_script.write_text(resolver_python, encoding="utf-8")
+
+    def resolve_index(service_names):
+        values_path = resolver_dir_path / "values.yaml"
+        values_path.write_text(
+            yaml.safe_dump({"previewStack": {"services": [{"name": name} for name in service_names]}}),
+            encoding="utf-8",
+        )
+        return subprocess.run(
+            [sys.executable, str(resolver_script), str(values_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    reordered_index = resolve_index(
+        ["world-management-service", "game-design-service", "game-logic-service"]
+    )
+    if reordered_index.returncode != 0 or reordered_index.stdout.strip() != "1":
+        raise SystemExit("dev-demo Game Design index resolver must select the exact name after reordering")
+    for invalid_names, expected_count in (
+        (["world-management-service"], 0),
+        (["game-design-service", "game-design-service"], 2),
+    ):
+        invalid_index = resolve_index(invalid_names)
+        if invalid_index.returncode == 0 or f"found {expected_count}" not in invalid_index.stderr:
+            raise SystemExit("dev-demo Game Design index resolver must refuse missing or duplicate names")
 if not (
     deploy_run.index(quiesced_upgrade) < deploy_run.rindex("helm upgrade --install")
     and deploy_run.index("--wait", deploy_run.index(quiesced_upgrade))
@@ -859,8 +900,13 @@ hosted_values = yaml.safe_load(
     (repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text(encoding="utf-8")
 )
 configured_services = hosted_values["previewStack"]["services"]
-if len(configured_services) <= 3 or configured_services[3].get("name") != "game-design-service":
-    raise SystemExit("dev-demo publication-quiescence override must target the Game Design chart entry")
+game_design_indices = [
+    index
+    for index, service in enumerate(configured_services)
+    if isinstance(service, dict) and service.get("name") == "game-design-service"
+]
+if len(game_design_indices) != 1:
+    raise SystemExit("dev-demo fixture values must define exactly one Game Design chart entry")
 with tempfile.TemporaryDirectory() as temp_dir:
     rendered_values_path = Path(temp_dir) / "dev-demo-values.yaml"
     subprocess.run(
@@ -886,7 +932,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
             "-f",
             str(rendered_values_path),
             "--set",
-            "previewStack.services[3].replicaCount=0",
+            f"previewStack.services[{game_design_indices[0]}].replicaCount=0",
         ],
         check=True,
         capture_output=True,
@@ -2092,6 +2138,7 @@ steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 run = next(step["run"] for step in steps if step.get("name") == "Deploy dev-demo release")
 run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
 run = run.replace("${{ needs.dev-demo-plan.outputs.namespace }}", "dev")
+run = run.replace("/tmp/dev-demo-values.yaml", '"$TEST_RENDERED_VALUES_PATH"')
 print(run)
 PY
 python3 - "$workflow" >"$record_deployed_head_step" <<'PY'
@@ -2113,6 +2160,8 @@ PY
 
 deployment_stub_dir="$fixture_dir/deployment-evidence-stubs"
 mkdir -p "$deployment_stub_dir"
+deployment_values_path="$fixture_dir/deployment-values.yaml"
+printf 'previewStack:\n  services:\n    - name: world-management-service\n    - name: game-design-service\n    - name: game-logic-service\n' >"$deployment_values_path"
 cat >"$deployment_stub_dir/helm" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -2122,8 +2171,8 @@ invocation="$(grep -c '^helm-start$' "${TEST_DEPLOYMENT_LOG:?}" || true)"
 if [[ "$invocation" == 0 ]]; then
   expected=(
     upgrade --install dev k8s/helm/firemud
-    -f /tmp/dev-demo-values.yaml
-    --set 'previewStack.services[3].replicaCount=0'
+    -f "${TEST_RENDERED_VALUES_PATH:?}"
+    --set "previewStack.services[${TEST_GAME_DESIGN_INDEX:?}].replicaCount=0"
     --namespace dev
     --wait
     --timeout 15m
@@ -2131,7 +2180,7 @@ if [[ "$invocation" == 0 ]]; then
 elif [[ "$invocation" == 1 ]]; then
   expected=(
     upgrade --install dev k8s/helm/firemud
-    -f /tmp/dev-demo-values.yaml
+    -f "${TEST_RENDERED_VALUES_PATH:?}"
     --namespace dev
     --wait
     --timeout 15m
@@ -2213,6 +2262,8 @@ PY
       PATH="$deployment_stub_dir:$PATH" \
       GITHUB_ENV="$github_env" \
       TEST_DEPLOYMENT_LOG="$deployment_log" \
+      TEST_RENDERED_VALUES_PATH="$deployment_values_path" \
+      TEST_GAME_DESIGN_INDEX=1 \
       TEST_HELM_RESULT="$scenario" \
       bash "$deploy_script"
   )
