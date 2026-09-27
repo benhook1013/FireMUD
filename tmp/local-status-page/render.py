@@ -805,6 +805,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-fact-value .additions {{ color: #9de0bd; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #ffc390; }}
 .front-controller-unavailable {{ color: #f1dfe1; font-weight: 600; }}
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
+@media (min-width: 901px) {{ .front-copy {{ padding: 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
 .front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
