@@ -1677,6 +1677,9 @@ class AccountJoinPostgresIntegrationTest {
         payload.replace(
             exactMembershipVersionJson, "\"membershipVersion\":" + malformedMembershipVersionJson);
     assertThat(malformedPayload).isNotEqualTo(payload);
+    assertThatThrownBy(() -> MembershipAuthorityEventV1Codec.verify(malformedPayload))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("event.membershipVersion ");
     // V33 events are immutable; append a malformed newer event through the opaque storage boundary.
     String malformedRequestId = "malformed-version-" + UUID.randomUUID();
     var malformedEvent =
