@@ -345,7 +345,10 @@ def _frontend_render_enabled(documents: list[object]) -> bool:
         spec = document.get("spec")
         if not isinstance(spec, dict):
             continue
-        for rule in spec.get("rules", []):
+        rules = spec.get("rules", [])
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
             if not isinstance(rule, dict):
                 continue
             http = rule.get("http")
