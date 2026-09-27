@@ -1073,6 +1073,14 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             roleStatus(
                 materials.material(HostedIdentityContract.GRPC_ROLE),
                 previousRole(resource, HostedIdentityContract.GRPC_ROLE)));
+    updatedStatus.setGrpcAccountService(
+        roleStatus(
+            materials.material(HostedIdentityContract.GRPC_ACCOUNT_ROLE),
+            previousRole(resource, HostedIdentityContract.GRPC_ACCOUNT_ROLE)));
+    updatedStatus.setGrpcGameSessionService(
+        roleStatus(
+            materials.material(HostedIdentityContract.GRPC_GAME_SESSION_ROLE),
+            previousRole(resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE)));
     updatedStatus.setGrpcPublication(publicationRoleStatus(resource, materials));
     resource.setStatus(updatedStatus);
     return UpdateControl.patchStatus(resource).rescheduleAfter(properties.getReconcileInterval());
@@ -1126,7 +1134,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           previousPublicationRoles(resource);
       return publicationRoles == null ? null : publicationRoles.get(role);
     }
-    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) return null;
     if (resource.getStatus() == null) return null;
     return switch (role) {
       case HostedIdentityContract.INGRESS_ROLE -> resource.getStatus().getIngress();
@@ -1135,6 +1142,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           resource.getStatus().getGatewayInternalWs();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> resource.getStatus().getTcpProxyBridge();
       case HostedIdentityContract.GRPC_ROLE -> resource.getStatus().getGrpc();
+      case HostedIdentityContract.GRPC_ACCOUNT_ROLE ->
+          resource.getStatus().getGrpcAccountService();
+      case HostedIdentityContract.GRPC_GAME_SESSION_ROLE ->
+          resource.getStatus().getGrpcGameSessionService();
       default -> throw new IllegalArgumentException("unsupported identity role: " + role);
     };
   }
