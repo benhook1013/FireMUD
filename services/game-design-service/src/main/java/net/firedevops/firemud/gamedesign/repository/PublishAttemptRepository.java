@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -78,20 +79,20 @@ public class PublishAttemptRepository {
     if (attemptId == null || requestDigest == null || requestDigest.isBlank()) {
       return Optional.empty();
     }
+    Condition fullVersionAttemptIdentity =
+        ID.eq(attemptId)
+            .and(TENANT_ID.eq(tenantId))
+            .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
+            .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
+            .and(VERSION_ID.eq(versionId))
+            .and(VERSION_NUMBER.eq(versionNumber));
     dsl.update(PUBLISH_ATTEMPT_TABLE)
         .set(REQUEST_DIGEST, requestDigest)
-        .where(
-            ID.eq(attemptId)
-                .and(TENANT_ID.eq(tenantId))
-                .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
-                .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
-                .and(VERSION_ID.eq(versionId))
-                .and(VERSION_NUMBER.eq(versionNumber))
-                .and(REQUEST_DIGEST.isNull()))
+        .where(fullVersionAttemptIdentity.and(REQUEST_DIGEST.isNull()))
         .execute();
     return Optional.ofNullable(
         dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
-            .where(ID.eq(attemptId))
+            .where(fullVersionAttemptIdentity)
             .limit(1)
             .fetchOne(this::toEntity));
   }
