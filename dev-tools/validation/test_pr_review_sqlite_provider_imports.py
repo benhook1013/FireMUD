@@ -33,8 +33,18 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.records.bootstrap()
 
     @staticmethod
-    def checkpoint(channel: str, marker: str, *, raw: int = 1, accepted: int = 1, routed: int = 0):
-        suffix = f"{channel}: {raw} found / {accepted} accepted / {routed} routed · {HEAD[:12]} · 1 files"
+    def checkpoint(
+        channel: str,
+        marker: str,
+        *,
+        raw: int = 1,
+        accepted: int = 1,
+        routed: int | None = 0,
+    ):
+        counts = f"{raw} found / {accepted} accepted"
+        if routed is not None:
+            counts += f" / {routed} routed"
+        suffix = f"{channel}: {counts} · {HEAD[:12]} · 1 files"
         comments, unparsed = pr_review.evidence.parse_checkpoint_comments(
             [{"id": 10, "body": suffix + "\n" + marker, "created_at": "2026-09-27T12:00:00Z"}]
         )
@@ -48,6 +58,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         *,
         state: str = "COMMENTED",
         review_body: str | None = None,
+        decision_text: str = "701\taccepted\tvalid source finding\n",
     ) -> None:
         capture_dir = self.common / "firemud" / f"hosted-review.{review_id}"
         capture_dir.mkdir(parents=True)
@@ -76,7 +87,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         if review_body is not None:
             snapshot["review"]["body"] = review_body
         (capture_dir / "snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
-        (capture_dir / "decisions.tsv").write_text("701\taccepted\tvalid source finding\n", encoding="utf-8")
+        (capture_dir / "decisions.tsv").write_text(decision_text, encoding="utf-8")
 
     def cli_capture(self, run_id: str = "run.Importer") -> None:
         capture_dir = self.common / "coderabbit-review-logs" / run_id
@@ -169,6 +180,66 @@ class SqliteProviderImportsTest(unittest.TestCase):
         routes = self.records.open_routes()
         self.assertEqual(len(routes), 1)
         self.assertIsNone(routes[0]["target_pr"])
+
+    def test_legacy_two_count_checkpoints_import_routed_hosted_and_cli_findings(self) -> None:
+        self.hosted_capture(decision_text="701\trouted\towned by another PR\n")
+        hosted = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->", accepted=0, routed=None)
+        hosted_result = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=hosted,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.cli_capture()
+        cli = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=None)
+        cli_result = pr_review.sqlite_provider_imports.import_cli_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=cli,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertIsNone(hosted.routed)
+        self.assertEqual(hosted_result["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        self.assertIsNone(cli.routed)
+        self.assertEqual(cli_result["counts"], {"found": 1, "accepted": 0, "routed": 1})
+
+    def test_explicit_modern_routed_counts_remain_strict_for_hosted_and_cli(self) -> None:
+        self.hosted_capture(decision_text="701\trouted\towned by another PR\n")
+        hosted = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->", accepted=0, routed=0)
+        with self.assertRaisesRegex(
+            pr_review.sqlite_provider_imports.ProviderImportError,
+            "checkpoint counts do not match",
+        ):
+            pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=hosted,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+            )
+
+        self.cli_capture()
+        cli = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=0)
+        with self.assertRaisesRegex(pr_review.evidence.CaptureInvalid, "routed count"):
+            pr_review.sqlite_provider_imports.import_cli_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=cli,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+            )
 
     def test_provider_import_rolls_back_when_a_later_decision_conflicts(self) -> None:
         self.records.record_run(

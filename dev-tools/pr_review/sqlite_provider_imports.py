@@ -446,7 +446,7 @@ def _validate_counts(
         raise ProviderImportError("source decisions do not map one-to-one to captured findings")
     accepted = sum(disposition == "accepted" for disposition, _ in decisions.values())
     routed = sum(disposition == "routed" for disposition, _ in decisions.values())
-    if accepted != checkpoint.accepted or routed != (checkpoint.routed or 0):
+    if accepted != checkpoint.accepted or (checkpoint.routed is not None and routed != checkpoint.routed):
         raise ProviderImportError("checkpoint counts do not match recorded provider decisions")
 
 

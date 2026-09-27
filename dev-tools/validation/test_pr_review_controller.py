@@ -673,7 +673,7 @@ class ControllerTests(unittest.TestCase):
         )
         return controller
 
-    def hosted_judgment_allocation_fixture(self, *, audit=None, hosted_patch_id=None):
+    def hosted_judgment_allocation_fixture(self, *, audit=None, hosted_patch_id=None, cli_patch_id=None):
         values = {1: pr(1, HEAD_3)}
         hosted_review = self.allocation_evidence(
             head=HEAD_2,
@@ -683,6 +683,14 @@ class ControllerTests(unittest.TestCase):
         )
         if hosted_patch_id is not None:
             hosted_review["patch_id"] = hosted_patch_id
+        cli_review = self.allocation_evidence(
+            head=HEAD_3,
+            checkpoint="cli-current-head",
+            channel="cli",
+            raw=0,
+        )
+        if cli_patch_id is not None:
+            cli_review["patch_id"] = cli_patch_id
         evidence = AuditedEvidence(
             {
                 (1, "hosted"): [
@@ -690,12 +698,7 @@ class ControllerTests(unittest.TestCase):
                     self.scope_timeline_evidence(1, "hosted", HEAD_2),
                 ],
                 (1, "cli"): [
-                    self.allocation_evidence(
-                        head=HEAD_3,
-                        checkpoint="cli-current-head",
-                        channel="cli",
-                        raw=0,
-                    ),
+                    cli_review,
                     self.scope_timeline_evidence(1, "cli", HEAD_3),
                 ],
             },
@@ -758,6 +761,18 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+
+    def test_bounded_hosted_allocation_rejects_current_cli_patch_mismatch(self):
+        controller, _ = self.hosted_judgment_allocation_fixture(cli_patch_id="stale-cli-patch")
+
+        self.grant_judgment_hosted_review(controller)
+
+        self.assertEqual(
+            controller.status()["review_targets"]["hosted"]["status"],
+            "JUDGMENT_REQUIRED",
+        )
+        with self.assertRaisesRegex(ControllerError, "hosted review cannot run: JUDGMENT_REQUIRED"):
+            controller.resolve_hosted_target()
 
     def test_bounded_hosted_allocation_still_refuses_judgment_required_with_open_findings(self):
         audit = {

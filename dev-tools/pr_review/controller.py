@@ -3843,6 +3843,7 @@ class ReviewController:
         if not (
             shares_current_parent(hosted_latest)
             and shares_current_parent(cli_latest)
+            and _field(cli_latest, "patch_id") == current.patch_id
             and type(_field(hosted_latest, "raw", "raw_found")) is int
             and _field(hosted_latest, "raw", "raw_found") == 0
             and type(_field(hosted_latest, "accepted")) is int
