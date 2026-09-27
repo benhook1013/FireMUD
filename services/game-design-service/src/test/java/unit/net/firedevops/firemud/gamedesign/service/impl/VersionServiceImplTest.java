@@ -273,6 +273,41 @@ class VersionServiceImplTest {
         .createScriptPatchAttempt(any(), any(), any(), any());
     verify(publishGateService, org.mockito.Mockito.never())
         .collectScriptPatchParticipantDigests(any(), any(), any());
+    verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", List.of());
+  }
+
+  @Test
+  void concurrentScriptPatchSuccessNotifiesAfterParticipantFailure() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "first notes");
+    Version published =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
+        .thenReturn(Optional.of(draft), Optional.of(published));
+    doAnswer(
+            invocation -> {
+              attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
+              throw new IllegalStateException("participant read failed after concurrent success");
+            })
+        .when(publishGateService)
+        .collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+
+    VersionDto result =
+        service.publishScriptPatchVersion("tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID);
+
+    assertEquals(11L, result.id());
+    assertEquals(VersionLifecycleState.PUBLISHED, result.versionState());
+    verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", List.of());
   }
 
   @Test

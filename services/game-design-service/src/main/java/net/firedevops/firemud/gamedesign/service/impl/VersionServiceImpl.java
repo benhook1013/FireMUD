@@ -164,6 +164,7 @@ public class VersionServiceImpl implements VersionService {
       throw ex.causeException();
     }
     if (reservation.status() == PublishAttemptStatus.SUCCEEDED) {
+      notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
       return reservation.versionDto();
     }
     if (reservation.status() == PublishAttemptStatus.FAILED) {
@@ -183,10 +184,7 @@ public class VersionServiceImpl implements VersionService {
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
-        runSafely(
-            "notify script patch version update",
-            () ->
-                scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
+        notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {
@@ -223,6 +221,7 @@ public class VersionServiceImpl implements VersionService {
                         publishFailureCode(operationFailure),
                         publishFailureMessage(operationFailure)));
         if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
+          notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
           return failure.versionDto();
         }
       } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
@@ -462,6 +461,12 @@ public class VersionServiceImpl implements VersionService {
       return new IllegalStateException(
           failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
+  }
+
+  private void notifyScriptPatchVersionUpdate(String tenantId, String scriptPatchVersion) {
+    runSafely(
+        "notify script patch version update",
+        () -> scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
   }
 
   @Override
