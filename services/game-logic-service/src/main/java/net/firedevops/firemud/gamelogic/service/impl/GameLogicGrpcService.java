@@ -113,7 +113,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         gameLogicDraftDesignDigestService,
         gameplaySessionAttestationService,
         meterRegistry,
-        configuredPublicationReadGuard(workloadNamespace));
+        PublicationReadGuard.configured(workloadNamespace));
   }
 
   public GameLogicGrpcService(
@@ -183,17 +183,19 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         responseObserver.onCompleted();
         return;
       }
-      if (!request.getBaseVersionId().isEmpty()) {
-        throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-      }
       PublicationDigestRequestBinding binding =
-          PublicationDigestRequestBinding.full(
-              request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
       var digest =
           gameLogicDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
-      requireMatchingDigestScope(binding, digest.tenantId(), digest.scopeValue());
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
@@ -236,34 +238,11 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     }
   }
 
-  private static void requireMatchingDigestScope(
-      PublicationDigestRequestBinding binding, String tenantId, String scopeValue) {
-    if (!binding.tenantId().equals(tenantId) || !binding.versionId().equals(scopeValue)) {
-      throw new IllegalArgumentException("owner digest scope does not match publication binding");
-    }
-  }
-
   private void requirePublicationRead() {
     if (publicationReadGuard == null) {
       throw new AdminAuthorizationException("Publication read authorization is not configured");
     }
     publicationReadGuard.requirePublicationRead(PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      logger.warn(
-          "firemud.grpc.workload-namespace is unset or blank; publication digest reads will be denied");
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      logger.warn(
-          "firemud.grpc.workload-namespace is invalid; publication digest reads will be denied: {}",
-          ex.getMessage());
-      return null;
-    }
   }
 
   @Override

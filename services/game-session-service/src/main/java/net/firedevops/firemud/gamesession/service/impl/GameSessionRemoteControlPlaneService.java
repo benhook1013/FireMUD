@@ -130,10 +130,7 @@ final class GameSessionRemoteControlPlaneService {
     return GetRemoteFollowupResponse.newBuilder()
         .setFollowup(
             toRemoteFollowupEntry(
-                followup,
-                linkedTargetCommand(tenantId, followup),
-                coordinator,
-                new HashMap<>()))
+                followup, linkedTargetCommand(tenantId, followup), coordinator, new HashMap<>()))
         .build();
   }
 
@@ -504,11 +501,7 @@ final class GameSessionRemoteControlPlaneService {
               followup == null ? null : targetCommandsByFollowupId.get(followup.getFollowupId());
           response.addResults(
               toRemoteFollowupResultEntry(
-                  result,
-                  coordinator,
-                  followup,
-                  targetCommand,
-                  runtimeBoundaryCache));
+                  result, coordinator, followup, targetCommand, runtimeBoundaryCache));
         });
     return response.build();
   }
@@ -2125,8 +2118,7 @@ final class GameSessionRemoteControlPlaneService {
           .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
           .setLastChangedAtMs(0L)
           .setLookupErrorCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
-          .setLookupErrorMessage(
-              "base_version_id is required for script patch publication lookup")
+          .setLookupErrorMessage("base_version_id is required for script patch publication lookup")
           .build();
     }
     GetPublishedScriptPatchVersionResponse response =

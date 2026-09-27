@@ -113,6 +113,93 @@ Once a service has no active compatibility obligation, it may converge directly 
 
 Direct replacements that take blocking DDL or change writer uniqueness require a quiesced deployment boundary when rolling old/new overlap is unsafe. The boundary must come from trusted deployment control, not a PR-controlled Helm value or a static `Recreate` strategy alone: first close the canonical writer Services and prove their EndpointSlices have no endpoints, then scale their owners to zero and prove that no old writer Pods remain before a new binary can start. Restore Service selectors only after the writers are stopped and verified; a failed closure or drain blocks activation and requires operator verification before retry. The migration itself must inspect its known schema prerequisites and reject unresolved active claims or retained-data conflicts before destructive DDL; an unknown environment state blocks activation. Recovery is roll-forward only: resolve the reported preflight conflict under its data owner and retry the same release or a corrected forward migration; do not restart old binaries against the changed uniqueness contract.
 
+### Game Design script-patch identity migration preflight
+
+Game Design migrations V26 and V27 are coordinated/recreate and roll-forward-only. Close and drain Game Design writers under the procedure above before activation; a pre-V26 binary must not overlap either migration or be restarted after V26 has changed participant-digest identity. Before either migration, use the deployed Game Design `SERVICE_SCHEMA` value (the `application.yml` default is `public`) to select and verify the target schema in the same `psql` session. Replace the example value with the exact deployed setting, then run the read-only preflight queries below and retain their results with the deployment record:
+
+```sql
+\set service_schema 'public'
+SET search_path TO :"service_schema";
+SELECT current_schema() AS selected_schema, current_schemas(false) AS search_path_schemas;
+```
+
+Confirm `selected_schema` matches the deployed Game Design `SERVICE_SCHEMA` before continuing. V26 requires exactly one distinct positive base candidate for each retained script-patch recorded-digest row. Run this diagnostic before V26; it lists rows with zero or multiple candidate bases, along with candidate base and script-only version IDs. V27 rejects every retained script-only version with an incomplete effective identity, including `DRAFT` rows, and every duplicate `(tenant_id, base_version_id, script_patch_version)` tuple, also including `DRAFT` rows. Neither migration chooses a retained winner or deletes conflicting evidence.
+
+List unresolved V26 recorded-patch base mappings:
+
+```sql
+SELECT recorded.id AS recorded_digest_id,
+       recorded.tenant_id,
+       recorded.scope_value AS script_patch_version,
+       COUNT(DISTINCT version_row.base_version_id) AS positive_base_count,
+       COALESCE(
+           ARRAY_AGG(DISTINCT version_row.base_version_id ORDER BY version_row.base_version_id)
+               FILTER (WHERE version_row.id IS NOT NULL),
+           ARRAY[]::BIGINT[]
+       ) AS candidate_base_version_ids,
+       COALESCE(
+           ARRAY_AGG(DISTINCT version_row.id ORDER BY version_row.id)
+               FILTER (WHERE version_row.id IS NOT NULL),
+           ARRAY[]::BIGINT[]
+       ) AS candidate_script_version_ids
+FROM publish_recorded_participant_digest AS recorded
+LEFT JOIN version AS version_row
+  ON version_row.tenant_id = recorded.tenant_id
+ AND version_row.script_patch_version = recorded.scope_value
+ AND version_row.is_script_only = TRUE
+ AND version_row.base_version_id IS NOT NULL
+ AND version_row.base_version_id > 0
+WHERE recorded.publish_type = 'SCRIPT_PATCH'
+GROUP BY recorded.id, recorded.tenant_id, recorded.scope_value
+HAVING COUNT(DISTINCT version_row.base_version_id) <> 1
+ORDER BY recorded.tenant_id, recorded.id;
+```
+
+For every returned row, the Game Design data owner must adjudicate the exact recorded digest against authoritative retained publication evidence and identify the one correct positive base. Zero candidates or multiple candidates remain unresolved until that owner records a justified disposition; do not infer a base from lifecycle state or choose among candidates automatically. Resolve the retained evidence under owner authority before retrying V26, then rerun the diagnostic and require zero rows. Do not rewrite either migration to bypass unresolved history.
+
+List incomplete identities with their lifecycle state:
+
+```sql
+SELECT id, tenant_id, version_state, base_version_id, script_patch_version
+FROM version
+WHERE is_script_only = TRUE
+  AND (
+      base_version_id IS NULL
+      OR base_version_id <= 0
+      OR script_patch_version IS NULL
+      OR script_patch_version = ''
+  )
+ORDER BY tenant_id, id;
+```
+
+List duplicate effective identities and all candidate version IDs:
+
+```sql
+SELECT tenant_id, base_version_id, script_patch_version,
+       COUNT(*) AS row_count,
+       ARRAY_AGG(id ORDER BY id) AS version_ids,
+       ARRAY_AGG(version_state ORDER BY id) AS version_states
+FROM version
+WHERE is_script_only = TRUE
+GROUP BY tenant_id, base_version_id, script_patch_version
+HAVING COUNT(*) > 1
+ORDER BY tenant_id, base_version_id, script_patch_version;
+```
+
+For each returned row, the Game Design data owner must establish the effective identity from authoritative retained publication evidence. Correct an incomplete tuple only when that evidence proves one positive base and non-empty patch identity. For duplicates, retain any published, active, or otherwise referenced version and do not infer a winner from lifecycle ordering or delete retained publication evidence. If multiple non-disposable retained versions still claim the same tuple, keep V27 blocked until an owner-approved forward disposition preserves their required reads. A conflicting draft may be quarantined and removed only after the owner confirms it is an abandoned `DRAFT`, has no release bundle or active/launch/remap dependency, and has no dependent publish attempt or artifact workflow that still requires it. Check incoming foreign keys before removal with:
+
+```sql
+SELECT conrelid::regclass AS referencing_table,
+       conname,
+       pg_get_constraintdef(oid) AS constraint_definition
+FROM pg_constraint
+WHERE contype = 'f'
+  AND confrelid = 'version'::regclass
+ORDER BY conrelid::regclass::text, conname;
+```
+
+This catalog query identifies enforced references, not all domain-level reachability; the owner must also check release bundles, launch descriptors, remap sets, publish attempts, and asset workflows for the exact candidate IDs. If the draft cannot be proved disposable, the migration remains blocked for owner adjudication. After correction or approved draft removal, rerun both queries and require zero rows before retrying the same release. Never broaden the migration to rewrite or delete retained rows to make V27 pass.
+
 The trusted dev-demo workflow preserves its existing clean namespace reset for ordinary pushes. A push that first adds the Game Session or Automation V2 Flyway migration, or Account V25 profile-identity migration, in the trusted deployed-to-target range instead preserves the runtime database and uses the quiesced activation path. That path first proves the reserved nonmatching selector does not match a Pod, replaces each canonical Account, Game Session, and Automation Service selector, verifies each readback, and waits until all matching EndpointSlices contain no endpoints. It then scales all three writers to zero and proves their Deployments and writer Pods are quiescent before restoring the canonical Service selectors. If selector mutation, endpoint observation, scaling, or drain proof fails, the helper aborts before migration activation and attempts to leave the canonical Services closed. If closure cannot be verified or reapplied, an operator must verify and repair admission before retrying. This includes Account because its V25 tenant-scoped uniqueness constraint must not overlap an old Account writer. Edits or deletions of an existing supported migration fail before namespace mutation because retained-database and Flyway checksum state are uncertain. Other Flyway migrations in the exact deployed-to-target Git range fail detection before namespace mutation until explicit trusted support exists; non-migration pushes retain the clean reset. Both pushes and redispatches use only the exact deployed-head annotation from the owned `dev` namespace as the classification base and require valid Git ancestry to the target. A supplied push before-SHA can add an ancestry check but never replaces that deployed-head base. Missing or ambiguous namespace evidence stops the workflow before namespace mutation. This narrow exception avoids using namespace deletion as a substitute for proving the retained V1 data prerequisites.
 
 Hosted candidate previews may activate a migration only when the trusted path independently proves both an isolated fresh database and absence of old writers. A newly recreated namespace or a manifest value is not database provenance when backing storage may be retained. If the preview credential cannot verify that proof, skip or fail the candidate activation before modifying its namespace; use the trusted post-merge quiesce path instead.
