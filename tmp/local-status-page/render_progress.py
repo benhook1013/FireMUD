@@ -7,9 +7,10 @@ import html
 import json
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
 TRACKERS = ROOT.parents[1] / "design/project-management/implementation-tracking"
@@ -110,8 +111,9 @@ def render(data: dict, now: datetime, tracker_root: Path = TRACKERS) -> str:
         f'<li><div><strong>{safe(item["name"])}</strong><span>{safe(item["state"])}</span></div><p>{safe(item["trigger"])}</p></li>'
         for item in data["return_points"]
     )
-    timestamp = now.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
-    reviewed = datetime.fromisoformat(data["reviewed_at"].replace("Z", "+00:00")).strftime("%d %b %Y")
+    local_timezone = ZoneInfo("Pacific/Auckland")
+    timestamp = now.astimezone(local_timezone).strftime("%d %b %Y %H:%M %Z")
+    reviewed = datetime.fromisoformat(data["reviewed_at"].replace("Z", "+00:00")).astimezone(local_timezone).strftime("%d %b %Y")
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="icon" type="image/svg+xml" href="/flame-ember.svg"><title>FireMUD · project map</title>
