@@ -1585,8 +1585,7 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(GameDesignControlPlaneClient.class);
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    PlatformTransactionManager transactionManager =
-        Mockito.mock(PlatformTransactionManager.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
     AtomicBoolean transactionActive = new AtomicBoolean();
     AtomicBoolean lifecycleLockHeld = new AtomicBoolean();
     AtomicInteger externalReads = new AtomicInteger();

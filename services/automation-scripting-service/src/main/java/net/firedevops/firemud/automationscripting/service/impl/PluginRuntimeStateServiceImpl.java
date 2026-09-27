@@ -485,8 +485,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             .toList()) {
       boolean disabled =
           Boolean.TRUE.equals(
-              policyDecisionTransactions.execute(
-                  status -> applyPolicyDecision(decision, now)));
+              policyDecisionTransactions.execute(status -> applyPolicyDecision(decision, now)));
       if (disabled) {
         disabledCount++;
       }
