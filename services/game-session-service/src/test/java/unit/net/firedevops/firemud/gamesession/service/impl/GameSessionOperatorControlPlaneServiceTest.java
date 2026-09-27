@@ -483,14 +483,6 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setVersionId(null);
     instance.setRuntimeVersion(null);
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
-        .thenReturn(publishedPatch(1L, 200L, 100L));
-    when(automation.getScriptPatchStatus(1L, "patch-new"))
-        .thenReturn(
-            GetScriptPatchStatusResponse.newBuilder()
-                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
-                .setBaseVersionId(100L)
-                .build());
     when(repository.recordScriptPinFailure(
             1L,
             7L,
@@ -511,7 +503,20 @@ class GameSessionOperatorControlPlaneServiceTest {
             .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    verifyNoInteractions(gameDesign, automation);
     verifyNoScriptPinMutation(repository);
+    verify(repository)
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
   }
 
   @Test
@@ -525,14 +530,6 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setVersionId(null);
     instance.setRuntimeVersion("runtime-version");
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new", 100L))
-        .thenReturn(publishedPatch(1L, 200L, 100L));
-    when(automation.getScriptPatchStatus(1L, "patch-new"))
-        .thenReturn(
-            GetScriptPatchStatusResponse.newBuilder()
-                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
-                .setBaseVersionId(100L)
-                .build());
     when(repository.recordScriptPinFailure(
             1L,
             7L,
@@ -553,7 +550,20 @@ class GameSessionOperatorControlPlaneServiceTest {
             .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    verifyNoInteractions(gameDesign, automation);
     verifyNoScriptPinMutation(repository);
+    verify(repository)
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
   }
 
   @Test
@@ -983,14 +993,6 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setScriptPinEpoch(5L);
     instance.setScriptPatchPinnedControlPlaneRequestId("legacy-request");
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    when(gameDesign.getPublishedScriptPatchVersion(1L, "legacy-patch", 0L))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setError(
-                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
-                        .build())
-                .build());
     GameSessionOperatorControlPlaneService service =
         newService(repository, tickService, gameDesign, automation);
 
@@ -998,7 +1000,7 @@ class GameSessionOperatorControlPlaneServiceTest {
 
     assertThat(response.getPublication().getLookupErrorCode())
         .isEqualTo("SCRIPT_PATCH_BASE_VERSION_REQUIRED");
-    verify(gameDesign).getPublishedScriptPatchVersion(1L, "legacy-patch", 0L);
+    verifyNoInteractions(gameDesign, automation);
   }
 
   @Test
