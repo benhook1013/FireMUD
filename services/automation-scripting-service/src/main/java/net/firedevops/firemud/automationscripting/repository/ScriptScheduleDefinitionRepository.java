@@ -74,6 +74,7 @@ public class ScriptScheduleDefinitionRepository {
         dsl.update(SCRIPT_SCHEDULE_DEFINITIONS)
             .set(SCRIPT_SCHEDULE_DEFINITIONS.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_SCHEDULE_DEFINITIONS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_SCHEDULE_DEFINITIONS.BASE_VERSION_ID, entity.getBaseVersionId())
             .set(SCRIPT_SCHEDULE_DEFINITIONS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_SCHEDULE_DEFINITIONS.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_SCHEDULE_DEFINITIONS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
@@ -98,7 +99,10 @@ public class ScriptScheduleDefinitionRepository {
                 SCRIPT_SCHEDULE_DEFINITIONS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_SCHEDULE_DEFINITIONS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_SCHEDULE_DEFINITIONS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_SCHEDULE_DEFINITIONS.BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -117,6 +121,7 @@ public class ScriptScheduleDefinitionRepository {
   private void populate(ScriptScheduleDefinitionsRecord record, ScriptScheduleDefinition entity) {
     record.setTenantId(entity.getTenantId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setBaseVersionId(entity.getBaseVersionId());
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
@@ -138,6 +143,7 @@ public class ScriptScheduleDefinitionRepository {
     entity.setId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.ID));
     entity.setTenantId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.TENANT_ID));
     entity.setScriptPatchVersion(record.get(SCRIPT_SCHEDULE_DEFINITIONS.SCRIPT_PATCH_VERSION));
+    entity.setBaseVersionId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.BASE_VERSION_ID));
     entity.setScriptId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_SCHEDULE_DEFINITIONS.PLUGIN_VERSION_ID));

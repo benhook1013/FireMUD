@@ -3,8 +3,12 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -19,14 +23,19 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
+import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -61,11 +70,14 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Autowired private GameRepository gameRepository;
-  @Autowired private PublishAttemptService publishAttemptService;
+  @Autowired private PublishAttemptServiceImpl publishAttemptService;
+  @Autowired private VersionPublishCommandServiceImpl versionPublishCommandService;
   @Autowired private PublishAttemptRepository publishAttemptRepository;
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @MockitoBean private AssetExportService assetExportService;
+  @MockitoBean private PublishGateService publishGateService;
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {
@@ -134,5 +146,67 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(versionAssetArtifactRepository.findByTenantIdAndVersionId(TENANT_ID, versionId))
         .isEmpty();
     assertThat(gameRepository.findByTenantId(TENANT_ID)).isNotNull();
+  }
+
+  @Test
+  void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
+    String tenantId = "9002";
+    String publishRequestId = "successful-reconcile-request";
+    String publishWorkflowId =
+        FiremudWorkflowIds.workflowId(
+            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
+            tenantId,
+            "publish-request",
+            publishRequestId);
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("successful-transaction-proof-game");
+    gameRepository.save(game);
+
+    Mockito.when(
+            publishGateService.collectFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(publishRequestId),
+                Mockito.eq(publishWorkflowId)))
+        .thenAnswer(
+            invocation -> {
+              VersionDto version = invocation.getArgument(0);
+              return List.of(
+                  new PublishParticipantDigestDto(
+                      "GAME_DESIGN_CONTROL_PLANE",
+                      String.valueOf(version.id()),
+                      "version:" + version.id(),
+                      "transaction-proof-design-digest",
+                      1,
+                      null,
+                      null));
+            });
+    Mockito.when(assetExportService.exportAssets(tenantId, 1))
+        .thenReturn(
+            new ExportedAssetManifest("transaction-proof-manifest", List.of("manifest.json")));
+
+    VersionDto publishedVersion =
+        versionPublishCommandService.publishFullVersion(
+            tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    Version storedVersion =
+        versionRepository.findByTenantIdAndId(tenantId, publishedVersion.id()).orElseThrow();
+    PublishedReleaseBundle bundle =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
+    VersionAssetArtifact artifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
+
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
+    assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
+    assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
+    assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
+    assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
+    assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
   }
 }

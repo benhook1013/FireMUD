@@ -93,7 +93,14 @@ class GrpcPeerIdentityTest {
   }
 
   @Test
-  void wrongPeerServiceIsRejected() throws Exception {
+  void validPeerIdentityReachesHandlerContext() throws Exception {
+    assertThat(interceptAndObserve(sessionWithUriSans(GAME_DESIGN_URI)))
+        .extracting(GrpcPeerIdentity::uri, GrpcPeerIdentity::namespace, GrpcPeerIdentity::service)
+        .containsExactly(GAME_DESIGN_URI, "firemud", "game-design-service");
+  }
+
+  @Test
+  void knownServiceIdentityParsesAndUnknownServiceIsRejected() throws Exception {
     assertThat(
             GrpcPeerIdentity.fromSslSession(
                 sessionWithUriSans("spiffe://firemud/ns/firemud/sa/world-management-service")))

@@ -2613,8 +2613,10 @@ class AccountServiceImplTest {
     assertEquals(exception.getMessage(), replayed.getMessage());
   }
 
-  @Test
-  void issueConnectTokenKeepsGenericMembershipRejectionDistinctFromBillingDenial() {
+  @ParameterizedTest
+  @CsvSource({"true,production", "false,preview"})
+  void issueConnectTokenRejectsPresentNonAdmittingMembership(
+      boolean publicProductionRealm, String realmSlug) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2630,7 +2632,7 @@ class AccountServiceImplTest {
             java.util.List.of(
                 net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
                     .setWorldSlug("demo")
-                    .setRealmSlug("preview")
+                    .setRealmSlug(realmSlug)
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
@@ -2639,17 +2641,17 @@ class AccountServiceImplTest {
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(true)
-                    .setPublicProductionRealm(false)
+                    .setPublicProductionRealm(publicProductionRealm)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", realmSlug))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
                 .setWorldDisplayName("Demo World")
-                .setRealmSlug("preview")
+                .setRealmSlug(realmSlug)
                 .setRealmDisplayName("Preview Realm")
                 .setTenantId("7")
                 .setGameInstanceId("55")
@@ -2658,13 +2660,13 @@ class AccountServiceImplTest {
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
                 .setVisible(true)
-                .setPublicProductionRealm(false)
+                .setPublicProductionRealm(publicProductionRealm)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
                 .build());
     when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            11L, 7L, "demo", "preview"))
+            11L, 7L, "demo", realmSlug))
         .thenReturn(true);
     Subscription active = new Subscription();
     active.setId(22L);
@@ -2831,7 +2833,8 @@ class AccountServiceImplTest {
 
   @ParameterizedTest
   @CsvSource({"false", "true"})
-  void listBootstrapCharactersRequiresCurrentAdmittingMembership(boolean membershipExists) {
+  void listBootstrapCharactersDistinguishesMissingAndNonAdmittingMembership(
+      boolean membershipExists) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2865,8 +2868,13 @@ class AccountServiceImplTest {
                 service.listBootstrapCharacters(
                     bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
 
-    assertEquals("JOIN_REQUIRED", exception.getCode());
-    assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    if (membershipExists) {
+      assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
+      assertEquals("Gameplay admission is not allowed for this account", exception.getMessage());
+    } else {
+      assertEquals("JOIN_REQUIRED", exception.getCode());
+      assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    }
     verifyNoInteractions(entityManagementClient);
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));

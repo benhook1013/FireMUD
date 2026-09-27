@@ -195,7 +195,6 @@ public class CertificateMaterialService {
         HostedIdentityContract.grpcPublicationRole(workload),
         workload,
         plan.grpcPublicationCertificateName(workload),
-        plan.grpcPublicationSourceSecretName(workload),
         batch);
   }
 
@@ -207,7 +206,6 @@ public class CertificateMaterialService {
         HostedIdentityContract.GRPC_ACCOUNT_ROLE,
         HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
         plan.grpcAccountCertificateName(),
-        plan.grpcAccountSourceSecretName(),
         batch);
   }
 
@@ -219,7 +217,6 @@ public class CertificateMaterialService {
         HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
         HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
         plan.grpcGameSessionCertificateName(),
-        plan.grpcGameSessionSourceSecretName(),
         batch);
   }
 
@@ -229,8 +226,8 @@ public class CertificateMaterialService {
       String role,
       String workload,
       String certificateName,
-      String sourceSecretName,
       MaterializationBatch batch) {
+    String sourceSecretName = plan.sourceSecretName(role);
     RoleExpectation expectation =
         new RoleExpectation(
             plan.grpcWorkloadIdentityDnsNames(workload),
@@ -479,7 +476,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.identityNamespace())
-            .withName(sourceSecretName(plan, role))
+            .withName(plan.sourceSecretName(role))
             .get();
     if (source != null) {
       requireIdentitySourceBinding(source, plan, role);
@@ -504,7 +501,7 @@ public class CertificateMaterialService {
       RoleExpectation expectation,
       boolean deferredBehindAnotherRotation) {
     String name = plan.secretName(role);
-    String sourceName = sourceSecretName(plan, role);
+    String sourceName = plan.sourceSecretName(role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     requireOwned(current, plan, role, "runtime projection Secret");
     Map<String, String> annotations = current.getMetadata().getAnnotations();
@@ -768,13 +765,6 @@ public class CertificateMaterialService {
         throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
       }
     };
-  }
-
-  private static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
-    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
-      return plan.grpcWorkloadIdentitySourceSecretNames().get(role);
-    }
-    return plan.secretName(role);
   }
 
   private static String issuerName(EnvironmentIdentityPlan plan, String role) {

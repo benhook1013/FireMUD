@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamedesign.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -11,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -88,6 +91,61 @@ class AutomationScriptingClientTest {
     assertThat(request.getPublishRequestId()).isEqualTo(binding.publishRequestId());
     assertThat(request.getDerivedWorkflowIdentity()).isEqualTo(binding.derivedWorkflowIdentity());
     assertThat(request.getRequestDigest()).isEqualTo(binding.requestDigest());
+  }
+
+  @Test
+  void scriptPatchNotificationCarriesExactBaseVersion() throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    client.notifyScriptVersionUpdate("tenant-1", 7L, "patch-7", java.util.List.of("script-a"));
+
+    var requestCaptor = org.mockito.ArgumentCaptor.forClass(NotifyScriptVersionUpdateRequest.class);
+    verify(stub).notifyScriptVersionUpdate(requestCaptor.capture());
+    NotifyScriptVersionUpdateRequest request = requestCaptor.getValue();
+    assertThat(request.getTenantId()).isEqualTo("tenant-1");
+    assertThat(request.getBaseVersionId()).isEqualTo(7L);
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-7");
+    assertThat(request.getAffectedScriptsList()).containsExactly("script-a");
+  }
+
+  @Test
+  void scriptPatchNotificationRejectsMissingOrNonpositiveBaseBeforeCallingAutomation()
+      throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    for (Long baseVersionId : java.util.Arrays.asList(null, 0L, -1L)) {
+      assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  client.notifyScriptVersionUpdate(
+                      "tenant-1", baseVersionId, "patch-7", java.util.List.of()));
+    }
+
+    verify(stub, never()).notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class));
   }
 
   private static final class TestAutomationScriptingClient extends AutomationScriptingClient {

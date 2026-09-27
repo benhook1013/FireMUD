@@ -4,8 +4,6 @@ import java.util.List;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -137,11 +135,15 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
         .setRegionEpoch(runtimeStatus.getRegionEpoch())
         .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
+        .setPinnedScriptPatchBaseVersionId(
+            instance.getScriptPatchBaseVersionId() == null
+                ? 0L
+                : instance.getScriptPatchBaseVersionId())
         .setPublication(
             scriptPatchPublicationLink(
                 instance.getTenantId(),
                 instance.getScriptPatchVersion(),
-                runtimeVersionId(instance)))
+                instance.getScriptPatchBaseVersionId()))
         .build();
   }
 
@@ -385,45 +387,8 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       long tenantId, String scriptPatchVersion, Long baseVersionId) {
-    String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
-    GetPublishedScriptPatchVersionResponse response =
-        gameDesignClient == null
-            ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
-            : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
-    if (response.hasError() && !response.getError().getCode().isBlank()) {
-      return ScriptPatchPublicationLink.newBuilder()
-          .setScriptPatchVersion(normalizedScriptPatchVersion)
-          .setVersionId(0L)
-          .setBaseVersionId(0L)
-          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
-          .setLastChangedAtMs(0L)
-          .setLookupErrorCode(response.getError().getCode())
-          .setLookupErrorMessage(response.getError().getMessage())
-          .build();
-    }
-    return ScriptPatchPublicationLink.newBuilder()
-        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
-        .setVersionId(response.getScriptPatch().getVersionId())
-        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
-        .setPublicationState(response.getScriptPatch().getPublicationState())
-        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
-        .build();
-  }
-
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null && instance.getVersionId() > 0L) {
-      return instance.getVersionId();
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
+    return ScriptPatchPublicationLinkResolver.resolve(
+        gameDesignClient, tenantId, scriptPatchVersion, baseVersionId);
   }
 
   private static long parseGameInstanceId(String gameInstanceId) {

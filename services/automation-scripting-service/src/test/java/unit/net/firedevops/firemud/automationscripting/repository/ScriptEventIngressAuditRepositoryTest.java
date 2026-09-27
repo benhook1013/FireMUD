@@ -193,6 +193,164 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void saveFinalizesInitialPluginFenceUnderTheCurrentIngressClaim() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    AtomicReference<Object[]> updateBindings = new AtomicReference<>();
+    AtomicReference<Integer> selectCount = new AtomicReference<>(0);
+    ScriptEventIngressAuditRecord row = persistedIngressRow();
+    row.setSourceState("IN_PROGRESS");
+    row.set(
+        SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT,
+        OffsetDateTime.ofInstant(FIXED_NOW.minusSeconds(20), java.time.ZoneOffset.UTC));
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().trim().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("select")) {
+            if (selectCount.getAndUpdate(count -> count + 1) > 0) {
+              row.setPluginActivationEpoch(4L);
+              row.setLifecycleRevision(8L);
+              row.setSourceState("TRIGGER_ADMITTED");
+              row.setRowVersion(5);
+            }
+            Result<ScriptEventIngressAuditRecord> result =
+                resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+            result.add(row);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          updateSql.set(sql);
+          updateBindings.set(context.bindings());
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setId(7L);
+    entity.setRowVersion(4);
+    entity.setClaimStartedAt(FIXED_NOW.minusSeconds(20));
+    entity.setPluginActivationEpoch(4L);
+    entity.setLifecycleRevision(8L);
+    entity.setSourceState("TRIGGER_ADMITTED");
+
+    ScriptEventIngressAudit saved = repository.save(entity);
+
+    assertThat(saved.getPluginActivationEpoch()).isEqualTo(4L);
+    assertThat(saved.getLifecycleRevision()).isEqualTo(8L);
+    assertThat(saved.getRowVersion()).isEqualTo(5);
+    String whereClause = updateSql.get().substring(updateSql.get().indexOf(" where "));
+    assertThat(whereClause)
+        .contains("row_version", "source_state", "plugin_activation_epoch", "lifecycle_revision");
+    assertThat(updateBindings.get()).contains(4L, 8L, "TRIGGER_ADMITTED", "IN_PROGRESS", 0L, 0L);
+  }
+
+  @Test
+  void saveRejectsPluginFenceRewriteAfterIngressFinalization() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Boolean> updateCalled = new AtomicReference<>(false);
+    ScriptEventIngressAuditRecord persisted = persistedIngressRow();
+    persisted.setPluginActivationEpoch(4L);
+    persisted.setLifecycleRevision(8L);
+    persisted.setSourceState("TRIGGER_ADMITTED");
+    MockDataProvider provider =
+        context -> {
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("update")) {
+            updateCalled.set(true);
+            return new MockResult[] {new MockResult(1)};
+          }
+          Result<ScriptEventIngressAuditRecord> result =
+              resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+          result.add(persisted);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setId(7L);
+    entity.setRowVersion(4);
+    entity.setPluginActivationEpoch(5L);
+    entity.setLifecycleRevision(9L);
+    entity.setSourceState("TRIGGER_ADMITTED");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "immutable script identity conflicts with persisted row: plugin_activation_epoch");
+    assertThat(updateCalled).hasValue(false);
+  }
+
+  @Test
+  void saveRejectsInitialPluginFencePromotionOutsideAnInProgressClaim() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Boolean> updateCalled = new AtomicReference<>(false);
+    ScriptEventIngressAuditRecord persisted = persistedIngressRow();
+    persisted.setSourceState("TRIGGER_REJECTED");
+    persisted.set(
+        SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT,
+        OffsetDateTime.ofInstant(FIXED_NOW.minusSeconds(20), java.time.ZoneOffset.UTC));
+    MockDataProvider provider =
+        context -> {
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("update")) {
+            updateCalled.set(true);
+            return new MockResult[] {new MockResult(1)};
+          }
+          Result<ScriptEventIngressAuditRecord> result =
+              resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+          result.add(persisted);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setId(7L);
+    entity.setRowVersion(4);
+    entity.setClaimStartedAt(FIXED_NOW.minusSeconds(20));
+    entity.setPluginActivationEpoch(4L);
+    entity.setLifecycleRevision(8L);
+    entity.setSourceState("TRIGGER_ADMITTED");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "immutable script identity conflicts with persisted row: plugin_activation_epoch");
+    assertThat(updateCalled).hasValue(false);
+  }
+
+  @Test
+  void insertRetryAcceptsTheFinalFenceForItsUnfencedInitialClaim() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord row = persistedIngressRow();
+    row.setPluginActivationEpoch(4L);
+    row.setLifecycleRevision(8L);
+    row.setSourceState("TRIGGER_ADMITTED");
+    MockDataProvider provider =
+        context -> {
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, false);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(pinnedIngressEntity("pin-request-1"));
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getPluginActivationEpoch()).isEqualTo(4L);
+    assertThat(result.audit().getLifecycleRevision()).isEqualTo(8L);
+  }
+
+  @Test
   void saveRetainsRowVersionCasForGenuineStaleWrite() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();

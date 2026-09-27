@@ -4,6 +4,10 @@ metadata:
   name: game-session-service
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Game Session V2 changes unique keys with blocking DDL and requires
+  # old pods to terminate before a V2 binary starts.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
 {{ include "firemud.labels" . | indent 6 }}
