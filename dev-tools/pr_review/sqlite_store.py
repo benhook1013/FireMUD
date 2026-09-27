@@ -1,8 +1,10 @@
-"""Offline SQLite persistence for validated PR-review controller state.
+"""Transactional SQLite persistence for versioned PR-review controller state.
 
-This module is deliberately not wired into the live controller. It provides a
-transactional store and an explicit JSON import primitive for a later,
-operator-controlled migration.
+The controller selects this store only after an explicit JSON-to-SQLite
+cutover; until then it uses the currently selected JSON state. Cutover and
+migration are operator-controlled and version-checked. Structured review
+records require separate explicit bootstrap. This module does not migrate
+historical provider captures or old private review ledgers.
 """
 
 from __future__ import annotations

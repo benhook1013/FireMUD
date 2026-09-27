@@ -6,6 +6,7 @@ import contextlib
 import dataclasses
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,7 +18,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
 from pr_review import runtime
-from pr_review.sqlite_store import WRITER_BUILD
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
 from pr_review.state import ControllerStateStore, ReviewState, StateStore
 
 
@@ -34,6 +35,23 @@ class SqliteControllerEntrypointTest(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             result = review_cli.main(arguments)
         return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_canonical_entrypoint_reports_the_schema_writer_build(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "dev-tools" / "pr-review"), "--version"],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            f"pr-review sqlite_schema_version={SQLITE_SCHEMA_VERSION} writer_build={WRITER_BUILD}",
+        )
+        self.assertEqual(result.stderr, "")
 
     def test_live_store_keeps_json_until_explicit_migration_and_status_is_read_only(self) -> None:
         live_store = ControllerStateStore(self.state_path)

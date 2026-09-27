@@ -33,7 +33,6 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             title=f"Finding {key}",
             disposition=disposition,
             target_pr=target_pr,
-            payload={"stable_key": key},
         )
 
     def test_bootstrap_is_explicit_and_preserves_controller_schema_version(self) -> None:
@@ -67,6 +66,62 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 findings=(self.observation("bug-1"), self.observation("bug-1", "accepted")),
             )
         self.assertEqual(self.records.history(2828)["runs"], [])
+
+    def test_record_run_is_exactly_idempotent_and_conflicts_do_not_create_routes(self) -> None:
+        self.bootstrap()
+        findings = (self.observation("stable-1"),)
+        original = {
+            "run_id": "manual-run-1",
+            "source_pr": 2828,
+            "channel": "manual",
+            "findings": findings,
+            "reviewer": "reviewer",
+            "scope": "narrow",
+            "coverage_limits": ("no runtime execution",),
+            "started_at": "2026-09-28T01:02:03Z",
+            "finished_at": "2026-09-28T01:03:03Z",
+        }
+        first = self.records.record_run(**original)
+        replay = self.records.record_run(**original)
+        self.assertFalse(first["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(first["counts"], replay["counts"])
+        with self.assertRaisesRegex(ReviewRecordsError, "different immutable content"):
+            self.records.record_run(
+                **{**original, "findings": (self.observation("stable-1", "routed", target_pr=2879),)}
+            )
+        self.assertEqual(self.records.open_routes(), [])
+
+        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
+            FindingObservation("safe-key", "title", detail="token=ghp_" + "A" * 30)
+
+    def test_routed_source_finding_cannot_be_changed_into_an_orphan_route(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="manual-route-run",
+            source_pr=2828,
+            channel="manual",
+            findings=(self.observation("route-key"),),
+        )
+        route = self.records.record_source_decision(
+            "manual-route-run",
+            "route-key",
+            decision_id="source-route",
+            decision="routed",
+            target_pr=2879,
+            actor="reviewer",
+            reason="owned by another change",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "cannot be withdrawn"):
+            self.records.record_source_decision(
+                "manual-route-run",
+                "route-key",
+                decision_id="source-reject-after-route",
+                decision="rejected",
+                actor="reviewer",
+                reason="changed mind",
+            )
+        self.assertEqual([item["route_id"] for item in self.records.open_routes()], [route["route_id"]])
 
     def test_repeated_source_observations_reuse_one_route_and_keep_target_history(self) -> None:
         self.bootstrap()
@@ -138,6 +193,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         finalized = self.records.finalize_run("imported-review")
         self.assertEqual(finalized["counts"], {"found": 3, "accepted": 1, "routed": 1})
         self.assertTrue(finalized["finalized"])
+        replay = self.records.record_run(
+            run_id="imported-review",
+            source_pr=2828,
+            channel="hosted",
+            findings=(
+                self.observation("accept-me"),
+                self.observation("route-me"),
+                self.observation("reject-me"),
+            ),
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertTrue(replay["finalized"])
+        self.assertEqual(replay["counts"], {"found": 3, "accepted": 1, "routed": 1})
 
         route_id = routed["route_id"]
         source_counts_before = self.records.history(2828)["runs"][0]["counts"]
@@ -176,6 +244,116 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 actor="reviewer",
                 reason="too late",
             )
+
+    def test_completed_import_is_atomic_when_a_later_route_conflicts(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="seed-route",
+            source_pr=2828,
+            channel="cli",
+            findings=(self.observation("later-route", "routed", target_pr=2879),),
+        )
+
+        with self.assertRaisesRegex(ReviewRecordsError, "explicitly retargeted"):
+            self.records.import_completed_run(
+                run_id="atomic-import",
+                source_pr=2828,
+                channel="cli",
+                findings=(self.observation("first-accepted"), self.observation("later-route")),
+                source_decisions=(
+                    {
+                        "source_finding_key": "first-accepted",
+                        "decision_id": "atomic-accept",
+                        "decision": "accepted",
+                        "actor": "reviewer",
+                        "reason": "valid source finding",
+                    },
+                    {
+                        "source_finding_key": "later-route",
+                        "decision_id": "atomic-route",
+                        "decision": "routed",
+                        "target_pr": 2999,
+                        "actor": "reviewer",
+                        "reason": "belongs to another change",
+                    },
+                ),
+            )
+
+        history = self.records.history(2828)
+        self.assertEqual([run["run_id"] for run in history["runs"]], ["seed-route"])
+        self.assertEqual([finding["source_finding_key"] for finding in history["findings"]], ["later-route"])
+        self.assertEqual(self.records.open_routes()[0]["target_pr"], 2879)
+
+    def test_completed_import_replays_exactly_and_refuses_decision_conflict(self) -> None:
+        self.bootstrap()
+        import_args = {
+            "run_id": "completed-import",
+            "source_pr": 2828,
+            "channel": "manual",
+            "findings": (self.observation("accept-me"),),
+            "source_decisions": (
+                {
+                    "source_finding_key": "accept-me",
+                    "decision_id": "completed-accept",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "valid source finding",
+                },
+            ),
+            "reviewer": "reviewer",
+            "scope": "narrow",
+        }
+        first = self.records.import_completed_run(**import_args)
+        replay = self.records.import_completed_run(**import_args)
+        self.assertFalse(first["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(first["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts with this completed import"):
+            self.records.import_completed_run(
+                **{
+                    **import_args,
+                    "source_decisions": (
+                        {
+                            "source_finding_key": "accept-me",
+                            "decision_id": "completed-accept",
+                            "decision": "accepted",
+                            "actor": "different-reviewer",
+                            "reason": "changed reason",
+                        },
+                    ),
+                }
+            )
+        self.assertEqual(len(self.records.history(2828)["runs"]), 1)
+
+    def test_completed_import_replay_survives_later_route_retargeting(self) -> None:
+        self.bootstrap()
+        import_args = {
+            "run_id": "completed-routed-import",
+            "source_pr": 2828,
+            "channel": "cli",
+            "findings": (self.observation("route-me"),),
+            "source_decisions": (
+                {
+                    "source_finding_key": "route-me",
+                    "decision_id": "completed-route",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "owned by another change",
+                },
+            ),
+        }
+        first = self.records.import_completed_run(**import_args)
+        route_id = self.records.open_routes()[0]["route_id"]
+        self.records.retarget_route(
+            route_id,
+            target_pr=2879,
+            actor="target-owner",
+            reason="target owner identified",
+        )
+        replay = self.records.import_completed_run(**import_args)
+        self.assertFalse(first["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(self.records.open_routes(target_pr=2879)[0]["route_id"], route_id)
 
     def test_route_targeting_is_validated_and_unassigned_routes_are_readable(self) -> None:
         self.bootstrap()
@@ -272,7 +450,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         result = reopened.history(2828)
         self.assertEqual(result["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
         self.assertTrue(result["runs"][0]["finalized"])
-        self.assertEqual(result["findings"][0]["payload"], {"stable_key": "readback"})
+        self.assertEqual(result["runs"][0]["reviewer"], "manual")
+        self.assertEqual(result["runs"][0]["scope"], "narrow")
+        self.assertEqual(result["findings"][0]["source_finding_key"], "readback")
+        self.assertNotIn("payload", result["findings"][0])
         self.assertNotIn("taper", result)
 
         with sqlite3.connect(self.database) as connection:

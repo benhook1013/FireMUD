@@ -1,33 +1,43 @@
-"""One-shot, explicit SSH/SFTP backup and restore for a SQLite database.
+"""One-shot SFTP-only backup and restore for a SQLite database.
 
 This module is not imported by the review controller. A separate operator job
-may call :func:`backup_database` for a database whose contents have already
-been constrained to contain no credentials or raw secrets. It uses SQLite's
-online backup API, publishes a content-addressed versioned file into an
-operator-provisioned private directory, and reads the published bytes back
-before reporting success.
+may call :func:`backup_database` for the compatible FireMUD controller and
+bootstrapped review-record database. It checks an allowlisted schema and
+screens persisted text before transfer, then uses SQLite's online backup API,
+publishes a content-addressed versioned file into an operator-provisioned
+private directory, and reads the published bytes back before reporting success.
 
-The remote account, SSH key, known-hosts file, and destination directory are
-provided by the caller. The destination must already exist, be owned by that
-remote account, and have mode 0700. The module does not create accounts, keys,
-directories, or secret material.
+The remote account must be a dedicated unprivileged SFTP-only identity, jailed
+to a pre-provisioned directory with mode 0700. The job checks that directory's
+visible owner and mode, rejects symlink or writable path components, and checks
+artifact ownership and mode through SFTP listings. The forced-SFTP jail remains
+a server provisioning invariant that the client cannot independently attest.
+The module does not create accounts, keys, directories, or secret material.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import os
 import re
-import shlex
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+
+from .sqlite_review_records import (
+    _SECRET_PATTERNS,
+    SqliteReviewRecords,
+)
+from .sqlite_store import SqliteStateStore
 
 _BACKUP_NAME = re.compile(
     r"^pr-review-state-(?P<timestamp>\d{8}T\d{12}Z)-(?P<digest>[0-9a-f]{64})-"
@@ -39,6 +49,51 @@ _HOST = re.compile(
 )
 _REMOTE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
 _COMMAND_TIMEOUT_SECONDS = 120
+_DEFAULT_RETENTION_COUNT = 30
+_GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
+_SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
+_EXPECTED_COLUMNS = {
+    "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
+    "review_state": ("singleton", "state_json"),
+    "review_records_metadata": (
+        "singleton", "records_schema_version", "controller_schema_version",
+        "controller_data_model_version", "min_writer_build",
+    ),
+    "review_runs": (
+        "run_id", "source_pr", "channel", "source_head", "reviewer", "scope",
+        "coverage_limits_json", "import_payload_json", "outcome", "attributable",
+        "started_at", "finished_at", "found_count", "accepted_count", "routed_count",
+        "finalized", "finalized_at",
+    ),
+    "findings": ("finding_id", "source_pr", "source_channel", "source_finding_key", "first_seen_at"),
+    "finding_observations": (
+        "run_id", "finding_id", "source_pr", "source_channel", "title", "detail", "disposition", "route_id",
+    ),
+    "routes": (
+        "route_id", "finding_id", "source_pr", "source_channel", "target_pr", "status", "created_at", "updated_at",
+    ),
+    "route_target_history": ("sequence", "route_id", "target_pr", "changed_at", "actor", "reason"),
+    "decisions": (
+        "decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision_pr",
+        "decision", "actor", "reason", "decided_at",
+    ),
+    "resolutions": (
+        "resolution_id", "route_id", "resolution_pr", "outcome", "actor", "proof_or_reason", "resolved_at",
+    ),
+}
+_EXPECTED_INDEXES = {"review_runs_source_pr_idx", "routes_target_status_idx"}
+_TEXT_COLUMNS = {
+    "controller_metadata": (),
+    "review_state": ("state_json",),
+    "review_records_metadata": (),
+    "review_runs": ("run_id", "source_head", "reviewer", "scope", "coverage_limits_json", "import_payload_json", "outcome", "started_at", "finished_at", "finalized_at"),
+    "findings": ("finding_id", "source_channel", "source_finding_key", "first_seen_at"),
+    "finding_observations": ("run_id", "finding_id", "source_channel", "title", "detail", "disposition", "route_id"),
+    "routes": ("route_id", "finding_id", "source_channel", "status", "created_at", "updated_at"),
+    "route_target_history": ("route_id", "changed_at", "actor", "reason"),
+    "decisions": ("decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision", "actor", "reason", "decided_at"),
+    "resolutions": ("resolution_id", "route_id", "outcome", "actor", "proof_or_reason", "resolved_at"),
+}
 
 
 class BackupError(RuntimeError):
@@ -138,6 +193,7 @@ def restore_snapshot(snapshot_path: str | os.PathLike[str], destination_path: st
 
         os.chmod(target, 0o600, follow_symlinks=False)
         _fsync_file(target)
+        _validate_database(target, "restored database")
         return _snapshot_info(target)
     except FileExistsError as exc:
         raise BackupError(f"restore destination already exists: {target}") from exc
@@ -156,8 +212,9 @@ def backup_database(
     identity_file: str | os.PathLike[str],
     known_hosts_file: str | os.PathLike[str],
     remote_directory: str,
-    ssh_binary: str = "ssh",
+    remote_uid: int,
     sftp_binary: str = "sftp",
+    retention_count: int = _DEFAULT_RETENTION_COUNT,
 ) -> BackupReceipt:
     """Snapshot and publish one versioned backup, then verify remote readback.
 
@@ -166,39 +223,48 @@ def backup_database(
     call it.
     """
 
-    remote = _remote_config(host, identity_file, known_hosts_file, remote_directory)
+    _validate_database(Path(database_path).expanduser().absolute(), "source database")
+    remote = _remote_config(host, identity_file, known_hosts_file, remote_directory, remote_uid)
+    if not isinstance(retention_count, int) or retention_count < 1:
+        raise BackupError("retention count must be a positive integer")
     with tempfile.TemporaryDirectory(prefix="firemud-pr-review-backup-") as temporary_name:
         temporary_directory = Path(temporary_name)
         snapshot_path = temporary_directory / "snapshot.sqlite3"
         snapshot = create_snapshot(database_path, snapshot_path)
+        _validate_database(snapshot.path, "local snapshot")
         filename = _versioned_name(snapshot.sha256)
         final_remote_path = _remote_join(remote.directory, filename)
         partial_remote_path = _remote_join(remote.directory, f".{filename}.{uuid.uuid4().hex}.partial")
         readback_path = temporary_directory / "readback.sqlite3"
 
-        _verify_remote_directory(remote, ssh_binary, expected_absent=final_remote_path)
+        _verify_remote_directory(remote, sftp_binary)
         try:
             _run_sftp(
                 remote,
                 sftp_binary,
                 f"put {_sftp_quote(str(snapshot.path))} {_sftp_quote(partial_remote_path)}\n",
             )
-            _run_ssh(remote, ssh_binary, _publish_command(partial_remote_path, final_remote_path))
-        except BackupError:
+            _run_sftp(remote, sftp_binary, f"chmod 600 {_sftp_quote(partial_remote_path)}\n")
+            _verify_remote_file(remote, sftp_binary, partial_remote_path)
+            _run_sftp(
+                remote,
+                sftp_binary,
+                f"get {_sftp_quote(partial_remote_path)} {_sftp_quote(str(readback_path))}\n",
+            )
+            os.chmod(readback_path, 0o600, follow_symlinks=False)
+            readback = _snapshot_info(readback_path)
+            if readback.sha256 != snapshot.sha256 or readback.size_bytes != snapshot.size_bytes:
+                raise BackupError("uploaded SFTP bytes did not match the local snapshot")
+            _validate_database(readback_path, "remote backup readback")
+            _run_sftp(remote, sftp_binary, f"rename {_sftp_quote(partial_remote_path)} {_sftp_quote(final_remote_path)}\n")
+        except (BackupError, OSError) as exc:
             _remove_remote_partial(remote, sftp_binary, partial_remote_path)
+            if isinstance(exc, OSError):
+                raise BackupError("could not verify uploaded SFTP bytes") from exc
             raise
 
-        _verify_remote_file(remote, ssh_binary, final_remote_path, set_private_mode=True)
-        _run_sftp(
-            remote,
-            sftp_binary,
-            f"get {_sftp_quote(final_remote_path)} {_sftp_quote(str(readback_path))}\n",
-        )
-        os.chmod(readback_path, 0o600, follow_symlinks=False)
-        readback = _snapshot_info(readback_path)
-        if readback.sha256 != snapshot.sha256 or readback.size_bytes != snapshot.size_bytes:
-            raise BackupError(f"remote backup readback did not match uploaded snapshot: {final_remote_path}")
-        _validate_database(readback_path, "remote backup readback")
+        _verify_remote_file(remote, sftp_binary, final_remote_path)
+        _prune_remote_backups(remote, sftp_binary, retention_count, keep=filename)
         return BackupReceipt(
             filename=filename,
             remote_path=final_remote_path,
@@ -215,7 +281,7 @@ def restore_remote_backup(
     identity_file: str | os.PathLike[str],
     known_hosts_file: str | os.PathLike[str],
     remote_directory: str,
-    ssh_binary: str = "ssh",
+    remote_uid: int,
     sftp_binary: str = "sftp",
 ) -> Snapshot:
     """Read back a named backup, validate its digest, and restore a new DB."""
@@ -223,10 +289,11 @@ def restore_remote_backup(
     match = _BACKUP_NAME.fullmatch(filename)
     if match is None:
         raise BackupError("backup filename is not a versioned FireMUD SQLite backup")
-    remote = _remote_config(host, identity_file, known_hosts_file, remote_directory)
+    destination = _new_destination_path(destination_path)
+    remote = _remote_config(host, identity_file, known_hosts_file, remote_directory, remote_uid)
     remote_path = _remote_join(remote.directory, filename)
-    _verify_remote_directory(remote, ssh_binary)
-    _verify_remote_file(remote, ssh_binary, remote_path, set_private_mode=False)
+    _verify_remote_directory(remote, sftp_binary)
+    _verify_remote_file(remote, sftp_binary, remote_path)
 
     with tempfile.TemporaryDirectory(prefix="firemud-pr-review-restore-") as temporary_name:
         local_snapshot = Path(temporary_name) / "download.sqlite3"
@@ -240,12 +307,26 @@ def restore_remote_backup(
         if downloaded.sha256 != match.group("digest"):
             raise BackupError(f"remote backup digest does not match its versioned filename: {remote_path}")
         _validate_database(local_snapshot, "downloaded remote backup")
-        return restore_snapshot(local_snapshot, destination_path)
+        return restore_snapshot(local_snapshot, destination)
+
+
+def _new_destination_path(destination_path: str | os.PathLike[str]) -> Path:
+    target = Path(destination_path).expanduser().absolute()
+    if not target.parent.is_dir():
+        raise BackupError(f"restore parent directory does not exist: {target.parent}")
+    try:
+        target.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return target
+    except OSError as exc:
+        raise BackupError("restore destination cannot be checked safely") from exc
+    raise BackupError(f"restore destination already exists: {target}")
 
 
 @dataclass(frozen=True)
 class _RemoteConfig:
     host: str
+    remote_uid: int
     identity_file: Path
     known_hosts_file: Path
     directory: str
@@ -256,7 +337,10 @@ def _remote_config(
     identity_file: str | os.PathLike[str],
     known_hosts_file: str | os.PathLike[str],
     remote_directory: str,
+    remote_uid: int,
 ) -> _RemoteConfig:
+    if isinstance(remote_uid, bool) or not isinstance(remote_uid, int) or remote_uid < 1:
+        raise BackupError("remote UID must be a pinned positive integer")
     if (
         not isinstance(host, str)
         or not _HOST.fullmatch(host)
@@ -275,7 +359,7 @@ def _remote_config(
     known_hosts = _require_regular_file(known_hosts_file, "known-hosts file", reject_symlink=True)
     if stat.S_IMODE(known_hosts.stat().st_mode) & 0o022:
         raise BackupError("known-hosts file must not be group or world writable")
-    return _RemoteConfig(host, identity, known_hosts, directory)
+    return _RemoteConfig(host, remote_uid, identity, known_hosts, directory)
 
 
 def _validate_remote_directory(directory: str) -> str:
@@ -318,9 +402,126 @@ def _validate_database(path: Path, label: str) -> None:
     uri = f"{path.as_uri()}?mode=ro"
     try:
         with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
+            connection.execute("PRAGMA query_only = ON")
             _require_integrity(connection, label)
-    except sqlite3.Error as exc:
-        raise BackupError(f"{label} is not a readable SQLite database: {exc}") from exc
+            _require_allowlisted_schema(connection)
+            _screen_persisted_text(connection)
+
+        # These public read paths validate the controller document, the full
+        # record schema, and indexed history/worklist reads without changing it.
+        state = SqliteStateStore(path).load()
+        if not isinstance(state.to_dict(), dict):
+            raise BackupError(f"{label} contains invalid logical controller state")
+        records = SqliteReviewRecords(path)
+        with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
+            connection.execute("PRAGMA query_only = ON")
+            prs = {
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT source_pr FROM review_runs UNION SELECT decision_pr FROM decisions "
+                    "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
+                    "UNION SELECT resolution_pr FROM resolutions"
+                )
+            }
+        for pr in sorted(prs):
+            history = records.history(pr)
+            with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
+                connection.execute("PRAGMA query_only = ON")
+                expected = (
+                    connection.execute("SELECT COUNT(*) FROM review_runs WHERE source_pr = ?", (pr,)).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM finding_observations WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute("SELECT COUNT(*) FROM decisions WHERE decision_pr = ?", (pr,)).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM routes WHERE source_pr = ? OR target_pr = ?", (pr, pr)
+                    ).fetchone()[0],
+                )
+            actual = (
+                len(history["runs"]), len(history["findings"]),
+                len(history["decisions"]), len(history["routes"]),
+            )
+            if actual != expected:
+                raise BackupError("indexed review-history readback does not match persisted record counts")
+        open_routes = records.open_routes()
+        with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
+            connection.execute("PRAGMA query_only = ON")
+            expected_open_routes = connection.execute(
+                "SELECT COUNT(*) FROM routes WHERE status = 'open'"
+            ).fetchone()[0]
+        if len(open_routes) != expected_open_routes:
+            raise BackupError("indexed route-worklist readback does not match persisted records")
+    except BackupError:
+        raise
+    except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+        raise BackupError(f"{label} failed FireMUD SQLite schema or logical readback validation") from exc
+
+
+def _require_allowlisted_schema(connection: sqlite3.Connection) -> None:
+    objects = connection.execute(
+        "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    tables = {name for object_type, name in objects if object_type == "table"}
+    indexes = {name for object_type, name in objects if object_type == "index"}
+    if tables != set(_EXPECTED_COLUMNS):
+        raise BackupError("database tables do not match the allowlisted FireMUD controller and review-record schema")
+    if indexes != _EXPECTED_INDEXES or any(object_type not in {"table", "index"} for object_type, _name in objects):
+        raise BackupError("database contains non-allowlisted SQLite schema objects")
+    for table, expected_columns in _EXPECTED_COLUMNS.items():
+        actual_columns = tuple(
+            row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')
+        )
+        if actual_columns != expected_columns:
+            raise BackupError(f"database columns do not match the allowlist for {table}")
+
+
+def _screen_persisted_text(connection: sqlite3.Connection) -> None:
+    for table, columns in _TEXT_COLUMNS.items():
+        for column in columns:
+            for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
+                if not isinstance(value, str):
+                    continue
+                if column == "state_json":
+                    try:
+                        document = json.loads(value)
+                    except json.JSONDecodeError as exc:
+                        raise BackupError("controller state JSON cannot be screened") from exc
+                    _screen_json_values(document)
+                elif _looks_secret(value):
+                    raise BackupError("database contains credential- or raw-secret-looking text")
+
+
+def _screen_json_values(value: object, key: str = "") -> None:
+    if isinstance(value, str):
+        if _looks_secret(value):
+            raise BackupError("database contains credential- or raw-secret-looking text")
+    elif isinstance(value, dict):
+        for nested_value in value.values():
+            _screen_json_values(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            _screen_json_values(nested_value)
+
+
+def _looks_secret(value: str) -> bool:
+    if any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS):
+        return True
+    return any(
+        not _is_known_identifier(match.group())
+        for match in _GENERIC_SECRET_PATTERN.finditer(value)
+    )
+
+
+def _is_known_identifier(token: str) -> bool:
+    if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", token):
+        return True
+    words = token.split("_")
+    return (
+        len(token) <= 120
+        and len(words) >= 5
+        and not set(words) & {"access", "aws", "bearer", "credential", "github", "key", "password", "private", "secret", "token"}
+        and all(2 <= len(word) <= 24 and word.isascii() and word.isalpha() and word.islower() for word in words)
+    )
 
 
 def _require_integrity(connection: sqlite3.Connection, label: str) -> None:
@@ -363,7 +564,7 @@ def _sftp_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _ssh_base(remote: _RemoteConfig) -> list[str]:
+def _sftp_transport_options(remote: _RemoteConfig) -> list[str]:
     return [
         "-F", "/dev/null",
         "-o", "BatchMode=yes",
@@ -382,15 +583,11 @@ def _ssh_base(remote: _RemoteConfig) -> list[str]:
     ]
 
 
-def _run_ssh(remote: _RemoteConfig, ssh_binary: str, command: str) -> None:
-    _run([ssh_binary, *_ssh_base(remote), remote.host, command], None, "SSH command")
+def _run_sftp(remote: _RemoteConfig, sftp_binary: str, batch: str) -> str:
+    return _run([sftp_binary, *_sftp_transport_options(remote), "-b", "-", remote.host], batch, "SFTP operation")
 
 
-def _run_sftp(remote: _RemoteConfig, sftp_binary: str, batch: str) -> None:
-    _run([sftp_binary, *_ssh_base(remote), "-b", "-", remote.host], batch, "SFTP transfer")
-
-
-def _run(arguments: list[str], input_text: str | None, operation: str) -> None:
+def _run(arguments: list[str], input_text: str | None, operation: str) -> str:
     try:
         result = subprocess.run(
             arguments,
@@ -405,70 +602,65 @@ def _run(arguments: list[str], input_text: str | None, operation: str) -> None:
     except OSError as exc:
         raise BackupError(f"could not start {operation}: {exc}") from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        suffix = f": {detail}" if detail else ""
-        raise BackupError(f"{operation} failed with exit status {result.returncode}{suffix}")
+        # Do not copy server diagnostics into reports or job logs: they are
+        # external text and can contain sensitive path or account details.
+        raise BackupError(f"{operation} failed with exit status {result.returncode}")
+    return result.stdout
 
 
-def _directory_guard_command(directory: str, expected_absent: str | None = None) -> str:
-    quoted_directory = shlex.quote(directory)
-    checks = [
-        "set -eu",
-        f"d={quoted_directory}",
-        '[ -d "$d" ]',
-        '[ ! -L "$d" ]',
-        '[ "$(id -u)" -ne 0 ]',
-        '[ "$(stat -c %a -- "$d")" = 700 ]',
-        '[ "$(stat -c %u -- "$d")" = "$(id -u)" ]',
-    ]
-    if expected_absent is not None:
-        quoted_target = shlex.quote(expected_absent)
-        checks.extend((f"p={quoted_target}", '[ ! -e "$p" ]', '[ ! -L "$p" ]'))
-    return "; ".join(checks)
+def _verify_remote_directory(remote: _RemoteConfig, sftp_binary: str) -> None:
+    components = PurePosixPath(remote.directory).parts[1:]
+    parent = PurePosixPath("/")
+    for index, component in enumerate(components):
+        output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(str(parent))}\n")
+        entry = _listing_entry(output, component, expected_path=str(parent / component))
+        if entry is None or not entry[0].startswith("d"):
+            raise BackupError("remote backup path contains a missing or non-directory component")
+        is_destination = index == len(components) - 1
+        if is_destination:
+            if entry[0] != "drwx------" or not _owner_matches(entry[2], remote.remote_uid):
+                raise BackupError("remote backup directory must be mode 0700 and owned by the pinned remote UID")
+        elif entry[0][5] == "w" or entry[0][8] == "w":
+            raise BackupError("remote backup path contains a group- or world-writable directory")
+        parent = parent / component
+    _run_sftp(remote, sftp_binary, f"cd {_sftp_quote(remote.directory)}\npwd\n")
 
 
-def _file_guard_command(path: str, *, set_private_mode: bool) -> str:
-    quoted_path = shlex.quote(path)
-    checks = ["set -eu", f"p={quoted_path}"]
-    if set_private_mode:
-        checks.append('chmod 600 -- "$p"')
-    checks.extend(
-        (
-            '[ -f "$p" ]',
-            '[ ! -L "$p" ]',
-            '[ "$(stat -c %a -- "$p")" = 600 ]',
-            '[ "$(stat -c %u -- "$p")" = "$(id -u)" ]',
-        )
+def _parse_listing_line(line: str) -> tuple[str, str, int, str] | None:
+    match = re.match(
+        r"^(?P<mode>[bcdlps-][rwxStTs-]{9})\s+(?:\d+|\?)\s+(?P<owner>\S+)\s+\S+\s+"
+        r"(?P<size>\d+)\s+\S+\s+\S+\s+\S+\s+(?P<name>.+?)\s*$",
+        line,
     )
-    return "; ".join(checks)
+    if match is None:
+        return None
+    return match.group("mode"), match.group("owner"), int(match.group("size")), match.group("name")
 
 
-def _publish_command(partial_path: str, final_path: str) -> str:
-    source = shlex.quote(partial_path)
-    target = shlex.quote(final_path)
-    return "; ".join(
-        (
-            "set -eu",
-            f"s={source}",
-            f"d={target}",
-            '[ -f "$s" ]',
-            '[ ! -L "$s" ]',
-            'ln -- "$s" "$d"',
-            'rm -- "$s"',
-        )
-    )
+def _listing_entry(
+    output: str, expected_name: str, *, expected_path: str | None = None
+) -> tuple[str, int, str] | None:
+    """Parse an OpenSSH SFTP long-listing row with basename or full-path names."""
+    for line in output.splitlines():
+        parsed = _parse_listing_line(line)
+        if parsed is None:
+            continue
+        mode, owner, size, listed_name = parsed
+        if listed_name == expected_name or (expected_path is not None and listed_name == expected_path):
+            return mode, size, owner
+    return None
 
 
-def _verify_remote_directory(
-    remote: _RemoteConfig, ssh_binary: str, expected_absent: str | None = None
-) -> None:
-    _run_ssh(remote, ssh_binary, _directory_guard_command(remote.directory, expected_absent))
+def _verify_remote_file(remote: _RemoteConfig, sftp_binary: str, path: str) -> None:
+    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(path)}\n")
+    expected_name = PurePosixPath(path).name
+    entry = _listing_entry(output, expected_name, expected_path=path)
+    if entry is None or entry[0] != "-rw-------" or not _owner_matches(entry[2], remote.remote_uid):
+        raise BackupError(f"remote backup file metadata is not private and owned by the pinned remote UID: {path}")
 
 
-def _verify_remote_file(
-    remote: _RemoteConfig, ssh_binary: str, path: str, *, set_private_mode: bool
-) -> None:
-    _run_ssh(remote, ssh_binary, _file_guard_command(path, set_private_mode=set_private_mode))
+def _owner_matches(owner_text: str, expected_uid: int) -> bool:
+    return owner_text.isascii() and owner_text.isdecimal() and int(owner_text) == expected_uid
 
 
 def _remove_remote_partial(remote: _RemoteConfig, sftp_binary: str, path: str) -> None:
@@ -478,3 +670,213 @@ def _remove_remote_partial(remote: _RemoteConfig, sftp_binary: str, path: str) -
         # The primary transfer failure remains authoritative; an inaccessible
         # unique partial path is confined by the already-private directory.
         return
+
+
+def _prune_remote_backups(
+    remote: _RemoteConfig, sftp_binary: str, retention_count: int, *, keep: str
+) -> None:
+    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(remote.directory)}\n")
+    entries: list[str] = []
+    for line in output.splitlines():
+        parsed = _parse_listing_line(line)
+        if parsed is None:
+            continue
+        mode, owner, _size, listed_name = parsed
+        listed_path = PurePosixPath(listed_name)
+        if listed_path.is_absolute():
+            if listed_path.parent != PurePosixPath(remote.directory):
+                continue
+            filename = listed_path.name
+        else:
+            filename = listed_name
+        if _BACKUP_NAME.fullmatch(filename):
+            if mode != "-rw-------" or not _owner_matches(owner, remote.remote_uid):
+                raise BackupError("remote backup retention found an artifact with unsafe metadata")
+            entries.append(filename)
+    if keep not in entries:
+        raise BackupError("new remote backup is missing from the SFTP retention listing")
+    retained = {keep, *sorted((name for name in entries if name != keep), reverse=True)[: retention_count - 1]}
+    for filename in entries:
+        if filename not in retained:
+            _run_sftp(remote, sftp_binary, f"rm {_sftp_quote(_remote_join(remote.directory, filename))}\n")
+
+
+def _write_report(report_path: str | os.PathLike[str], payload: dict[str, object]) -> None:
+    target = Path(report_path).expanduser().absolute()
+    if not target.parent.is_dir():
+        raise BackupError("report parent directory does not exist")
+    temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    descriptor = -1
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        remaining = memoryview(encoded)
+        while remaining:
+            remaining = remaining[os.write(descriptor, remaining):]
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, target)
+        os.chmod(target, 0o600, follow_symlinks=False)
+        directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise BackupError("could not persist local backup status report") from exc
+
+
+def _read_report(report_path: str | os.PathLike[str]) -> dict[str, object]:
+    target = Path(report_path).expanduser().absolute()
+    if not target.parent.is_dir():
+        raise BackupError("report parent directory does not exist")
+    try:
+        info = target.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return {"lastSuccess": None, "lastFailureAt": None}
+    except OSError as exc:
+        raise BackupError("could not read local backup status report") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_IMODE(info.st_mode) & 0o077
+        or (hasattr(os, "geteuid") and info.st_uid != os.geteuid())
+    ):
+        raise BackupError("existing backup status report must be a private regular file")
+    try:
+        value = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BackupError("existing backup status report is unreadable") from exc
+    if not isinstance(value, dict):
+        raise BackupError("existing backup status report is malformed")
+    last_success = value.get("lastSuccess")
+    last_failure_at = value.get("lastFailureAt")
+    if last_success is not None and not isinstance(last_success, dict):
+        raise BackupError("existing backup status report is malformed")
+    if last_failure_at is not None and not isinstance(last_failure_at, str):
+        raise BackupError("existing backup status report is malformed")
+    try:
+        if last_failure_at is not None:
+            last_failure_at = datetime.fromisoformat(last_failure_at).astimezone(timezone.utc).isoformat()
+        if last_success is not None:
+            completed_at = last_success.get("completedAt")
+            filename = last_success.get("filename")
+            digest = last_success.get("sha256")
+            size_bytes = last_success.get("sizeBytes")
+            match = _BACKUP_NAME.fullmatch(filename) if isinstance(filename, str) else None
+            if (
+                not isinstance(completed_at, str)
+                or match is None
+                or not isinstance(digest, str)
+                or digest != match.group("digest")
+                or not isinstance(size_bytes, int)
+                or size_bytes < 1
+            ):
+                raise ValueError("invalid last-success record")
+            last_success = {
+                "completedAt": datetime.fromisoformat(completed_at).astimezone(timezone.utc).isoformat(),
+                "filename": filename,
+                "sha256": digest,
+                "sizeBytes": size_bytes,
+            }
+    except (ValueError, TypeError) as exc:
+        raise BackupError("existing backup status report is malformed") from exc
+    return {"lastSuccess": last_success, "lastFailureAt": last_failure_at}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Create or restore one SFTP-only SQLite backup")
+    parser.add_argument(
+        "database",
+        type=Path,
+        nargs="?",
+        help="source database for backup, or a new destination database with --restore",
+    )
+    parser.add_argument("--restore", metavar="FILENAME", help="restore this versioned remote backup")
+    parser.add_argument("--host", required=True, help="dedicated non-root account@host")
+    parser.add_argument("--identity-file", required=True, type=Path)
+    parser.add_argument("--known-hosts-file", required=True, type=Path)
+    parser.add_argument("--remote-directory", required=True)
+    parser.add_argument("--remote-uid", required=True, type=int)
+    parser.add_argument("--report-file", type=Path)
+    parser.add_argument("--retention-count", type=int, default=_DEFAULT_RETENTION_COUNT)
+    parser.add_argument("--sftp-binary", default="sftp")
+    args = parser.parse_args(argv)
+    if args.database is None:
+        parser.error("a source or destination database path is required")
+    if args.restore is not None:
+        try:
+            restored = restore_remote_backup(
+                args.restore,
+                args.database,
+                host=args.host,
+                identity_file=args.identity_file,
+                known_hosts_file=args.known_hosts_file,
+                remote_directory=args.remote_directory,
+                remote_uid=args.remote_uid,
+                sftp_binary=args.sftp_binary,
+            )
+            print(f"restore verified: sha256={restored.sha256} size={restored.size_bytes}")
+            return 0
+        except (BackupError, OSError) as exc:
+            print(f"restore failed: {type(exc).__name__}", file=sys.stderr)
+            return 1
+    if args.report_file is None:
+        parser.error("--report-file is required for backup mode")
+    attempted_at = datetime.now(timezone.utc).isoformat()
+    try:
+        previous = _read_report(args.report_file)
+    except BackupError as exc:
+        print(f"backup failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    try:
+        receipt = backup_database(
+            args.database,
+            host=args.host,
+            identity_file=args.identity_file,
+            known_hosts_file=args.known_hosts_file,
+            remote_directory=args.remote_directory,
+            remote_uid=args.remote_uid,
+            sftp_binary=args.sftp_binary,
+            retention_count=args.retention_count,
+        )
+        _write_report(
+            args.report_file,
+            {
+                "lastAttempt": {"startedAt": attempted_at, "completedAt": datetime.now(timezone.utc).isoformat(), "status": "success"},
+                "lastSuccess": {
+                    "completedAt": datetime.now(timezone.utc).isoformat(),
+                    "filename": receipt.filename,
+                    "sha256": receipt.sha256,
+                    "sizeBytes": receipt.size_bytes,
+                },
+                "lastFailureAt": previous["lastFailureAt"],
+            },
+        )
+        print(f"backup verified: {receipt.filename} sha256={receipt.sha256} size={receipt.size_bytes}")
+        return 0
+    except (BackupError, OSError) as exc:
+        try:
+            _write_report(
+                args.report_file,
+                {
+                    "lastAttempt": {"startedAt": attempted_at, "completedAt": datetime.now(timezone.utc).isoformat(), "status": "failure"},
+                    "lastSuccess": previous["lastSuccess"],
+                    "lastFailureAt": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except BackupError:
+            pass
+        # Deliberately omit exception text because it can contain external diagnostics.
+        print(f"backup failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import json
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -44,6 +46,45 @@ class SqliteMigrationEntrypointTest(unittest.TestCase):
         self.assertEqual(self.database_path.read_bytes(), before)
         with self.assertRaises(StateError):
             StateStore(self.legacy_path).save(ReviewState(ordered_prs=(9999,)))
+
+    def test_migration_waits_for_in_flight_legacy_writer_and_imports_its_state(self) -> None:
+        initial = ReviewState(ordered_prs=(2828,))
+        updated = ReviewState(ordered_prs=(2828, 2879))
+        legacy_store = StateStore(self.legacy_path)
+        legacy_store.save(initial)
+        writer_entered = threading.Event()
+        release_writer = threading.Event()
+        migration_attempted = threading.Event()
+
+        def hold_legacy_update(state: ReviewState) -> ReviewState:
+            writer_entered.set()
+            if not release_writer.wait(timeout=5):
+                raise TimeoutError("test did not release the in-flight legacy writer")
+            return dataclasses.replace(state, ordered_prs=updated.ordered_prs)
+
+        def migrate() -> SqliteStateStore:
+            migration_attempted.set()
+            return SqliteStateStore.migrate_legacy_json(self.legacy_path, self.database_path)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            writer_future = executor.submit(legacy_store.update, hold_legacy_update)
+            self.assertTrue(writer_entered.wait(timeout=5), "legacy update did not acquire its lock")
+            migration_future = executor.submit(migrate)
+            self.assertTrue(migration_attempted.wait(timeout=5), "migration did not start")
+            try:
+                release_writer.set()
+                self.assertEqual(writer_future.result(timeout=5), updated)
+                migrated = migration_future.result(timeout=5)
+            finally:
+                release_writer.set()
+
+        self.assertEqual(migrated.load(), updated)
+        self.assertEqual(migrated.status()["min_writer_build"], WRITER_BUILD)
+        retained_path = self.legacy_path.with_name(f"{self.legacy_path.name}.migrated")
+        retained_state = json.loads(retained_path.read_text(encoding="utf-8"))
+        self.assertEqual(ReviewState.from_dict(retained_state), updated)
+        with self.assertRaises(StateError):
+            legacy_store.update(lambda state: dataclasses.replace(state, ordered_prs=(9999,)))
 
     def test_incompatible_schema_and_writer_metadata_fail_closed(self) -> None:
         StateStore(self.legacy_path).save(ReviewState(ordered_prs=(2828,)))
