@@ -31,7 +31,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository, dsl);
 
-    assertThatThrownBy(() -> service.beginPatchReadiness("1", "patch-h2", List.of("script-a")))
+    assertThatThrownBy(() -> service.beginPatchReadiness("1", 1L, "patch-h2", List.of("script-a")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("script_patch_readiness_requires_postgres");
     Mockito.verifyNoInteractions(repository, workItemRepository);
@@ -66,7 +66,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
-    service.beginPatchReadiness("1", "patch-new", List.of("script-b", "script-a"));
+    service.beginPatchReadiness("1", 1L, "patch-new", List.of("script-b", "script-a"));
 
     assertThat(oldProjection.getReadinessStatus()).isEqualTo("SUPERSEDED");
     assertThat(oldProjection.getStatusReason()).isEqualTo("superseded_by_newer_patch");
@@ -77,6 +77,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
         ArgumentCaptor.forClass(ScriptPatchReadinessProjection.class);
     verify(repository).save(newProjectionCaptor.capture());
     assertThat(newProjectionCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-new");
+    assertThat(newProjectionCaptor.getValue().getBaseVersionId()).isEqualTo(1L);
     assertThat(newProjectionCaptor.getValue().getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
     assertThat(newProjectionCaptor.getValue().getScriptSetManifest())
         .containsExactly("script-a", "script-b");
@@ -93,6 +94,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
       ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
       projection.setTenantId("1");
       projection.setScriptPatchVersion("patch-terminal-" + terminalStatus);
+      projection.setBaseVersionId(1L);
       projection.setReadinessStatus(terminalStatus);
       projection.setScriptSetManifest(List.of("script-a"));
       projection.setReadinessGeneration(1L);
@@ -105,7 +107,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
       ScriptPatchReadinessProjectionServiceImpl service =
           new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
-      service.beginPatchReadiness("1", "patch-terminal-" + terminalStatus, List.of("script-a"));
+      service.beginPatchReadiness("1", 1L, "patch-terminal-" + terminalStatus, List.of("script-a"));
 
       assertThat(projection.getReadinessStatus()).isEqualTo(terminalStatus);
       assertThat(projection.getStatusReason()).isEqualTo("original-reason");
@@ -125,6 +127,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-active");
+    projection.setBaseVersionId(1L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     projection.setStatusReason("tenant_readiness_running");
     projection.setScriptSetManifest(List.of("script-a"));
@@ -136,13 +139,39 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
-    service.beginPatchReadiness("1", "patch-active", List.of("script-a"));
+    service.beginPatchReadiness("1", 1L, "patch-active", List.of("script-a"));
 
     assertThat(projection.getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
     assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_running");
     assertThat(projection.getLastChangedAt()).isEqualTo(Instant.ofEpochMilli(123));
     Mockito.verify(repository, Mockito.never())
         .findByTenantIdAndReadinessStatusInOrderByLastChangedAtAsc(Mockito.any(), Mockito.any());
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
+  void rejectsReusingPatchReadinessIdentityWithDifferentBase() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-active");
+    projection.setBaseVersionId(1L);
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    projection.setScriptSetManifest(List.of("script-a"));
+    projection.setReadinessGeneration(1L);
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-active"))
+        .thenReturn(Optional.of(projection));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    assertThatThrownBy(
+            () -> service.beginPatchReadiness("1", 2L, "patch-active", List.of("script-a")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
     Mockito.verifyNoInteractions(workItemRepository);
   }
@@ -155,6 +184,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-ready");
+    projection.setBaseVersionId(1L);
     projection.setReadinessStatus("READY");
     projection.setScriptSetManifest(List.of("script-original"));
     projection.setReadinessGeneration(1L);
@@ -165,7 +195,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
     assertThatThrownBy(
-            () -> service.beginPatchReadiness("1", "patch-ready", List.of("script-changed")))
+            () -> service.beginPatchReadiness("1", 1L, "patch-ready", List.of("script-changed")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_patch_manifest_changed");
 
@@ -191,7 +221,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
     assertThatThrownBy(
-            () -> service.beginPatchReadiness("1", "patch-retained", List.of("script-a")))
+            () -> service.beginPatchReadiness("1", 1L, "patch-retained", List.of("script-a")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("script_patch_script_manifest_unavailable");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());

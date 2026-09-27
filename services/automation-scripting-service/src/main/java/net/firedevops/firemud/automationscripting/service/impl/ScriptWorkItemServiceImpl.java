@@ -227,7 +227,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .getProjection(tenantId, scriptPatchVersion)
         .map(
             readiness -> {
-              PublicationMetadata metadata = publicationMetadata(tenantId, scriptPatchVersion);
+              PublicationMetadata metadata =
+                  publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
               return PatchStatusSummary.fromProjection(
                   readiness,
                   metadata.baseVersionId(),
@@ -245,7 +246,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .map(
             readiness -> {
               PublicationMetadata metadata =
-                  publicationMetadata(tenantId, readiness.scriptPatchVersion());
+                  publicationMetadata(
+                      tenantId, readiness.baseVersionId(), readiness.scriptPatchVersion());
               return PatchStatusSummary.fromProjection(
                   readiness,
                   metadata.baseVersionId(),
@@ -666,7 +668,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
-    return publicationMetadata(tenantId, 0L, scriptPatchVersion);
+    ScriptPatchReadinessProjectionService.ReadinessStatusSummary readiness =
+        readinessProjectionService.getProjection(tenantId, scriptPatchVersion).orElse(null);
+    if (readiness == null || readiness.baseVersionId() <= 0L) {
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion, "NOT_FOUND", "owner-retained script-patch base is unavailable");
+    }
+    return publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
   }
 
   private PublicationMetadata publicationMetadata(
@@ -687,6 +695,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
           scriptPatchResponse.getError().getMessage());
     }
     long baseVersionId = scriptPatchResponse.getScriptPatch().getBaseVersionId();
+    if (baseVersionId != requestedBaseVersionId
+        || !scriptPatchVersion.equals(
+            blankToEmpty(scriptPatchResponse.getScriptPatch().getScriptPatchVersion()))) {
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion,
+          "FAILED_PRECONDITION",
+          "published script-patch identity does not match the exact requested base");
+    }
     ScriptPatchPublicationLink publication =
         new ScriptPatchPublicationLink(
             blankToEmpty(scriptPatchResponse.getScriptPatch().getScriptPatchVersion()),
@@ -904,6 +920,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private boolean eligibleForOnLoadReplay(ScriptWorkItem item) {
     return readinessProjectionService
         .getProjection(item.getTenantId(), item.getScriptPatchVersion())
+        .filter(
+            summary ->
+                item.getScriptPatchBaseVersionId() != null
+                    && item.getScriptPatchBaseVersionId() > 0L
+                    && summary.baseVersionId() == item.getScriptPatchBaseVersionId())
         .filter(summary -> summary.status() == ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED)
         .filter(summary -> summary.supersededByScriptPatchVersion().isBlank())
         .isPresent();
@@ -919,6 +940,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     if (item.getScriptPinEpoch() <= 0
         || runtime.get().scriptPinEpoch() <= 0
+        || item.getScriptPatchBaseVersionId() == null
+        || item.getScriptPatchBaseVersionId() <= 0L
+        || runtime.get().pinnedScriptPatchBaseVersionId() <= 0L
+        || item.getScriptPatchBaseVersionId() != runtime.get().pinnedScriptPatchBaseVersionId()
         || !item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())
         || item.getScriptPinEpoch() != runtime.get().scriptPinEpoch()
         || blankToEmpty(item.getScriptPinControlPlaneRequestId()).isBlank()

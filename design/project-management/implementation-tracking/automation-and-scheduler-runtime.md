@@ -8,6 +8,8 @@ This is a non-normative implementation tracker for automation and scheduler runt
 
 The bounded implementation slices recorded here are complete at their stated boundaries. This tracker is the permanent reader-facing implementation record for the live automation ingress, scheduling, execution, handoff, readiness, and runtime/operator projection contracts.
 
+The exact-base publication-provenance successor is in progress. Its owned gap is to retain and read back the admitted positive `baseVersionId` with Automation's patch digest, readiness/work-item projection, and timer audit instead of deriving publication authority from patch identity or a mutable current pin. The parent publication PR keeps unknown-base enrichment fail-closed; this tracker does not mark the successor implemented or proved until those owner records, migration, and focused failure-path tests land.
+
 Current residual: the legacy NPC formation REST controllers are removed and `/formations` fails closed at the service-local HTTP boundary. Formation behavior remains `partial`: internal gRPC methods retain only the global admin-role guard, not the target tenant-bound `tenantAdmin` check, and do not prove Entity-owned leader/member NPC tenant/namespace ownership. HTTP 404 proof is not internal authorization/ownership proof; exact internal binding and cross-tenant negative tests remain open.
 
 The current Automation queue reset/rebuild/resume path is unavailable and must fail closed regardless of the observed status mix; a non-atomic status preflight cannot authorize the target PENDING-only workflow. The owner-reconciled target recovery and its proof remain outstanding.

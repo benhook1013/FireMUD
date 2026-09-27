@@ -186,7 +186,8 @@ public class VersionServiceImpl implements VersionService {
         runSafely(
             "notify script patch version update",
             () ->
-                scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
+                scriptingClient.notifyScriptVersionUpdate(
+                    tenantId, baseVersionId, scriptPatchVersion, List.of()));
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {

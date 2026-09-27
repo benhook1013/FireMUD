@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -39,7 +40,8 @@ class ScriptPatchVersionCommandServiceTest {
     scheduleInstanceService = mock(ScriptScheduleInstanceService.class);
     scriptEventIngressService = mock(ScriptEventIngressService.class);
     readinessProjectionService = mock(ScriptPatchReadinessProjectionService.class);
-    when(readinessProjectionService.beginPatchReadiness(any(), any(), any())).thenReturn(true);
+    when(readinessProjectionService.beginPatchReadiness(any(), anyLong(), any(), any()))
+        .thenReturn(true);
     when(readinessProjectionService.applyIfCurrent(any(), any(), any(), any()))
         .thenAnswer(
             invocation -> {
@@ -63,7 +65,7 @@ class ScriptPatchVersionCommandServiceTest {
 
   @Test
   void notifyUpdateRejectsZeroTenantIdBeforeLookups() {
-    assertThatThrownBy(() -> service.notifyUpdate("0", "v1-script.1", List.of("npc-barkeep")))
+    assertThatThrownBy(() -> service.notifyUpdate("0", 1L, "v1-script.1", List.of("npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenantId must be positive");
 
@@ -83,11 +85,11 @@ class ScriptPatchVersionCommandServiceTest {
             1L, "v1-script.1", List.of("npc-barkeep", "npc-guard")))
         .thenReturn(List.of(guard, barkeep));
 
-    assertThat(service.notifyUpdate("1", "v1-script.1", List.of("npc-guard", "npc-barkeep")))
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-guard", "npc-barkeep")))
         .isTrue();
 
     verify(readinessProjectionService)
-        .beginPatchReadiness("1", "v1-script.1", List.of("npc-barkeep", "npc-guard"));
+        .beginPatchReadiness("1", 1L, "v1-script.1", List.of("npc-barkeep", "npc-guard"));
     verify(scheduleDefinitionService)
         .refreshPatchSchedules(
             "1", "v1-script.1", List.of(barkeep, guard), List.of("npc-barkeep", "npc-guard"));
@@ -103,14 +105,47 @@ class ScriptPatchVersionCommandServiceTest {
     assertThat(requestCaptor.getAllValues())
         .extracting(TriggerScriptEventRequest::getScriptEventId)
         .containsExactly("onload:1:v1-script.1:npc-barkeep", "onload:1:v1-script.1:npc-guard");
+    assertThat(requestCaptor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPatchBaseVersionId)
+        .containsExactly(1L, 1L);
   }
 
   @Test
   void notifyUpdateRejectsDuplicateScriptNamesBeforeReadinessAdmission() {
     assertThatThrownBy(
-            () -> service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep", "npc-barkeep")))
+            () ->
+                service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep", "npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly one definition per unique requested name");
+
+    verifyNoInteractions(
+        repository,
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateRejectsDefinitionRetainedUnderDifferentBaseBeforeReadinessAdmission() {
+    ScriptDefinition definition = definition("npc-barkeep");
+    definition.setBaseVersionId(2L);
+    stubDefinitions(definition);
+
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_mismatch");
+
+    verifyNoInteractions(
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void emptyAffectedManifestDoesNotMaterializeReadiness() {
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of())).isFalse();
 
     verifyNoInteractions(
         repository,
@@ -126,7 +161,7 @@ class ScriptPatchVersionCommandServiceTest {
             1L, "v1-script.1", List.of("npc-barkeep")))
         .thenReturn(List.of());
 
-    assertThatThrownBy(() -> service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly one definition per unique requested name");
 
@@ -141,10 +176,11 @@ class ScriptPatchVersionCommandServiceTest {
   void activeRetryReplaysIdempotentOnLoadAndDatabaseDownstreamWork() {
     ScriptDefinition definition = definition("npc-barkeep");
     stubDefinitions(definition);
-    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", List.of("npc-barkeep")))
+    when(readinessProjectionService.beginPatchReadiness(
+            "1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .thenReturn(false);
 
-    assertThat(service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep"))).isTrue();
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep"))).isTrue();
 
     verify(readinessProjectionService)
         .applyIfCurrent(eq("1"), eq("v1-script.1"), eq(List.of("npc-barkeep")), any());
@@ -158,7 +194,8 @@ class ScriptPatchVersionCommandServiceTest {
   void readyRetryRepairsSchedulesAndRegistryWithoutReadmittingOnLoad() {
     ScriptDefinition definition = definition("npc-barkeep");
     stubDefinitions(definition);
-    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", List.of("npc-barkeep")))
+    when(readinessProjectionService.beginPatchReadiness(
+            "1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .thenReturn(false);
     org.mockito.Mockito.doAnswer(
             invocation -> {
@@ -168,7 +205,7 @@ class ScriptPatchVersionCommandServiceTest {
         .when(readinessProjectionService)
         .applyIfCurrent(eq("1"), eq("v1-script.1"), eq(List.of("npc-barkeep")), any());
 
-    assertThat(service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep"))).isTrue();
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep"))).isTrue();
 
     verify(scheduleDefinitionService)
         .refreshPatchSchedules("1", "v1-script.1", List.of(definition), List.of("npc-barkeep"));
@@ -181,13 +218,14 @@ class ScriptPatchVersionCommandServiceTest {
   @Test
   void skipsAllDownstreamWorkWhenANewerGenerationIsCurrent() {
     stubDefinitions(definition("npc-barkeep"));
-    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", List.of("npc-barkeep")))
+    when(readinessProjectionService.beginPatchReadiness(
+            "1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .thenReturn(false);
     org.mockito.Mockito.doReturn(false)
         .when(readinessProjectionService)
         .applyIfCurrent(eq("1"), eq("v1-script.1"), eq(List.of("npc-barkeep")), any());
 
-    assertThat(service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep"))).isFalse();
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep"))).isFalse();
 
     verifyNoInteractions(
         scheduleDefinitionService, scheduleInstanceService, scriptEventIngressService);
@@ -203,7 +241,7 @@ class ScriptPatchVersionCommandServiceTest {
         .when(readinessProjectionService)
         .rebuildRegistryIfCurrent(eq("1"), eq("v1-script.1"), eq(List.of("npc-barkeep")), any());
 
-    assertThat(service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep"))).isFalse();
+    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep"))).isFalse();
 
     verify(readinessProjectionService)
         .applyIfCurrent(eq("1"), eq("v1-script.1"), eq(List.of("npc-barkeep")), any());
@@ -221,7 +259,7 @@ class ScriptPatchVersionCommandServiceTest {
         .when(scheduleInstanceService)
         .reconcilePinnedPatchInstances("1", "v1-script.1");
 
-    assertThatThrownBy(() -> service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("schedule_reconcile_failed");
 
@@ -241,6 +279,8 @@ class ScriptPatchVersionCommandServiceTest {
     ScriptDefinition definition = new ScriptDefinition();
     definition.setTenantId(1L);
     definition.setName(name);
+    definition.setScriptVersion("v1-script.1");
+    definition.setBaseVersionId(1L);
     definition.setDefinition("{}");
     return definition;
   }

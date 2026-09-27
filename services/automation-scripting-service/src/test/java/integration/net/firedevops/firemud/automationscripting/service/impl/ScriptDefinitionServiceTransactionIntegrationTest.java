@@ -133,7 +133,23 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
                 .orElseThrow()
                 .getId())
         .isEqualTo(first.id());
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
     assertThat(bindingIds(name)).containsExactly("binding-a", "binding-b");
+  }
+
+  @Test
+  void scriptPatchBaseBindingIsImmutableAcrossRetries() {
+    transactionTemplate.executeWithoutResult(
+        status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 1L));
+
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.executeWithoutResult(
+                    status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 2L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
   }
 
   @Test
@@ -267,7 +283,7 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
 
   private static ScriptDefinitionDto request(
       Long id, String name, String definition, List<ScriptDefinitionDto.EventBindingDto> bindings) {
-    return new ScriptDefinitionDto(id, TENANT_ID, name, VERSION, definition, bindings);
+    return new ScriptDefinitionDto(id, TENANT_ID, name, VERSION, 1L, definition, bindings);
   }
 
   private static ScriptDefinitionDto.EventBindingDto binding(

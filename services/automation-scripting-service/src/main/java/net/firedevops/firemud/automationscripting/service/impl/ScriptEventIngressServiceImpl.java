@@ -135,6 +135,41 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         new ScriptRuntimeProperties());
   }
 
+  public ScriptEventIngressServiceImpl(
+      ScriptEventIngressAuditRepository repository,
+      ScriptEventBindingRepository bindingRepository,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository eventAuditRepository,
+      ScriptEventRegistryService eventRegistryService,
+      AutomationQueueService automationQueueService,
+      ScriptOutputProperties outputProperties,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      ScriptQuotaService quotaService,
+      ScriptDryRunQuotaService dryRunQuotaService) {
+    this(
+        repository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        eventRegistryService,
+        automationQueueService,
+        outputProperties,
+        gameSessionControlPlaneClient,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        scriptDefinitionRepository,
+        pluginRuntimeStateService,
+        quotaService,
+        dryRunQuotaService,
+        new ScriptRuntimeProperties());
+  }
+
   @org.springframework.beans.factory.annotation.Autowired
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -325,6 +360,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         ScriptQuotaClasses.normalize(definition == null ? null : definition.quotaClass()));
     audit.setScriptPatchVersion(
         requiredText(request.getScriptPatchVersion(), "script_patch_version"));
+    audit.setScriptPatchBaseVersionId(
+        request.getScriptPatchBaseVersionId() > 0 ? request.getScriptPatchBaseVersionId() : null);
     audit.setScriptPinEpoch(
         instanceScoped && request.getScriptPinEpoch() > 0L ? request.getScriptPinEpoch() : null);
     audit.setScriptPinControlPlaneRequestId(
@@ -382,6 +419,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
+    TriggerAdmission patchBaseAdmission = validateAuthoredPatchBase(request);
+    if (patchBaseAdmission != null) {
+      return validation(patchBaseAdmission);
+    }
     if (definition == null) {
       return validation(rejected("unknown_event_type"));
     }
@@ -626,6 +667,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "version_unavailable", 0),
           request.getScriptPinEpoch());
     }
+    long admittedBaseVersionId = runtimeState.getPinnedScriptPatchBaseVersionId();
+    if (admittedBaseVersionId <= 0L
+        || request.getScriptPatchBaseVersionId() != admittedBaseVersionId) {
+      return new PinValidation(
+          new TriggerAdmission(
+              false, OUTCOME_VERSION_UNAVAILABLE, "script_patch_base_version_mismatch", 0),
+          request.getScriptPinEpoch());
+    }
     if (request.getScriptPinEpoch() != runtimeState.getScriptPinEpoch()) {
       return new PinValidation(
           new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "script_pin_epoch_mismatch", 0),
@@ -696,6 +745,27 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (pluginPolicyStale(status.get())) {
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "signer_policy_unavailable", 0);
+    }
+    return null;
+  }
+
+  private TriggerAdmission validateAuthoredPatchBase(TriggerScriptEventRequest request) {
+    long requestedBaseVersionId = request.getScriptPatchBaseVersionId();
+    if (requestedBaseVersionId <= 0L || scriptDefinitionRepository == null) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "script_patch_base_version_unavailable", 0);
+    }
+    Long retainedBaseVersionId =
+        scriptDefinitionRepository
+            .findScriptPatchBaseVersionId(request.getTenantId(), request.getScriptPatchVersion())
+            .orElse(null);
+    if (retainedBaseVersionId == null || retainedBaseVersionId <= 0L) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "script_patch_base_version_unavailable", 0);
+    }
+    if (requestedBaseVersionId != retainedBaseVersionId) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "script_patch_base_version_mismatch", 0);
     }
     return null;
   }
@@ -785,7 +855,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     List<ScriptEventBinding> scopedBindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-                tenantKey, request.getScriptPatchVersion(), request.getEventType(), schemaVersion)
+                tenantKey,
+                request.getScriptPatchVersion(),
+                request.getScriptPatchBaseVersionId(),
+                request.getEventType(),
+                schemaVersion)
             .stream()
             .filter(
                 binding ->
@@ -1070,6 +1144,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setEventSchemaVersion(schemaVersion);
     item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
     item.setScriptPatchVersion(request.getScriptPatchVersion());
+    item.setScriptPatchBaseVersionId(request.getScriptPatchBaseVersionId());
     item.setScriptPinEpoch(scriptPinEpoch);
     item.setScriptPinControlPlaneRequestId(
         scriptPinEpoch > 0L ? normalize(request.getScriptPinControlPlaneRequestId()) : null);
@@ -1169,6 +1244,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
+    audit.setScriptPatchBaseVersionId(request.getScriptPatchBaseVersionId());
     audit.setScriptPinEpoch(persistedScriptPinEpoch);
     audit.setScriptPinControlPlaneRequestId(
         persistedScriptPinEpoch == null

@@ -238,7 +238,8 @@ class VersionServiceImplTest {
                 PublicationDigestRequestBinding.patch(
                         "tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
                     .requestDigest()));
-    verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
+    verify(scriptingClient)
+        .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", java.util.List.of());
     verify(recordedParticipantDigestService)
         .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
@@ -402,7 +403,8 @@ class VersionServiceImplTest {
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchSucceeded(any(String.class));
     verify(scriptingClient, org.mockito.Mockito.never())
-        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
+        .notifyScriptVersionUpdate(
+            any(String.class), any(Long.class), any(String.class), any(List.class));
   }
 
   @Test
@@ -445,7 +447,8 @@ class VersionServiceImplTest {
     assertEquals("transaction completion outcome is ambiguous", thrown.getMessage());
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(scriptingClient, org.mockito.Mockito.never())
-        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
+        .notifyScriptVersionUpdate(
+            any(String.class), any(Long.class), any(String.class), any(List.class));
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
   }
@@ -494,7 +497,8 @@ class VersionServiceImplTest {
     String workflowId = binding.derivedWorkflowIdentity();
     verify(versionRepository).delete(draftAfterRollback);
     verify(scriptingClient, org.mockito.Mockito.never())
-        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
+        .notifyScriptVersionUpdate(
+            any(String.class), any(Long.class), any(String.class), any(List.class));
     verify(publishAttemptService)
         .markScriptPatchFailed(
             org.mockito.ArgumentMatchers.eq(workflowId),

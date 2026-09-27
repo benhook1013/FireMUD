@@ -53,12 +53,16 @@ public class AutomationScriptingClient
 
   /** Notify the Automation service that a new script patch version is active. */
   public void notifyScriptVersionUpdate(
-      String tenantId, String patchVersion, List<String> scripts) {
+      String tenantId, Long baseVersionId, String patchVersion, List<String> scripts) {
+    if (baseVersionId == null || baseVersionId <= 0) {
+      throw new IllegalArgumentException("baseVersionId must be positive");
+    }
     NotifyScriptVersionUpdateRequest request =
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId(tenantId)
             .setScriptPatchVersion(patchVersion)
             .addAllAffectedScripts(scripts)
+            .setBaseVersionId(baseVersionId)
             .build();
     stub().notifyScriptVersionUpdate(request);
   }

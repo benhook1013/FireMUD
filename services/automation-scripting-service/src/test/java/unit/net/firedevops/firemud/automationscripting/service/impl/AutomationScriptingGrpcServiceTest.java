@@ -175,7 +175,7 @@ class AutomationScriptingGrpcServiceTest {
     Mockito.when(scriptDesignDigestService.getDraftDesignDigestForVersion("1", "7"))
         .thenReturn(
             new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "7", "version:7", "digest-script", 1));
+                "1", "7", 0L, "version:7", "digest-script", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -222,10 +222,10 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", "patch:é:1"))
+    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", 7L, "patch:é:1"))
         .thenReturn(
             new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "patch:é:1", "patch:patch:é:1", "digest-script-patch", 1));
+                "1", "patch:é:1", 7L, "patch:patch:é:1", "digest-script-patch", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -709,7 +709,7 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new IllegalArgumentException("schedule_interval_ticks_required"))
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -726,6 +726,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -752,7 +753,7 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new ScriptIngressInProgressException())
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -770,6 +771,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -906,6 +908,7 @@ class AutomationScriptingGrpcServiceTest {
     service.updateScript(
         UpdateScriptRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setName("guard-script")
             .setVersion("v1")
             .setDefinition("{}")

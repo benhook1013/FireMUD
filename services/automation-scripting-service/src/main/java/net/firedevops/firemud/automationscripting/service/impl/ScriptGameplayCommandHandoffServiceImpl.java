@@ -626,7 +626,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
     // on the durable work item before allowing either local staging or remote scheduling.
     if (workItem.getScriptPinEpoch() <= 0
         || normalize(workItem.getScriptPinControlPlaneRequestId()).isBlank()
+        || workItem.getScriptPatchBaseVersionId() == null
+        || workItem.getScriptPatchBaseVersionId() <= 0
         || runtimeState.getRuntimeState().getScriptPinEpoch() <= 0
+        || runtimeState.getRuntimeState().getPinnedScriptPatchBaseVersionId() <= 0
         || normalize(runtimeState.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId())
             .isBlank()) {
       return RuntimeRegionScopeStatus.MALFORMED;
@@ -639,7 +642,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
         || !runtimeState
             .getRuntimeState()
             .getScriptPatchPinnedControlPlaneRequestId()
-            .equals(normalize(workItem.getScriptPinControlPlaneRequestId()))) {
+            .equals(normalize(workItem.getScriptPinControlPlaneRequestId()))
+        || runtimeState.getRuntimeState().getPinnedScriptPatchBaseVersionId()
+            != workItem.getScriptPatchBaseVersionId()) {
       return RuntimeRegionScopeStatus.ADVANCED;
     }
     return runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
@@ -748,6 +753,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
         .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
+        .setScriptPatchBaseVersionId(workItem.getScriptPatchBaseVersionId())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setAutomationDispatchId(dispatchId)
