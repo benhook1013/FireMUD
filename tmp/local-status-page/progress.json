@@ -1,5 +1,5 @@
 {
-  "reviewed_at": "2026-09-27T03:05:00Z",
+  "reviewed_at": "2026-09-27T10:53:32Z",
   "headline": "Building a playable FireMUD",
   "orientation": "Track the main workstreams, return points, and rough implementation and proof by domain here. Open PR Delivery for current reviews and merges; each domain card links to its detailed tracker.",
   "tracks": [
@@ -90,6 +90,25 @@
         {"name": "Review and fix the current front", "state": "ACTIVE"},
         {"name": "Reconcile and prepare downstream PRs", "state": "ACTIVE"},
         {"name": "Human merges verified candidates", "state": "ONGOING"}
+      ],
+      "links": [
+        {"label": "Open PR delivery page", "url": "/"}
+      ]
+    },
+    {
+      "id": "review-tooling-visibility",
+      "name": "Review tooling and progress visibility",
+      "state": "ACTIVE · RECORDS NEXT",
+      "tone": "active",
+      "purpose": "Make review coordination and programme progress easier to follow, with durable records behind a read-only PR history.",
+      "now": "The controller coordinates separate Hosted and CLI review channels through one queue and routes CodeRabbit findings. PR Delivery shows the current queue and review state; the Project Map tracks long-range programme progress.",
+      "milestone": "Add SQLite-backed run, finding and decision records, including independent manual and subagent pre-reviews, then show read-only history by PR. Keep those pre-review results separate from CodeRabbit review and taper results.",
+      "return_when": "Continue alongside the merge train; connect PR-level website history when controller read data is available, and prove private remote backup and restore before completion.",
+      "phases": [
+        {"name": "Current queue and programme visibility", "state": "LIVE"},
+        {"name": "Persist runs, findings, decisions and separate pre-reviews", "state": "NEXT"},
+        {"name": "Add read-only PR-level website history", "state": "LATER"},
+        {"name": "Prove live read interface and private backup/restore", "state": "FINISH GATE"}
       ],
       "links": [
         {"label": "Open PR delivery page", "url": "/"}
