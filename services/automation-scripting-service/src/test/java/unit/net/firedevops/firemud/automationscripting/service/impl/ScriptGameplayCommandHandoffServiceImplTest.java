@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
@@ -184,6 +186,12 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         .thenAnswer(
             invocation -> {
               ScriptHandoffEvent event = invocation.getArgument(0);
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(0);
+              } else {
+                event.setRowVersion(event.getRowVersion() + 1);
+              }
               savedEvents.add(event);
               operations.add(
                   "handoff-save:"
@@ -212,6 +220,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isTrue();
+      assertThat(savedEvents.getLast().getId()).isEqualTo(44L);
+      assertThat(savedEvents.getLast().getRowVersion()).isEqualTo(1);
+      assertThat(savedEvents.getLast().getGameSessionCommandId()).isEqualTo("command-1");
       assertThat(operations)
           .contains(
               "runtime:false", "handoff-save:intent", "enqueue:false", "handoff-save:response");
@@ -226,6 +237,107 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               TransactionDefinition.PROPAGATION_REQUIRES_NEW,
               TransactionDefinition.PROPAGATION_NOT_SUPPORTED,
               TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
+  void concurrentAcceptedResultAfterResponseCheckCannotBeReplacedByStaleResponse() {
+    List<String> operations = new ArrayList<>();
+    RecordingTransactionManager transactionManager = new RecordingTransactionManager(operations);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("late-command")
+                .build());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
+    AtomicReference<ScriptHandoffEvent> attemptedResponseWrite = new AtomicReference<>();
+    AtomicInteger findCount = new AtomicInteger();
+    AtomicInteger saveCount = new AtomicInteger();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation -> {
+              int call = findCount.incrementAndGet();
+              if (call <= 2) {
+                return Optional.empty();
+              }
+              if (call == 3) {
+                ScriptHandoffEvent intent = persisted.get();
+                ScriptHandoffEvent checkedIntent =
+                    handoffRow(intent.getId(), intent.getRowVersion(), "handoff_in_flight", "");
+                // Model a retry that commits after this response transaction has read the intent
+                // but before it attempts to append its older downstream response.
+                persisted.set(
+                    handoffRow(
+                        intent.getId(),
+                        intent.getRowVersion() + 1,
+                        "duplicate_noop",
+                        "winner-command"));
+                return Optional.of(checkedIntent);
+              }
+              return Optional.of(persisted.get());
+            });
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              saveCount.incrementAndGet();
+              ScriptHandoffEvent current = persisted.get();
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(5);
+                persisted.set(event);
+                return event;
+              }
+              attemptedResponseWrite.set(event);
+              if (current == null
+                  || !event.getId().equals(current.getId())
+                  || event.getRowVersion() != current.getRowVersion()) {
+                throw new IllegalStateException("stale handoff event write");
+              }
+              event.setRowVersion(event.getRowVersion() + 1);
+              persisted.set(event);
+              return event;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result =
+          service.handoff(
+              workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+      assertThat(result.accepted()).isFalse();
+      assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(persisted.get().getHandoffOutcome()).isEqualTo("duplicate_noop");
+      assertThat(persisted.get().getGameSessionCommandId()).isEqualTo("winner-command");
+      assertThat(persisted.get().getRowVersion()).isEqualTo(6);
+      assertThat(attemptedResponseWrite.get().getId()).isEqualTo(44L);
+      assertThat(attemptedResponseWrite.get().getRowVersion()).isEqualTo(5);
+      assertThat(findCount.get()).isEqualTo(3);
+      assertThat(saveCount.get()).isEqualTo(2);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
@@ -2162,6 +2274,16 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(persistedOutcome.getWorldSlug()).isBlank();
     assertThat(persistedOutcome.getRealmSlug()).isBlank();
     assertThat(persistedOutcome.getPointerVersion()).isBlank();
+  }
+
+  private static ScriptHandoffEvent handoffRow(
+      Long id, int rowVersion, String outcome, String commandId) {
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setId(id);
+    event.setRowVersion(rowVersion);
+    event.setHandoffOutcome(outcome);
+    event.setGameSessionCommandId(commandId);
+    return event;
   }
 
   private static ScriptGameplayCommandHandoffService.EmittedCommand emittedCommand(

@@ -292,7 +292,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
       return executeResponseTransaction(
           () ->
               persistDownstreamResponse(
-                  workItem, command, dispatchId, downstreamResult, preparation.intentRowVersion()));
+                  workItem,
+                  command,
+                  dispatchId,
+                  downstreamResult,
+                  preparation.intentId(),
+                  preparation.intentRowVersion()));
     } catch (RuntimeException ex) {
       LOGGER.warn(
           "Unable to persist script handoff response for workItemId={} commandOrdinal={}; retaining in-flight evidence",
@@ -352,9 +357,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private record HandoffPreparation(
-      HandoffResult result, boolean remoteHandoff, int intentRowVersion) {
+      HandoffResult result, boolean remoteHandoff, Long intentId, int intentRowVersion) {
     HandoffPreparation(HandoffResult result, boolean remoteHandoff) {
-      this(result, remoteHandoff, -1);
+      this(result, remoteHandoff, null, -1);
     }
   }
 
@@ -496,7 +501,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     rolloutProjectionService.refreshForWorkItem(workItem);
 
     ScriptHandoffEvent intent = appendHandoffIntent(workItem, command, dispatchId, now);
-    return new HandoffPreparation(null, remoteHandoff, intent.getRowVersion());
+    return new HandoffPreparation(null, remoteHandoff, intent.getId(), intent.getRowVersion());
   }
 
   private HandoffResult invokeDownstream(
@@ -532,11 +537,16 @@ public class ScriptGameplayCommandHandoffServiceImpl
       EmittedCommand command,
       String dispatchId,
       HandoffResult result,
+      Long intentId,
       int intentRowVersion) {
     if (isReconciliationRequired(result)) {
       return result;
     }
-    if (handoffTransactionTemplate != null) {
+    HandoffRowFence responseFence = null;
+    if (handoffTransactionTemplate != null || intentId != null) {
+      if (intentId == null || intentRowVersion < 0) {
+        return reconciliationRequiredResult("durable handoff intent identity was unavailable");
+      }
       Optional<ScriptHandoffEvent> existingHandoff =
           handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
               workItem.getTenantId(), workItem.getId(), command.ordinal());
@@ -547,13 +557,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
       if (isAcceptedHandoff(existing)) {
         return handoffResult(existing);
       }
-      if (intentRowVersion >= 0 && existing.getRowVersion() != intentRowVersion) {
+      if (!Objects.equals(existing.getId(), intentId)
+          || existing.getRowVersion() != intentRowVersion) {
         return reconciliationRequiredResult("durable handoff intent fence advanced");
       }
+      responseFence = new HandoffRowFence(intentId, intentRowVersion);
     }
-    applyOutcome(workItem, command, dispatchId, result, Instant.now());
+    applyOutcome(workItem, command, dispatchId, result, Instant.now(), responseFence);
     return result;
   }
+
+  private record HandoffRowFence(Long id, int rowVersion) {}
 
   private static ScopeValidationResult validateRemoteHandoffScope(
       ScriptWorkItem workItem, EmittedCommand command) {
@@ -1061,7 +1075,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       HandoffResult result,
       Instant now) {
-    appendHandoffEvent(workItem, command, dispatchId, result, now);
+    applyOutcome(workItem, command, dispatchId, result, now, null);
+  }
+
+  private void applyOutcome(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffResult result,
+      Instant now,
+      HandoffRowFence handoffRowFence) {
+    appendHandoffEvent(workItem, command, dispatchId, result, now, handoffRowFence);
     if (isReconciliationRequired(result)) {
       // A lost/ambiguous downstream response is not a terminal rejection. The child remains
       // HANDOFF_IN_FLIGHT until a later exact-identity reconciliation determines the outcome.
@@ -1171,6 +1195,16 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       HandoffResult result,
       Instant now) {
+    return appendHandoffEvent(workItem, command, dispatchId, result, now, null);
+  }
+
+  private ScriptHandoffEvent appendHandoffEvent(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffResult result,
+      Instant now,
+      HandoffRowFence handoffRowFence) {
     String outcome = result.outcome().toLowerCase(Locale.ROOT);
     String reason = handoffReason(result);
     RoutingBundleSupport.RoutingBundle routingBundle =
@@ -1213,14 +1247,19 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);
     event.setObservedAt(now);
-    handoffEventRepository
-        .findByTenantIdAndWorkItemIdAndCommandOrdinal(
-            workItem.getTenantId(), workItem.getId(), command.ordinal())
-        .ifPresent(
-            existing -> {
-              event.setId(existing.getId());
-              event.setRowVersion(existing.getRowVersion());
-            });
+    if (handoffRowFence != null) {
+      event.setId(handoffRowFence.id());
+      event.setRowVersion(handoffRowFence.rowVersion());
+    } else {
+      handoffEventRepository
+          .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+              workItem.getTenantId(), workItem.getId(), command.ordinal())
+          .ifPresent(
+              existing -> {
+                event.setId(existing.getId());
+                event.setRowVersion(existing.getRowVersion());
+              });
+    }
     ScriptHandoffEvent saved = handoffEventRepository.save(event);
     return saved == null ? event : saved;
   }
