@@ -517,12 +517,13 @@ public class AccountServiceImpl implements AccountService {
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
 
-    if (!membership.membershipExists() || !membership.gameplayAdmissionAllowed()) {
+    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+
+    if (!membership.membershipExists()) {
       if (!isPublicProductionRealm(realm)) {
-        if (membership.membershipExists()) {
-          throw new AuthenticationException(
-              "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-        }
         throw new AuthenticationException(
             "NON_PUBLIC_ENROLLMENT_REQUIRED",
             "Existing game membership is required for this non-public realm");
@@ -952,12 +953,15 @@ public class AccountServiceImpl implements AccountService {
     }
 
     boolean publicProductionRealm = isPublicProductionRealm(currentRealm);
-    boolean gameplayAdmissionAllowed =
-        accountTenantMembershipRepository
-            .findByAccountIdAndTenantId(bootstrapContext.accountId(), currentRealm.tenantId())
-            .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-            .isPresent();
-    if (!gameplayAdmissionAllowed) {
+    Optional<AccountTenantMembership> maybeMembership =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(
+            bootstrapContext.accountId(), currentRealm.tenantId());
+    if (maybeMembership.isPresent()
+        && !maybeMembership.orElseThrow().isGameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+    if (maybeMembership.isEmpty()) {
       if (!publicProductionRealm) {
         throw new AuthenticationException(
             "NON_PUBLIC_ENROLLMENT_REQUIRED",
