@@ -545,6 +545,7 @@ class ReviewAllocation:
     baseline_checkpoint: str | None = None
     min_additional_completed: int | None = None
     max_additional_completed: int | None = None
+    reopens_taper: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -577,6 +578,8 @@ class ReviewAllocation:
             or self.max_additional_completed <= 0
         ):
             raise StateError("maximum additional completed reviews must be a positive integer")
+        if not isinstance(self.reopens_taper, bool):
+            raise StateError("review allocation taper-reopen marker must be boolean")
         if self.min_additional_completed is None and self.max_additional_completed is None:
             if self.baseline_checkpoint is not None:
                 raise StateError("a bounded review allocation requires a minimum or maximum")
@@ -684,6 +687,8 @@ class ReviewAllocation:
             value["min_additional_completed"] = self.min_additional_completed
         if self.max_additional_completed is not None:
             value["max_additional_completed"] = self.max_additional_completed
+        if self.reopens_taper:
+            value["reopens_taper"] = True
         return value
 
     @classmethod
@@ -701,6 +706,7 @@ class ReviewAllocation:
             "baseline_checkpoint",
             "min_additional_completed",
             "max_additional_completed",
+            "reopens_taper",
             "handoff_checkpoint",
             "handoff_head",
             "handoff_validation",
@@ -753,6 +759,7 @@ class ReviewAllocation:
                 baseline_checkpoint=value.get("baseline_checkpoint"),
                 min_additional_completed=value.get("min_additional_completed"),
                 max_additional_completed=value.get("max_additional_completed"),
+                reopens_taper=value.get("reopens_taper", False),
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),
                 handoff_validation=value.get("handoff_validation"),

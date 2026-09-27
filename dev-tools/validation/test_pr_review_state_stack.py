@@ -10,7 +10,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review import state as state_module
-from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status, select_review_target, taper_satisfied
+from pr_review.policy import (
+    Channel,
+    Evidence,
+    ReviewStatus,
+    completion_status,
+    select_review_target,
+    taper_satisfied,
+    taper_satisfied_for_state,
+)
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
 from pr_review.state import (
     Judgment,
@@ -80,11 +88,13 @@ class ReviewStateStackTest(unittest.TestCase):
             baseline_checkpoint="5846432587",
             min_additional_completed=1,
             max_additional_completed=2,
+            reopens_taper=True,
         )
 
         restored = ReviewAllocation.from_dict(allocation.to_dict())
 
         self.assertEqual(restored, allocation)
+        self.assertTrue(restored.reopens_taper)
         state = ReviewState(ordered_prs=(2827,), allocations={allocation.identity: allocation})
         self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
         self.assertEqual(state.to_dict()["schema_version"], 1)
@@ -952,6 +962,113 @@ class ReviewStateStackTest(unittest.TestCase):
             accepted=1,
         )
         self.assertTrue(taper_satisfied(Channel.HOSTED, (hosted_dry, hosted_fix), 1))
+
+    def test_explicit_reopen_starts_fresh_cli_streak_after_useful_result(self):
+        old_dry = tuple(
+            Evidence(
+                1,
+                "review-head",
+                f"old-dry-{index}",
+                patch_id="review-patch",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+            )
+            for index in range(1, 4)
+        )
+        reopen = Judgment(
+            1,
+            "cli",
+            "reopen",
+            old_dry[-1].head,
+            old_dry[-1].checkpoint,
+            "fresh CLI discovery is required",
+            old_dry[-1].patch_id,
+        )
+        useful = Evidence(
+            1,
+            "review-head",
+            "fresh-useful-2-of-2",
+            patch_id="review-patch",
+            completed=True,
+            attributable=True,
+            anchored=True,
+            accepted=2,
+            raw=2,
+            corrected_state=True,
+        )
+        first_fresh_dry = Evidence(
+            1,
+            "review-head",
+            "fresh-dry-1",
+            patch_id="review-patch",
+            completed=True,
+            attributable=True,
+            anchored=True,
+            corrected_state=True,
+        )
+        state = ReviewState(ordered_prs=(1,), judgments=(reopen,))
+        history = (*old_dry, useful, first_fresh_dry)
+
+        self.assertTrue(taper_satisfied(Channel.CLI, old_dry, 3))
+        self.assertFalse(taper_satisfied_for_state(state, Channel.CLI, history))
+        decision = select_review_target(state, Channel.CLI, (1,), {1: history})
+        self.assertEqual(decision.status, ReviewStatus.READY)
+        self.assertFalse(decision.to_dict()["taper_complete"])
+
+        two_fresh_dry = (*history, dataclasses.replace(first_fresh_dry, checkpoint="fresh-dry-2"))
+        self.assertFalse(taper_satisfied_for_state(state, Channel.CLI, two_fresh_dry))
+        three_fresh_dry = (*two_fresh_dry, dataclasses.replace(first_fresh_dry, checkpoint="fresh-dry-3"))
+        self.assertTrue(taper_satisfied_for_state(state, Channel.CLI, three_fresh_dry))
+
+    def test_latest_exact_judgment_resolves_changed_patch_identity_hold(self):
+        history = (
+            Evidence(
+                1,
+                "review-head",
+                "hosted-dry",
+                patch_id="review-patch",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+            ),
+        )
+        for reconciliation in (
+            ReconciliationStatus.PATCH_CHANGED,
+            ReconciliationStatus.EQUIVALENT_HISTORY,
+        ):
+            for judgment_decision in ("retain", "reopen"):
+                with self.subTest(reconciliation=reconciliation, judgment=judgment_decision):
+                    judgment = Judgment(
+                        1,
+                        "hosted",
+                        judgment_decision,
+                        "review-head",
+                        "hosted-dry",
+                        f"explicitly {judgment_decision} the latest review identity",
+                        "review-patch",
+                    )
+                    decision = select_review_target(
+                        ReviewState(ordered_prs=(1,), judgments=(judgment,)),
+                        Channel.HOSTED,
+                        (1,),
+                        {1: history},
+                        reconciliation_by_pr={1: reconciliation},
+                    )
+
+                    self.assertNotEqual(decision.status, ReviewStatus.JUDGMENT_REQUIRED)
+                    if judgment_decision == "reopen":
+                        self.assertEqual(decision.status, ReviewStatus.READY)
+                        self.assertEqual(decision.target, 1)
+                        self.assertFalse(decision.to_dict()["taper_complete"])
+                    elif reconciliation == ReconciliationStatus.PATCH_CHANGED:
+                        self.assertEqual(decision.status, ReviewStatus.READY)
+                        self.assertEqual(decision.target, 1)
+                    else:
+                        self.assertEqual(decision.status, ReviewStatus.COMPLETE)
+                        self.assertIsNone(decision.target)
 
     def test_cli_streak_break_includes_newer_round_and_keeps_hosted_policy_unchanged(self):
         history = (

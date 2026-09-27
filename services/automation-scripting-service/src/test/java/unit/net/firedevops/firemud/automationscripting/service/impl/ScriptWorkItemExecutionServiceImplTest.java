@@ -629,6 +629,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
     ScriptWorkItem item = pluginWorkItem();
     item.setPluginActivationEpoch(0L);
+    item.setLifecycleRevision(0L);
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));

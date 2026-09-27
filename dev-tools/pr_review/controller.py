@@ -3149,10 +3149,13 @@ class ReviewController:
         latest = snapshot["results"][-1] if snapshot["results"] else None
         baseline = snapshot["baseline"]
         baseline_head = snapshot.get("baseline_head") or allocation.head
-        normal_taper_complete = policy.taper_satisfied(
+        normal_taper_complete = policy.taper_satisfied_for_state(
+            state,
             allocation.channel,
             history,
-            policy.required_taper(state, allocation.channel, history),
+            baseline_checkpoints=(
+                allocation.baseline_checkpoints if allocation.reopens_taper else ()
+            ),
         )
 
         def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
@@ -3170,6 +3173,12 @@ class ReviewController:
                 "max_additional_completed": cap,
                 "completed_count": used,
                 "taper_complete": normal_taper_complete,
+                "historical_taper_complete": policy.taper_satisfied(
+                    allocation.channel,
+                    history,
+                    policy.required_taper(state, allocation.channel, history),
+                ),
+                "reopens_taper": allocation.reopens_taper,
                 "used": used,
                 "cap": cap,
                 "remaining": max(0, cap - used - in_flight) if cap is not None else None,
@@ -3286,11 +3295,14 @@ class ReviewController:
                 control="taper",
             )
         if cap is None or used < cap:
-            reason = (
-                "normal channel taper is not complete; more allocated results may be requested"
-                if cap is None
-                else "normal channel taper may finish before the maximum additional-review limit"
-            )
+            if allocation.reopens_taper and not normal_taper_complete:
+                reason = "fresh taper restarted at this post-taper allocation; additional results may be requested"
+            else:
+                reason = (
+                    "normal channel taper is not complete; more allocated results may be requested"
+                    if cap is None
+                    else "normal channel taper may finish before the maximum additional-review limit"
+                )
             return result("CAP_ACTIVE", reason, control="taper")
         if reconciliation_result is None or not latest:
             return result(
@@ -3586,10 +3598,24 @@ class ReviewController:
             view["minimum_additional_completed"] = minimum
             view["maximum_additional_completed"] = maximum
             view["completed_count"] = completed_count
-            view["taper_complete"] = policy.taper_satisfied(
+            view["reopens_taper"] = allocation.reopens_taper
+            view["historical_taper_complete"] = policy.taper_satisfied(
                 channel,
                 histories[pr],
                 policy.required_taper(state, channel, histories[pr]),
+            )
+            taper_values = policy.fresh_taper_history(
+                state,
+                channel,
+                histories[pr],
+                baseline_checkpoints=(
+                    allocation.baseline_checkpoints if allocation.reopens_taper else ()
+                ),
+            )
+            view["taper_complete"] = policy.taper_satisfied(
+                channel,
+                taper_values,
+                policy.required_taper(state, channel, taper_values),
             )
             views[pr] = view
         return views
@@ -3628,6 +3654,17 @@ class ReviewController:
                 if isinstance(value, str):
                     other_heads[pr] = value
         channel_allocations = allocations
+        taper_history_by_pr = {
+            pr: policy.fresh_taper_history(
+                state,
+                channel,
+                histories[channel].get(pr, ()),
+                baseline_checkpoints=state.allocations[f"{pr}:{channel.value}"].baseline_checkpoints,
+            )
+            for pr, view in channel_allocations.items()
+            if view.get("reopens_taper") is True
+            and f"{pr}:{channel.value}" in state.allocations
+        }
         decision = policy.select_review_target(
             state,
             channel,
@@ -3671,10 +3708,18 @@ class ReviewController:
             | {
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] == "CAP_ACTIVE"
-                and view.get("selection_control") == "minimum"
-                and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                if (
+                    view["status"] == "CAP_ACTIVE"
+                    and view.get("selection_control") == "minimum"
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
+                or (
+                    view.get("reopens_taper") is True
+                    and view["status"] in {"PROMISED", "CAP_ACTIVE"}
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
             },
+            taper_history_by_pr=taper_history_by_pr,
         )
         if (
             channel == policy.Channel.CLI
@@ -3885,7 +3930,9 @@ class ReviewController:
             selected,
             pr,
             policy.ReviewStatus.READY if completed_allocation_override else decision.status,
-            "explicit bounded allocation overrides the completed taper" if completed_allocation_override else decision.reason,
+            "explicit allocation reopens a fresh taper after completion"
+            if completed_allocation_override
+            else decision.reason,
             selected_target,
             anchor,
             decision.provisional,
@@ -4791,10 +4838,17 @@ class ReviewController:
             raise ControllerError("allocation requires a coherent current stack identity")
         current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
-        policy_history = (
-            self._policy_history(state, pr, selected, reconciliation)
-            if bounded_replacement
-            else history
+        policy_history = self._policy_history(state, pr, selected, reconciliation)
+        prior_taper_baseline = (
+            previous.baseline_checkpoints
+            if previous is not None and previous.reopens_taper
+            else ()
+        )
+        reopens_taper = policy.taper_satisfied_for_state(
+            state,
+            selected,
+            policy_history,
+            baseline_checkpoints=prior_taper_baseline,
         )
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
@@ -4828,7 +4882,7 @@ class ReviewController:
             target = self._target(
                 selected,
                 expected_pr=pr,
-                allow_completed_allocation=bounded_replacement,
+                allow_completed_allocation=True,
             )
             try:
                 self._ensure_runnable(target)
@@ -4897,6 +4951,7 @@ class ReviewController:
             baseline_checkpoint=checkpoint,
             min_additional_completed=min_additional_completed,
             max_additional_completed=max_additional_completed,
+            reopens_taper=reopens_taper,
         )
         progress = None
         if bounded_replacement:

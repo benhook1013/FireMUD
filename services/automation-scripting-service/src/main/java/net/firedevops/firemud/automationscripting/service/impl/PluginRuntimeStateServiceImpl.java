@@ -124,9 +124,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     zeroIfNull(state.getRuntimeRegionEpoch()),
                     PluginState.PLUGIN_STATE_UNSPECIFIED,
                     ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
-                    state.getLastChangedAt() == null
-                        ? 0L
-                        : state.getLastChangedAt().toEpochMilli(),
+                    state.getLastChangedAt() == null ? 0L : state.getLastChangedAt().toEpochMilli(),
                     normalize(state.getControlPlaneRequestId()),
                     normalize(state.getActorPrincipal()),
                     state.getLastPolicyCheckedAt() == null

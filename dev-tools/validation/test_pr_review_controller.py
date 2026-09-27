@@ -734,7 +734,7 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(allocation["taper_complete"])
         self.assertEqual(after["review_targets"]["cli"]["pr"], 2)
 
-    def test_minimum_and_maximum_after_taper_stop_at_minimum_not_maximum(self):
+    def test_minimum_and_maximum_after_taper_count_only_the_fresh_streak(self):
         dry_history = [
             self.allocation_evidence(checkpoint=f"cli-dry-{index}", channel="cli")
             for index in range(1, 4)
@@ -750,7 +750,9 @@ class ControllerTests(unittest.TestCase):
 
         allocation = controller.status()["prs"][0]["allocations"]["cli"]
         self.assertEqual(allocation["status"], "CAP_ACTIVE")
-        self.assertTrue(allocation["taper_complete"])
+        self.assertTrue(allocation["reopens_taper"])
+        self.assertTrue(allocation["historical_taper_complete"])
+        self.assertFalse(allocation["taper_complete"])
         self.assertEqual(allocation["completed_count"], 0)
         self.assertEqual(allocation["controlling_reason"], "minimum of 2 additional completed reviews is not met")
         self.assertEqual(controller.select_target("cli")["pr"], 1)
@@ -761,18 +763,26 @@ class ControllerTests(unittest.TestCase):
         first = controller.status()["prs"][0]["allocations"]["cli"]
         self.assertEqual(first["status"], "CAP_ACTIVE")
         self.assertEqual(first["completed_count"], 1)
+        self.assertFalse(first["taper_complete"])
         self.assertEqual(first["selection_control"], "minimum")
 
         evidence[(1, "cli")].append(
             self.allocation_evidence(checkpoint="cli-additional-2", channel="cli")
         )
         final = controller.status()["prs"][0]["allocations"]["cli"]
-        self.assertEqual(final["status"], "CAP_TAPERED")
+        self.assertEqual(final["status"], "CAP_ACTIVE")
         self.assertEqual(final["completed_count"], 2)
         self.assertEqual(final["maximum_additional_completed"], 3)
-        self.assertTrue(final["taper_complete"])
+        self.assertFalse(final["taper_complete"])
+        evidence[(1, "cli")].append(
+            self.allocation_evidence(checkpoint="cli-additional-3", channel="cli")
+        )
+        tapered = controller.status()["prs"][0]["allocations"]["cli"]
+        self.assertEqual(tapered["status"], "CAP_TAPERED")
+        self.assertEqual(tapered["completed_count"], 3)
+        self.assertTrue(tapered["taper_complete"])
 
-    def test_maximum_only_does_not_override_an_already_completed_taper(self):
+    def test_maximum_only_after_taper_reopens_fresh_cli_streak(self):
         pre_taper_evidence = {
             (1, "cli"): [
                 self.allocation_evidence(checkpoint="cli-first", channel="cli")
@@ -816,14 +826,48 @@ class ControllerTests(unittest.TestCase):
         )
 
         allocation = controller.status()["prs"][0]["allocations"]["cli"]
-        self.assertEqual(allocation["status"], "CAP_TAPERED")
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertTrue(allocation["reopens_taper"])
+        self.assertTrue(allocation["historical_taper_complete"])
         self.assertIsNone(allocation["minimum_additional_completed"])
         self.assertEqual(allocation["maximum_additional_completed"], 2)
         self.assertEqual(allocation["completed_count"], 0)
-        self.assertTrue(allocation["taper_complete"])
-        self.assertEqual(allocation["selection_control"], "taper")
-        with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
-            controller.resolve_cli_target()
+        self.assertFalse(allocation["taper_complete"])
+        self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
+
+    def test_hosted_maximum_only_after_taper_uses_one_new_dry_result(self):
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    checkpoint="hosted-old-dry",
+                    channel="hosted",
+                    accepted=0,
+                )
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            channel="hosted",
+            checkpoint="hosted-old-dry",
+            cap=3,
+            minimum=None,
+            evidence=evidence,
+        )
+
+        before_new_result = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(before_new_result["status"], "CAP_ACTIVE")
+        self.assertTrue(before_new_result["reopens_taper"])
+        self.assertTrue(before_new_result["historical_taper_complete"])
+        self.assertFalse(before_new_result["taper_complete"])
+        self.assertEqual(before_new_result["completed_count"], 0)
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(checkpoint="hosted-new-dry", channel="hosted", accepted=0)
+        )
+        after_new_result = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(after_new_result["status"], "CAP_TAPERED")
+        self.assertEqual(after_new_result["completed_count"], 1)
+        self.assertTrue(after_new_result["taper_complete"])
 
     def test_maximum_stop_is_not_taper_and_does_not_waive_findings(self):
         evidence = {(1, "hosted"): [

@@ -1681,32 +1681,32 @@ class LiveEvidence:
                     "non_counting": True,
                 }
             )
-        values.append(
-            {
-                "pr": pr,
-                "head": head,
-                "channel": channel,
-                "kind": "scope_timeline",
-                "scope_timeline": True,
-                "scope_timeline_complete": True,
-                "checkpoint": "scope-timeline:complete",
-                "completed": False,
-                "attributable": False,
-                "anchored": False,
-                "accepted": 0,
-                "raw": 0,
-                "non_counting": True,
-            }
+        global_blockers = self._global_blockers(
+            pr,
+            head,
+            payload,
+            changed_files=live.changed_files,
+            include_hosted_findings=channel == "hosted",
         )
-        values.extend(
-            self._global_blockers(
-                pr,
-                head,
-                payload,
-                changed_files=live.changed_files,
-                include_hosted_findings=channel == "hosted",
+        if values or global_blockers:
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "channel": channel,
+                    "kind": "scope_timeline",
+                    "scope_timeline": True,
+                    "scope_timeline_complete": True,
+                    "checkpoint": "scope-timeline:complete",
+                    "completed": False,
+                    "attributable": False,
+                    "anchored": False,
+                    "accepted": 0,
+                    "raw": 0,
+                    "non_counting": True,
+                }
             )
-        )
+        values.extend(global_blockers)
         self._histories[key] = values
         return values
 
