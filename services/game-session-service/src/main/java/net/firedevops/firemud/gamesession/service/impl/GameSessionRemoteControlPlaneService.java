@@ -2117,11 +2117,23 @@ final class GameSessionRemoteControlPlaneService {
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
+    if (baseVersionId == null || baseVersionId <= 0L) {
+      return ScriptPatchPublicationLink.newBuilder()
+          .setScriptPatchVersion(normalizedScriptPatchVersion)
+          .setVersionId(0L)
+          .setBaseVersionId(0L)
+          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+          .setLastChangedAtMs(0L)
+          .setLookupErrorCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
+          .setLookupErrorMessage(
+              "base_version_id is required for script patch publication lookup")
+          .build();
+    }
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
+                tenantId, normalizedScriptPatchVersion, baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)

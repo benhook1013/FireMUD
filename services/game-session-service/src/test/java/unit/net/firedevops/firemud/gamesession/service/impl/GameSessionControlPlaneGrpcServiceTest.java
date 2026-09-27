@@ -5072,6 +5072,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     1L, 9L, "region-b", 4L, "rf-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameDesignClient gameDesignClient = gameDesignClient();
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
             repository,
@@ -5080,7 +5081,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             null,
-            gameDesignClient());
+            gameDesignClient);
 
     AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
     service.getRemoteFollowup(
@@ -5107,6 +5108,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
         responseRef.get().getFollowup().getPublication().getLookupErrorCode());
+    Mockito.verify(gameDesignClient, Mockito.never())
+        .getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong());
   }
 
   @Test
