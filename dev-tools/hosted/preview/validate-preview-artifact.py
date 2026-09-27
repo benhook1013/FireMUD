@@ -45,6 +45,7 @@ EXPECTED_KINDS = {
     ("batch/v1", "Job"),
     ("networking.k8s.io/v1", "Ingress"),
     ("networking.k8s.io/v1", "NetworkPolicy"),
+    ("traefik.io/v1alpha1", "Middleware"),
 }
 SERVICE_IMAGES = {
     "account-service",
@@ -72,9 +73,17 @@ DISTINCT_GRPC_WORKLOADS = (
     PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS
 )
 EXPECTED_NAMES = {
-    "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
+    "Deployment": SERVICE_IMAGES
+    | {"postgres", "redis-coord", "redis-cache", "minio", "frontend"},
     "Service": SERVICE_IMAGES
-    | {"spring-cloud-gateway-mtls", "postgres", "redis-coord", "redis-cache", "minio"},
+    | {
+        "spring-cloud-gateway-mtls",
+        "postgres",
+        "redis-coord",
+        "redis-cache",
+        "minio",
+        "frontend",
+    },
     "ConfigMap": {"firemud-config", "firemud-seed-sql"},
     "PersistentVolumeClaim": {"postgres-data", "redis-coord-data", "redis-cache-data", "minio-data"},
     "Job": {"firemud-seed"},
@@ -86,7 +95,15 @@ EXPECTED_NAMES = {
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
+        "frontend-static-host",
     },
+    "Middleware": {"firemud-preview-auth-path-rewrite"},
+}
+FRONTEND_EXPECTED_NAMES = {
+    "Deployment": {"frontend"},
+    "Service": {"frontend"},
+    "NetworkPolicy": {"frontend-static-host"},
+    "Middleware": {"firemud-preview-auth-path-rewrite"},
 }
 EXPECTED_PVC_SPECS = {
     "postgres-data": {
@@ -126,6 +143,7 @@ EXPECTED_OBJECTS = {
     (kind, name)
     for kind, names in EXPECTED_NAMES.items()
     for name in names
+    if name not in FRONTEND_EXPECTED_NAMES.get(kind, set())
 }
 INFRASTRUCTURE_IMAGES = {
     "postgres:16",
@@ -161,6 +179,58 @@ GATEWAY_HTTP_ROUTE_APPS = (
     "account-service",
     "social-groups-service",
 )
+FRONTEND_IMAGE_REPOSITORIES = {
+    "ghcr.io/benhook1013/web-client",
+}
+FRONTEND_MIDDLEWARE_NAME = "firemud-preview-auth-path-rewrite"
+FRONTEND_MIDDLEWARE_ANNOTATION = "traefik.ingress.kubernetes.io/router.middlewares"
+FRONTEND_MIDDLEWARE_REFERENCE = re.compile(
+    rf"^pr-[1-9][0-9]{{0,50}}-{re.escape(FRONTEND_MIDDLEWARE_NAME)}@kubernetescrd$"
+)
+FRONTEND_MIDDLEWARE_SPEC = {
+    "replacePathRegex": {
+        "regex": r"^/auth(/.*)?$",
+        "replacement": r"/api/account/auth$1",
+    }
+}
+FRONTEND_SERVICE_SPEC = {
+    "selector": {"app": "frontend"},
+    "ports": [
+        {
+            "name": "http",
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP",
+        }
+    ],
+    "type": "ClusterIP",
+}
+FRONTEND_NETWORK_POLICY_SPEC = {
+    "podSelector": {"matchLabels": {"app": "frontend"}},
+    "policyTypes": ["Ingress", "Egress"],
+    "ingress": [
+        {
+            "from": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {
+                            "kubernetes.io/metadata.name": "kube-system"
+                        }
+                    },
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "traefik"}
+                    },
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        }
+    ],
+    "egress": [],
+}
+FRONTEND_RESOURCES = {
+    "requests": {"cpu": "10m", "memory": "32Mi"},
+    "limits": {"cpu": "250m", "memory": "128Mi"},
+}
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
@@ -223,16 +293,76 @@ def _exposure_mode_for_service_type(service_type: object) -> str:
     fail("validated TCP Proxy Service has no canonical exposure mode")
 
 
-def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
+def _expected_names_for_mode(
+    certificate_identity_mode: str,
+    frontend_enabled: bool = False,
+) -> dict[str, set[str]]:
     _validate_certificate_identity_mode(certificate_identity_mode)
     expected_names = {
         kind: set(names) for kind, names in EXPECTED_NAMES.items()
     }
+    if not frontend_enabled:
+        for kind, names in FRONTEND_EXPECTED_NAMES.items():
+            expected_names.setdefault(kind, set()).difference_update(names)
     if certificate_identity_mode == "standalone":
-        expected_names["NetworkPolicy"].discard(
+        expected_names.setdefault("NetworkPolicy", set()).discard(
             "account-service-controller-ingress"
         )
     return expected_names
+
+
+def _frontend_render_enabled(documents: list[object]) -> bool:
+    """Detect the explicit frontend opt-in without trusting arbitrary objects."""
+
+    frontend_objects = {
+        (kind, name)
+        for kind, names in FRONTEND_EXPECTED_NAMES.items()
+        for name in names
+    }
+    frontend_paths = {
+        "/frontend-assets",
+        "/auth",
+        "/api",
+        "/ws/game",
+        "/assets",
+    }
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        metadata = document.get("metadata")
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        if (document.get("kind"), name) in frontend_objects:
+            return True
+        if document.get("kind") != "Ingress":
+            continue
+        if (
+            isinstance(metadata, dict)
+            and isinstance(metadata.get("annotations"), dict)
+            and FRONTEND_MIDDLEWARE_ANNOTATION in metadata["annotations"]
+        ):
+            return True
+        spec = document.get("spec")
+        if not isinstance(spec, dict):
+            continue
+        for rule in spec.get("rules", []):
+            if not isinstance(rule, dict):
+                continue
+            http = rule.get("http")
+            if not isinstance(http, dict):
+                continue
+            paths = http.get("paths")
+            if isinstance(paths, list) and any(
+                isinstance(path, dict) and path.get("path") in frontend_paths
+                for path in paths
+            ):
+                return True
+    return False
+
+
+def _expected_frontend_middleware_reference(expected_namespace: str) -> str:
+    if re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace) is None:
+        fail(f"runtime namespace is not canonical: {expected_namespace!r}")
+    return f"{expected_namespace}-{FRONTEND_MIDDLEWARE_NAME}@kubernetescrd"
 
 
 def _is_tcp_proxy_identity_object(document: dict) -> bool:
@@ -819,6 +949,7 @@ def _validate_image_reference(
     location: str,
     value: str,
     expected_image_tag: str,
+    allow_frontend: bool = False,
 ) -> None:
     if value in INFRASTRUCTURE_IMAGES:
         return
@@ -829,6 +960,14 @@ def _validate_image_reference(
     if not separator or not repository or not tag:
         fail(f"{location} uses an untagged image")
     service = repository.rsplit("/", 1)[-1]
+    if service == "web-client":
+        if not allow_frontend:
+            fail(f"{location} uses an unapproved service image repository")
+        if repository not in FRONTEND_IMAGE_REPOSITORIES:
+            fail(f"{location} uses an unapproved frontend image repository")
+        if tag != expected_image_tag:
+            fail(f"{location} uses image tag {tag!r}, expected {expected_image_tag!r}")
+        return
     if service in SERVICE_IMAGES:
         if repository != f"ghcr.io/benhook1013/{service}":
             fail(f"{location} uses an unapproved service image repository")
@@ -1165,6 +1304,162 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
         fail(f"{path}.securityContext.windowsOptions.hostProcess is forbidden")
 
 
+def _validate_frontend_image(
+    image: object, path: str, expected_image_tag: str | None = None
+) -> None:
+    if not isinstance(image, str) or "@" in image:
+        fail(f"{path} must be an immutable tagged frontend image")
+    repository, separator, tag = image.rpartition(":")
+    if (
+        not separator
+        or repository not in FRONTEND_IMAGE_REPOSITORIES
+        or not tag
+    ):
+        fail(f"{path} uses an unapproved frontend image")
+    if expected_image_tag is not None and tag != expected_image_tag:
+        fail(f"{path} uses image tag {tag!r}, expected {expected_image_tag!r}")
+
+
+def validate_frontend_deployment(
+    document: dict, expected_image_tag: str | None = None
+) -> None:
+    """Require the exact unprivileged static-host Deployment contract."""
+
+    name = document.get("metadata", {}).get("name", "frontend")
+    spec = _require_mapping(document.get("spec"), f"Deployment/{name}.spec")
+    if set(spec) != {"replicas", "selector", "template"}:
+        fail(f"Deployment/{name} has an unsafe frontend spec")
+    if spec.get("replicas") != 1:
+        fail(f"Deployment/{name} must have exactly one replica")
+    if spec.get("selector") != {"matchLabels": {"app": "frontend"}}:
+        fail(f"Deployment/{name} has an unsafe frontend selector")
+    template = _require_mapping(
+        spec.get("template"), f"Deployment/{name}.spec.template"
+    )
+    if template.get("metadata") != {"labels": {"app": "frontend"}}:
+        fail(f"Deployment/{name} has unsafe frontend pod-template metadata")
+    pod = _require_mapping(
+        template.get("spec"), f"Deployment/{name}.spec.template.spec"
+    )
+    expected_pod_security = {
+        "runAsNonRoot": True,
+        "runAsUser": 101,
+        "runAsGroup": 101,
+        "fsGroup": 101,
+        "fsGroupChangePolicy": "OnRootMismatch",
+        "seccompProfile": {"type": "RuntimeDefault"},
+    }
+    expected_pod_fields = {
+        "automountServiceAccountToken",
+        "securityContext",
+        "containers",
+        "volumes",
+        "imagePullSecrets",
+    }
+    if set(pod) - expected_pod_fields:
+        fail(f"Deployment/{name} has unsupported frontend pod fields")
+    if pod.get("automountServiceAccountToken") is not False:
+        fail(f"Deployment/{name} must disable the ServiceAccount token")
+    if pod.get("securityContext") != expected_pod_security:
+        fail(f"Deployment/{name} has unsafe frontend pod security")
+    if "imagePullSecrets" in pod and pod["imagePullSecrets"] != [
+        {"name": "ghcr-preview-pull"}
+    ]:
+        fail(f"Deployment/{name} has an unsafe frontend imagePullSecret")
+    containers = _require_mapping_list(
+        pod.get("containers"), f"Deployment/{name}.spec.template.spec.containers"
+    )
+    if len(containers) != 1:
+        fail(f"Deployment/{name} must contain exactly one frontend container")
+    container = containers[0]
+    container_path = f"Deployment/{name}.spec.template.spec.containers[0]"
+    expected_container_fields = {
+        "name",
+        "image",
+        "imagePullPolicy",
+        "securityContext",
+        "ports",
+        "readinessProbe",
+        "livenessProbe",
+        "resources",
+        "volumeMounts",
+    }
+    if set(container) != expected_container_fields:
+        fail(f"{container_path} has an unsafe frontend container shape")
+    if container.get("name") != "frontend":
+        fail(f"{container_path} has an unexpected name")
+    _validate_frontend_image(
+        container.get("image"), f"{container_path}.image", expected_image_tag
+    )
+    if container.get("imagePullPolicy") != "Always":
+        fail(f"{container_path}.imagePullPolicy must be Always")
+    if container.get("securityContext") != {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "runAsNonRoot": True,
+        "runAsUser": 101,
+        "runAsGroup": 101,
+        "capabilities": {"drop": ["ALL"]},
+    }:
+        fail(f"{container_path} has unsafe frontend container security")
+    if container.get("ports") != [
+        {"name": "http", "containerPort": 8080, "protocol": "TCP"}
+    ]:
+        fail(f"{container_path} has an unsafe HTTP port")
+    expected_probe = {
+        "httpGet": {"path": "/healthz", "port": "http"},
+        "initialDelaySeconds": 2,
+        "periodSeconds": 10,
+    }
+    if container.get("readinessProbe") != expected_probe:
+        fail(f"{container_path} has an unsafe readiness probe")
+    expected_liveness_probe = {
+        "httpGet": {"path": "/healthz", "port": "http"},
+        "initialDelaySeconds": 5,
+        "periodSeconds": 20,
+    }
+    if container.get("livenessProbe") != expected_liveness_probe:
+        fail(f"{container_path} has an unsafe liveness probe")
+    if container.get("resources") != FRONTEND_RESOURCES:
+        fail(f"{container_path} has unsafe resource limits")
+    if container.get("volumeMounts") != [
+        {"name": "nginx-tmp", "mountPath": "/tmp"}
+    ]:
+        fail(f"{container_path} has an unsafe temporary volume mount")
+    if pod.get("volumes") != [
+        {"name": "nginx-tmp", "emptyDir": {"sizeLimit": "16Mi"}}
+    ]:
+        fail(f"Deployment/{name} has an unsafe temporary volume")
+
+
+def validate_frontend_middleware(document: dict, expected_namespace: str) -> None:
+    name = document.get("metadata", {}).get("name", FRONTEND_MIDDLEWARE_NAME)
+    if document.get("apiVersion") != "traefik.io/v1alpha1":
+        fail(f"Middleware/{name} has an unsupported apiVersion")
+    if document.get("kind") != "Middleware":
+        fail(f"Middleware/{name} has an unexpected kind")
+    if document.get("spec") != FRONTEND_MIDDLEWARE_SPEC:
+        fail(f"Middleware/{name} has an unsafe spec")
+    if name != FRONTEND_MIDDLEWARE_NAME:
+        fail(f"Middleware/{name} is not the trusted frontend middleware")
+    _expected_frontend_middleware_reference(expected_namespace)
+
+
+def _frontend_ingress_paths() -> list[dict]:
+    gateway = {
+        "service": {"name": "spring-cloud-gateway", "port": {"number": 80}}
+    }
+    frontend = {"service": {"name": "frontend", "port": {"number": 80}}}
+    return [
+        {"path": "/frontend-assets", "pathType": "Prefix", "backend": frontend},
+        {"path": "/auth", "pathType": "Prefix", "backend": gateway},
+        {"path": "/api", "pathType": "Prefix", "backend": gateway},
+        {"path": "/ws/game", "pathType": "Prefix", "backend": gateway},
+        {"path": "/assets", "pathType": "Prefix", "backend": gateway},
+        {"path": "/", "pathType": "Prefix", "backend": frontend},
+    ]
+
+
 def _strip_annotations(value: object) -> None:
     if isinstance(value, dict):
         metadata = value.get("metadata")
@@ -1192,12 +1487,22 @@ def _validate_no_annotations(value: object, path: str = "object") -> None:
 def sanitize(source: Path, destination: Path) -> None:
     """Produce the credential-free artifact consumed by the trusted workflow."""
 
+    raw_documents = [
+        raw
+        for raw in yaml.safe_load_all(source.read_text(encoding="utf-8"))
+        if raw is not None
+    ]
+    if any(not isinstance(raw, dict) for raw in raw_documents):
+        fail("render contains a non-object document")
+    frontend_enabled = _frontend_render_enabled(raw_documents)
+    expected_names = {
+        kind: set(names) for kind, names in EXPECTED_NAMES.items()
+    }
+    if not frontend_enabled:
+        for kind, names in FRONTEND_EXPECTED_NAMES.items():
+            expected_names.setdefault(kind, set()).difference_update(names)
     documents = []
-    for raw in yaml.safe_load_all(source.read_text(encoding="utf-8")):
-        if raw is None:
-            continue
-        if not isinstance(raw, dict):
-            fail("render contains a non-object document")
+    for raw in raw_documents:
         api_version = raw.get("apiVersion")
         kind = raw.get("kind")
         if kind in SANITIZER_FORBIDDEN_KINDS:
@@ -1208,7 +1513,7 @@ def sanitize(source: Path, destination: Path) -> None:
         if not isinstance(metadata, dict) or not metadata.get("name"):
             fail(f"{kind} has no metadata.name")
         name = metadata["name"]
-        if not isinstance(name, str) or name not in EXPECTED_NAMES[kind]:
+        if not isinstance(name, str) or name not in expected_names.get(kind, set()):
             fail(f"{kind}/{name} is not an approved preview object")
         if metadata.get("namespace") in {"firemud-system", "kube-system"}:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
@@ -1225,6 +1530,42 @@ def sanitize(source: Path, destination: Path) -> None:
                 pod,
                 f"{kind}/{metadata['name']}.spec.template.spec",
             )
+        if frontend_enabled and kind == "Deployment" and name == "frontend":
+            validate_frontend_deployment(raw)
+        if (
+            frontend_enabled
+            and kind == "Middleware"
+            and name == FRONTEND_MIDDLEWARE_NAME
+            and raw.get("spec") != FRONTEND_MIDDLEWARE_SPEC
+        ):
+            fail(f"Middleware/{name} has an unsafe spec")
+        trusted_frontend_annotation = None
+        if frontend_enabled and kind == "Ingress" and name == "firemud-preview":
+            annotations = metadata.get("annotations")
+            if annotations is not None:
+                if not isinstance(annotations, dict):
+                    fail("Ingress/firemud-preview annotations are not an object")
+                unexpected_annotations = set(annotations) - {
+                    "cert-manager.io/cluster-issuer",
+                    FRONTEND_MIDDLEWARE_ANNOTATION,
+                }
+                if unexpected_annotations:
+                    fail(
+                        "Ingress/firemud-preview has unsupported frontend annotations: "
+                        f"{sorted(unexpected_annotations)}"
+                    )
+                trusted_frontend_annotation = annotations.get(
+                    FRONTEND_MIDDLEWARE_ANNOTATION
+                )
+                if trusted_frontend_annotation is not None and (
+                    not isinstance(trusted_frontend_annotation, str)
+                    or not FRONTEND_MIDDLEWARE_REFERENCE.fullmatch(
+                        trusted_frontend_annotation
+                    )
+                ):
+                    fail(
+                        "Ingress/firemud-preview has an unsafe frontend middleware reference"
+                    )
         sanitized = _clean_config_map(copy.deepcopy(raw))
         if sanitized.get("kind") == "Service":
             name = sanitized["metadata"]["name"]
@@ -1235,6 +1576,10 @@ def sanitize(source: Path, destination: Path) -> None:
             for port in ports:
                 port.pop("nodePort", None)
         _strip_annotations(sanitized)
+        if trusted_frontend_annotation is not None:
+            sanitized.setdefault("metadata", {})["annotations"] = {
+                FRONTEND_MIDDLEWARE_ANNOTATION: trusted_frontend_annotation
+            }
         _validate_sanitized_secret_refs(sanitized)
         documents.append(sanitized)
     if not documents:
@@ -1269,6 +1614,7 @@ def inject_telnet_port(
     if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
         fail("preview exposure mode is not canonical")
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+    frontend_enabled = _frontend_render_enabled(documents)
     matches = []
     ingress_matches = 0
     for document in documents:
@@ -1277,6 +1623,12 @@ def inject_telnet_port(
         metadata = _validate_object_metadata(
             document,
             expected_namespace,
+            allow_trusted_ingress_annotation=(
+                frontend_enabled
+                and document.get("kind") == "Ingress"
+                and isinstance(document.get("metadata"), dict)
+                and document["metadata"].get("name") == "firemud-preview"
+            ),
             certificate_identity_mode=certificate_identity_mode,
         )
         namespace = metadata.get("namespace")
@@ -1284,15 +1636,28 @@ def inject_telnet_port(
             fail(
                 f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
             )
-        if "annotations" in metadata:
+        if "annotations" in metadata and not (
+            frontend_enabled
+            and document.get("kind") == "Ingress"
+            and metadata.get("name") == "firemud-preview"
+            and metadata.get("annotations") == {
+                FRONTEND_MIDDLEWARE_ANNOTATION: _expected_frontend_middleware_reference(
+                    expected_namespace
+                )
+            }
+        ):
             fail("validated preview render retains untrusted annotations")
         metadata["namespace"] = expected_namespace
         if document.get("kind") == "Ingress" and metadata.get("name") == "firemud-preview":
             ingress_matches += 1
             if certificate_identity_mode == "standalone":
                 metadata["annotations"] = {
-                    "cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER
+                    "cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER,
                 }
+                if frontend_enabled:
+                    metadata["annotations"][FRONTEND_MIDDLEWARE_ANNOTATION] = (
+                        _expected_frontend_middleware_reference(expected_namespace)
+                    )
         if document.get("kind") != "Service":
             continue
         if metadata.get("name") != "tcp-proxy-service":
@@ -1368,6 +1733,7 @@ def validate_runtime_target(
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("prepared preview render is empty")
+    frontend_enabled = _frontend_render_enabled(documents)
     node_ports: list[tuple[str, object, object]] = []
     ingress_matches = 0
     for index, document in enumerate(documents):
@@ -1377,10 +1743,12 @@ def validate_runtime_target(
             document,
             expected_namespace,
             allow_trusted_ingress_annotation=(
-                certificate_identity_mode == "standalone"
-                and document.get("kind") == "Ingress"
+                document.get("kind") == "Ingress"
                 and isinstance(document.get("metadata"), dict)
                 and document["metadata"].get("name") == "firemud-preview"
+                and (
+                    certificate_identity_mode == "standalone" or frontend_enabled
+                )
             ),
             allow_trusted_allocated_telnet_port=(
                 document.get("kind") == "Service"
@@ -1399,8 +1767,23 @@ def validate_runtime_target(
         if document.get("kind") == "Ingress" and name == "firemud-preview":
             ingress_matches += 1
             expected_annotations = (
-                {"cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER}
-                if certificate_identity_mode == "standalone"
+                {
+                    **(
+                        {"cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER}
+                        if certificate_identity_mode == "standalone"
+                        else {}
+                    ),
+                    **(
+                        {
+                            FRONTEND_MIDDLEWARE_ANNOTATION: _expected_frontend_middleware_reference(
+                                expected_namespace
+                            )
+                        }
+                        if frontend_enabled
+                        else {}
+                    ),
+                }
+                if certificate_identity_mode == "standalone" or frontend_enabled
                 else None
             )
             if annotations != expected_annotations:
@@ -1728,16 +2111,24 @@ def validate_service_consumers(
 
 
 def validate_services(
-    documents: list[dict], certificate_identity_mode: str = "standalone"
+    documents: list[dict],
+    certificate_identity_mode: str = "standalone",
+    frontend_enabled: bool | None = None,
 ) -> None:
     """Require the exact trusted preview Service specs."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
+    if frontend_enabled is None:
+        frontend_enabled = _frontend_render_enabled(documents)
     for document in documents:
         if document.get("kind") != "Service":
             continue
         name = document.get("metadata", {}).get("name")
         spec = _require_mapping(document.get("spec"), f"Service/{name}.spec")
+        if name == "frontend":
+            if not frontend_enabled or spec != FRONTEND_SERVICE_SPEC:
+                fail(f"Service/{name} has an unsafe frontend spec")
+            continue
         expected_spec = EXPECTED_SERVICE_SPECS.get(name)
         if expected_spec is None:
             fail(f"Service/{name} is not an approved preview Service")
@@ -1788,13 +2179,25 @@ def _validate_gateway_egress_policy(policy: dict) -> None:
         fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe spec")
 
 
+def validate_frontend_network_policy(document: dict) -> None:
+    name = document.get("metadata", {}).get("name", "frontend-static-host")
+    spec = _require_mapping(
+        document.get("spec"), f"NetworkPolicy/{name}.spec"
+    )
+    if name != "frontend-static-host" or spec != FRONTEND_NETWORK_POLICY_SPEC:
+        fail(f"NetworkPolicy/{name} has an unsafe spec")
+
+
 def validate_network_policies(
     documents: list[dict],
     certificate_identity_mode: str = "hosted-controller",
+    frontend_enabled: bool | None = None,
 ) -> None:
     """Keep the runtime policy set and every allowed traffic exception exact."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
+    if frontend_enabled is None:
+        frontend_enabled = _frontend_render_enabled(documents)
     raw_policies = [
         document for document in documents if document.get("kind") == "NetworkPolicy"
     ]
@@ -1802,7 +2205,9 @@ def validate_network_policies(
         document.get("metadata", {}).get("name"): document
         for document in raw_policies
     }
-    expected_names = _expected_names_for_mode(certificate_identity_mode)[
+    expected_names = _expected_names_for_mode(
+        certificate_identity_mode, frontend_enabled
+    )[
         "NetworkPolicy"
     ]
     if len(raw_policies) != len(policies) or set(policies) != expected_names:
@@ -1812,6 +2217,9 @@ def validate_network_policies(
             f"extra={sorted(set(policies) - expected_names)})"
     )
     _validate_internal_network_policies(policies)
+
+    if frontend_enabled:
+        validate_frontend_network_policy(policies["frontend-static-host"])
 
     expected_from = {
         "namespaceSelector": {
@@ -1959,6 +2367,7 @@ def validate_ingress(
     document: dict,
     expected_namespace: str,
     expected_hostname: str,
+    frontend_enabled: bool = False,
 ) -> None:
     """Require the complete trusted preview Ingress routing contract."""
 
@@ -1978,29 +2387,57 @@ def validate_ingress(
     paths = _require_mapping_list(
         http.get("paths"), f"{ingress_path}.rules[0].http.paths"
     )
-    if len(paths) != 1:
+    if len(paths) != (6 if frontend_enabled else 1):
         fail("Ingress/firemud-preview has an unexpected route set")
-    route = paths[0]
-    backend = _require_mapping(
-        route.get("backend"),
-        f"{ingress_path}.rules[0].http.paths[0].backend",
-    )
-    service_backend = _require_mapping(
-        backend.get("service"),
-        f"{ingress_path}.rules[0].http.paths[0].backend.service",
-    )
-    service_port = _require_mapping(
-        service_backend.get("port"),
-        f"{ingress_path}.rules[0].http.paths[0].backend.service.port",
-    )
-    if (
-        route.get("path") != "/"
-        or route.get("pathType") != "Prefix"
-        or service_backend.get("name") != "spring-cloud-gateway"
-        or service_port.get("number") != 80
-    ):
-        fail("Ingress/firemud-preview has an unsafe backend")
+    if frontend_enabled:
+        if paths != _frontend_ingress_paths():
+            fail("Ingress/firemud-preview has an unsafe frontend route set")
+    else:
+        route = paths[0]
+        backend = _require_mapping(
+            route.get("backend"),
+            f"{ingress_path}.rules[0].http.paths[0].backend",
+        )
+        service_backend = _require_mapping(
+            backend.get("service"),
+            f"{ingress_path}.rules[0].http.paths[0].backend.service",
+        )
+        service_port = _require_mapping(
+            service_backend.get("port"),
+            f"{ingress_path}.rules[0].http.paths[0].backend.service.port",
+        )
+        if (
+            route.get("path") != "/"
+            or route.get("pathType") != "Prefix"
+            or service_backend.get("name") != "spring-cloud-gateway"
+            or service_port.get("number") != 80
+        ):
+            fail("Ingress/firemud-preview has an unsafe backend")
+    if frontend_enabled:
+        annotations = document.get("metadata", {}).get("annotations")
+        if annotations != {
+            FRONTEND_MIDDLEWARE_ANNOTATION: _expected_frontend_middleware_reference(
+                expected_namespace
+            )
+        }:
+            fail("Ingress/firemud-preview has an unsafe frontend middleware reference")
 
+    expected_paths = (
+        _frontend_ingress_paths()
+        if frontend_enabled
+        else [
+            {
+                "path": "/",
+                "pathType": "Prefix",
+                "backend": {
+                    "service": {
+                        "name": "spring-cloud-gateway",
+                        "port": {"number": 80},
+                    }
+                },
+            }
+        ]
+    )
     expected_spec = {
         "ingressClassName": "traefik",
         "tls": [
@@ -2014,16 +2451,7 @@ def validate_ingress(
                 "host": expected_hostname,
                 "http": {
                     "paths": [
-                        {
-                            "path": "/",
-                            "pathType": "Prefix",
-                            "backend": {
-                                "service": {
-                                    "name": "spring-cloud-gateway",
-                                    "port": {"number": 80},
-                                }
-                            },
-                        }
+                        *expected_paths,
                     ]
                 },
             }
@@ -2041,15 +2469,18 @@ def validate_manifest(
     certificate_identity_mode: str = "hosted-controller",
 ) -> None:
     _validate_certificate_identity_mode(certificate_identity_mode)
-    expected_names = _expected_names_for_mode(certificate_identity_mode)
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    if not documents:
+        fail("manifest is empty")
+    frontend_enabled = _frontend_render_enabled(documents)
+    expected_names = _expected_names_for_mode(
+        certificate_identity_mode, frontend_enabled
+    )
     expected_objects = {
         (kind, name)
         for kind, names in expected_names.items()
         for name in names
     }
-    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
-    if not documents:
-        fail("manifest is empty")
     seen: set[tuple[str, str]] = set()
     for index, document in enumerate(documents):
         if not isinstance(document, dict):
@@ -2060,6 +2491,9 @@ def validate_manifest(
         metadata = _validate_object_metadata(
             document,
             expected_namespace,
+            allow_trusted_ingress_annotation=(
+                frontend_enabled and document.get("kind") == "Ingress"
+            ),
             certificate_identity_mode=certificate_identity_mode,
         )
         name = metadata.get("name")
@@ -2081,13 +2515,27 @@ def validate_manifest(
                 pod,
                 f"{document['kind']}/{name}.spec.template.spec",
             )
+        if frontend_enabled and document["kind"] == "Deployment" and name == "frontend":
+            validate_frontend_deployment(document, expected_image_tag)
         if document["kind"] == "Ingress":
-            validate_ingress(document, expected_namespace, expected_hostname)
+            validate_ingress(
+                document,
+                expected_namespace,
+                expected_hostname,
+                frontend_enabled,
+            )
+        if frontend_enabled and document["kind"] == "Middleware":
+            validate_frontend_middleware(document, expected_namespace)
         object_key = (document["kind"], name)
         if object_key in seen:
             fail(f"manifest contains duplicate {document['kind']}/{name}")
         seen.add(object_key)
-        _validate_no_annotations(document)
+        if frontend_enabled and document["kind"] == "Ingress":
+            without_annotations = copy.deepcopy(document)
+            without_annotations.get("metadata", {}).pop("annotations", None)
+            _validate_no_annotations(without_annotations)
+        else:
+            _validate_no_annotations(document)
         for location, value in walk(document):
             if location.endswith(".nodePort"):
                 fail(f"{location} retains a PR-selected nodePort")
@@ -2109,7 +2557,14 @@ def validate_manifest(
                 fail(f"{location} contains an unapproved Secret reference")
         for location, value in walk(document):
             if location.endswith(".image") and isinstance(value, str):
-                _validate_image_reference(location, value, expected_image_tag)
+                _validate_image_reference(
+                    location,
+                    value,
+                    expected_image_tag,
+                    allow_frontend=(
+                        document["kind"] == "Deployment" and name == "frontend"
+                    ),
+                )
         if document["kind"] in {"Deployment", "Job"}:
             _validate_workload_selector_metadata(document)
         if document["kind"] == "PersistentVolumeClaim":
@@ -2118,8 +2573,10 @@ def validate_manifest(
         missing = sorted(expected_objects - seen)
         extra = sorted(seen - expected_objects)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
-    validate_services(documents, certificate_identity_mode)
-    validate_network_policies(documents, certificate_identity_mode)
+    validate_services(documents, certificate_identity_mode, frontend_enabled)
+    validate_network_policies(
+        documents, certificate_identity_mode, frontend_enabled
+    )
     validate_infrastructure_deployments(documents)
     if ("Service", "tcp-proxy-service") in expected_objects:
         tcp_proxy_service = next(
