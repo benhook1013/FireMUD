@@ -1051,6 +1051,33 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
             self.assertEqual(json.loads(record_path.read_text()), original_record)
 
+    def test_terminal_provider_file_ceiling_skip_allows_cli_on_same_published_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir, anchor=cli_anchor())
+            original_record = json.loads(record_path.read_text())
+            commands = FakeCommands(root)
+            body = (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+                "<details><summary>⚠️ Action not completed</summary>\n\n"
+                "Review skipped: 121 files exceed the limit of 100.\n\n</details>"
+            )
+            with patch(
+                "pr_review.cli_runner.github_api.fetch_pull_request",
+                return_value=hosted_payload(body),
+            ):
+                run_cli_review(
+                    target(merge_base=PARENT, patch_identity=cli_anchor()["patch_id"]),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                )
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), original_record)
+
     def test_historical_terminal_ambiguity_allows_cli_on_a_later_published_head(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

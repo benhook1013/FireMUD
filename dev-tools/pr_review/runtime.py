@@ -403,6 +403,8 @@ class LiveEvidence:
             created is not None and hosted._rate_limit(body, created) is not None
         ) or body.strip().lower().startswith("review rate limited"):
             return "rate_limited"
+        if hosted.provider_file_ceiling_skip(body):
+            return "failed"
         if hosted.NOOP_MARKER in body:
             return "noop"
         if hosted.ACTIVE_PATTERN.search(hosted._unquoted(body)):
@@ -1409,9 +1411,13 @@ class LiveEvidence:
                 continue
             body = item.get("body") or ""
             timestamp = hosted.parse_timestamp(item.get("createdAt") or item.get("submittedAt"))
-            if (
+            provider_skip = hosted.provider_file_ceiling_skip(body)
+            legacy_skip = (
                 "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->" in body
                 and _PLAN_CEILING_PATTERN.search(body)
+            )
+            if (
+                (legacy_skip or provider_skip)
                 and timestamp is not None
                 and timestamp >= latest_exact_completion
                 and include_hosted_findings

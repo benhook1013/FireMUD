@@ -73,6 +73,12 @@ class RuntimeTest(unittest.TestCase):
             "body": "Full review triggered. I am reviewing the pull request now.",
             "createdAt": "2026-09-24T00:00:00Z",
         }
+        provider_skip = {
+            "databaseId": 75,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review skipped: 121 files exceed the limit of 100.",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
         ambiguous_comment = {
             "databaseId": 73,
             "body": "**Actionable comments posted:** 1",
@@ -80,6 +86,7 @@ class RuntimeTest(unittest.TestCase):
         }
         self.assertEqual(LiveEvidence._public_response_state(review, "submittedAt", {}), "completed")
         self.assertEqual(LiveEvidence._public_response_state(active_comment, "createdAt", {}), "active")
+        self.assertEqual(LiveEvidence._public_response_state(provider_skip, "createdAt", {}), "failed")
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
 
@@ -768,9 +775,9 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
+                self.assertRaisesRegex(ControllerError, "at most 100 changed files"),
             ):
-                with self.assertRaisesRegex(ControllerError, "at most 100 changed files"):
-                    HostedRunner("owner/repo", live)(target, expect_pr=42)
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
             self.assertFalse(path.exists())
 
     def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
@@ -2675,6 +2682,38 @@ class RuntimeTest(unittest.TestCase):
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             completed_history = self._history(Path(directory), completed_payload, "hosted", changed_files=121)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
+
+    def test_provider_ceiling_skip_is_hosted_only_and_ignores_docstring_skips(self) -> None:
+        provider_skip = {
+            "databaseId": 40,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+                "<details><summary>⚠️ Action not completed</summary>\n\n"
+                "Review skipped: 121 files exceed the limit of 100.\n\n</details>"
+            ),
+            "createdAt": "2026-09-23T00:04:00Z",
+        }
+        docstring_skip = {
+            **provider_skip,
+            "databaseId": 41,
+            "body": "Docstring Coverage: 31 skipped files over the file limit.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            hosted_history = self._history(
+                Path(directory), self._payload([provider_skip]), "hosted", changed_files=121
+            )
+            cli_history = self._history(
+                Path(directory), self._payload([provider_skip]), "cli", changed_files=121
+            )
+            docstring_history = self._history(
+                Path(directory), self._payload([docstring_skip]), "hosted", changed_files=121
+            )
+
+        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in docstring_history))
 
     def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:
         first = {

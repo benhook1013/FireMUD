@@ -1162,6 +1162,47 @@ class HostedEvidenceTests(unittest.TestCase):
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, failure]), trigger_record())
         self.assertEqual(state.state, "failed")
 
+    def test_explicit_provider_file_ceiling_skip_is_attributable_terminal_failure(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        skip = comment(
+            11,
+            "coderabbitai[bot]",
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+            "<details><summary>⚠️ Action not completed</summary>\n\n"
+            "Review skipped: 121 files exceed the limit of 100.\n\n</details>",
+            "2026-09-23T00:02:00Z",
+        )
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, skip]), trigger_record())
+
+        self.assertEqual(state.state, "failed")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_url, "https://example.test/comments/11")
+
+    def test_file_ceiling_skip_requires_provider_wording_and_actual_overflow(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        cases = (
+            comment(11, "coderabbitai[bot]", "Review skipped: 80 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+            comment(
+                12,
+                "coderabbitai[bot]",
+                "Docstring Coverage: 31 skipped files over the file limit.",
+                "2026-09-23T00:02:00Z",
+            ),
+            comment(13, "maintainer", "Review skipped: 121 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+        )
+
+        for response in cases:
+            with self.subTest(response=response["body"]):
+                state = hosted.trigger_state(REPO, PR, review_payload([trigger, response]), trigger_record())
+                self.assertEqual(state.state, "awaiting_response")
+                self.assertFalse(state.terminal)
+                self.assertIsNone(state.response_id)
+
     def test_recorded_trigger_author_login_comparison_is_case_insensitive(self):
         trigger = comment(10, "Owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         record = trigger_record()
