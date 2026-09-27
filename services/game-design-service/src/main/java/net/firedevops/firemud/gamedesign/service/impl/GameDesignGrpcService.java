@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -225,6 +226,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", ex.failureCode().name(), ex.getMessage()));
+    } catch (PublishAttemptPendingReconciliationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "PublishVersion", ex));
     }

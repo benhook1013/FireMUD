@@ -36,13 +36,16 @@ from .git_merge import TestMergeError, test_merge_tree
 from .hosted import default_trigger_record_path, parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
 from .state import (
+    FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
     PolicyOverride,
     ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
+    StateError,
     StateStore,
+    merge_open_route,
     observation_fingerprint,
 )
 
@@ -437,7 +440,14 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
             continue
         raw = _field(item, "raw", "raw_found")
         accepted = _field(item, "accepted")
-        if type(raw) is not int or type(accepted) is not int or raw < 0 or not 0 <= accepted <= raw:
+        routed = _field(item, "routed")
+        if (
+            type(raw) is not int
+            or type(accepted) is not int
+            or raw < 0
+            or not 0 <= accepted <= raw
+            or (routed is not None and (type(routed) is not int or routed < 0 or accepted + routed > raw))
+        ):
             continue
         reviewed_head = _field(item, "head", "reviewed_head")
         observed_at = parse_timestamp(_field(item, "observed_at"))
@@ -445,6 +455,7 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
             {
                 "raw": raw,
                 "accepted": accepted,
+                "routed": routed,
                 "completed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
                 "attributable": _field(item, "attributable") is True,
                 "current_head": isinstance(reviewed_head, str) and reviewed_head == current_head,
@@ -3965,6 +3976,144 @@ class ReviewController:
             review_target_selection_complete=True,
         )
 
+    def list_routes(self, *, target_pr: int | None = None, unassigned: bool = False) -> dict[str, Any]:
+        """Return open incoming or unassigned routes without consulting live PR state."""
+
+        if (target_pr is None) == (not unassigned):
+            raise ControllerError("route query requires exactly one of target_pr or unassigned")
+        routes = [
+            item.to_dict()
+            for item in self._state().routes
+            if item.status == "open"
+            and ((unassigned and item.target_pr is None) or (target_pr is not None and item.target_pr == target_pr))
+        ]
+        return {
+            "query": "unassigned" if unassigned else "target_pr",
+            "target_pr": target_pr,
+            "routes": routes,
+            "count": len(routes),
+        }
+
+    def record_route(
+        self,
+        *,
+        source_pr: int,
+        source_channel: str,
+        source_review: str,
+        source_finding: str,
+        observation: str,
+        target_pr: int | None = None,
+    ) -> dict[str, Any]:
+        """Create one stable route or append an observation to its existing identity."""
+
+        candidate = FindingRoute(
+            source_pr,
+            source_channel,
+            source_review,
+            source_finding,
+            (observation,),
+            target_pr=target_pr,
+        )
+        selected: FindingRoute | None = None
+
+        def mutate(state: ReviewState) -> ReviewState:
+            nonlocal selected
+            existing = next((item for item in state.routes if item.route_id == candidate.route_id), None)
+            if existing is None:
+                selected = candidate
+                return dataclasses.replace(state, routes=(*state.routes, candidate))
+            if existing.status != "open":
+                raise ControllerError(f"route {existing.route_id} is already dispositioned")
+            try:
+                selected = merge_open_route(existing, candidate)
+            except StateError as exc:
+                raise ControllerError(str(exc)) from exc
+            return dataclasses.replace(
+                state,
+                routes=tuple(selected if item.route_id == selected.route_id else item for item in state.routes),
+            )
+
+        self.store.update(mutate)
+        assert selected is not None
+        return {"status": "recorded", "route": selected.to_dict()}
+
+    def decide_route(
+        self,
+        *,
+        route_id: str,
+        decision: str,
+        reason: str | None = None,
+        proof: str | None = None,
+        target_pr: int | None = None,
+    ) -> dict[str, Any]:
+        """Disposition one target-owned route while preserving its stable identity."""
+
+        if not re.fullmatch(r"[0-9a-f]{24}", route_id):
+            raise ControllerError("route ID must be a 24-character stable route identity")
+        if decision == "accepted-fixed":
+            if not isinstance(proof, str) or not proof.strip() or reason is not None or target_pr is not None:
+                raise ControllerError("accepted-fixed route disposition requires only --proof")
+            if len(proof) > 500:
+                raise ControllerError("accepted-fixed route proof must be at most 500 characters")
+            if any(ord(character) < 0x20 for character in proof):
+                raise ControllerError("accepted-fixed route proof must not contain control characters")
+        elif decision == "rejected":
+            if not isinstance(reason, str) or not reason.strip() or proof is not None or target_pr is not None:
+                raise ControllerError("rejected route disposition requires only --reason")
+            if len(reason) > 500:
+                raise ControllerError("rejected route reason must be at most 500 characters")
+            if any(ord(character) < 0x20 for character in reason):
+                raise ControllerError("rejected route reason must not contain control characters")
+        elif decision == "retargeted":
+            if (
+                isinstance(target_pr, bool)
+                or not isinstance(target_pr, int)
+                or target_pr <= 0
+                or not isinstance(reason, str)
+                or not reason.strip()
+                or proof is not None
+            ):
+                raise ControllerError("retargeted route disposition requires --target-pr and --reason")
+            if (
+                len(f"Retargeted: {reason}") > 500
+                or any(ord(character) < 0x20 for character in reason)
+            ):
+                raise ControllerError("retarget reason must fit within a 500-character route observation")
+        else:
+            raise ControllerError("route disposition must be accepted-fixed, rejected, or retargeted")
+        selected: FindingRoute | None = None
+
+        def mutate(state: ReviewState) -> ReviewState:
+            nonlocal selected
+            existing = next((item for item in state.routes if item.route_id == route_id), None)
+            if existing is None:
+                raise ControllerError(f"route {route_id} does not exist")
+            if existing.status != "open":
+                raise ControllerError(f"route {route_id} is already dispositioned")
+            if decision == "accepted-fixed":
+                selected = dataclasses.replace(existing, status="accepted_fixed", disposition="accepted and fixed", proof=proof)
+            elif decision == "rejected":
+                selected = dataclasses.replace(existing, status="rejected", disposition=reason)
+            else:
+                if existing.target_pr == target_pr:
+                    raise ControllerError("retargeted route must change its target PR")
+                selected = dataclasses.replace(
+                    existing,
+                    target_pr=target_pr,
+                    observations=(*existing.observations, f"Retargeted: {reason}"),
+                    target_history=(*existing.target_history, existing.target_pr),
+                )
+            return dataclasses.replace(
+                state,
+                routes=tuple(selected if item.route_id == route_id else item for item in state.routes),
+            )
+
+        self.store.update(mutate)
+        assert selected is not None
+        if decision == "retargeted":
+            return {"status": "recorded", "decision": decision, "route": selected.to_dict()}
+        return {"status": selected.status, "route": selected.to_dict()}
+
     def _status_from_state(
         self,
         state: ReviewState,
@@ -4114,6 +4263,10 @@ class ReviewController:
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
                         if pr in allocations[channel]
                     },
+                    "incoming_routes": [
+                        route.to_dict() for route in state.routes if route.status == "open" and route.target_pr == pr
+                    ],
+                    "routes_out": [route.to_dict() for route in state.routes if route.source_pr == pr],
                 }
             )
         report = {
@@ -4173,6 +4326,10 @@ class ReviewController:
                 "channels": {"hosted": "UNKNOWN", "cli": "UNKNOWN"},
                 "review_activity": {},
                 "allocations": {},
+                "incoming_routes": [
+                    route.to_dict() for route in state.routes if route.status == "open" and route.target_pr == pr
+                ],
+                "routes_out": [route.to_dict() for route in state.routes if route.source_pr == pr],
                 "detail_level": "unknown",
                 "evidence_status": "unknown",
                 "evidence_last_checked_at": None,
@@ -4262,6 +4419,10 @@ class ReviewController:
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
                 "selected_pr": pr,
                 "reason": "PR is not configured in the repository review stack",
+                "incoming_routes": [
+                    item.to_dict() for item in state.routes if item.status == "open" and item.target_pr == pr
+                ],
+                "routes_out": [item.to_dict() for item in state.routes if item.source_pr == pr],
             }
         scoped = dataclasses.replace(state, ordered_prs=state.ordered_prs[: index + 1])
         report = self._status_from_state(scoped)
@@ -4489,9 +4650,13 @@ class ReviewController:
                     "merged": item.merged,
                     "reconciliation": "UNKNOWN" if not stale else "UNRECONCILED",
                     "reason": reason,
-                    "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
-                    "review_activity": {},
-                    "allocations": {},
+                "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
+                "review_activity": {},
+                "allocations": {},
+                "incoming_routes": [
+                    route.to_dict() for route in state.routes if route.status == "open" and route.target_pr == pr
+                ],
+                "routes_out": [route.to_dict() for route in state.routes if route.source_pr == pr],
                     "detail_level": "identity_only",
                     "evidence_status": "stale" if stale else "unknown",
                     "evidence_last_checked_at": None,

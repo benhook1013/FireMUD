@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted
+from pr_review.cli_runner import ReviewResult
 
 REPO = "owner/repo"
 PR = 42
@@ -75,6 +76,27 @@ def trigger_record(head: str = HEAD):
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_cli_result_exposes_human_duration_without_changing_seconds_or_marker(self):
+        result = ReviewResult(
+            run_id="run.A1",
+            pull_request=PR,
+            candidate_sha=HEAD,
+            parent_sha=BASE,
+            merge_base=BASE,
+            published_files=3,
+            candidate_files=3,
+            published_status="current",
+            provisional=False,
+            duration_seconds=487,
+            exit_status=0,
+            capture_dir=Path("/tmp/review-capture"),
+        )
+
+        rendered = result.as_dict()
+        self.assertEqual(rendered["duration_seconds"], 487)
+        self.assertEqual(rendered["duration_display"], "8m 07s")
+        self.assertEqual(rendered["duration_marker"], "<!-- firemud-review-duration-seconds: 487 -->")
+
     def test_summary_counts_require_anchored_canonical_lines(self):
         body = (
             "The review discusses Outside diff range comments and Duplicate comments in prose.\n"
@@ -285,11 +307,58 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "body": "CLI: 1 found / 1 accepted · `abcdef1` · 3 files · 9s\n<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
                 "created_at": "2026-09-23T00:01:00Z",
             },
+            {
+                "id": 3,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 3 files · 1h 08m 07s\n"
+                "<!-- firemud-hosted-review: 11 -->\n<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:02:00Z",
+            },
+            {
+                "id": 4,
+                "body": "CLI: 3 found / 1 accepted / 1 routed · `abcdef1` · 3 files · 9s\n"
+                "<!-- firemud-cli-run: run.A2 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
         self.assertEqual(unparsed, 0)
         self.assertIsNone(parsed[0].duration_seconds)
         self.assertEqual(parsed[1].duration_seconds, 9)
+        self.assertEqual(parsed[2].duration_seconds, 4087)
+        self.assertEqual(parsed[2].as_json()["duration_display"], "1h 08m 07s")
+        self.assertIsNone(parsed[0].routed)
+        self.assertEqual(parsed[3].routed, 1)
+        self.assertEqual(parsed[3].as_json()["routed"], 1)
+        self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
+
+    def test_checkpoint_counts_file_counts_and_visible_durations_require_ascii_digits(self):
+        comments = [
+            {"body": "Hosted: １ found / 0 accepted", "created_at": "2026-09-23T00:00:00Z"},
+            {"body": "Hosted: 1 found / １ accepted", "created_at": "2026-09-23T00:01:00Z"},
+            {"body": "Hosted: 1 found / 0 accepted / １ routed", "created_at": "2026-09-23T00:02:00Z"},
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · １ files",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
+            {
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · 1 files · １s",
+                "created_at": "2026-09-23T00:04:00Z",
+            },
+            {
+                "body": "CLI: 1 found / 1 accepted · `abcdef1` · 1 files · 9s\n"
+                "<!-- firemud-cli-run: run.A1 -->\n<!-- firemud-review-duration-seconds: 9 -->",
+                "created_at": "2026-09-23T00:05:00Z",
+            },
+        ]
+
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 5)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].duration_seconds, 9)
+        self.assertEqual(evidence._visible_duration_seconds("9s"), 9)
+        self.assertIsNone(evidence._visible_duration_seconds("９s"))
+        self.assertIsNone(evidence._visible_duration_seconds("１m 09s"))
 
     def test_malformed_duration_is_explicit_and_not_inferred(self):
         comments = [
@@ -347,6 +416,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "<!-- firemud-review-duration-seconds: 4 -->",
                 "created_at": "2026-09-23T00:06:00Z",
             },
+            {
+                "id": 8,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 487 -->",
+                "created_at": "2026-09-23T00:07:00Z",
+            },
+            {
+                "id": 9,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 1h 08m 07s\n"
+                "<!-- firemud-review-duration-seconds: 4087 -->",
+                "created_at": "2026-09-23T00:08:00Z",
+            },
+            {
+                "id": 10,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 8m 07s\n"
+                "<!-- firemud-review-duration-seconds: 486 -->",
+                "created_at": "2026-09-23T00:09:00Z",
+            },
         ]
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
 
@@ -356,13 +443,19 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed[1].duration_seconds, 4)
         self.assertEqual(parsed[2].duration_seconds, 4)
         self.assertFalse(parsed[2].duration_invalid)
-        self.assertTrue(all(item.duration_invalid for item in parsed[3:]))
+        self.assertTrue(all(item.duration_invalid for item in parsed[3:7]))
+        self.assertEqual(parsed[7].duration_seconds, 487)
+        self.assertEqual(parsed[8].duration_seconds, 4087)
+        self.assertIsNone(parsed[9].duration_seconds)
+        self.assertTrue(parsed[9].duration_invalid)
+        self.assertEqual(evidence.format_duration_seconds(487), "8m 07s")
+        self.assertEqual(evidence.format_duration_seconds(4087), "1h 08m 07s")
         self.assertTrue(evidence.hosted_checkpoint_evidence(parsed[5], [], HEAD)["status"] == "missing")
         report = evidence.collect_evidence(comments)
         self.assertEqual(report["duration_audit"]["malformed_count"], 1)
         self.assertEqual(report["duration_audit"]["duplicate_count"], 1)
         self.assertEqual(report["duration_audit"]["missing_count"], 2)
-        self.assertEqual(report["duration_audit"]["mismatch_count"], 1)
+        self.assertEqual(report["duration_audit"]["mismatch_count"], 2)
 
     def test_malformed_private_capture_fails_closed(self):
         checkpoint = evidence.Checkpoint(
@@ -386,6 +479,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         decision_text: str | None,
         rejection_text: str | None = None,
         accepted: int = 0,
+        routed: int | None = None,
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -407,7 +501,18 @@ class GithubAndEvidenceTests(unittest.TestCase):
         if rejection_text is not None:
             (run / "rejections.tsv").write_text(rejection_text, encoding="utf-8")
         checkpoint = evidence.Checkpoint(
-            1, "2026-09-23T00:00:00Z", "CLI", 1, accepted, HEAD[:12], 1, False, None, run_id, None
+            1,
+            "2026-09-23T00:00:00Z",
+            "CLI",
+            1,
+            accepted,
+            HEAD[:12],
+            1,
+            False,
+            None,
+            run_id,
+            None,
+            routed=routed,
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
@@ -467,6 +572,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            capture = self._cli_capture(
+                common,
+                decision_text="1\trouted\towner PR #2879\n",
+                routed=1,
+            )
+            self.assertEqual(capture.decisions, {1: ("routed", "owner PR #2879")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "routed count"):
+                self._cli_capture(
+                    common,
+                    decision_text="1\trouted\towner PR #2879\n",
+                    routed=0,
+                )
 
     def test_uncheckpointed_raw_positive_capture_is_discovered_without_decision_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1067,6 +1190,47 @@ class HostedEvidenceTests(unittest.TestCase):
         failure = comment(11, "coderabbitai", "The review failed. Something went wrong.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, failure]), trigger_record())
         self.assertEqual(state.state, "failed")
+
+    def test_explicit_provider_file_ceiling_skip_is_attributable_terminal_failure(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        skip = comment(
+            11,
+            "coderabbitai[bot]",
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+            "<details><summary>⚠️ Action not completed</summary>\n\n"
+            "Review skipped: 121 files exceed the limit of 100.\n\n</details>",
+            "2026-09-23T00:02:00Z",
+        )
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, skip]), trigger_record())
+
+        self.assertEqual(state.state, "failed")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_url, "https://example.test/comments/11")
+
+    def test_file_ceiling_skip_requires_provider_wording_and_actual_overflow(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        cases = (
+            comment(11, "coderabbitai[bot]", "Review skipped: 80 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+            comment(
+                12,
+                "coderabbitai[bot]",
+                "Docstring Coverage: 31 skipped files over the file limit.",
+                "2026-09-23T00:02:00Z",
+            ),
+            comment(13, "maintainer", "Review skipped: 121 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+        )
+
+        for response in cases:
+            with self.subTest(response=response["body"]):
+                state = hosted.trigger_state(REPO, PR, review_payload([trigger, response]), trigger_record())
+                self.assertEqual(state.state, "awaiting_response")
+                self.assertFalse(state.terminal)
+                self.assertIsNone(state.response_id)
 
     def test_recorded_trigger_author_login_comparison_is_case_insensitive(self):
         trigger = comment(10, "Owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

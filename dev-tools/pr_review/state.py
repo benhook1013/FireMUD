@@ -150,6 +150,7 @@ class SummaryFindingDisposition:
     decision: str
     reason: str
     corrected_head: str | None = None
+    route_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -164,7 +165,7 @@ class SummaryFindingDisposition:
             raise StateError("summary disposition kind must be outside_diff or duplicate")
         if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count <= 0:
             raise StateError("summary disposition count must be a positive integer")
-        if self.decision not in {"rejected", "accepted_unfixed", "accepted_fixed"}:
+        if self.decision not in {"rejected", "accepted_unfixed", "accepted_fixed", "routed"}:
             raise StateError("summary disposition decision is invalid")
         if not isinstance(self.reason, str) or not self.reason.strip() or len(self.reason) > 500:
             raise StateError("summary disposition requires a reason of at most 500 characters")
@@ -177,13 +178,23 @@ class SummaryFindingDisposition:
                 raise StateError("accepted-fixed summary disposition requires a changed head")
         elif self.corrected_head is not None:
             raise StateError("only accepted-fixed summary dispositions may set a corrected head")
+        if self.decision == "routed":
+            if not isinstance(self.route_ids, tuple) or not self.route_ids or any(
+                not isinstance(route_id, str) or not re.fullmatch(r"[0-9a-f]{24}", route_id)
+                for route_id in self.route_ids
+            ):
+                raise StateError("routed summary disposition requires stable route IDs")
+        elif self.route_ids:
+            raise StateError("only routed summary dispositions may set route IDs")
 
     @property
     def identity(self) -> tuple[int, str, str, int, str, int]:
         return (self.pr, self.head.casefold(), self.source, self.summary_id, self.kind, self.count)
 
     def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+        value = dataclasses.asdict(self)
+        value["route_ids"] = list(self.route_ids)
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> SummaryFindingDisposition:
@@ -197,10 +208,172 @@ class SummaryFindingDisposition:
             "decision",
             "reason",
             "corrected_head",
+            "route_ids",
         }
         if set(value) - allowed:
             raise StateError("summary disposition contains fields outside the private schema")
-        return cls(**{key: value[key] for key in allowed if key in value})
+        fields = {key: value[key] for key in allowed if key in value}
+        if "route_ids" in fields:
+            if not isinstance(fields["route_ids"], list):
+                raise StateError("routed summary route IDs must be a JSON array")
+            fields["route_ids"] = tuple(fields["route_ids"])
+        return cls(**fields)
+
+
+@dataclasses.dataclass(frozen=True)
+class FindingRoute:
+    """One durable route from a source review finding to its owning PR."""
+
+    source_pr: int
+    source_channel: str
+    source_review: str
+    source_finding: str
+    observations: tuple[str, ...]
+    target_pr: int | None = None
+    status: str = "open"
+    disposition: str | None = None
+    proof: str | None = None
+    target_history: tuple[int | None, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.source_pr, bool) or not isinstance(self.source_pr, int) or self.source_pr <= 0:
+            raise StateError("route source PR must be a positive integer")
+        if self.source_channel not in {"hosted", "cli"}:
+            raise StateError("route source channel must be hosted or cli")
+        for name in ("source_review", "source_finding"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip() or len(value) > 200:
+                raise StateError(f"route {name.replace('_', ' ')} must be non-empty and at most 200 characters")
+        if not isinstance(self.observations, tuple) or not self.observations:
+            raise StateError("route must retain at least one observation")
+        if any(
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 500
+            or any(ord(char) < 0x20 for char in value)
+            for value in self.observations
+        ):
+            raise StateError("route observations must be non-empty text of at most 500 characters")
+        if self.target_pr is not None and (
+            isinstance(self.target_pr, bool) or not isinstance(self.target_pr, int) or self.target_pr <= 0
+        ):
+            raise StateError("route target PR must be a positive integer or null")
+        if self.status not in {"open", "accepted_fixed", "rejected"}:
+            raise StateError("route status is invalid")
+        if self.status == "accepted_fixed":
+            if not isinstance(self.proof, str) or not self.proof.strip() or len(self.proof) > 500:
+                raise StateError("accepted-fixed route requires proof")
+            if self.disposition != "accepted and fixed":
+                raise StateError("accepted-fixed route requires its disposition")
+        elif self.status == "rejected":
+            if not isinstance(self.disposition, str) or not self.disposition.strip() or len(self.disposition) > 500:
+                raise StateError("rejected route requires a reason")
+            if self.proof is not None:
+                raise StateError("rejected route cannot have fix proof")
+        elif self.disposition is not None or self.proof is not None:
+            raise StateError("open route cannot have a terminal disposition")
+        if not isinstance(self.target_history, tuple) or any(
+            item is not None and (isinstance(item, bool) or not isinstance(item, int) or item <= 0)
+            for item in self.target_history
+        ):
+            raise StateError("route target history is invalid")
+
+    @property
+    def identity(self) -> tuple[int, str, str, str]:
+        return (self.source_pr, self.source_channel, self.source_review, self.source_finding)
+
+    @property
+    def route_id(self) -> str:
+        encoded = "\0".join((str(self.source_pr), self.source_channel, self.source_review, self.source_finding))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "route_id": self.route_id,
+            "source_pr": self.source_pr,
+            "source_channel": self.source_channel,
+            "source_review": self.source_review,
+            "source_finding": self.source_finding,
+            "observations": list(self.observations),
+            "target_pr": self.target_pr,
+            "status": self.status,
+            "disposition": self.disposition,
+            "proof": self.proof,
+            "target_history": list(self.target_history),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> FindingRoute:
+        allowed = {
+            "route_id", "source_pr", "source_channel", "source_review", "source_finding", "observations",
+            "target_pr", "status", "disposition", "proof", "target_history",
+        }
+        target_history = value.get("target_history", [])
+        if (
+            set(value) - allowed
+            or not isinstance(value.get("observations"), list)
+            or not isinstance(target_history, list)
+        ):
+            raise StateError("route record contains fields outside its schema")
+        route = cls(
+            source_pr=value.get("source_pr"),
+            source_channel=value.get("source_channel"),
+            source_review=value.get("source_review"),
+            source_finding=value.get("source_finding"),
+            observations=tuple(value["observations"]),
+            target_pr=value.get("target_pr"),
+            status=value.get("status", "open"),
+            disposition=value.get("disposition"),
+            proof=value.get("proof"),
+            target_history=tuple(target_history),
+        )
+        if value.get("route_id") not in (None, route.route_id):
+            raise StateError("route ID does not match its stable source finding identity")
+        return route
+
+
+def merge_open_route(existing: FindingRoute, incoming: FindingRoute) -> FindingRoute:
+    """Merge an observation into an open route without changing its identity."""
+
+    if not isinstance(existing, FindingRoute) or not isinstance(incoming, FindingRoute):
+        raise StateError("route merge requires validated route records")
+    if existing.identity != incoming.identity:
+        raise StateError("route merge requires the same stable source finding identity")
+    if existing.status != "open" or incoming.status != "open":
+        raise StateError("only open routes can merge observations")
+    if existing.target_pr is not None and incoming.target_pr not in (None, existing.target_pr):
+        raise StateError("an existing route must be explicitly retargeted")
+    observations = list(existing.observations)
+    observations.extend(value for value in incoming.observations if value not in observations)
+    return dataclasses.replace(
+        existing,
+        observations=tuple(observations),
+        target_pr=existing.target_pr if existing.target_pr is not None else incoming.target_pr,
+    )
+
+
+def _summary_route_matches_disposition(
+    route: FindingRoute,
+    disposition: SummaryFindingDisposition,
+) -> bool:
+    if (
+        route.source_pr != disposition.pr
+        or route.source_channel != "hosted"
+        or route.source_review != f"summary:{disposition.source}:{disposition.summary_id}"
+    ):
+        return False
+    prefix = f"{disposition.kind}:"
+    if not route.source_finding.startswith(prefix):
+        return False
+    reference = route.source_finding[len(prefix) :]
+    if reference.startswith("ref:"):
+        return bool(reference[4:].strip())
+    legacy = re.fullmatch(r"(?P<count>[1-9][0-9]*):(?P<reference>.+)", reference)
+    return bool(
+        legacy
+        and int(legacy.group("count")) == disposition.count
+        and legacy.group("reference").strip()
+    )
 
 
 def adjudicate_summary_findings(
@@ -254,7 +427,7 @@ def adjudicate_summary_findings(
         # A fixed disposition refers to a prior head and can never clear a
         # finding in a current-head summary. It remains in state as a historical
         # operator decision; any new summary has a distinct identity.
-        if disposition.decision != "rejected":
+        if disposition.decision not in {"rejected", "routed"}:
             remaining.append(dict(finding))
     return remaining, matched
 
@@ -791,6 +964,7 @@ class ReviewState:
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
     legacy_transitions: tuple[LegacyEvidenceTransition, ...] = ()
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
+    routes: tuple[FindingRoute, ...] = ()
     allocations: Mapping[str, ReviewAllocation] = dataclasses.field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -820,6 +994,24 @@ class ReviewState:
             raise StateError("summary dispositions must contain validated disposition records")
         if any(not isinstance(item, LegacyEvidenceTransition) for item in self.legacy_transitions):
             raise StateError("legacy transitions must contain validated transition records")
+        if any(not isinstance(item, FindingRoute) for item in self.routes):
+            raise StateError("routes must contain validated finding route records")
+        route_ids = [item.route_id for item in self.routes]
+        if len(set(route_ids)) != len(route_ids):
+            raise StateError("routes must have unique stable source finding identities")
+        routes_by_id = {item.route_id: item for item in self.routes}
+        for disposition in self.summary_dispositions:
+            if disposition.decision != "routed":
+                continue
+            if not set(disposition.route_ids) <= routes_by_id.keys():
+                raise StateError("routed summary dispositions must link to a durable route")
+            if any(
+                not _summary_route_matches_disposition(routes_by_id[route_id], disposition)
+                for route_id in disposition.route_ids
+            ):
+                raise StateError(
+                    "routed summary disposition routes must match its source PR, hosted summary identity, and finding bucket"
+                )
         identities = [item.identity for item in self.summary_dispositions]
         if len(set(identities)) != len(identities):
             raise StateError("summary dispositions must have unique exact finding identities")
@@ -833,6 +1025,7 @@ class ReviewState:
             "reconciliations": [item.to_dict() for item in self.reconciliations],
             "legacy_transitions": [item.to_dict() for item in self.legacy_transitions],
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
+            "routes": [item.to_dict() for item in self.routes],
             "allocations": {identity: item.to_dict() for identity, item in sorted(self.allocations.items())},
         }
 
@@ -848,6 +1041,7 @@ class ReviewState:
             "reconciliations",
             "legacy_transitions",
             "summary_dispositions",
+            "routes",
             "allocations",
         }:
             raise StateError("state contains fields outside the private configuration schema")
@@ -863,6 +1057,9 @@ class ReviewState:
             raise StateError("review allocations must be an object")
         if any(not isinstance(item, Mapping) for item in raw_allocations.values()):
             raise StateError("review allocation records must be objects")
+        raw_routes = value.get("routes", [])
+        if not isinstance(raw_routes, list) or any(not isinstance(item, Mapping) for item in raw_routes):
+            raise StateError("routes must be an array of objects")
         try:
             overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
             allocations = {identity: ReviewAllocation.from_dict(item) for identity, item in raw_allocations.items()}
@@ -879,6 +1076,7 @@ class ReviewState:
                 summary_dispositions=tuple(
                     SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
                 ),
+                routes=tuple(FindingRoute.from_dict(item) for item in raw_routes),
                 allocations=allocations,
             )
         except StateError:
