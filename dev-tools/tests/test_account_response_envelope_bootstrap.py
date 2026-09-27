@@ -51,6 +51,7 @@ class FakeKubectl:
         self.username = MATERIALIZER_USERNAME
         self.operations: list[str] = []
         self.mutations: list[str] = []
+        self.uid = "secret-uid-account-ring-1"
 
     def __call__(self, command: list[str], **kwargs: object) -> SimpleNamespace:
         operation = command[1]
@@ -83,6 +84,10 @@ class FakeKubectl:
         else:
             raise AssertionError(f"unexpected kubectl operation: {operation}")
         self.mutations.append(operation)
+        if operation == "create":
+            request["metadata"]["uid"] = self.uid
+        else:
+            request["metadata"]["uid"] = self.secret["metadata"]["uid"]
         request["metadata"]["resourceVersion"] = resource_version
         self.secret = request
         return SimpleNamespace(returncode=0, stdout=json.dumps(self.secret), stderr="")
