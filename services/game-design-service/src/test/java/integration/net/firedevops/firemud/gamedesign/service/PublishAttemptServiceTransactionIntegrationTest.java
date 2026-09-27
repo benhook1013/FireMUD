@@ -404,6 +404,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + recordedDigestFailure.get()
             + ", exportCallbackFailure="
             + exportCallbackFailure.get()
+            + ", exportCallbackFailureFrame="
+            + firstStackFrame(exportCallbackFailure.get())
             + ", failure="
             + publishFailure.getClass().getName()
             + ": "
@@ -436,5 +438,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedRemapSet.getApprovedAt()).isNotNull();
     assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
     assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
+  }
+
+  private static String firstStackFrame(Throwable failure) {
+    if (failure == null || failure.getStackTrace().length == 0) {
+      return "none";
+    }
+    return failure.getStackTrace()[0].toString();
   }
 }
