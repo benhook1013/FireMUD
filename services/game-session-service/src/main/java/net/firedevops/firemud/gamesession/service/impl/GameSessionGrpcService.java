@@ -545,12 +545,24 @@ public final class GameSessionGrpcService
           gameplayWorldCatalog
               .resolveWorld(request.getWorldSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
+      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(world)) {
+        throw new CatalogRevisionUnavailableException(
+            "Authoritative public-production realm cardinality is invalid");
+      }
+      List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
+          gameplayWorldCatalog.visibleRealms(world).stream()
+              .map(realm -> toGameplayRealm(world.slug(), realm))
+              .toList();
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder().addAllRealms(realms).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (CatalogRevisionUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
-              .addAllRealms(
-                  gameplayWorldCatalog.visibleRealms(world).stream()
-                      .map(realm -> toGameplayRealm(world.slug(), realm))
-                      .toList())
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -592,7 +604,21 @@ public final class GameSessionGrpcService
                       .setPublicProductionRealm(realm.publicProductionRealm())
                       .setStateScope(realm.stateScope())
                       .setCharacterCreationPolicy(realm.characterCreationPolicy())
+                      .setCatalogRevision(requireCatalogRevision(realm.catalogRevision()))
+                      .setRealmId(requireIdentity(realm.realmId(), "realmId"))
+                      .setPlayableStateNamespaceId(
+                          requireIdentity(
+                              realm.playableStateNamespaceId(), "playableStateNamespaceId"))
                       .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (CatalogRevisionUnavailableException ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -778,7 +804,33 @@ public final class GameSessionGrpcService
         .setPublicProductionRealm(realm.publicProductionRealm())
         .setStateScope(realm.stateScope())
         .setCharacterCreationPolicy(realm.characterCreationPolicy())
+        .setCatalogRevision(requireCatalogRevision(realm.catalogRevision()))
+        .setRealmId(requireIdentity(realm.realmId(), "realmId"))
+        .setPlayableStateNamespaceId(
+            requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private static String requireIdentity(java.util.UUID identity, String fieldName) {
+    if (identity == null) {
+      throw new CatalogRevisionUnavailableException(
+          "Authoritative gameplay " + fieldName + " is missing");
+    }
+    return identity.toString();
+  }
+
+  private static long requireCatalogRevision(long catalogRevision) {
+    if (catalogRevision <= 0L) {
+      throw new CatalogRevisionUnavailableException(
+          "Authoritative gameplay catalog revision is missing or invalid");
+    }
+    return catalogRevision;
+  }
+
+  private static final class CatalogRevisionUnavailableException extends RuntimeException {
+    private CatalogRevisionUnavailableException(String message) {
+      super(message);
+    }
   }
 
   private static final class AuthorizationException extends RuntimeException {

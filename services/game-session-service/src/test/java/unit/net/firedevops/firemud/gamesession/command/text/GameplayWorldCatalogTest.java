@@ -167,6 +167,89 @@ class GameplayWorldCatalogTest {
     assertThat(catalog.resolveRealmForAdmission(normalizedWorld, "invalid")).isEmpty();
   }
 
+  @Test
+  void publicProductionCardinalityCountsExactlyOneAcrossTheTenantCatalogue() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("demo", "production", 7L, true),
+                worldWithRealm("preview", "preview", 7L, false)));
+
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
+        .isPresent();
+  }
+
+  @Test
+  void publicProductionCardinalityFailsClosedWhenTenantHasNoPublicRealm() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(worldWithRealm("preview", "preview", 7L, false)));
+
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.ZERO);
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("preview").orElseThrow()))
+        .isEmpty();
+  }
+
+  @Test
+  void publicProductionCardinalityCountsSameTenantCandidatesAcrossWorlds() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("demo", "production", 7L, true),
+                worldWithRealm("alternate", "production", 7L, true)));
+
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
+        .isEmpty();
+  }
+
+  @Test
+  void closedVisiblePublicRealmStillCountsAsTheTenantPublicRealm() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            7L,
+                            0L,
+                            0L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW")))));
+
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
+        .isPresent();
+  }
+
+  @Test
+  void numericWorldSelectionUsesTheSameFilteredSetAsWorldBrowsePresentation() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("invalid", "preview", 7L, false),
+                worldWithRealm("demo", "production", 8L, true)));
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo");
+    assertThat(catalog.resolveWorld("1").orElseThrow().slug()).isEqualTo("demo");
+    assertThat(catalog.resolveWorld("invalid")).isPresent();
+  }
+
   private static GameplayWorldCatalog.WorldView worldWithTargetRealm(
       String realmSlug, boolean visible) {
     return new GameplayWorldCatalog.WorldView(
@@ -183,6 +266,25 @@ class GameplayWorldCatalogTest {
                 1L,
                 visible,
                 false,
+                false,
+                "SHARED",
+                "ALLOW_NEW")));
+  }
+
+  private static GameplayWorldCatalog.WorldView worldWithRealm(
+      String worldSlug, String realmSlug, long tenantId, boolean publicProduction) {
+    return new GameplayWorldCatalog.WorldView(
+        worldSlug,
+        worldSlug,
+        List.of(
+            new GameplayWorldCatalog.RealmView(
+                realmSlug,
+                realmSlug,
+                tenantId,
+                11L,
+                1L,
+                true,
+                publicProduction,
                 false,
                 "SHARED",
                 "ALLOW_NEW")));

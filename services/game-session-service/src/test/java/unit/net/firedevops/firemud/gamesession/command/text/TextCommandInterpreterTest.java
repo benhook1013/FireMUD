@@ -518,15 +518,15 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void realmsAreVisibleAfterLogin() {
+  void privateRealmsAreNotDisclosedWithoutAuthority() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "REALMS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("[shared, allow_new]"));
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertFalse(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
   }
 
   @Test

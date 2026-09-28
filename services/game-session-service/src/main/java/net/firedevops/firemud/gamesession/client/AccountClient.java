@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -14,6 +15,10 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
@@ -25,6 +30,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
@@ -157,6 +163,131 @@ public final class AccountClient
 
   public PingResponse ping() {
     return callStub().ping(PingRequest.getDefaultInstance());
+  }
+
+  /** Requests one Account-owned direct-text scope for a server-resolved REALMS target. */
+  public IssueDirectTextConnectScopeResponse issueDirectTextConnectScope(
+      PlayerExecutionContext playerContext, DirectTextConnectScopeTarget target) {
+    Objects.requireNonNull(playerContext, "playerContext must not be null");
+    Objects.requireNonNull(target, "target must not be null");
+    if (!hasDirectTextCallerIdentity(playerContext)
+        || !playerContext.getTenantId().equals(target.tenantId())
+        || !playerContext.getRealmId().equals(target.realmId())
+        || !playerContext.getPlayableStateNamespaceId().equals(target.playableStateNamespaceId())
+        || !playerContext.getPlayableStateScope().equals(target.playableStateScope())
+        || !playerContext.getGameInstanceId().equals(target.gameInstanceId())) {
+      return scopeIssueError("INVALID_ARGUMENT", "Direct-text scope context did not match target");
+    }
+    if (stub() == null) {
+      return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
+    }
+    IssueDirectTextConnectScopeRequest request =
+        IssueDirectTextConnectScopeRequest.newBuilder()
+            .setPlayerContext(playerContext)
+            .setTenantId(target.tenantId())
+            .setWorldSlug(target.worldSlug())
+            .setRealmSlug(target.realmSlug())
+            .setRealmId(target.realmId())
+            .setPlayableStateNamespaceId(target.playableStateNamespaceId())
+            .setPlayableStateScope(target.playableStateScope())
+            .setGameInstanceId(target.gameInstanceId())
+            .setCatalogRevision(target.catalogRevision())
+            .setPointerVersion(target.pointerVersion())
+            .build();
+    try {
+      return callStub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .issueDirectTextConnectScope(request);
+    } catch (StatusRuntimeException ex) {
+      logger.warn("Account direct-text scope issuance failed", ex);
+      return scopeIssueError(accountAuthorityErrorCode(ex), "Account authority unavailable");
+    } catch (Exception ex) {
+      logger.warn("Account direct-text scope issuance did not complete", ex);
+      return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
+    }
+  }
+
+  /** Applies explicit direct-text JOIN with a caller-bound, immutable request identity. */
+  public JoinPublicProductionMembershipResponse joinPublicProductionMembership(
+      PlayerExecutionContext playerContext, String connectScopeId, String requestId) {
+    Objects.requireNonNull(playerContext, "playerContext must not be null");
+    if (!hasDirectTextCallerIdentity(playerContext)
+        || connectScopeId == null
+        || connectScopeId.isBlank()
+        || requestId == null
+        || requestId.isBlank()
+        || !playerContext.getRequestId().equals(requestId)) {
+      return joinError("INVALID_ARGUMENT", "Direct-text JOIN request was incomplete");
+    }
+    if (stub() == null) {
+      return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
+    }
+    JoinPublicProductionMembershipRequest request =
+        JoinPublicProductionMembershipRequest.newBuilder()
+            .setPlayerContext(playerContext)
+            .setConnectScopeId(connectScopeId)
+            .setRequestId(requestId)
+            .build();
+    try {
+      return callStub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .joinPublicProductionMembership(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE
+          || ex.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+        logger.warn(
+            "Account direct-text JOIN response was unavailable; retrying same request id", ex);
+        try {
+          initClient();
+          return callStub()
+              .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+              .joinPublicProductionMembership(request);
+        } catch (Exception retryEx) {
+          logger.warn("Account direct-text JOIN retry did not complete", retryEx);
+        }
+        return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
+      }
+      logger.warn("Account direct-text JOIN returned a terminal transport status", ex);
+      return joinError(ex.getStatus().getCode().name(), "Account JOIN request failed");
+    } catch (Exception ex) {
+      logger.warn("Account direct-text JOIN did not complete", ex);
+      return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
+    }
+  }
+
+  private boolean hasDirectTextCallerIdentity(PlayerExecutionContext context) {
+    return isPositiveLong(context.getAccountId()) && isPositiveLong(context.getSessionId());
+  }
+
+  private boolean isPositiveLong(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      return Long.parseLong(value) > 0;
+    } catch (NumberFormatException ignored) {
+      return false;
+    }
+  }
+
+  private String accountAuthorityErrorCode(StatusRuntimeException exception) {
+    Status.Code statusCode = exception.getStatus().getCode();
+    return statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED
+        ? "AUTH_UNAVAILABLE"
+        : statusCode.name();
+  }
+
+  private IssueDirectTextConnectScopeResponse scopeIssueError(String code, String message) {
+    return IssueDirectTextConnectScopeResponse.newBuilder()
+        .setError(ErrorDetail.newBuilder().setCode(code).setMessage(message))
+        .build();
+  }
+
+  private JoinPublicProductionMembershipResponse joinError(String code, String message) {
+    return JoinPublicProductionMembershipResponse.newBuilder()
+        .setOutcomeCode(code)
+        .setError(ErrorDetail.newBuilder().setCode(code).setMessage(message))
+        .build();
   }
 
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(

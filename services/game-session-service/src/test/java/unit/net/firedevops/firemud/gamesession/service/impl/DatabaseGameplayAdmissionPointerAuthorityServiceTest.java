@@ -38,6 +38,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     GameplayAdmissionPointer existing = new GameplayAdmissionPointer();
     existing.setId(11L);
     existing.setPointerVersion(3L);
+    existing.setStateScope("SHARED");
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 

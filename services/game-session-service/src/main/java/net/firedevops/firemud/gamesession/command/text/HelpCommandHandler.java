@@ -83,6 +83,11 @@ public class HelpCommandHandler {
           success(
               "PLAY <world> [realm] [character]\n"
                   + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+      case "JOIN" ->
+          success(
+              "JOIN <world>\n"
+                  + "Join the public-production membership for a world after LOGIN.\n"
+                  + "Use REALMS <world> first, then JOIN before CHARS and PLAY.");
       case "REALMS" ->
           success(
               "REALMS <world>\n"
@@ -226,6 +231,9 @@ public class HelpCommandHandler {
           case "HELP" -> "HELP";
           case "LOGIN", "LOGON" -> "LOGIN";
           case "PLAY" -> "PLAY";
+          case "JOIN" -> "JOIN";
+          case "REALMS" -> "REALMS";
+          case "CHARS" -> "CHARS";
           case "WHO" -> "WHO";
           case "STATUS", "STAT" -> "STATUS";
           case "FRIENDS" -> "FRIENDS";
@@ -271,6 +279,9 @@ public class HelpCommandHandler {
                 "Help topics:",
                 "- HELP LOGIN",
                 "- HELP PLAY",
+                "- HELP REALMS",
+                "- HELP JOIN",
+                "- HELP CHARS",
                 "- HELP WHO",
                 "- HELP STATUS",
                 "- HELP FRIENDS",
@@ -336,6 +347,7 @@ public class HelpCommandHandler {
 
   private PlayerCommandCapability capabilityForTopic(String topic) {
     return switch (topic) {
+      case "JOIN", "REALMS", "CHARS" -> PlayerCommandCapability.MANDATORY;
       case "SAY", "WHISPER", "TELL", "FRIENDS" -> PlayerCommandCapability.SOCIAL;
       case "WHO" -> PlayerCommandCapability.PRESENCE;
       case "INVENTORY", "EQUIPMENT", "CONTAINER", "PUT", "TAKE", "WEAR", "REMOVE", "GET", "DROP" ->

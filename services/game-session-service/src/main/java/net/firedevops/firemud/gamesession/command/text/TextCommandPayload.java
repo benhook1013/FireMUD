@@ -10,6 +10,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Credentials,
         TextCommandPayload.EmailLoginChallengeRequest,
         TextCommandPayload.RealmBrowseRequest,
+        TextCommandPayload.JoinRequest,
         TextCommandPayload.CharacterBrowseRequest,
         TextCommandPayload.PlayRequest,
         TextCommandPayload.AfkRequest,
@@ -36,6 +37,8 @@ public sealed interface TextCommandPayload
   record EmailLoginChallengeRequest(String email) implements TextCommandPayload {}
 
   record RealmBrowseRequest(String worldSelector) implements TextCommandPayload {}
+
+  record JoinRequest(String worldSelector) implements TextCommandPayload {}
 
   record CharacterBrowseRequest(String worldSelector, String realmSelector)
       implements TextCommandPayload {}
@@ -81,6 +84,10 @@ public sealed interface TextCommandPayload
           viewRequestFor(type);
       case REALMS ->
           parseRealmBrowseRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case JOIN ->
+          parseJoinRequest(safeArgs)
               .<TextCommandPayload>map(request -> request)
               .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case CHARS ->
@@ -244,6 +251,16 @@ public sealed interface TextCommandPayload
       return java.util.Optional.empty();
     }
     return java.util.Optional.of(new RealmBrowseRequest(worldSelector));
+  }
+
+  private static java.util.Optional<JoinRequest> parseJoinRequest(List<String> args) {
+    if (args == null || args.size() != 1) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.getFirst());
+    return StringUtils.hasText(worldSelector)
+        ? java.util.Optional.of(new JoinRequest(worldSelector))
+        : java.util.Optional.empty();
   }
 
   private static java.util.Optional<CharacterBrowseRequest> parseCharacterBrowseRequest(

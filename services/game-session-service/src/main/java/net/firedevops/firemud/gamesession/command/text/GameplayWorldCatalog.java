@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -55,17 +56,18 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> visibleWorlds = visibleWorlds();
+    List<WorldView> indexedWorlds = discoverableWorlds();
     try {
       int index = Integer.parseInt(selector);
-      if (index >= 1 && index <= worlds.size()) {
-        return Optional.of(worlds.get(index - 1));
+      if (index >= 1 && index <= indexedWorlds.size()) {
+        return Optional.of(indexedWorlds.get(index - 1));
       }
     } catch (NumberFormatException ignored) {
       // Fall back to slug matching.
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return worlds.stream()
+    return visibleWorlds.stream()
         .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
         .findFirst();
   }
@@ -105,10 +107,62 @@ public final class GameplayWorldCatalog {
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
+    List<RealmView> publicProductionRealms =
+        visibleRealms.stream().filter(RealmView::publicProductionRealm).toList();
+    if (publicProductionRealms.size() > 1) {
+      return Optional.empty();
+    }
+    if (publicProductionRealms.size() == 1) {
+      RealmView publicRealm = publicProductionRealms.getFirst();
+      return hasValidPublicProductionRealm(publicRealm.tenantId())
+          ? Optional.of(publicRealm)
+          : Optional.empty();
+    }
+    // Preserve explicit non-public presentation when the selected tenant has a valid public
+    // production realm elsewhere in the catalogue. A tenant with zero public realms is invalid
+    // authority, so it must not become a default by falling back to the first visible row.
     return visibleRealms.stream()
-        .filter(RealmView::publicProductionRealm)
-        .findFirst()
-        .or(() -> Optional.of(visibleRealms.get(0)));
+            .allMatch(realm -> hasValidPublicProductionRealm(realm.tenantId()))
+        ? Optional.of(visibleRealms.getFirst())
+        : Optional.empty();
+  }
+
+  /**
+   * Returns the tenant-wide cardinality of visible, player-addressable public-production realms.
+   * The scan intentionally spans every authored world because a tenant may have candidates in
+   * more than one world selector.
+   */
+  public PublicProductionRealmCardinality publicProductionRealmCardinality(long tenantId) {
+    if (tenantId <= 0L) {
+      return PublicProductionRealmCardinality.ZERO;
+    }
+    long count =
+        normalizeWorlds(worldSupplier.get()).stream()
+            .flatMap(world -> world.realms().stream())
+            .filter(realm -> realm.tenantId() == tenantId)
+            .filter(this::isPlayerAddressable)
+            .filter(RealmView::publicProductionRealm)
+            .count();
+    return switch (Long.compare(count, 1L)) {
+      case -1 -> PublicProductionRealmCardinality.ZERO;
+      case 0 -> PublicProductionRealmCardinality.EXACTLY_ONE;
+      default -> PublicProductionRealmCardinality.MULTIPLE;
+    };
+  }
+
+  public boolean hasValidPublicProductionRealm(long tenantId) {
+    return publicProductionRealmCardinality(tenantId)
+        == PublicProductionRealmCardinality.EXACTLY_ONE;
+  }
+
+  /** Returns whether every tenant represented by this selected world has unambiguous authority. */
+  public boolean hasValidPublicProductionRealm(WorldView world) {
+    List<RealmView> visibleRealms = visibleRealms(world);
+    return !visibleRealms.isEmpty()
+        && visibleRealms.stream()
+            .map(RealmView::tenantId)
+            .distinct()
+            .allMatch(this::hasValidPublicProductionRealm);
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
@@ -180,20 +234,25 @@ public final class GameplayWorldCatalog {
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> worlds = discoverableWorlds();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
-    for (int i = 0; i < worlds.size(); i++) {
-      WorldView world = worlds.get(i);
-      RealmView defaultRealm = defaultRealm(world);
+    for (WorldView world : worlds) {
+      RealmView defaultRealm = resolveDefaultRealm(world).orElseThrow();
       entries.add(
           new WorldsViewOutput.WorldEntry(
-              i + 1,
+              entries.size() + 1,
               world.slug(),
               world.displayName(),
               defaultRealm.gameInstanceId(),
               defaultRealm.requiresCharacterSelection()));
     }
     return List.copyOf(entries);
+  }
+
+  private List<WorldView> discoverableWorlds() {
+    return visibleWorlds().stream()
+        .filter(world -> resolveDefaultRealm(world).isPresent())
+        .toList();
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
@@ -218,13 +277,12 @@ public final class GameplayWorldCatalog {
     return world != null && !visibleRealms(world).isEmpty();
   }
 
-  private RealmView defaultRealm(WorldView world) {
-    return resolveDefaultRealm(world)
-        .orElseGet(
-            () -> {
-              return new RealmView(
-                  "production", "Live Realm", 0L, 0L, 1L, true, true, false, "SHARED", "ALLOW_NEW");
-            });
+  private boolean isPlayerAddressable(RealmView realm) {
+    return realm != null
+        && realm.visible()
+        && realm.slug() != null
+        && !realm.slug().isBlank()
+        && realm.tenantId() > 0L;
   }
 
   private static List<WorldView> normalizeWorlds(List<WorldView> worlds) {
@@ -285,7 +343,10 @@ public final class GameplayWorldCatalog {
         pointer.publicProductionRealm(),
         pointer.requiresCharacterSelection(),
         pointer.stateScope(),
-        pointer.characterCreationPolicy());
+        pointer.characterCreationPolicy(),
+        pointer.catalogRevision(),
+        pointer.realmId(),
+        pointer.playableStateNamespaceId());
   }
 
   private static WorldView copyWorldView(WorldView input) {
@@ -312,7 +373,10 @@ public final class GameplayWorldCatalog {
         input.publicProductionRealm(),
         input.requiresCharacterSelection(),
         input.stateScope(),
-        input.characterCreationPolicy());
+        input.characterCreationPolicy(),
+        input.catalogRevision(),
+        input.realmId(),
+        input.playableStateNamespaceId());
   }
 
   public record WorldView(String slug, String displayName, List<RealmView> realms) {
@@ -331,10 +395,74 @@ public final class GameplayWorldCatalog {
       boolean publicProductionRealm,
       boolean requiresCharacterSelection,
       String stateScope,
-      String characterCreationPolicy) {}
+      String characterCreationPolicy,
+      long catalogRevision,
+      UUID realmId,
+      UUID playableStateNamespaceId) {
+    /** Creates a synthetic realm view without authoritative identity evidence. */
+    public RealmView(
+        String slug,
+        String displayName,
+        long tenantId,
+        long gameInstanceId,
+        long pointerVersion,
+        boolean visible,
+        boolean publicProductionRealm,
+        boolean requiresCharacterSelection,
+        String stateScope,
+        String characterCreationPolicy,
+        long catalogRevision) {
+      this(
+          slug,
+          displayName,
+          tenantId,
+          gameInstanceId,
+          pointerVersion,
+          visible,
+          publicProductionRealm,
+          requiresCharacterSelection,
+          stateScope,
+          characterCreationPolicy,
+          catalogRevision,
+          null,
+          null);
+    }
+
+    /** Creates a synthetic realm view without authoritative catalog revision evidence. */
+    public RealmView(
+        String slug,
+        String displayName,
+        long tenantId,
+        long gameInstanceId,
+        long pointerVersion,
+        boolean visible,
+        boolean publicProductionRealm,
+        boolean requiresCharacterSelection,
+        String stateScope,
+        String characterCreationPolicy) {
+      this(
+          slug,
+          displayName,
+          tenantId,
+          gameInstanceId,
+          pointerVersion,
+          visible,
+          publicProductionRealm,
+          requiresCharacterSelection,
+          stateScope,
+          characterCreationPolicy,
+          0L);
+    }
+  }
 
   public record RuntimeRealmTarget(
       String worldSlug, String worldDisplayName, String realmSlug, String realmDisplayName) {}
+
+  public enum PublicProductionRealmCardinality {
+    ZERO,
+    EXACTLY_ONE,
+    MULTIPLE
+  }
 
   private static final class MutableWorldAccumulator {
     private final String slug;

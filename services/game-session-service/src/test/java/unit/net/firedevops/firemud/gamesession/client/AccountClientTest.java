@@ -27,6 +27,10 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -34,12 +38,109 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+
+  @Test
+  void directTextScopeRequestCarriesTypedCallerAndCompleteServerResolvedTarget() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    IssueDirectTextConnectScopeResponse expected =
+        IssueDirectTextConnectScopeResponse.newBuilder()
+            .setConnectScopeId("account-issued-scope")
+            .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+            .build();
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+    PlayerExecutionContext context = directTextContext("request-unused");
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse actual =
+        client.issueDirectTextConnectScope(context, target);
+
+    assertThat(actual).isEqualTo(expected);
+    ArgumentCaptor<IssueDirectTextConnectScopeRequest> captor =
+        ArgumentCaptor.forClass(IssueDirectTextConnectScopeRequest.class);
+    verify(stub).issueDirectTextConnectScope(captor.capture());
+    assertThat(captor.getValue().getPlayerContext().getAccountId()).isEqualTo("41");
+    assertThat(captor.getValue().getPlayerContext().getSessionId()).isEqualTo("7");
+    assertThat(captor.getValue().getTenantId()).isEqualTo("22");
+    assertThat(captor.getValue().getWorldSlug()).isEqualTo("demo-world");
+    assertThat(captor.getValue().getRealmId()).isEqualTo(target.realmId());
+    assertThat(captor.getValue().getPlayableStateNamespaceId())
+        .isEqualTo(target.playableStateNamespaceId());
+    assertThat(captor.getValue().getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(captor.getValue().getGameInstanceId()).isEqualTo("9");
+    assertThat(captor.getValue().getCatalogRevision()).isEqualTo(7L);
+    assertThat(captor.getValue().getPointerVersion()).isEqualTo(4L);
+  }
+
+  @Test
+  void directTextJoinRetryReusesExactContextScopeAndRequestId() throws Exception {
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    JoinPublicProductionMembershipResponse expected =
+        JoinPublicProductionMembershipResponse.newBuilder()
+            .setSuccess(true)
+            .setOutcomeCode("CREATED")
+            .build();
+    when(fixture
+            .retryStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = fixture.client();
+    PlayerExecutionContext context = directTextContext("join-request-1");
+
+    JoinPublicProductionMembershipResponse actual =
+        client.joinPublicProductionMembership(context, "account-issued-scope", "join-request-1");
+
+    assertThat(actual).isEqualTo(expected);
+    ArgumentCaptor<JoinPublicProductionMembershipRequest> firstCaptor =
+        ArgumentCaptor.forClass(JoinPublicProductionMembershipRequest.class);
+    ArgumentCaptor<JoinPublicProductionMembershipRequest> retryCaptor =
+        ArgumentCaptor.forClass(JoinPublicProductionMembershipRequest.class);
+    verify(fixture.initialStub()).joinPublicProductionMembership(firstCaptor.capture());
+    verify(fixture.retryStub()).joinPublicProductionMembership(retryCaptor.capture());
+    assertThat(firstCaptor.getValue()).isEqualTo(retryCaptor.getValue());
+    assertThat(retryCaptor.getValue().getConnectScopeId()).isEqualTo("account-issued-scope");
+    assertThat(retryCaptor.getValue().getRequestId()).isEqualTo("join-request-1");
+    assertThat(retryCaptor.getValue().getPlayerContext().getRequestId())
+        .isEqualTo("join-request-1");
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  private static PlayerExecutionContext directTextContext(String requestId) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId("41")
+        .setSessionId("7")
+        .setTenantId("22")
+        .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
+        .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId("9")
+        .setRequestId(requestId)
+        .build();
+  }
 
   @Test
   void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
