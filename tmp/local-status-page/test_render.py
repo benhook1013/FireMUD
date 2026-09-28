@@ -1033,13 +1033,14 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h 0m</time>', merged_row)
         self.assertIn('5 files · <span class="additions">+10</span> / <span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>', result)
-        self.assertIn('<span class="round-pill" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '
+        self.assertIn('<span class="round-pill" aria-label="4/3, Completed 24 Sep 2026 23:46 NZST" '
                       'title="Completed 24 Sep 2026 23:46 NZST"><span>4/3</span>'
                       '<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time></span>', result)
         self.assertIn('<strong>CLI CodeRabbit</strong><span>1 completed</span>', result)
         self.assertNotIn('class="activity-caption">', result)
         self.assertNotIn('from older heads', result)
-        self.assertIn('aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST"', result)
+        self.assertIn('aria-label="4/3, Completed 24 Sep 2026 23:46 NZST"', result)
+        self.assertNotIn('older head', result)
         age_markup = ('PR data refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
                       'title="25 Sep 00:00 NZST">just now</time>')
         self.assertEqual(1, result.count(age_markup))
@@ -1162,7 +1163,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<span class="round-pill" aria-label="3/1, Completion time unavailable" '
                       'title="Completion time unavailable"><span>3/1</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('<span class="round-pill zero-accepted unlinked" '
-                      'aria-label="2/0 (older head, unlinked, non-counting), Completion time unavailable" '
+                      'aria-label="2/0 (unlinked, non-counting), Completion time unavailable" '
                       'title="Completion time unavailable"><span>2/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
         self.assertIn('.front-evidence .round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
@@ -1170,7 +1171,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertNotIn('class="activity-caption">', result)
         self.assertNotIn('from older heads', result)
         self.assertLess(result.index('aria-label="0/0,'), result.index('aria-label="3/1,'))
-        self.assertLess(result.index('aria-label="3/1,'), result.index('aria-label="2/0 (older head'))
+        self.assertLess(result.index('aria-label="3/1,'), result.index('aria-label="2/0 (unlinked'))
         review["queue"][42]["review_activity"]["hosted"]["recent"] = []
         without_notes = page.render(self.fixture(), review, NOW)
         self.assertNotIn('class="activity-caption">', without_notes)
@@ -1300,7 +1301,7 @@ vm.runInNewContext(process.argv[1], {
         result = page.render(self.fixture(), review, NOW)
         self.assertIn('class="round-pill zero-accepted"', result)
         self.assertIn('<time class="round-age" datetime="2026-09-24T11:59:30+00:00">&lt;1m</time>', result)
-        self.assertIn('class="round-pill" aria-label="2/1 (older head), Completion time unavailable"', result)
+        self.assertIn('class="round-pill" aria-label="2/1, Completion time unavailable"', result)
         self.assertNotIn('onclick="alert(1)', result)
 
     @patch.object(page.subprocess, "run")

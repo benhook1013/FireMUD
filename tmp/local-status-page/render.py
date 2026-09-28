@@ -1170,12 +1170,11 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                     type(routed) is not int or routed < 0 or routed + result["accepted"] > result["raw"]
                 ):
                     raise ValueError("review routed count is invalid")
-                older = not result["current_head"]
                 unlinked = not result["attributable"]
                 non_counting = result["non_counting"]
                 description = ", ".join(
                     part for part, selected in
-                    (("older head", older), ("unlinked", unlinked), ("non-counting", non_counting)) if selected
+                    (("unlinked", unlinked), ("non-counting", non_counting)) if selected
                 )
                 pill_label = f'{result["raw"]}/{result["accepted"]}'
                 if routed is not None:
