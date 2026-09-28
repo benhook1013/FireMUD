@@ -1245,6 +1245,14 @@ components:
         catalogRevision:
           type: integer
           nullable: true
+        realmId:
+          type: string
+          format: uuid
+          nullable: true
+        playableStateNamespaceId:
+          type: string
+          format: uuid
+          nullable: true
         visible:
           type: boolean
         publicProductionRealm:

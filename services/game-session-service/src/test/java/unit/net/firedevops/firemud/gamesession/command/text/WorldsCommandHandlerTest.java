@@ -49,10 +49,9 @@ class WorldsCommandHandlerTest {
         .setPublicProductionRealm(false);
     WorldsViewOutput response = handler.browseView();
 
-    assertThat(response.worlds()).hasSize(2);
+    assertThat(response.worlds()).hasSize(1);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
-    assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 
   @Test

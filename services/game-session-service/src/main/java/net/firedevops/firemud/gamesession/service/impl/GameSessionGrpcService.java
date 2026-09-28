@@ -541,10 +541,14 @@ public final class GameSessionGrpcService
       ListGameplayRealmsRequest request,
       StreamObserver<ListGameplayRealmsResponse> responseObserver) {
     try {
+      String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorld(request.getWorldSlug())
-              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
+              .resolveWorld(worldSelector)
+              .orElseThrow(
+                  () ->
+                      new CatalogRevisionUnavailableException(
+                          "Authoritative gameplay world selection is unavailable"));
       if (!gameplayWorldCatalog.hasValidPublicProductionRealm(world)) {
         throw new CatalogRevisionUnavailableException(
             "Authoritative public-production realm cardinality is invalid");
@@ -809,6 +813,17 @@ public final class GameSessionGrpcService
         .setPlayableStateNamespaceId(
             requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private static String requireWorldSelector(String worldSelector) {
+    if (worldSelector == null || worldSelector.isBlank()) {
+      throw new IllegalArgumentException("worldSlug is required");
+    }
+    String trimmed = worldSelector.trim();
+    if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
+      throw new IllegalArgumentException("worldSlug must be a valid selector");
+    }
+    return worldSelector;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {

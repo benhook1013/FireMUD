@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -140,6 +142,10 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
         ArgumentCaptor.forClass(GameplayAdmissionPointerEvent.class);
     verify(eventRepository).save(eventCaptor.capture());
     assertEquals(1L, eventCaptor.getValue().getCatalogRevision());
+    assertEquals(pointerCaptor.getValue().getRealmId(), eventCaptor.getValue().getRealmId());
+    assertEquals(
+        pointerCaptor.getValue().getPlayableStateNamespaceId(),
+        eventCaptor.getValue().getPlayableStateNamespaceId());
   }
 
   @Test
@@ -291,6 +297,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     event.setGameInstanceId(7L);
     event.setPointerVersion(1L);
     event.setCatalogRevision(2L);
+    event.setRealmId(UUID.fromString("11111111-1111-1111-1111-111111111111"));
+    event.setPlayableStateNamespaceId(UUID.fromString("22222222-2222-2222-2222-222222222222"));
     event.setStateScope("SHARED");
     event.setCharacterCreationPolicy("ALLOW_NEW");
     event.setOccurredAt(java.time.Instant.parse("2026-09-29T00:00:00Z"));
@@ -298,8 +306,29 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
             1L, "demo", "production"))
         .thenReturn(List.of(event));
 
-    assertEquals(
-        2L, service.listPointerAudit(1L, "demo", "production").getFirst().catalogRevision());
+    var auditEntry = service.listPointerAudit(1L, "demo", "production").getFirst();
+    assertEquals(2L, auditEntry.catalogRevision());
+    assertEquals(event.getRealmId(), auditEntry.realmId());
+    assertEquals(event.getPlayableStateNamespaceId(), auditEntry.playableStateNamespaceId());
+  }
+
+  @Test
+  void listPointerAuditLeavesHistoricalIdentityAbsent() {
+    GameplayAdmissionPointerEvent historicalEvent = new GameplayAdmissionPointerEvent();
+    historicalEvent.setWorldSlug("demo");
+    historicalEvent.setRealmSlug("production");
+    historicalEvent.setTenantId(1L);
+    historicalEvent.setGameInstanceId(7L);
+    historicalEvent.setPointerVersion(1L);
+    historicalEvent.setCatalogRevision(1L);
+    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+            1L, "demo", "production"))
+        .thenReturn(List.of(historicalEvent));
+
+    var auditEntry = service.listPointerAudit(1L, "demo", "production").getFirst();
+    assertEquals(1L, auditEntry.catalogRevision());
+    assertNull(auditEntry.realmId());
+    assertNull(auditEntry.playableStateNamespaceId());
   }
 
   @Test
@@ -334,6 +363,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     pointer.setGameInstanceId(7L);
     pointer.setPointerVersion(1L);
     pointer.setCatalogRevision(1L);
+    pointer.setRealmId(UUID.fromString("11111111-1111-1111-1111-111111111111"));
+    pointer.setPlayableStateNamespaceId(UUID.fromString("22222222-2222-2222-2222-222222222222"));
     pointer.setVisible(true);
     pointer.setPublicProductionRealm(true);
     pointer.setRequiresCharacterSelection(false);

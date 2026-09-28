@@ -252,6 +252,8 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         parseLong(entry.getGameInstanceId(), "game_instance_id"),
         entry.getPointerVersion(),
         entry.hasCatalogRevision() ? entry.getCatalogRevision() : null,
+        parseOptionalUuid(entry.getRealmId(), "realm_id"),
+        parseOptionalUuid(entry.getPlayableStateNamespaceId(), "playable_state_namespace_id"),
         entry.getVisible(),
         entry.getPublicProductionRealm(),
         entry.getRequiresCharacterSelection(),
@@ -262,6 +264,17 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         entry.getControlPlaneRequestId(),
         entry.getPreparedVersionUpgradeId().isBlank() ? null : entry.getPreparedVersionUpgradeId(),
         entry.getOccurredAtMs() <= 0 ? null : Instant.ofEpochMilli(entry.getOccurredAtMs()));
+  }
+
+  private UUID parseOptionalUuid(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    try {
+      return UUID.fromString(value);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(fieldName + " must be a UUID", ex);
+    }
   }
 
   private PreparedVersionUpgradeDto toDto(PreparedVersionUpgrade preparation) {

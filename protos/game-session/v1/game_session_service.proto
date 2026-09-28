@@ -417,6 +417,10 @@ message AdmissionPointerControlPlaneEntry {
   string prepared_version_upgrade_id = 16;
   bool public_production_realm = 17;
   optional int64 catalog_revision = 18;
+  // Empty for historical audit rows that predate durable pointer identity.
+  string realm_id = 19;
+  // Empty for historical audit rows that predate durable pointer identity.
+  string playable_state_namespace_id = 20;
 }
 
 message ListAdmissionPointersRequest {}
