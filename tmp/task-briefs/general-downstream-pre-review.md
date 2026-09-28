@@ -12,7 +12,7 @@ Use the live configured queue and each PR's owning architecture, tracker, and cu
 
 Use bounded independent reviewers with disjoint scope and explicit success conditions. General owns finding adjudication, integration, focused proof, and safe publication. Fix valid findings in the owning PR; route other-owner findings with evidence and coordinate a safe handoff.
 
-Independent pre-review is preparation only: do not request or run CodeRabbit under this brief, and do not claim CodeRabbit findings, taper credit, or merge readiness from independent passes. Do not merge or enable auto-merge. Follow [PR lifecycle](../../design/developer-workflows/pr-lifecycle.md), [validation and runtime proof](../../design/developer-workflows/validation-and-runtime-proof.md), and [AI delegation and review](../../design/developer-workflows/ai-delegation-and-review.md).
+Independent pre-review is preparation only: do not request or run CodeRabbit under this brief, and do not claim CodeRabbit findings, taper credit, or merge readiness from independent passes. Do not merge or enable auto-merge. At each resumption, read the version-matched active FireMUD worktree's PR lifecycle, validation and runtime proof, and AI delegation and review guides; use the stable [PR lifecycle](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/pr-lifecycle.md), [validation and runtime proof](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/validation-and-runtime-proof.md), and [AI delegation and review](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/ai-delegation-and-review.md) copies after the changes land.
 
 ## Handoff
 
