@@ -175,6 +175,9 @@ class AuthControllerTest {
                     1L,
                     42L,
                     17L,
+                    23L,
+                    "8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88",
+                    "PLAYABLE_STATE_SCOPE_SHARED",
                     false,
                     "SHARED",
                     "ALLOW_NEW",
@@ -190,6 +193,12 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].realmSlug").value("production"))
         .andExpect(jsonPath("$.data[0].realmId").value("4c4b57d8-e3a2-48fe-9977-e7df0fdce901"))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(23))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88"))
+        .andExpect(jsonPath("$.data[0].playableStateScope").value("PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(jsonPath("$.data[0].stateScope").value("SHARED"))
         .andExpect(jsonPath("$.data[0].connectScopeId").value("scope-1"));
   }
 

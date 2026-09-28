@@ -21,9 +21,17 @@ import org.springframework.stereotype.Component;
 @Component
 public final class GameplayWorldCatalog {
   private final Supplier<List<WorldView>> worldSupplier;
+  private final Supplier<List<GameplayAdmissionPointerSnapshot>> authorityPointerSupplier;
 
   private GameplayWorldCatalog(Supplier<List<WorldView>> worldSupplier) {
+    this(worldSupplier, null);
+  }
+
+  private GameplayWorldCatalog(
+      Supplier<List<WorldView>> worldSupplier,
+      Supplier<List<GameplayAdmissionPointerSnapshot>> authorityPointerSupplier) {
     this.worldSupplier = Objects.requireNonNull(worldSupplier, "worldSupplier must not be null");
+    this.authorityPointerSupplier = authorityPointerSupplier;
   }
 
   @Autowired
@@ -32,6 +40,10 @@ public final class GameplayWorldCatalog {
         () -> {
           Objects.requireNonNull(authorityService, "authorityService must not be null");
           return toWorlds(authorityService.listPointers());
+        },
+        () -> {
+          Objects.requireNonNull(authorityService, "authorityService must not be null");
+          return authorityService.listPointers();
         });
   }
 
@@ -56,7 +68,17 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = visibleWorlds();
+    return resolveWorld(selector, visibleWorlds());
+  }
+
+  public Optional<WorldView> resolveWorldFromAuthoritySnapshot(String selector) {
+    if (selector == null || selector.isBlank()) {
+      return Optional.empty();
+    }
+    return resolveWorld(selector, visibleWorldsFromAuthoritySnapshot());
+  }
+
+  private Optional<WorldView> resolveWorld(String selector, List<WorldView> worlds) {
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= worlds.size()) {
@@ -180,6 +202,32 @@ public final class GameplayWorldCatalog {
         .toList();
   }
 
+  /**
+   * Builds the visible world projection from one authoritative pointer-list snapshot.
+   *
+   * <p>Text discovery intentionally continues to use {@link #visibleWorlds()}, which filters
+   * malformed or ambiguous rows for its existing negative-admission behavior. The gRPC discovery
+   * boundary instead needs to distinguish an empty authority store from an unavailable authority
+   * row, so it validates the exact snapshot before projecting it.
+   */
+  public List<WorldView> visibleWorldsFromAuthoritySnapshot() {
+    if (authorityPointerSupplier == null) {
+      return visibleWorlds();
+    }
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    if (pointers == null) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative gameplay pointer list is unavailable");
+    }
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (!hasCompleteAuthorityPointer(pointer)) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative gameplay pointer is incomplete");
+      }
+    }
+    return toWorlds(pointers).stream().filter(this::hasVisibleRealmEntries).toList();
+  }
+
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
     List<WorldView> worlds = visibleWorlds();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
@@ -277,6 +325,12 @@ public final class GameplayWorldCatalog {
         && ("SHARED".equals(pointer.stateScope()) || "ISOLATED".equals(pointer.stateScope()))
         && pointer.characterCreationPolicy() != null
         && !pointer.characterCreationPolicy().isBlank();
+  }
+
+  public static final class AuthorityPointerUnavailableException extends RuntimeException {
+    public AuthorityPointerUnavailableException(String message) {
+      super(message);
+    }
   }
 
   private static RealmView toRealmView(GameplayAdmissionPointerSnapshot pointer) {

@@ -41,6 +41,8 @@ import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsRequest;
 import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsResponse;
+import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsRequest;
+import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
@@ -434,6 +436,133 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void listGameplayWorldsBuildsVisibleWorldsFromOneAuthoritySnapshot() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot firstSnapshot =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo World",
+            "production",
+            "Live Realm",
+            7L,
+            44L,
+            17L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            29L,
+            java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            java.util.UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayAdmissionPointerSnapshot secondSnapshot =
+        new GameplayAdmissionPointerSnapshot(
+            "other",
+            "Other World",
+            "production",
+            "Other Realm",
+            8L,
+            55L,
+            3L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            4L,
+            java.util.UUID.fromString("c0a801a0-7e42-4cc8-9e18-0c0b20d4e6f9"),
+            java.util.UUID.fromString("e94d4b9d-7635-4d7f-b70c-12f4e3ea8e27"));
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenReturn(List.of(firstSnapshot), List.of(secondSnapshot));
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayWorldsResponse response = listGameplayWorlds(service);
+
+    assertFalse(response.hasError());
+    assertEquals(1, response.getWorldsCount());
+    assertEquals("demo", response.getWorlds(0).getWorldSlug());
+    assertEquals("Demo World", response.getWorlds(0).getDisplayName());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+  }
+
+  @Test
+  void listGameplayWorldsAllowsAnEmptyAuthorityStore() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of());
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayWorldsResponse response = listGameplayWorlds(service);
+
+    assertFalse(response.hasError());
+    assertEquals(0, response.getWorldsCount());
+    Mockito.verify(pointerAuthorityService).listPointers();
+  }
+
+  @Test
+  void listGameplayWorldsRejectsAnIncompleteAuthorityPointer() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot incompleteSnapshot =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo World",
+            "production",
+            "Live Realm",
+            7L,
+            44L,
+            17L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            0L);
+    Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(incompleteSnapshot));
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayWorldsResponse response = listGameplayWorlds(service);
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertEquals(0, response.getWorldsCount());
+    Mockito.verify(pointerAuthorityService).listPointers();
+  }
+
+  @Test
   void gameplayCatalogRpcReturnsCanonicalRealmData() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
@@ -652,6 +781,27 @@ class GameSessionGrpcServiceTest {
     return response.get();
   }
 
+  private static ListGameplayWorldsResponse listGameplayWorlds(GameSessionGrpcService service) {
+    AtomicReference<ListGameplayWorldsResponse> response = new AtomicReference<>();
+    service.listGameplayWorlds(
+        ListGameplayWorldsRequest.getDefaultInstance(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListGameplayWorldsResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return response.get();
+  }
+
   @Test
   void missingStableRealmIdentityFailsClosedForCatalogReads() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
@@ -788,7 +938,9 @@ class GameSessionGrpcServiceTest {
     GameplayAdmissionPointerEventRepository eventRepository =
         Mockito.mock(GameplayAdmissionPointerEventRepository.class);
     AtomicReference<GameplayAdmissionPointer> currentPointer = new AtomicReference<>();
-    Mockito.when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
+    Mockito.when(
+            pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+                7L, "demo", "production"))
         .thenAnswer(invocation -> java.util.Optional.ofNullable(currentPointer.get()));
     Mockito.when(pointerRepository.save(Mockito.any(GameplayAdmissionPointer.class)))
         .thenAnswer(
