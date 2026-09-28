@@ -164,7 +164,7 @@ class ScriptDefinitionRepositoryTest {
   }
 
   @Test
-  void existingIdIdentityMutationIsRejectedByCasAndLeavesOriginalRowUntouched() {
+  void existingIdBaseIdentityMutationReportsExistingAndRequestedBaseVersions() {
     AtomicReference<String> updateSql = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
@@ -175,17 +175,21 @@ class ScriptDefinitionRepositoryTest {
             return new MockResult[] {new MockResult(0)};
           }
           var result = resultDsl.newResult(SCRIPTS);
-          result.add(scriptRecord(17L, "{\"original\":true}", 4));
+          ScriptsRecord existing = scriptRecord(17L, "{\"original\":true}", 4);
+          existing.setBaseVersionId(11L);
+          result.add(existing);
           return new MockResult[] {new MockResult(1, result)};
         };
     ScriptDefinitionRepository repository = repository(provider);
     ScriptDefinition changedIdentity = script(17L, "{\"replacement\":true}");
-    changedIdentity.setName("renamed");
+    changedIdentity.setBaseVersionId(12L);
     changedIdentity.setRowVersion(4);
 
     assertThatThrownBy(() -> repository.save(changedIdentity))
         .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
-        .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=11, name=script-1)")
+        .hasMessageContaining(
+            "requested=(tenantId=1, version=v1, baseVersionId=12, name=script-1)");
 
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
         .contains("tenant_id", "version", "name", "row_version")

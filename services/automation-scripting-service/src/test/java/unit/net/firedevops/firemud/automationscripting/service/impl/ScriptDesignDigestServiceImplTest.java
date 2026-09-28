@@ -92,9 +92,12 @@ class ScriptDesignDigestServiceImplTest {
 
   @Test
   void getDraftDesignDigestRejectsRequestedBaseDifferentFromRetainedOwnerBase() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("1", 2L, "patch-1"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 2L, "patch-1"));
+
+    assertEquals("script_patch_base_version_mismatch", exception.getMessage());
   }
 
   @Test
@@ -109,11 +112,13 @@ class ScriptDesignDigestServiceImplTest {
   @Test
   void getDraftDesignDigestFailsClosedForMixedBaseScriptRows() {
     ScriptDefinition first = new ScriptDefinition();
+    first.setTenantId(1L);
     first.setName("alpha");
     first.setScriptVersion("patch-1");
     first.setBaseVersionId(1L);
     first.setDefinition("return 1");
     ScriptDefinition second = new ScriptDefinition();
+    second.setTenantId(1L);
     second.setName("beta");
     second.setScriptVersion("patch-1");
     second.setBaseVersionId(2L);
@@ -121,9 +126,12 @@ class ScriptDesignDigestServiceImplTest {
     when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
         .thenReturn(List.of(first, second));
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+
+    assertEquals("script_patch_base_version_mismatch:script", exception.getMessage());
   }
 
   @Test
@@ -146,6 +154,7 @@ class ScriptDesignDigestServiceImplTest {
   @Test
   void getDraftDesignDigestFailsClosedForMixedBaseBindingRows() {
     ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
     script.setName("alpha");
     script.setScriptVersion("patch-1");
     script.setBaseVersionId(1L);
@@ -159,9 +168,12 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(binding));
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+
+    assertEquals("script_patch_base_version_mismatch:binding", exception.getMessage());
   }
 
   @Test

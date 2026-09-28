@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -766,6 +767,96 @@ class AutomationScriptingGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateMapsUnavailableBaseVersionToFailedPreconditionAppError() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalStateException("script_patch_base_version_unavailable"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", response.get().getError().getCode());
+    assertEquals("script_patch_base_version_unavailable", response.get().getError().getMessage());
+  }
+
+  @Test
+  void notifyScriptVersionUpdatePropagatesUnrelatedIllegalStateException() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalStateException("internal_invariant_failure"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.notifyScriptVersionUpdate(
+                    NotifyScriptVersionUpdateRequest.newBuilder()
+                        .setTenantId("1")
+                        .setBaseVersionId(1L)
+                        .setScriptPatchVersion("patch-1")
+                        .addAffectedScripts("guard-script")
+                        .build(),
+                    new StreamObserver<>() {
+                      @Override
+                      public void onNext(NotifyScriptVersionUpdateResponse value) {}
+
+                      @Override
+                      public void onError(Throwable t) {}
+
+                      @Override
+                      public void onCompleted() {}
+                    }));
+
+    assertEquals("internal_invariant_failure", exception.getMessage());
   }
 
   @Test

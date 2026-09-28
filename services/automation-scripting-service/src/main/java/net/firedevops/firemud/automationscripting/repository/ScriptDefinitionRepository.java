@@ -281,6 +281,8 @@ public class ScriptDefinitionRepository {
             + requested.getTenantId()
             + ", version="
             + requested.getScriptVersion()
+            + ", baseVersionId="
+            + requested.getBaseVersionId()
             + ", name="
             + requested.getName()
             + ")");
