@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore.RealmOrdinalTarget;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore.WorldOrdinalTarget;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -141,6 +142,75 @@ public final class GameplayWorldCatalog {
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
 
+  /** Reads the current realm catalog and records the exact response-local ordinal targets. */
+  public RealmDiscoverySnapshot readRealmDiscoverySnapshot(WorldView world) {
+    Objects.requireNonNull(world, "world must not be null");
+    return realmDiscoverySnapshot(world, visibleRealms(world));
+  }
+
+  /** Builds a REALMS snapshot whose ordinals match the filtered response entries. */
+  public RealmDiscoverySnapshot realmDiscoverySnapshot(
+      WorldView world, List<RealmView> responseRealms) {
+    Objects.requireNonNull(world, "world must not be null");
+    List<RealmView> visibleCatalogRealms = visibleRealms(world);
+    List<RealmView> safeResponseRealms =
+        List.copyOf(Objects.requireNonNull(responseRealms, "responseRealms must not be null"));
+    if (safeResponseRealms.stream().anyMatch(realm -> !visibleCatalogRealms.contains(realm))) {
+      throw new IllegalArgumentException("REALMS response contains a non-visible realm");
+    }
+    List<RealmOrdinalTarget> targets = new ArrayList<>(safeResponseRealms.size());
+    for (int index = 0; index < safeResponseRealms.size(); index++) {
+      RealmView realm = safeResponseRealms.get(index);
+      targets.add(
+          new RealmOrdinalTarget(
+              index + 1,
+              realm.slug(),
+              realm.tenantId(),
+              realm.catalogRevision(),
+              realm.pointerVersion(),
+              realmTargetFingerprint(world, realm)));
+    }
+    List<RealmOrdinalTarget> catalogTargets = new ArrayList<>(visibleCatalogRealms.size());
+    for (int index = 0; index < visibleCatalogRealms.size(); index++) {
+      RealmView realm = visibleCatalogRealms.get(index);
+      catalogTargets.add(
+          new RealmOrdinalTarget(
+              index + 1,
+              realm.slug(),
+              realm.tenantId(),
+              realm.catalogRevision(),
+              realm.pointerVersion(),
+              realmTargetFingerprint(world, realm)));
+    }
+    return new RealmDiscoverySnapshot(
+        world.slug(),
+        fingerprint(
+            catalogTargets.stream()
+                .map(GameplayWorldCatalog::realmTargetFingerprintInput)
+                .toList()),
+        List.copyOf(targets));
+  }
+
+  /** Resolves a numeric REALMS target by identity, never by its current ordinal. */
+  public Optional<RealmView> resolveRealmSnapshotOrdinal(
+      WorldView world, RealmDiscoverySnapshot current, RealmOrdinalTarget originatingTarget) {
+    Objects.requireNonNull(world, "world must not be null");
+    Objects.requireNonNull(current, "current must not be null");
+    Objects.requireNonNull(originatingTarget, "originatingTarget must not be null");
+    if (!world.slug().equalsIgnoreCase(current.worldSlug())) {
+      return Optional.empty();
+    }
+    return visibleRealms(world).stream()
+        .filter(realm -> realm.slug().equalsIgnoreCase(originatingTarget.realmSlug()))
+        .filter(realm -> realm.tenantId() == originatingTarget.tenantId())
+        .filter(realm -> realm.catalogRevision() == originatingTarget.catalogRevision())
+        .filter(realm -> realm.pointerVersion() == originatingTarget.pointerVersion())
+        .filter(
+            realm ->
+                realmTargetFingerprint(world, realm).equals(originatingTarget.targetFingerprint()))
+        .findFirst();
+  }
+
   public Optional<WorldView> resolveWorld(String selector) {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
@@ -256,6 +326,42 @@ public final class GameplayWorldCatalog {
                 : defaultRealm.characterCreationPolicy()));
   }
 
+  private static String realmTargetFingerprint(WorldView world, RealmView realm) {
+    return fingerprint(
+        List.of(
+            world.slug(),
+            world.displayName(),
+            realm.slug(),
+            realm.displayName(),
+            Long.toString(realm.tenantId()),
+            Long.toString(realm.gameInstanceId()),
+            Long.toString(realm.pointerVersion()),
+            Long.toString(realm.catalogRevision()),
+            realm.realmId() == null ? "" : realm.realmId().toString(),
+            realm.playableStateNamespaceId() == null
+                ? ""
+                : realm.playableStateNamespaceId().toString(),
+            Boolean.toString(realm.visible()),
+            Boolean.toString(realm.publicProductionRealm()),
+            Boolean.toString(realm.requiresCharacterSelection()),
+            realm.stateScope() == null ? "" : realm.stateScope(),
+            realm.characterCreationPolicy() == null ? "" : realm.characterCreationPolicy()));
+  }
+
+  private static String realmTargetFingerprintInput(RealmOrdinalTarget target) {
+    return target.ordinal()
+        + "|"
+        + target.realmSlug()
+        + "|"
+        + target.tenantId()
+        + "|"
+        + target.catalogRevision()
+        + "|"
+        + target.pointerVersion()
+        + "|"
+        + target.targetFingerprint();
+  }
+
   private static String targetFingerprintInput(WorldOrdinalTarget target) {
     return target.ordinal()
         + "|"
@@ -296,6 +402,20 @@ public final class GameplayWorldCatalog {
           List.copyOf(Objects.requireNonNull(ordinalTargets, "ordinalTargets must not be null"));
       visibleWorlds =
           List.copyOf(Objects.requireNonNull(visibleWorlds, "visibleWorlds must not be null"));
+    }
+  }
+
+  public record RealmDiscoverySnapshot(
+      String worldSlug, String catalogFingerprint, List<RealmOrdinalTarget> ordinalTargets) {
+    public RealmDiscoverySnapshot {
+      if (worldSlug == null || worldSlug.isBlank()) {
+        throw new IllegalArgumentException("worldSlug must not be blank");
+      }
+      if (catalogFingerprint == null || catalogFingerprint.isBlank()) {
+        throw new IllegalArgumentException("catalogFingerprint must not be blank");
+      }
+      ordinalTargets =
+          List.copyOf(Objects.requireNonNull(ordinalTargets, "ordinalTargets must not be null"));
     }
   }
 

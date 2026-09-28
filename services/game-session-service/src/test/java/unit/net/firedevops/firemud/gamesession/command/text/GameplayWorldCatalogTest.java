@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.junit.jupiter.api.Test;
@@ -312,6 +313,55 @@ class GameplayWorldCatalogTest {
     assertThat(realm.catalogRevision()).isEqualTo(29L);
     assertThat(realm.realmId()).isEqualTo(realmId);
     assertThat(realm.playableStateNamespaceId()).isEqualTo(playableStateNamespaceId);
+  }
+
+  @Test
+  void realmSnapshotResolvesByExactTargetIdentityAfterResponseOrdinalChanges() {
+    GameplayWorldCatalog.RealmView production =
+        new GameplayWorldCatalog.RealmView(
+            "production",
+            "Live Realm",
+            7L,
+            11L,
+            3L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            29L,
+            UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.RealmView preview =
+        new GameplayWorldCatalog.RealmView(
+            "preview",
+            "Preview Realm",
+            7L,
+            12L,
+            4L,
+            true,
+            false,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            30L,
+            UUID.fromString("a11df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("b2a958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.WorldView original =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(production, preview));
+    GameplayWorldCatalog.WorldView reordered =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(preview, production));
+    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(List.of(reordered));
+    GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
+        GameplayWorldCatalog.forWorldViews(List.of(original))
+            .realmDiscoverySnapshot(original, List.of(production, preview));
+
+    assertThat(
+            catalog.resolveRealmSnapshotOrdinal(
+                reordered, snapshot, snapshot.ordinalTargets().get(0)))
+        .contains(production);
+    assertThat(catalog.readRealmDiscoverySnapshot(reordered).catalogFingerprint())
+        .isNotEqualTo(snapshot.catalogFingerprint());
   }
 
   private static GameplayWorldCatalog.WorldView worldWithTargetRealm(

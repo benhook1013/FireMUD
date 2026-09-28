@@ -288,7 +288,8 @@ class SessionResumptionFlowTest {
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
-            meterRegistry);
+            meterRegistry,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
     worldsHandler =
         new WorldsCommandHandler(
             worldCatalog,

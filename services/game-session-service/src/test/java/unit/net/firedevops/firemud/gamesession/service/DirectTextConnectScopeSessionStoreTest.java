@@ -131,6 +131,29 @@ class DirectTextConnectScopeSessionStoreTest {
   }
 
   @Test
+  void storesRealmsResponseSnapshotOnlyForTheIssuingAccountAndBeforeExpiry() {
+    SessionContext caller = session(41L, 7L);
+    Instant now = Instant.now();
+    DirectTextConnectScopeSessionStore.RealmOrdinalTarget target =
+        new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
+            1, "production", 22L, 29L, 3L, "realm-target-fingerprint");
+    store.replaceRealmSnapshot(
+        caller, "demo", "demo", "realm-catalog-fingerprint", List.of(target), List.of(), now);
+
+    assertThat(store.realmsSnapshot(caller, "demo", now))
+        .hasValueSatisfying(
+            snapshot -> {
+              assertThat(snapshot.worldSlug()).isEqualTo("demo");
+              assertThat(snapshot.catalogFingerprint()).isEqualTo("realm-catalog-fingerprint");
+              assertThat(snapshot.ordinalTargets()).containsExactly(target);
+              assertThat(snapshot.expiresAt()).isBeforeOrEqualTo(now.plusSeconds(301));
+            });
+    assertThat(store.realmsSnapshot(session(41L, 8L), "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(session(42L, 7L), "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(caller, "demo", now.plusSeconds(301))).isEmpty();
+  }
+
+  @Test
   void rejectsInvalidTransportIdsAndScopesBoundToAnotherIdentity() {
     assertThatThrownBy(() -> store.clearSession(0L)).isInstanceOf(IllegalArgumentException.class);
 

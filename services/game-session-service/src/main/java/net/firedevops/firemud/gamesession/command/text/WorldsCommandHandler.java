@@ -139,6 +139,7 @@ public class WorldsCommandHandler {
       return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     List<RealmBrowseViewOutput.RealmEntry> visibleEntries = new ArrayList<>();
+    List<GameplayWorldCatalog.RealmView> responseRealms = new ArrayList<>();
     List<DirectTextConnectScopeSessionStore.ScopedRealm> issuedScopes = new ArrayList<>();
     String requestId = sessionContext.sessionId() + ":" + UUID.randomUUID();
     for (GameplayWorldCatalog.RealmView realm : worldCatalog.visibleRealms(world)) {
@@ -190,11 +191,20 @@ public class WorldsCommandHandler {
                 realm.slug(), true, scopeResponse.getConnectScopeId(), expiresAt, playerContext));
       }
       visibleEntries.add(realmEntry(visibleEntries.size() + 1, realm));
+      responseRealms.add(realm);
     }
 
     try {
-      connectScopeSessionStore.replaceWorldScopes(
-          sessionContext, worldSelector, world.slug(), issuedScopes);
+      GameplayWorldCatalog.RealmDiscoverySnapshot realmSnapshot =
+          worldCatalog.realmDiscoverySnapshot(world, responseRealms);
+      connectScopeSessionStore.replaceRealmSnapshot(
+          sessionContext,
+          worldSelector,
+          world.slug(),
+          realmSnapshot.catalogFingerprint(),
+          realmSnapshot.ordinalTargets(),
+          issuedScopes,
+          Instant.now());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -272,6 +282,73 @@ public class WorldsCommandHandler {
         .orElseThrow(
             () ->
                 new IllegalArgumentException("positive numeric transport session ID is required"));
+  }
+
+  private RealmSelectorResolution resolveLobbyRealm(
+      SessionContext caller,
+      GameplayWorldCatalog.WorldView world,
+      String selector,
+      GameplayWorldCatalog.RealmDiscoverySnapshot currentCatalog) {
+    if (!StringUtils.hasText(selector)) {
+      return new RealmSelectorResolution.NoSelection();
+    }
+    if (!GameplayWorldCatalog.isOrdinalSelector(selector)) {
+      return worldCatalog
+          .resolveRealm(world, selector)
+          .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
+          .orElseGet(RealmSelectorResolution.Invalid::new);
+    }
+    if (connectScopeSessionStore == null) {
+      return new RealmSelectorResolution.Unavailable();
+    }
+    Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
+    try {
+      maybeSnapshot = connectScopeSessionStore.realmsSnapshot(caller, world.slug(), Instant.now());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return new RealmSelectorResolution.Unavailable();
+    }
+    if (maybeSnapshot.isEmpty()) {
+      return new RealmSelectorResolution.Stale();
+    }
+    DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
+    if (!snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
+      return new RealmSelectorResolution.Stale();
+    }
+    int ordinal;
+    try {
+      ordinal = Integer.parseInt(selector.trim());
+    } catch (NumberFormatException ex) {
+      return new RealmSelectorResolution.Stale();
+    }
+    Optional<DirectTextConnectScopeSessionStore.RealmOrdinalTarget> maybeTarget =
+        snapshot.ordinalTargets().stream()
+            .filter(target -> target.ordinal() == ordinal)
+            .findFirst();
+    if (maybeTarget.isEmpty()) {
+      return new RealmSelectorResolution.Stale();
+    }
+    return worldCatalog
+        .resolveRealmSnapshotOrdinal(world, currentCatalog, maybeTarget.orElseThrow())
+        .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
+        .orElseGet(RealmSelectorResolution.Stale::new);
+  }
+
+  private sealed interface RealmSelectorResolution
+      permits RealmSelectorResolution.Selected,
+          RealmSelectorResolution.NoSelection,
+          RealmSelectorResolution.Invalid,
+          RealmSelectorResolution.Stale,
+          RealmSelectorResolution.Unavailable {
+    record Selected(GameplayWorldCatalog.RealmView realm) implements RealmSelectorResolution {}
+
+    record NoSelection() implements RealmSelectorResolution {}
+
+    record Invalid() implements RealmSelectorResolution {}
+
+    record Stale() implements RealmSelectorResolution {}
+
+    record Unavailable() implements RealmSelectorResolution {}
   }
 
   private sealed interface WorldSelectorResolution {
@@ -637,12 +714,24 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
+        worldCatalog.readRealmDiscoverySnapshot(world);
+    RealmSelectorResolution realmSelection =
+        resolveLobbyRealm(sessionContext, world, realmSelector, currentRealmCatalog);
+    if (realmSelection instanceof RealmSelectorResolution.Unavailable) {
+      return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (realmSelection instanceof RealmSelectorResolution.Stale) {
+      return CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
     java.util.Optional<GameplayWorldCatalog.RealmView> maybeRealm =
-        StringUtils.hasText(realmSelector)
-            ? worldCatalog.resolveRealm(world, realmSelector)
-            : worldCatalog.requiresExplicitRealmSelection(world)
+        realmSelection instanceof RealmSelectorResolution.Selected selected
+            ? java.util.Optional.of(selected.realm())
+            : StringUtils.hasText(realmSelector)
                 ? java.util.Optional.empty()
-                : worldCatalog.resolveDefaultRealm(world);
+                : worldCatalog.requiresExplicitRealmSelection(world)
+                    ? java.util.Optional.empty()
+                    : worldCatalog.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
       return CharacterBrowseResult.invalidRealm(world.slug());
     }

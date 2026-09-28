@@ -188,6 +188,68 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void numericRealmSelectorRejectsReorderedRealmsBeforeAccountOrEntityAdmission() {
+    GameplayWorldCatalog.RealmView production =
+        new GameplayWorldCatalog.RealmView(
+            "production",
+            "Live Realm",
+            22L,
+            1L,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            UUID.randomUUID(),
+            UUID.randomUUID());
+    GameplayWorldCatalog.RealmView preview =
+        new GameplayWorldCatalog.RealmView(
+            "preview",
+            "Preview Realm",
+            23L,
+            2L,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            UUID.randomUUID(),
+            UUID.randomUUID());
+    GameplayWorldCatalog.WorldView original =
+        new GameplayWorldCatalog.WorldView("demo", "Demo World", List.of(production, preview));
+    AtomicReference<List<GameplayWorldCatalog.WorldView>> worlds =
+        new AtomicReference<>(List.of(original));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldSupplier(worlds::get),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    localHandler.browseRealms("7", authenticatedSession(), "demo");
+    Mockito.clearInvocations(accountClient, entityManagementClient);
+    worlds.set(
+        List.of(
+            new GameplayWorldCatalog.WorldView(
+                "demo", "Demo World", List.of(preview, production))));
+
+    assertThat(localHandler.browseCharacters("7", authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
   void browseRealmsToleratesNullRealmEnums() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
