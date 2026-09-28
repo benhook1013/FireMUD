@@ -874,7 +874,8 @@ def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, di
                 records["cli_attempts"] = cli_attempts
         except (ValueError, TypeError, KeyError, AttributeError):
             return number, {"state": "unavailable", "reason": "History response is malformed"}
-        state_name = "empty" if not any(records.values()) else "available"
+        has_history = any(records[key] for key in ("runs", "findings", "routes", "decisions"))
+        state_name = "available" if has_history else "empty"
         return number, {"state": state_name, **records}
 
     snapshots: dict[int, dict] = {}

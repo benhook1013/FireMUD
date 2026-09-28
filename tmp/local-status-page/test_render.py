@@ -407,7 +407,8 @@ class StatusPageTest(unittest.TestCase):
     def test_records_gate_reads_json_history_only_after_sqlite_compatibility(self, run):
         payload = {
             "api_version": 1,
-            "result": {"pr": 42, "runs": [], "findings": [], "routes": [], "decisions": []},
+            "result": {"pr": 42, "runs": [], "findings": [], "routes": [], "decisions": [],
+                       "cli_attempts": {"available": True, "attempts": []}},
         }
 
         def fake_run(command, **_kwargs):
@@ -423,6 +424,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual(2, run.call_count)
         self.assertEqual("empty", snapshots[42]["state"])
         self.assertEqual([], snapshots[42]["runs"])
+        self.assertEqual([], snapshots[42]["cli_attempts"]["attempts"])
 
     def test_failed_cli_attempt_is_visible_without_adding_a_review_pill(self):
         history = {"state": "available", "runs": [], "findings": [], "routes": [], "decisions": [],
