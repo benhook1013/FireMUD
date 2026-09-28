@@ -958,6 +958,63 @@ vm.runInNewContext(process.argv[1], {
         with self.assertRaisesRegex(ValueError, "review routed count is invalid"):
             page.render(self.fixture(), review, NOW)
 
+    def test_public_routed_counts_require_exact_history_checkpoint_association(self):
+        current_head = "c" * 40
+        cases = [
+            ("hosted", "Hosted", 5855889239, "2026-09-27T12:39:09Z", 3, 3, 0,
+             "52835745170c3dbb05b3bd46fd7afd47370a3033"),
+            ("hosted", "Hosted", 5857650474, "2026-09-27T16:25:46Z", 10, 10, 0,
+             "59c8c2b0873a8906afae0681bfe40bccd79448cc"),
+            ("hosted", "Hosted", 5860710003, "2026-09-27T23:11:11Z", 3, 3, 0,
+             "2c88eddd9a8c98a768161b8281805ac291263259"),
+            ("hosted", "Hosted", 5853009345, "2026-09-27T05:30:38Z", 6, 6, None,
+             "bed60e3b0b542db2a7e2d9b410754c108e608985"),
+            ("hosted", "Hosted", 5861078238, "2026-09-28T00:06:55Z", 5, 4, 1,
+             current_head),
+            ("cli", "CLI", 5861035852, "2026-09-28T00:01:03Z", 1, 0, 1,
+             current_head),
+        ]
+        review_activity = {"hosted": {"recent": []}, "cli": {"recent": []}}
+        public_checkpoints = []
+        policy_history = {"hosted": [], "cli": []}
+        for channel, checkpoint_type, checkpoint, observed_at, raw, accepted, routed, head in cases:
+            review_activity[channel]["recent"].append({
+                "raw": raw, "accepted": accepted, "routed": None,
+                "completed_at": observed_at, "current_head": head == current_head,
+                "attributable": True, "non_counting": False,
+            })
+            public_checkpoint = {
+                "comment_id": checkpoint, "type": checkpoint_type, "created_at": observed_at,
+                "raw_found": raw, "accepted": accepted, "reviewed_sha": head[:9],
+            }
+            if routed is not None:
+                public_checkpoint["routed"] = routed
+            public_checkpoints.append(public_checkpoint)
+            policy_history[channel].append({
+                "checkpoint": str(checkpoint), "observed_at": observed_at, "raw": raw,
+                "accepted": accepted, "head": head, "completed": True,
+                "attributable": True, "non_counting": False,
+            })
+        queue_item = {
+            "head": current_head,
+            "review_activity": review_activity,
+        }
+        evidence = {
+            "checkpoints": {"checkpoints": public_checkpoints},
+            "policy": policy_history,
+        }
+
+        page._apply_public_routed_counts(queue_item, evidence)
+
+        self.assertEqual(
+            [result.get("routed") for result in review_activity["hosted"]["recent"]],
+            [0, 0, 0, None, 1],
+        )
+        self.assertEqual(
+            [result.get("routed") for result in review_activity["cli"]["recent"]],
+            [1],
+        )
+
     def test_badge_timestamp_is_escaped_and_invalid_values_stay_unknown(self):
         review = page.review_snapshot(None, 42, HEAD, NOW)
         review.update({"available": True, "queue": {42: {

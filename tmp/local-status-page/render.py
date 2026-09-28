@@ -400,6 +400,149 @@ def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetim
         return {**unavailable, "reason": "Status fetch malformed or review front missing"}
 
 
+def _timestamp_key(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return utc(value).isoformat()
+    except ValueError:
+        return None
+
+
+def _apply_public_routed_counts(queue_item: dict, evidence: dict) -> None:
+    """Restore explicit public route counts only through exact checkpoint joins."""
+    activity = queue_item.get("review_activity", {})
+    current_head = queue_item.get("head")
+    if (not isinstance(activity, dict) or not isinstance(current_head, str)
+            or not isinstance(evidence.get("checkpoints"), dict)
+            or not isinstance(evidence.get("policy"), dict)):
+        return
+
+    raw_checkpoints = evidence["checkpoints"].get("checkpoints")
+    if not isinstance(raw_checkpoints, list):
+        return
+
+    for channel, checkpoint_type in (("hosted", "Hosted"), ("cli", "CLI")):
+        status = activity.get(channel)
+        recent = status.get("recent") if isinstance(status, dict) else None
+        history = evidence["policy"].get(channel)
+        if not isinstance(recent, list) or not isinstance(history, list):
+            continue
+
+        history_by_id: dict[str, list[dict]] = {}
+        for record in history:
+            if isinstance(record, dict) and isinstance(record.get("checkpoint"), str):
+                history_by_id.setdefault(record["checkpoint"], []).append(record)
+
+        routes_by_result: dict[tuple, list[int]] = {}
+        for checkpoint in raw_checkpoints:
+            if (not isinstance(checkpoint, dict) or checkpoint.get("type") != checkpoint_type
+                    or type(checkpoint.get("comment_id")) is not int
+                    or type(checkpoint.get("routed")) is not int or checkpoint["routed"] < 0):
+                continue
+            checkpoint_id = str(checkpoint["comment_id"])
+            policy_records = history_by_id.get(checkpoint_id, [])
+            if len(policy_records) != 1:
+                continue
+            policy_record = policy_records[0]
+            raw = checkpoint.get("raw_found")
+            accepted = checkpoint.get("accepted")
+            observed = _timestamp_key(checkpoint.get("created_at"))
+            policy_head = policy_record.get("head", policy_record.get("reviewed_head"))
+            reviewed_sha = checkpoint.get("reviewed_sha")
+            policy_raw = policy_record.get("raw", policy_record.get("raw_found"))
+            policy_accepted = policy_record.get("accepted")
+            attributable = policy_record.get("attributable")
+            if (type(raw) is not int or type(accepted) is not int or observed is None
+                    or policy_record.get("completed") is not True
+                    or type(attributable) is not bool
+                    or type(policy_raw) is not int or policy_raw != raw
+                    or type(policy_accepted) is not int or policy_accepted != accepted
+                    or _timestamp_key(policy_record.get("observed_at")) != observed
+                    or not isinstance(policy_head, str) or not isinstance(reviewed_sha, str)
+                    or len(reviewed_sha) < 7 or not policy_head.startswith(reviewed_sha)):
+                continue
+            result_key = (
+                observed,
+                raw,
+                accepted,
+                policy_head == current_head,
+                attributable,
+                policy_record.get("non_counting") is True,
+            )
+            routes_by_result.setdefault(result_key, []).append(checkpoint["routed"])
+
+        for result in recent:
+            if not isinstance(result, dict) or result.get("routed") is not None:
+                continue
+            observed = _timestamp_key(result.get("completed_at"))
+            if observed is None:
+                continue
+            result_key = (
+                observed,
+                result.get("raw"),
+                result.get("accepted"),
+                result.get("current_head"),
+                result.get("attributable"),
+                result.get("non_counting") is True,
+            )
+            matches = routes_by_result.get(result_key, [])
+            if len(matches) == 1:
+                result["routed"] = matches[0]
+
+
+def enrich_public_routed_counts(tool: Path | None, review: dict) -> None:
+    """Join explicit public route counts to recent Hosted and CLI status rows."""
+    if tool is None or not review.get("available") or not isinstance(review.get("queue"), dict):
+        return
+    queue = review["queue"]
+    prs = []
+    for number, item in queue.items():
+        if not isinstance(item, dict):
+            continue
+        activity = item.get("review_activity")
+        missing_routed = False
+        if isinstance(activity, dict):
+            for channel in ("hosted", "cli"):
+                status = activity.get(channel)
+                recent = status.get("recent") if isinstance(status, dict) else None
+                if (isinstance(recent, list)
+                        and any(isinstance(result, dict) and result.get("routed") is None
+                                for result in recent)):
+                    missing_routed = True
+                    break
+        if missing_routed:
+            prs.append(number)
+    if not prs:
+        return
+
+    def fetch(pr: int) -> tuple[int, dict | None]:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(tool), "evidence", str(pr), "--json"],
+                cwd=tool.parent.parent,
+                capture_output=True,
+                text=True,
+                timeout=RECORDS_PREFLIGHT_TIMEOUT_SECONDS + RECORDS_HISTORY_TIMEOUT_SECONDS + 7,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return pr, None
+        if result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+            return pr, None
+        try:
+            document = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            return pr, None
+        return (pr, document) if isinstance(document, dict) and document.get("pr") == pr else (pr, None)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
+        for future in as_completed([pool.submit(fetch, pr) for pr in prs]):
+            pr, evidence = future.result()
+            if evidence is not None:
+                _apply_public_routed_counts(queue[pr], evidence)
+
+
 def github_stages(now: datetime) -> dict:
     """Fetch live GitHub PR stage and diff size once for the open queue."""
     try:
@@ -1277,6 +1420,7 @@ def main() -> None:
     review = review_snapshot(review_tool, front["number"], front["head"], now)
     if review_tool is not None and not review["available"] and args.output.exists():
         raise RuntimeError(f"review status unavailable; existing page preserved: {review['reason']}")
+    enrich_public_routed_counts(review_tool, review)
     github = github_stages(now)
     if not github["available"] and args.output.exists():
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
