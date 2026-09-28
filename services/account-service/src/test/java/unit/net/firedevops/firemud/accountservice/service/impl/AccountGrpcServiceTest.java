@@ -325,8 +325,7 @@ class AccountGrpcServiceTest {
         GAME_SESSION_PEER,
         () ->
             service.issueDirectTextConnectScope(
-                validScopeRequest()
-                    .toBuilder()
+                validScopeRequest().toBuilder()
                     .setPlayerContext(validPlayerContext().toBuilder().setRequestId(requestId))
                     .build(),
                 observer));
