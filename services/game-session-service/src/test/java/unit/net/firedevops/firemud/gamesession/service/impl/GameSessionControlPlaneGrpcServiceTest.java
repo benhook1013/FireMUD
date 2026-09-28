@@ -548,7 +548,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                     true,
                     "SHARED",
                     "CREATE_ALLOWED",
-                    12L)));
+                    12L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -603,6 +605,16 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         12L,
         responseRef.get().getRuntimeState().getCurrentAdmissionPointers(0).getCatalogRevision());
+    assertEquals(
+        "11111111-1111-1111-1111-111111111111",
+        responseRef.get().getRuntimeState().getCurrentAdmissionPointers(0).getRealmId());
+    assertEquals(
+        "22222222-2222-2222-2222-222222222222",
+        responseRef
+            .get()
+            .getRuntimeState()
+            .getCurrentAdmissionPointers(0)
+            .getPlayableStateNamespaceId());
     assertEquals("region-7", responseRef.get().getRuntimeState().getRegionId());
     assertEquals(22L, responseRef.get().getRuntimeState().getRegionEpoch());
     assertEquals(17L, responseRef.get().getRuntimeState().getPublication().getVersionId());
@@ -714,7 +726,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     true,
                     true,
                     "SHARED",
-                    "CREATE_ALLOWED"),
+                    "CREATE_ALLOWED",
+                    11L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222")),
                 new GameplayAdmissionPointerSnapshot(
                     "sandbox",
                     "Sandbox World",
@@ -727,7 +742,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     true,
                     "SHARED",
-                    "CREATE_ALLOWED")));
+                    "CREATE_ALLOWED",
+                    12L,
+                    UUID.fromString("33333333-3333-3333-3333-333333333333"),
+                    UUID.fromString("44444444-4444-4444-4444-444444444444"))));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -803,7 +821,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     true,
                     true,
                     "SHARED",
-                    "CREATE_ALLOWED")));
+                    "CREATE_ALLOWED",
+                    11L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -848,7 +869,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void getGameInstanceRuntimeStateClearsSingularRoutingBundleWhenOnlyPointerLacksRuntimeIdentity() {
+  void getGameInstanceRuntimeStateFailsClosedWhenPointerLacksDurableIdentity() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -909,18 +930,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertNotNull(responseRef.get());
-    assertEquals(
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED,
-        responseRef.get().getRuntimeState().getPlayableStateScope());
-    assertEquals("", responseRef.get().getRuntimeState().getWorldSlug());
-    assertEquals("", responseRef.get().getRuntimeState().getRealmSlug());
-    assertEquals(0L, responseRef.get().getRuntimeState().getPointerVersion());
-    assertEquals(1, responseRef.get().getRuntimeState().getCurrentAdmissionPointersCount());
-    assertEquals(
-        "demo", responseRef.get().getRuntimeState().getCurrentAdmissionPointers(0).getWorldSlug());
-    assertEquals(
-        "production",
-        responseRef.get().getRuntimeState().getCurrentAdmissionPointers(0).getRealmSlug());
+    assertEquals("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
+    assertFalse(responseRef.get().hasRuntimeState());
   }
 
   @Test

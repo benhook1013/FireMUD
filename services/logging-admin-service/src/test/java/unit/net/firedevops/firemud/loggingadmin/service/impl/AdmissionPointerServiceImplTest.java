@@ -333,6 +333,12 @@ class AdmissionPointerServiceImplTest {
     assertEquals(7L, result.gameInstanceId());
     assertEquals("demo", result.worldSlug());
     assertEquals("production", result.currentAdmissionPointers().getFirst().realmSlug());
+    assertEquals(
+        java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"),
+        result.currentAdmissionPointers().getFirst().realmId());
+    assertEquals(
+        java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"),
+        result.currentAdmissionPointers().getFirst().playableStateNamespaceId());
     assertEquals("VERSION_LIFECYCLE_STATE_PUBLISHED", result.publication().publicationState());
   }
 
