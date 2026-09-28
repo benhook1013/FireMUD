@@ -1,6 +1,6 @@
 # Gameplay task brief: continuous merge train
 
-Owner: Gameplay. This is an ongoing assignment, including overnight. At each resumption, re-read the active FireMUD repository's canonical [PR lifecycle](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/pr-lifecycle.md) and [AI delegation and review](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/ai-delegation-and-review.md), then inspect the live controller queue. Until #2887 merges its workflow/controller changes, use the version-matched active FireMUD worktree's PR lifecycle and controller operations guide; afterward use the linked `develop` copies. The [dated archive](./gameplay-continuous-review-train-history-2026-09-27.md) preserves old handoffs, not current instructions.
+Owner: Gameplay. This is an ongoing assignment, including overnight. At each resumption, re-read the active FireMUD repository's canonical [PR lifecycle](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/pr-lifecycle.md) and [AI delegation and review](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/ai-delegation-and-review.md), then inspect the live controller queue. Use the version-matched controller entrypoint identified below until its correction merges. The [dated archive](./gameplay-continuous-review-train-history-2026-09-27.md) preserves old handoffs, not current instructions.
 
 ## Standing assignment
 
@@ -10,8 +10,6 @@ Keep at most one active request per channel. Prepare fixes locally while Hosted 
 
 Gameplay has the project owner's standing authorization to make coherent merge-train splits under [PR lifecycle](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/pr-lifecycle.md#change-and-merge-policy), without asking again for a routine split. Preserve review evidence, update and read back the configured queue, and continue safe work while preparing the split. Gameplay reports merge readiness; the human controls merging.
 
-## Current bounded work
+## Temporary controller handoff
 
-Finish the review-controller work already underway: keep `found / accepted / routed` and source-neutral routing queryable, import completed provider and manual/subagent findings into the canonical SQLite record store, and close any remaining head-dependent taper or stop behavior with focused proof. Use the active FireMUD repository's [controller operations guide](https://github.com/benhook1013/FireMUD/blob/develop/dev-tools/pr_review/README.md) for the detailed schema and commands. The live JSON-to-SQLite cutover waits for merged, version-matched tooling; then prove migration, old-writer refusal, private Hetzner snapshot backup, remote restore, and readback. Keep normal review commands free of remote backup I/O. Do not call the migration complete from local code or CI alone. Overseer owns the separate status-site presentation.
-
-Once that bounded controller work is proved and handed off, remove this section; the standing assignment continues through the configured queue.
+The shared JSON-to-SQLite cutover and private backup/restore proof are complete; do not rerun migration. Until the correction in #2890 merges, run all queue status and review commands through `/home/ben/src/FireMUD-review-active/dev-tools/pr-review`, pinned at `4bd735b3c`. That version preserves historical Hosted attribution after CodeRabbit edits a completion comment. The status site uses the same entrypoint. #2890 remains Overseer-owned for additional fixes and must stay open until explicitly handed into the review train. Keep independent Hosted and CLI reviews moving on eligible configured PRs.
