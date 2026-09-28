@@ -1316,9 +1316,6 @@ class ReviewStateStackTest(unittest.TestCase):
                         self.assertEqual(decision.status, ReviewStatus.READY)
                         self.assertEqual(decision.target, 1)
                         self.assertFalse(decision.to_dict()["taper_complete"])
-                    elif reconciliation == ReconciliationStatus.PATCH_CHANGED:
-                        self.assertEqual(decision.status, ReviewStatus.COMPLETE)
-                        self.assertIsNone(decision.target)
                     else:
                         self.assertEqual(decision.status, ReviewStatus.COMPLETE)
                         self.assertIsNone(decision.target)
