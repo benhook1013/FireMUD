@@ -297,30 +297,30 @@ class LoggingAdminApplicationIntegrationTest {
           .migrate();
 
       assertThat(
-              dsl.fetchValue(
-                  "SELECT COUNT(*) FROM " + schema + ".log_events WHERE message = ?",
-                  Integer.class,
-                  "legacy payment log"))
+              dsl.fetchSingle(
+                      "SELECT COUNT(*) FROM " + schema + ".log_events WHERE message = ?",
+                      "legacy payment log")
+                  .get(0, Integer.class))
           .isEqualTo(1);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT tenant_key FROM " + schema + ".log_events WHERE message = ?",
-                  Long.class,
-                  "legacy payment log"))
+              dsl.fetchSingle(
+                      "SELECT tenant_key FROM " + schema + ".log_events WHERE message = ?",
+                      "legacy payment log")
+                  .get(0, Long.class))
           .isEqualTo(0L);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT COUNT(*) FROM " + schema + ".account_audit_receipts", Integer.class))
+              dsl.fetchSingle("SELECT COUNT(*) FROM " + schema + ".account_audit_receipts")
+                  .get(0, Integer.class))
           .isEqualTo(4);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT COUNT(*) FROM "
-                      + schema
-                      + ".account_audit_receipts AS receipt LEFT JOIN "
-                      + schema
-                      + ".log_events AS event ON event.id = receipt.log_event_id "
-                      + "WHERE event.id IS NULL",
-                  Integer.class))
+              dsl.fetchSingle(
+                      "SELECT COUNT(*) FROM "
+                          + schema
+                          + ".account_audit_receipts AS receipt LEFT JOIN "
+                          + schema
+                          + ".log_events AS event ON event.id = receipt.log_event_id "
+                          + "WHERE event.id IS NULL")
+                  .get(0, Integer.class))
           .isEqualTo(0);
       assertBackfilledReceipt(
           schema,
@@ -372,19 +372,17 @@ class LoggingAdminApplicationIntegrationTest {
                   "SELECT id FROM " + schema + ".log_events WHERE message = ?", "legacy insert")
               .get("id", Long.class);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT tenant_key FROM " + schema + ".log_events WHERE id = ?",
-                  Long.class,
-                  legacyLogId))
+              dsl.fetchSingle(
+                      "SELECT tenant_key FROM " + schema + ".log_events WHERE id = ?", legacyLogId)
+                  .get(0, Long.class))
           .isEqualTo(0L);
 
       dsl.execute(
           "UPDATE " + schema + ".log_events SET tenant_id = ? WHERE id = ?", 85L, legacyLogId);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT tenant_key FROM " + schema + ".log_events WHERE id = ?",
-                  Long.class,
-                  legacyLogId))
+              dsl.fetchSingle(
+                      "SELECT tenant_key FROM " + schema + ".log_events WHERE id = ?", legacyLogId)
+                  .get(0, Long.class))
           .isEqualTo(0L);
 
       dsl.execute(
@@ -399,10 +397,10 @@ class LoggingAdminApplicationIntegrationTest {
           "ACCOUNT_AUDIT",
           "Account audit event 60000000-0000-4000-8000-000000000001");
       assertThat(
-              dsl.fetchValue(
-                  "SELECT tenant_key FROM " + schema + ".log_events WHERE audit_event_id = ?",
-                  Long.class,
-                  "60000000-0000-4000-8000-000000000001"))
+              dsl.fetchSingle(
+                      "SELECT tenant_key FROM " + schema + ".log_events WHERE audit_event_id = ?",
+                      "60000000-0000-4000-8000-000000000001")
+                  .get(0, Long.class))
           .isEqualTo(86L);
 
       assertThatThrownBy(
@@ -503,10 +501,10 @@ class LoggingAdminApplicationIntegrationTest {
         .isEqualTo(LocalDateTime.parse(timestamp));
     assertThat(receipt.get("account_id", Long.class)).isNull();
     assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM " + schema + ".log_events WHERE audit_event_id = ?",
-                Integer.class,
-                eventId))
+            dsl.fetchSingle(
+                    "SELECT COUNT(*) FROM " + schema + ".log_events WHERE audit_event_id = ?",
+                    eventId)
+                .get(0, Integer.class))
         .isEqualTo(1);
     if ("MINIMIZED".equals(status)) {
       assertThat(receipt.get("payload", byte[].class)).isNull();
