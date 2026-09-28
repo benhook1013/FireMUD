@@ -1673,6 +1673,8 @@ class LiveEvidence:
                             observation.update(
                                 {
                                     "terminal_ambiguous": True,
+                                    "terminal": state.terminal,
+                                    "attributable": state.attributed,
                                     **terminal_observation,
                                 }
                             )
@@ -1761,9 +1763,15 @@ class LiveEvidence:
 class HostedRunner:
     """Post one full Hosted request with a durable pre/post identity boundary."""
 
-    def __init__(self, repo: str, live: LiveGitHub) -> None:
+    def __init__(
+        self,
+        repo: str,
+        live: LiveGitHub,
+        state_store: StateStore | ControllerStateStore | None = None,
+    ) -> None:
         self.repo = repo
         self.live = live
+        self.state_store = state_store
 
     @staticmethod
     def _timestamp(value: str) -> datetime:
@@ -1793,8 +1801,8 @@ class HostedRunner:
             and target.has_current_default_test_merge_proof()
         )
 
-    def _assert_latest_manual_trigger_is_tracked(self, pr: int, payload: Mapping[str, Any]) -> None:
-        """Refuse a new request when the latest public manual trigger has no private attribution."""
+    def _latest_untracked_manual_trigger(self, pr: int, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Find the latest public full-review command if it has no private record."""
 
         try:
             comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
@@ -1803,7 +1811,7 @@ class HostedRunner:
         if not isinstance(comments, list):
             raise ControllerError("complete paginated Hosted comment history is malformed before posting")
 
-        commands: list[tuple[datetime, int]] = []
+        commands: list[tuple[datetime, int, Mapping[str, Any]]] = []
         for item in comments:
             if not isinstance(item, Mapping):
                 raise ControllerError("complete paginated Hosted comment history contains a malformed comment")
@@ -1818,12 +1826,14 @@ class HostedRunner:
             created = hosted.parse_timestamp(item.get("createdAt"))
             if comment_id is None or created is None:
                 raise ControllerError("a public full-review trigger has incomplete immutable identity")
-            commands.append((created, comment_id))
+            commands.append((created, comment_id, item))
         if not commands:
-            return
+            return None
 
-        latest_time = max(created for created, _ in commands)
-        latest_ids = {comment_id for created, comment_id in commands if created == latest_time}
+        latest_time = max(created for created, _, _ in commands)
+        latest = [(comment_id, item) for created, comment_id, item in commands if created == latest_time]
+        if len(latest) != 1:
+            raise ControllerError("the latest public full-review trigger identity is ambiguous")
         tracked_ids: set[int] = set()
         try:
             for record_path in hosted.trigger_record_paths(self.repo, pr):
@@ -1843,7 +1853,13 @@ class HostedRunner:
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ControllerError("private Hosted trigger records cannot be verified before posting") from exc
 
-        if not latest_ids.issubset(tracked_ids):
+        comment_id, comment = latest[0]
+        return None if comment_id in tracked_ids else comment
+
+    def _assert_latest_manual_trigger_is_tracked(self, pr: int, payload: Mapping[str, Any]) -> None:
+        """Refuse a target-PR request until its latest manual trigger is adopted."""
+
+        if self._latest_untracked_manual_trigger(pr, payload) is not None:
             raise ControllerError(
                 "the latest public full-review trigger is not tracked privately; resolve or adopt it before posting"
             )
@@ -1881,7 +1897,8 @@ class HostedRunner:
         common: Path,
     ) -> None:
         terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
-        for other_pr, paths in self._repository_current_trigger_paths(self.repo, common).items():
+        current = self._repository_current_trigger_paths(self.repo, common)
+        for other_pr, paths in current.items():
             if other_pr == pr:
                 continue
             if len(paths) != 1:
@@ -1932,6 +1949,41 @@ class HostedRunner:
                     raise ControllerError(
                         f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
                     )
+        if self.state_store is None:
+            return
+        try:
+            configured_prs = self.state_store.load().ordered_prs
+        except (OSError, StateError) as exc:
+            raise ControllerError("configured Hosted queue cannot be checked for manual requests") from exc
+        for other_pr in configured_prs:
+            if other_pr == pr or other_pr in current:
+                continue
+            try:
+                payload = github.fetch_pull_request(self.repo, other_pr)
+                command = self._latest_untracked_manual_trigger(other_pr, payload)
+                if command is None:
+                    continue
+                pull = payload["data"]["repository"]["pullRequest"]
+                author = command.get("author")
+                record = {
+                    "status": "posted",
+                    "head_sha": pull.get("headRefOid"),
+                    "trigger": {
+                        "id": github.immutable_database_id(dict(command)),
+                        "created_at": command.get("createdAt"),
+                        "url": command.get("url"),
+                        "author_login": author.get("login") if isinstance(author, Mapping) else None,
+                        "type": "full",
+                        "command": hosted.FULL_COMMAND,
+                    },
+                }
+                state = hosted.trigger_state(self.repo, other_pr, payload, record)
+            except ControllerError:
+                raise
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise ControllerError(f"manual Hosted request on PR #{other_pr} cannot be verified") from exc
+            if state.terminal is not True or state.response_id is None:
+                raise ControllerError(f"another manual Hosted request is unresolved for PR #{other_pr}")
 
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
         if target.default_base_front and not target.has_current_default_test_merge_proof():
@@ -2191,7 +2243,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     store = ControllerStateStore()
     observations = LiveEvidence(selected, live, store)
     git_provider = DefaultGitProvider()
-    hosted_runner = HostedRunner(selected, live)
+    hosted_runner = HostedRunner(selected, live, store)
 
     def cli_adapter(target: ReviewTarget, **kwargs: Any) -> Any:
         return run_cli_review(target, github=live, **kwargs)

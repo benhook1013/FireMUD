@@ -6248,6 +6248,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result.target, 2)
         self.assertEqual(result.status, ReviewStatus.MISSING_EVIDENCE)
 
+        unreconciled = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.UNRECONCILED, 2: stack.ReconciliationStatus.COHERENT},
+        )
+        self.assertEqual(unreconciled.target, 1)
+        self.assertEqual(unreconciled.status, ReviewStatus.HELD)
+
         no_later_target = select_review_target(
             state, Channel.HOSTED, [1], {1: [terminal]}
         )

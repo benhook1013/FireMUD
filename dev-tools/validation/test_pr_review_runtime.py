@@ -861,8 +861,14 @@ class RuntimeTest(unittest.TestCase):
             "body": "Full review finished.",
             "createdAt": "2026-09-23T00:01:00Z",
         }
+        other_unclassified_output = {
+            "databaseId": 458,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Additional review detail is unavailable.",
+            "createdAt": "2026-09-23T00:00:30Z",
+        }
         payload42 = self._payload([command])
-        payload43 = self._payload([other_command, other_ambiguous_response])
+        payload43 = self._payload([other_command, other_unclassified_output, other_ambiguous_response])
         payload43["data"]["repository"]["pullRequest"]["number"] = 43
         post_comment = {
             "id": 123,
@@ -968,6 +974,56 @@ class RuntimeTest(unittest.TestCase):
             ):
                 HostedRunner("owner/repo", live)(target, expect_pr=42)
 
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_request_refuses_untracked_manual_request_on_another_configured_pr(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        manual = {
+            "databaseId": 456,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/456",
+        }
+        payload42 = self._payload()
+        payload43 = self._payload([manual])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        calls = []
+
+        def gh_call(args, **kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("an unresolved manual Hosted request must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            store = StateStore(common / "state.json")
+            store.save(ReviewState(ordered_prs=(42, 43)))
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(
+                    github,
+                    "fetch_pull_request",
+                    side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
+                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #43"),
+            ):
+                HostedRunner("owner/repo", live, store)(target, expect_pr=42)
             self.assertFalse(path.exists())
             self.assertEqual(calls, [["gh", "api", "user"]])
 
@@ -2175,6 +2231,8 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(held[0]["trigger_id"], 10)
         self.assertEqual(held[0]["response_id"], 11)
         self.assertEqual(held[0]["captured_head"], HEAD)
+        self.assertTrue(held[0]["terminal"])
+        self.assertFalse(held[0]["attributable"])
         self.assertRegex(held[0]["fingerprint"], r"^[0-9a-f]{64}$")
 
         state.response_id = None

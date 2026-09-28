@@ -598,6 +598,7 @@ def select_review_target(
                 selected == Channel.HOSTED
                 and blocked in {ReviewStatus.HELD, ReviewStatus.UNSTABLE}
                 and not taper_complete
+                and reconciliation_by_pr.get(pr) == ReconciliationStatus.COHERENT
                 and _only_verified_terminal_hosted_ambiguity(history)
             ):
                 # This PR still needs a counted result or an audited stop for
