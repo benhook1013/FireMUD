@@ -20,6 +20,19 @@ HEAD = "a" * 40
 
 
 class StatusPageTest(unittest.TestCase):
+    def test_independent_pre_review_is_visible_but_separate_from_coderabbit(self):
+        data = self.fixture()
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        history = {"state": "available", "runs": [
+            {"channel": "subagent", "counts": {"found": 2, "accepted": 1, "routed": 1}},
+            {"channel": "manual", "counts": {"found": 0, "accepted": 0, "routed": 0}},
+        ]}
+        rendered = page.render(data, review, NOW, histories={42: history})
+        self.assertIn("Independent pre-review · 2 recorded", rendered)
+        self.assertIn("1 subagent · 1 manual · 2 found / 1 accepted here / 1 routed", rendered)
+        self.assertIn("separate from CodeRabbit taper", rendered)
+        self.assertNotIn("Independent pre-review", page.render(data, review, NOW))
+
     def test_refresh_uses_controller_order_and_adds_new_pr_from_github(self):
         data = self.fixture()
         data["stack"].append({**data["stack"][0], "number": 44, "title": "old child"})

@@ -58,6 +58,8 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: #ad3b55; color: #fff; }
+.independent-review { margin-top: .5rem; padding: .48rem .7rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; color: #37414a; font-size: .77rem; line-height: 1.35; }
+.independent-review strong { display: block; margin-bottom: .12rem; }
 @media (max-width: 760px) {
   .activity-grid { grid-template-columns: 1fr; }
   .round-pills { gap: .35rem; }
@@ -1084,8 +1086,8 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
     if item is None:
         raise ValueError("review details require a configured queue PR")
     queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
-    activity_html = render_activity_cards(queue_item, now)
     history = history or {"state": "unavailable"}
+    activity_html = render_activity_cards(queue_item, now) + render_independent_activity(history)
     state = history.get("state")
     if state == "unavailable":
         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
@@ -1224,6 +1226,32 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
     return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
 
 
+def render_independent_activity(history: dict | None) -> str:
+    """Show recorded preparation separately from CodeRabbit rounds and taper."""
+    if not isinstance(history, dict) or history.get("state") != "available":
+        return ""
+    runs = history.get("runs", [])
+    if not isinstance(runs, list):
+        return ""
+    independent = [run for run in runs if isinstance(run, dict)
+                   and run.get("channel") in {"manual", "subagent"}]
+    if not independent:
+        return ""
+    subagents = sum(run.get("channel") == "subagent" for run in independent)
+    manual = len(independent) - subagents
+    counts = []
+    for field in ("found", "accepted", "routed"):
+        values = [run.get("counts", {}).get(field) for run in independent
+                  if isinstance(run.get("counts"), dict)]
+        counts.append(sum(value for value in values if type(value) is int and value >= 0)
+                      if len(values) == len(independent) and all(type(value) is int and value >= 0 for value in values)
+                      else None)
+    count_text = (f" · {counts[0]} found / {counts[1]} accepted here / {counts[2]} routed"
+                  if all(value is not None for value in counts) else "")
+    return (f'<div class="independent-review"><strong>Independent pre-review · {len(independent)} recorded</strong>'
+            f'{subagents} subagent · {manual} manual{count_text} · separate from CodeRabbit taper</div>')
+
+
 def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: datetime,
                               histories: dict[int, dict]) -> None:
     detail_dir = output_dir / "review"
@@ -1242,7 +1270,7 @@ def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: d
 
 
 def render(data: dict, review: dict, now: datetime, github: dict | None = None, *,
-           history_only: bool = False) -> str:
+           history_only: bool = False, histories: dict[int, dict] | None = None) -> str:
     stack = data["stack"]
     lanes = data["lanes"]
     if not stack or [lane["name"] for lane in lanes] != ["Gameplay", "Document", "General"]:
@@ -1360,7 +1388,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
             status_html += f'<span class="sub">{label} · identity only</span>'
         elif queue_item and queue_item.get("detail_level") == "unknown":
             status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
-        activity_grid = render_activity_cards(queue_item, now)
+        activity_grid = (render_activity_cards(queue_item, now)
+                         + render_independent_activity((histories or {}).get(number)))
         if number == front_number:
             front_size_html = size_html
             if has_controller_states:
@@ -1593,6 +1622,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (min-width: 901px) {{ .front-copy {{ padding: 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
 .front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
+.front-evidence .independent-review {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
 .front-evidence .round-pill {{ background: #fff; color: #423039; }}
@@ -1674,8 +1704,8 @@ def main() -> None:
     history_prs = [item["number"] for item in data["stack"]]
     histories = records_history_snapshots(review_tool, history_prs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    rendered = render(data, review, now, github)
-    history_rendered = render(data, review, now, github, history_only=True)
+    rendered = render(data, review, now, github, histories=histories)
+    history_rendered = render(data, review, now, github, history_only=True, histories=histories)
     progress_rendered = render_project_map(now)
     write_review_detail_pages(args.output.parent, data, review, now, histories)
     for name in ASSET_FILES:
