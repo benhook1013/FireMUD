@@ -205,7 +205,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         requireText(context.getPlayableStateScope(), "playableStateScope"),
         requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
         requireText(context.getSessionId(), "sessionId"),
-        context.getRequestId());
+        requireText(context.getRequestId(), "requestId"));
   }
 
   private UUID requireCanonicalRealmId(String value) {

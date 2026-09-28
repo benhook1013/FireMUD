@@ -61,17 +61,20 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals("system/bootstrap", mutations.get(0).actorPrincipal());
     assertEquals("Initial gameplay pointer bootstrap", mutations.get(0).reason());
     assertEquals("bootstrap:1:1:demo:production", mutations.get(0).controlPlaneRequestId());
+    assertEquals(0L, mutations.get(0).expectedPointerVersion());
+    assertEquals(0L, mutations.get(0).expectedCatalogRevision());
     assertEquals("sandbox", mutations.get(1).worldSlug());
     assertTrue(mutations.get(1).requiresCharacterSelection());
   }
 
   @Test
-  void runDoesNothingWhenAuthorityStoreAlreadyHasPointers() throws Exception {
+  void runSkipsSeedMutationsOnRestartWhenAuthorityStoreAlreadyHasPointers() throws Exception {
     when(pointerRepository.count()).thenReturn(3L);
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
     verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+    verify(pointerRepository).count();
   }
 
   @Test

@@ -1609,7 +1609,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private void bumpProductionAdmissionPointer(
       long newGameInstanceId, boolean requiresCharacterSelection) {
-    long expectedPointerVersion =
+    GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
@@ -1617,8 +1617,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         && "demo".equals(pointer.worldSlug())
                         && "production".equals(pointer.realmSlug()))
             .findFirst()
-            .orElseThrow()
-            .pointerVersion();
+            .orElseThrow();
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             "demo",
@@ -1634,8 +1633,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "ALLOW_NEW",
             "integration-test",
             "cutover-proof",
-            "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
-            expectedPointerVersion,
+            "req-cutover-" + newGameInstanceId + "-" + currentPointer.pointerVersion(),
+            currentPointer.pointerVersion(),
+            currentPointer.catalogRevision(),
             "integration-test-prep-" + newGameInstanceId));
   }
 
@@ -1658,7 +1658,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-demo-pointer",
             "req-reset-demo",
-            null,
+            0L,
+            0L,
             null));
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -1676,7 +1677,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-sandbox-pointer",
             "req-reset-sandbox",
-            null,
+            0L,
+            0L,
             null));
   }
 

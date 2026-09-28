@@ -141,15 +141,18 @@ class AdmissionPointerServiceImplTest {
                 "cutover",
                 "req-1",
                 3L,
+                4L,
                 "pvu-1"));
 
     assertEquals(4L, result.pointerVersion());
+    assertEquals(4L, result.catalogRevision());
     verify(gameSessionControlPlaneClient)
         .setAdmissionPointer(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
                     request.getActorPrincipal().equals("42")
                         && request.getExpectedPointerVersion() == 3L
+                        && request.getExpectedCatalogRevision() == 4L
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")));
   }
 
@@ -186,6 +189,7 @@ class AdmissionPointerServiceImplTest {
                         "cutover",
                         "req-1",
                         3L,
+                        4L,
                         "pvu-1")));
 
     assertEquals(409, ex.getStatusCode().value());
@@ -215,6 +219,7 @@ class AdmissionPointerServiceImplTest {
                         "cutover",
                         "req-1",
                         3L,
+                        4L,
                         "pvu-1")));
 
     assertEquals(400, ex.getStatusCode().value());
@@ -233,16 +238,18 @@ class AdmissionPointerServiceImplTest {
     AdmissionPointerDto result =
         service.executePreparedVersionCutover(
             new ExecutePreparedVersionCutoverRequest(
-                "demo", "production", 2L, 7L, "pvu-1", "cutover", "req-1", 3L));
+                "demo", "production", 2L, 7L, "pvu-1", "cutover", "req-1", 3L, 4L));
 
     assertEquals(4L, result.pointerVersion());
+    assertEquals(4L, result.catalogRevision());
     verify(gameSessionControlPlaneClient)
         .executePreparedVersionCutover(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
                     request.getActorPrincipal().equals("42")
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")
-                        && request.getExpectedPointerVersion() == 3L));
+                        && request.getExpectedPointerVersion() == 3L
+                        && request.getExpectedCatalogRevision() == 4L));
   }
 
   @Test
@@ -410,6 +417,7 @@ class AdmissionPointerServiceImplTest {
         .setTenantId(Long.toString(tenantId))
         .setGameInstanceId(Long.toString(gameInstanceId))
         .setPointerVersion(pointerVersion)
+        .setCatalogRevision(pointerVersion)
         .setVisible(true)
         .setRequiresCharacterSelection(false)
         .setStateScope("SHARED")

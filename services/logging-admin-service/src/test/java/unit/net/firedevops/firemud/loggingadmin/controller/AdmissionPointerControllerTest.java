@@ -61,6 +61,7 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
                     true,
                     true,
                     false,
@@ -77,7 +78,8 @@ class AdmissionPointerControllerTest {
         .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"))
-        .andExpect(jsonPath("$.data[0].tenantId").value(2));
+        .andExpect(jsonPath("$.data[0].tenantId").value(2))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5));
   }
 
   @Test
@@ -93,6 +95,7 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
                     true,
                     true,
                     false,
@@ -111,7 +114,8 @@ class AdmissionPointerControllerTest {
             get("/admission-pointers/2/demo/production/audit")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
+        .andExpect(jsonPath("$.data[0].pointerVersion").value(3))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5));
   }
 
   @Test
@@ -304,6 +308,7 @@ class AdmissionPointerControllerTest {
                 2L,
                 7L,
                 11L,
+                7L,
                 true,
                 true,
                 false,

@@ -3,12 +3,14 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -71,6 +73,36 @@ class GameplayAdmissionPointerRepositoryTest {
 
       org.junit.jupiter.api.Assertions.assertThrows(
           IllegalStateException.class, () -> repository.save(created));
+    }
+  }
+
+  @Test
+  void catalogOnlyUpdatePreservesPointerVersionAndFencesStaleCatalogRevision() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-catalog-cas;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+
+      GameplayAdmissionPointer stale =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      GameplayAdmissionPointer catalogUpdate =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      catalogUpdate.setWorldDisplayName("Renamed Demo World");
+      catalogUpdate.setPointerVersion(1L);
+      catalogUpdate.setCatalogRevision(2L);
+
+      GameplayAdmissionPointer updated = repository.save(catalogUpdate);
+
+      assertEquals(1L, updated.getPointerVersion());
+      assertEquals(2L, updated.getCatalogRevision());
+
+      stale.setRealmDisplayName("Stale Realm Display");
+      stale.setPointerVersion(1L);
+      stale.setCatalogRevision(2L);
+      assertThrows(AdmissionPointerVersionMismatchException.class, () -> repository.save(stale));
     }
   }
 

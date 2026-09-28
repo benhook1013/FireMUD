@@ -10,6 +10,7 @@ public record GameplayAdmissionPointerAuditEntry(
     long tenantId,
     long gameInstanceId,
     long pointerVersion,
+    Long catalogRevision,
     boolean visible,
     boolean publicProductionRealm,
     boolean requiresCharacterSelection,
