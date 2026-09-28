@@ -59,12 +59,10 @@ public class ExpiredConnectScopeCleanupJob {
   public void cleanupExpiredConnectScopes() {
     Instant capturedNow = Instant.now();
     try {
-      deleted.increment(
-          connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize));
+      deleted.increment(connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize));
     } catch (RuntimeException ex) {
       failures.increment();
-      logger.warn(
-          "Expired connect-scope cleanup step failed ({})", ex.getClass().getSimpleName());
+      logger.warn("Expired connect-scope cleanup step failed ({})", ex.getClass().getSimpleName());
     }
   }
 }

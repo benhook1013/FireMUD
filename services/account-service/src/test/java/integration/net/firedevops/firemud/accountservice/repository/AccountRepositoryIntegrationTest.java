@@ -347,8 +347,7 @@ class AccountRepositoryIntegrationTest {
     insertJoinIntent(joinOperations, pending, "join-scope-pending");
     insertJoinIntent(joinOperations, committed, "join-scope-committed");
     insertJoinIntent(joinOperations, failed, "join-scope-failed");
-    joinOperations.finish(
-        "join-scope-failed", "FAILED", "CONNECT_SCOPE_INVALID", null, null, null);
+    joinOperations.finish("join-scope-failed", "FAILED", "CONNECT_SCOPE_INVALID", null, null, null);
     joinOperations.bindPolicyEvidence(
         "join-scope-committed",
         AccountJoinDigest.request(committed, "scope-cleanup-committed-caller", true, 1L),
@@ -378,8 +377,7 @@ class AccountRepositoryIntegrationTest {
         new ExpiredConnectScopeCleanupJob(scopes, meters, 100, 60_000);
     cleanupJob.cleanupExpiredConnectScopes();
 
-    assertThat(meters.get("account.connect_scopes.cleanup.deleted").counter().count())
-        .isEqualTo(1);
+    assertThat(meters.get("account.connect_scopes.cleanup.deleted").counter().count()).isEqualTo(1);
     assertThat(meters.get("account.connect_scopes.cleanup.failure").counter().count()).isZero();
     assertThat(scopeCount(jdbc, unreferenced)).isZero();
     assertThat(scopeCount(jdbc, pending)).isEqualTo(1);

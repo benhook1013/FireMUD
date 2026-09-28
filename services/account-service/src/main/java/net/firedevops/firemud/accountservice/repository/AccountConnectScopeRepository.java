@@ -80,9 +80,9 @@ public class AccountConnectScopeRepository {
   }
 
   /**
-   * Deletes a bounded batch of expired scopes only when no JOIN receipt references them.
-   * Malformed expiry values are retained. The database FK from JOIN receipts is the concurrent
-   * insert fence for the anti-join predicate.
+   * Deletes a bounded batch of expired scopes only when no JOIN receipt references them. Malformed
+   * expiry values are retained. The database FK from JOIN receipts is the concurrent insert fence
+   * for the anti-join predicate.
    */
   public int deleteExpiredUnreferenced(Instant capturedNow, int batchSize) {
     if (capturedNow == null) {
