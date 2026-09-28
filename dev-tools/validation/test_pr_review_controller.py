@@ -994,6 +994,44 @@ class ControllerTests(unittest.TestCase):
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
+    def test_default_one_result_allocation_requeues_completed_taper_without_resetting_it(self):
+        history = [
+            self.allocation_evidence(
+                checkpoint="hosted-zero-before-allocation",
+                channel="hosted",
+                accepted=0,
+            )
+        ]
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            {(1, "hosted"): history},
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+
+        before = controller.status()
+        self.assertEqual(before["review_targets"]["hosted"]["status"], "COMPLETE")
+        self.assertTrue(before["review_targets"]["hosted"]["taper_complete"])
+
+        controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            reason="one more hosted result after completed taper",
+        )
+
+        after = controller.status()
+        target = after["review_targets"]["hosted"]
+        allocation = after["prs"][0]["allocations"]["hosted"]
+        self.assertEqual((target["pr"], target["status"]), (1, "READY"))
+        self.assertTrue(target["taper_complete"])
+        self.assertEqual(allocation["status"], "PROMISED")
+        self.assertFalse(allocation["reopens_taper"])
+        self.assertTrue(allocation["historical_taper_complete"])
+        self.assertTrue(allocation["taper_complete"])
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+
     def test_selected_evidence_allocation_uses_only_selected_pr_ancestor_scope(self):
         values = {
             1: pr(1, HEAD_1),

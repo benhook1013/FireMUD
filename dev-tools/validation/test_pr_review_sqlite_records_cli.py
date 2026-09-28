@@ -152,6 +152,25 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIn("provider imports are not enabled", result["error"])
 
+    def test_batch_import_bounds_bytes_read_even_if_file_grows_after_validation(self) -> None:
+        class OversizedStream(io.BytesIO):
+            requested_bytes: int | None = None
+
+            def read(self, size: int = -1) -> bytes:
+                self.requested_bytes = size
+                return super().read(size)
+
+        stream = OversizedStream(b"{" + b" " * 512_000)
+        self.import_file.touch()
+        with (
+            patch.object(Path, "open", return_value=stream) as open_file,
+            self.assertRaisesRegex(cli.CliError, "exceeds the 512 KB limit"),
+        ):
+            cli._load_records_import(str(self.import_file))
+
+        open_file.assert_called_once_with("rb")
+        self.assertEqual(stream.requested_bytes, 512_001)
+
     def test_complete_batch_import_decides_and_finalizes_atomically(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         self.import_file.write_text(

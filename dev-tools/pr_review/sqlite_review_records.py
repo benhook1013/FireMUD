@@ -86,6 +86,7 @@ _SECRET_PATTERNS = (
     re.compile(r"\b[A-Za-z0-9_-]{40,}\b"),
 )
 _FULL_COMMIT_SHA = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
+_LOW_ENTROPY_IDENTIFIER = re.compile(r"[a-z]{1,24}[0-9]{0,3}(?:[_-][a-z]{1,24}[0-9]{0,3})+")
 
 
 def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
@@ -98,11 +99,13 @@ def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) ->
 
 def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
     value = _text(value, label, maximum=maximum, allow_empty=allow_empty)
-    # A full commit identifier is useful bounded review context, including in
-    # a sentence. Permit it only as a standalone long-token match; prefixes,
-    # suffixes, and all other token-like strings remain rejected.
+    # Full commit identifiers and segmented lowercase names are useful bounded
+    # review context. Keep the identifier exception to short alphabetic words
+    # with optional numeric suffixes; reject mixed-case and unsegmented tokens.
     if any(pattern.search(value) for pattern in _SECRET_PATTERNS[:-1]) or any(
-        not _FULL_COMMIT_SHA.fullmatch(match.group()) for match in _SECRET_PATTERNS[-1].finditer(value)
+        not _FULL_COMMIT_SHA.fullmatch(token := match.group())
+        and not _LOW_ENTROPY_IDENTIFIER.fullmatch(token)
+        for match in _SECRET_PATTERNS[-1].finditer(value)
     ):
         raise ReviewRecordsError(f"{label} resembles credential or raw secret material")
     return value
