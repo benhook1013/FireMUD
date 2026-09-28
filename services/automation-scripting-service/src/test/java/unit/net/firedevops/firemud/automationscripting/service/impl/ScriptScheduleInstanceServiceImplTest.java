@@ -3944,8 +3944,7 @@ class ScriptScheduleInstanceServiceImplTest {
             summary -> {
               assertThat(summary.publication().lookupErrorCode())
                   .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
-              assertThat(summary.publication().lookupErrorMessage())
-                  .contains("base_version_id");
+              assertThat(summary.publication().lookupErrorMessage()).contains("base_version_id");
             });
     verify(gameDesignControlPlaneClient, never())
         .getPublishedScriptPatchVersion(any(), anyLong(), any());

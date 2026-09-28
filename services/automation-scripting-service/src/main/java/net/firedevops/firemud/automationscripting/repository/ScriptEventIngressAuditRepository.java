@@ -255,6 +255,7 @@ public class ScriptEventIngressAuditRepository {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existingAudit.getScriptPinControlPlaneRequestId());
         requireMatchingClaimPluginFence(entity, existingAudit);
+        requireMatchingPatchBase(entity, existingAudit);
         return new IdempotentInsertResult(existingAudit, false);
       }
     }
@@ -299,6 +300,7 @@ public class ScriptEventIngressAuditRepository {
             requireMatchingPinOwnerEvidence(
                 normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
             requireMatchingClaimPluginFence(entity, audit);
+            requireMatchingPatchBase(entity, audit);
           }
           return new IdempotentInsertResult(audit, inserted);
         });
@@ -419,6 +421,15 @@ public class ScriptEventIngressAuditRepository {
     }
     if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
       throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
+  private static void requireMatchingPatchBase(
+      ScriptEventIngressAudit requested, ScriptEventIngressAudit existing) {
+    if (!Objects.equals(
+        requested.getScriptPatchBaseVersionId(), existing.getScriptPatchBaseVersionId())) {
+      throw new IllegalStateException(
+          "script_patch_base_version_id conflicts with existing ingress identity");
     }
   }
 
