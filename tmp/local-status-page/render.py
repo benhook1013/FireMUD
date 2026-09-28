@@ -59,6 +59,11 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: #ad3b55; color: #fff; }
+.attempt-note { margin: .55rem 0 0; padding: .4rem .6rem; border-left: 3px solid #d7aa61; background: #fff1d6; color: #755018; font-size: .78rem; }
+.attempt-history { margin-top: .8rem; padding: .55rem .7rem; border: 1px solid #d7aa61; border-radius: 8px; background: #fff9ec; }
+.attempt-history h3 { margin: 0 0 .35rem; font-size: .9rem; }
+.attempt-history ul { margin: 0; padding-left: 1.2rem; font-size: .82rem; }
+.attempt-history li + li { margin-top: .2rem; }
 .independent-review { margin-top: .5rem; color: #37414a; }
 @media (max-width: 760px) {
   .activity-grid { grid-template-columns: 1fr; }
@@ -856,6 +861,17 @@ def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, di
                    or any(not isinstance(record, dict) for record in value)
                    for value in records.values()):
                 raise ValueError("history records malformed or oversized")
+            cli_attempts = payload.get("cli_attempts")
+            if cli_attempts is not None:
+                if (not isinstance(cli_attempts, dict) or type(cli_attempts.get("available")) is not bool
+                        or not isinstance(cli_attempts.get("attempts"), list)
+                        or len(cli_attempts["attempts"]) > 5
+                        or any(not isinstance(attempt, dict)
+                               or attempt.get("outcome") not in {"rate_limited", "provider_failed", "timed_out", "setup_failed"}
+                               or not isinstance(attempt.get("finished_at"), str)
+                               for attempt in cli_attempts["attempts"])):
+                    raise ValueError("CLI attempt summary malformed")
+                records["cli_attempts"] = cli_attempts
         except (ValueError, TypeError, KeyError, AttributeError):
             return number, {"state": "unavailable", "reason": "History response is malformed"}
         state_name = "empty" if not any(records.values()) else "available"
@@ -1135,7 +1151,9 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
         raise ValueError("review details require a configured queue PR")
     queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
     history = history or {"state": "unavailable"}
-    activity_html = render_activity_cards(queue_item, now) + render_independent_activity(history, now)
+    activity_html = (render_activity_cards(queue_item, now)
+                     + render_independent_activity(history, now)
+                     + render_failed_cli_attempts(history, now))
     state = history.get("state")
     if state == "unavailable":
         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
@@ -1350,6 +1368,38 @@ def render_independent_activity(history: dict | None, now: datetime) -> str:
             f'<p class="activity-note">{safe(note)}</p></div>')
 
 
+def render_failed_cli_attempts(history: dict | None, now: datetime, *, compact: bool = False) -> str:
+    """Keep provider failures visible without presenting them as review results."""
+    source = history.get("cli_attempts") if isinstance(history, dict) else None
+    if not isinstance(source, dict) or source.get("available") is not True:
+        return ""
+    attempts = source.get("attempts", [])
+    if not isinstance(attempts, list):
+        return ""
+    labels = {
+        "rate_limited": "Rate limited", "provider_failed": "Provider failed",
+        "timed_out": "Timed out", "setup_failed": "CLI setup failed",
+    }
+    rendered = []
+    for attempt in attempts:
+        if not isinstance(attempt, dict) or attempt.get("outcome") not in labels:
+            continue
+        finished = round_completion(attempt.get("finished_at"), now)
+        if finished is None or (compact and now - finished > timedelta(hours=6)):
+            continue
+        time_html = (f'<time datetime="{safe(finished.isoformat())}">'
+                     f'{safe(round_age(finished, now))} ago</time>')
+        rendered.append(f'{labels[attempt["outcome"]]} · {time_html}')
+        if compact:
+            break
+    if not rendered:
+        return ""
+    if compact:
+        return f'<p class="attempt-note">CLI attempt, not a review: {rendered[0]}</p>'
+    return ('<div class="attempt-history"><h3>Failed CLI attempts (not reviews)</h3>'
+            f'<ul>{"".join(f"<li>{item}</li>" for item in rendered)}</ul></div>')
+
+
 def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: datetime,
                               histories: dict[int, dict]) -> None:
     detail_dir = output_dir / "review"
@@ -1486,8 +1536,10 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
             status_html += f'<span class="sub">{label} · identity only</span>'
         elif queue_item and queue_item.get("detail_level") == "unknown":
             status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
+        history = (histories or {}).get(number)
         activity_grid = (render_activity_cards(queue_item, now)
-                         + render_independent_activity((histories or {}).get(number), now))
+                         + render_independent_activity(history, now)
+                         + render_failed_cli_attempts(history, now, compact=True))
         if number == front_number:
             front_size_html = size_html
             if has_controller_states:

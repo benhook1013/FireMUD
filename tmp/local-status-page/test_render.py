@@ -424,6 +424,20 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual("empty", snapshots[42]["state"])
         self.assertEqual([], snapshots[42]["runs"])
 
+    def test_failed_cli_attempt_is_visible_without_adding_a_review_pill(self):
+        history = {"state": "available", "runs": [], "findings": [], "routes": [], "decisions": [],
+                   "cli_attempts": {"available": True, "attempts": [{
+                       "run_id": "run." + "a" * 32, "outcome": "rate_limited",
+                       "finished_at": "2026-09-24T11:30:00Z",
+                   }]}}
+        compact = page.render_failed_cli_attempts(history, NOW, compact=True)
+        detail = page.render_review_detail(self.fixture(), page.review_snapshot(None, 42, HEAD, NOW),
+                                           NOW, 42, history)
+        self.assertIn("CLI attempt, not a review: Rate limited", compact)
+        self.assertIn("Failed CLI attempts (not reviews)", detail)
+        self.assertNotIn("run." + "a" * 32, detail)
+        self.assertNotIn('class="round-pill"', compact)
+
     def test_detail_pages_are_generated_under_review_directory(self):
         data = self.fixture()
         data["stack"].append({**data["stack"][0], "number": 43, "title": "child"})
