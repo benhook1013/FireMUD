@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +30,14 @@ ANCHOR = {
 }
 
 
-def public_payload(*, head: str = HEAD, extra_trigger: bool = False, review_head: str = HEAD):
+def public_payload(
+    *,
+    head: str = HEAD,
+    base_name: str = "develop",
+    base_oid: str = BASE,
+    extra_trigger: bool = False,
+    review_head: str = HEAD,
+):
     trigger = {
         "databaseId": 10,
         "author": {"login": "maintainer"},
@@ -57,6 +65,8 @@ def public_payload(*, head: str = HEAD, extra_trigger: bool = False, review_head
             "repository": {
                 "pullRequest": {
                     "headRefOid": head,
+                    "baseRefName": base_name,
+                    "baseRefOid": base_oid,
                     "comments": {"nodes": comments},
                     "reviews": {
                         "nodes": [
@@ -109,6 +119,72 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             self.assertTrue(matched[0]["anchored"])
             self.assertEqual(matched[0]["accepted"], 2)
 
+    def test_malformed_existing_candidate_reports_path_and_refuses_adoption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            candidate = (
+                common
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text("{", encoding="utf-8")
+            record_path = common / "adopted-trigger.json"
+
+            with self.assertRaises(ValueError) as raised:
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=record_path, common=common
+                )
+
+            self.assertIn(str(candidate), str(raised.exception))
+            self.assertFalse(record_path.exists())
+
+    def test_custom_common_root_duplicate_is_refused_with_path_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            first_path = hosted.default_trigger_record_path(REPO, 42, common)
+            second_path = common / "second-adoption.json"
+
+            hosted.adopt_manual_completed_trigger(
+                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+            )
+
+            with self.assertRaisesRegex(ValueError, "already has a durable record"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=second_path, common=common
+                )
+
+            self.assertTrue(first_path.exists())
+            self.assertFalse(second_path.exists())
+
+    def test_canonical_path_override_derives_custom_common_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            first_path = hosted.default_trigger_record_path(REPO, 42, common)
+            legacy_path = (
+                common
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+
+            hosted.adopt_manual_completed_trigger(
+                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+            )
+
+            with self.assertRaisesRegex(ValueError, "already has a durable record"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=legacy_path
+                )
+
+            self.assertTrue(first_path.exists())
+            self.assertFalse(legacy_path.exists())
+
     def test_ambiguous_or_mismatched_public_identity_is_not_adopted(self):
         duplicated_review = public_payload()
         duplicated_review["data"]["repository"]["pullRequest"]["reviews"]["nodes"].append(
@@ -152,6 +228,38 @@ class ManualHostedAdoptionTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     hosted.adopt_manual_completed_trigger(REPO, 42, 10, HEAD, ANCHOR, payload, path=path)
                 self.assertFalse(path.exists())
+
+    def test_cli_refuses_live_base_that_differs_from_reconciled_parent(self):
+        candidate = SimpleNamespace(head=HEAD)
+        anchor = SimpleNamespace(as_dict=lambda: ANCHOR)
+        controller = SimpleNamespace(
+            repository=REPO,
+            store=SimpleNamespace(load=lambda: SimpleNamespace(ordered_prs=[42])),
+            _reconciliation=lambda _state, evidence_prs: ({42: candidate}, object()),
+            _reconciled_anchor=lambda _pr, _candidate, _reconciliation: anchor,
+        )
+        stale_payloads = (
+            public_payload(base_name="release"),
+            public_payload(base_oid="d" * 40),
+            public_payload(base_name=None),
+            public_payload(base_oid=None),
+        )
+
+        for payload in stale_payloads:
+            with self.subTest(base_name=payload["data"]["repository"]["pullRequest"].get("baseRefName"),
+                              base_oid=payload["data"]["repository"]["pullRequest"].get("baseRefOid")):
+                args = cli._parser().parse_args(
+                    ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]
+                )
+                with (
+                    patch.object(cli, "_controller", return_value=(controller, None)),
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    patch.object(hosted, "adopt_manual_completed_trigger") as adopt,
+                    self.assertRaisesRegex(cli.CliError, "live PR base to match its verified parent"),
+                ):
+                    cli._dispatch(args)
+
+                adopt.assert_not_called()
 
 
 if __name__ == "__main__":
