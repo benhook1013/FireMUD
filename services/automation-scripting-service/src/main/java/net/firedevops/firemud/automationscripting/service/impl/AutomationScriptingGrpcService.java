@@ -517,18 +517,22 @@ public class AutomationScriptingGrpcService
                   "INVALID_ARGUMENT",
                   ex.getMessage()));
     } catch (IllegalStateException ex) {
-      if (!"script_patch_base_version_unavailable".equals(ex.getMessage())) {
-        throw ex;
+      if ("script_patch_base_version_unavailable".equals(ex.getMessage())) {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "NotifyScriptVersionUpdate",
+                    "FAILED_PRECONDITION",
+                    ex.getMessage()));
+      } else {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.internal(meterRegistry, logger, "NotifyScriptVersionUpdate", ex));
       }
-      response
-          .setSuccess(false)
-          .setError(
-              GrpcAppErrors.error(
-                  meterRegistry,
-                  logger,
-                  "NotifyScriptVersionUpdate",
-                  "FAILED_PRECONDITION",
-                  ex.getMessage()));
     } catch (ScriptIngressInProgressException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());

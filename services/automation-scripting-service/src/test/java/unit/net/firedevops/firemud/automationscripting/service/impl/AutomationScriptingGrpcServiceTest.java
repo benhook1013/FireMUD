@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -816,7 +815,7 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
-  void notifyScriptVersionUpdatePropagatesUnrelatedIllegalStateException() {
+  void notifyScriptVersionUpdateMapsUnrelatedIllegalStateExceptionToInternalAppError() {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new IllegalStateException("internal_invariant_failure"))
         .when(versionService)
@@ -834,29 +833,31 @@ class AutomationScriptingGrpcServiceTest {
             new SimpleMeterRegistry(),
             "");
 
-    IllegalStateException exception =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                service.notifyScriptVersionUpdate(
-                    NotifyScriptVersionUpdateRequest.newBuilder()
-                        .setTenantId("1")
-                        .setBaseVersionId(1L)
-                        .setScriptPatchVersion("patch-1")
-                        .addAffectedScripts("guard-script")
-                        .build(),
-                    new StreamObserver<>() {
-                      @Override
-                      public void onNext(NotifyScriptVersionUpdateResponse value) {}
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
 
-                      @Override
-                      public void onError(Throwable t) {}
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
 
-                      @Override
-                      public void onCompleted() {}
-                    }));
+          @Override
+          public void onError(Throwable t) {}
 
-    assertEquals("internal_invariant_failure", exception.getMessage());
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("INTERNAL", response.get().getError().getCode());
   }
 
   @Test
