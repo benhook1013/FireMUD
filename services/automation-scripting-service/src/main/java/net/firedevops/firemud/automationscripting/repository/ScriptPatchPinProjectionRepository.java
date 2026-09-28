@@ -90,6 +90,9 @@ public class ScriptPatchPinProjectionRepository {
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_PATCH_PIN_PROJECTIONS.PINNED_SCRIPT_PATCH_BASE_VERSION_ID,
+                entity.getPinnedScriptPatchBaseVersionId())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID, entity.getRuntimeRegionId())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH, entity.getRuntimeRegionEpoch())
             .set(
@@ -130,6 +133,7 @@ public class ScriptPatchPinProjectionRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setPinnedScriptPatchBaseVersionId(entity.getPinnedScriptPatchBaseVersionId());
     record.setRuntimeRegionId(entity.getRuntimeRegionId());
     record.setRuntimeRegionEpoch(entity.getRuntimeRegionEpoch());
     record.setLastObservedControlPlaneRequestId(entity.getLastObservedControlPlaneRequestId());
@@ -151,6 +155,8 @@ public class ScriptPatchPinProjectionRepository {
     entity.setPointerVersion(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION));
     Long scriptPinEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
+    entity.setPinnedScriptPatchBaseVersionId(
+        record.get(SCRIPT_PATCH_PIN_PROJECTIONS.PINNED_SCRIPT_PATCH_BASE_VERSION_ID));
     entity.setRuntimeRegionId(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID));
     Long runtimeRegionEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH);
     entity.setRuntimeRegionEpoch(runtimeRegionEpoch == null ? 0L : runtimeRegionEpoch);

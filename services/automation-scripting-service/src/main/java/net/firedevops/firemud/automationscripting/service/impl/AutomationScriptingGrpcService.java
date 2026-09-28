@@ -325,6 +325,7 @@ public class AutomationScriptingGrpcService
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
               request.getVersion(),
+              request.getBaseVersionId(),
               request.getDefinition(),
               request.getEventBindingsList().stream()
                   .map(
@@ -381,13 +382,23 @@ public class AutomationScriptingGrpcService
       requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
+      long baseVersionId = 0L;
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH) {
+        baseVersionId =
+            RequestIdValidation.requirePositiveLong(binding.baseVersionId(), "baseVersionId");
+      }
       var digest =
           binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
                   binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(), binding.scriptPatchVersion());
+                  binding.tenantId(), baseVersionId, binding.scriptPatchVersion());
       binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
+          && (digest.baseVersionId() <= 0L || baseVersionId != digest.baseVersionId())) {
+        throw new IllegalArgumentException(
+            "owner digest base_version_id does not match publication binding");
+      }
       GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
@@ -399,7 +410,7 @@ public class AutomationScriptingGrpcService
       } else {
         response
             .setScriptPatchVersion(binding.scriptPatchVersion())
-            .setBaseVersionId(binding.baseVersionId());
+            .setBaseVersionId(Long.toString(digest.baseVersionId()));
       }
       responseObserver.onNext(response.build());
       responseObserver.onCompleted();
@@ -411,7 +422,7 @@ public class AutomationScriptingGrpcService
                       meterRegistry,
                       logger,
                       "GetDraftDesignDigest",
-                      "INVALID_ARGUMENT",
+                      draftDesignDigestArgumentErrorCode(ex),
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
@@ -453,6 +464,18 @@ public class AutomationScriptingGrpcService
     };
   }
 
+  private static String draftDesignDigestArgumentErrorCode(IllegalArgumentException exception) {
+    String message = exception.getMessage();
+    if ("script_patch_base_version_unavailable".equals(message)
+        || "script_patch_base_version_unavailable:script".equals(message)
+        || "script_patch_base_version_unavailable:binding".equals(message)
+        || "script_patch_base_version_mismatch:script".equals(message)
+        || "script_patch_base_version_mismatch:binding".equals(message)) {
+      return "FAILED_PRECONDITION";
+    }
+    return "INVALID_ARGUMENT";
+  }
+
   private void requirePublicationRead() {
     if (publicationReadGuard == null) {
       throw new AdminAuthorizationException("Publication read authorization is not configured");
@@ -492,7 +515,10 @@ public class AutomationScriptingGrpcService
     try {
       requireAdminRole();
       scriptVersionService.notifyUpdate(
-          request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+          request.getTenantId(),
+          request.getBaseVersionId(),
+          request.getScriptPatchVersion(),
+          request.getAffectedScriptsList());
       response.setSuccess(true);
     } catch (IllegalArgumentException ex) {
       response
@@ -502,8 +528,27 @@ public class AutomationScriptingGrpcService
                   meterRegistry,
                   logger,
                   "NotifyScriptVersionUpdate",
-                  "INVALID_ARGUMENT",
+                  "script_patch_base_version_unavailable".equals(ex.getMessage())
+                      ? "FAILED_PRECONDITION"
+                      : "INVALID_ARGUMENT",
                   ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      if ("script_patch_base_version_unavailable".equals(ex.getMessage())) {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "NotifyScriptVersionUpdate",
+                    "FAILED_PRECONDITION",
+                    ex.getMessage()));
+      } else {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.internal(meterRegistry, logger, "NotifyScriptVersionUpdate", ex));
+      }
     } catch (ScriptIngressInProgressException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());

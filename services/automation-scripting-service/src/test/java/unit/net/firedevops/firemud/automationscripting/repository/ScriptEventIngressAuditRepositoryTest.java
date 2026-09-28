@@ -706,6 +706,102 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void insertIfAbsentByIdentityReturnsStoredRowForDifferentPatchBaseFromOnConflict() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
+    MockDataProvider provider =
+        context -> {
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, false);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setScriptPatchBaseVersionId(7L);
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(13L);
+    assertThat(result.audit().getScriptPatchBaseVersionId()).isNull();
+  }
+
+  @Test
+  void insertIfAbsentByIdentityReturnsStoredRowForDifferentPatchBaseFromFallbackLookup() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
+    row.setScriptPatchBaseVersionId(7L);
+    AtomicReference<Integer> calls = new AtomicReference<>(0);
+    MockDataProvider provider =
+        context -> {
+          calls.updateAndGet(value -> value + 1);
+          if (calls.get() == 1) {
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT))
+            };
+          }
+          Result<ScriptEventIngressAuditRecord> result =
+              resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setScriptPatchBaseVersionId(8L);
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(13L);
+    assertThat(result.audit().getScriptPatchBaseVersionId()).isEqualTo(7L);
+    assertThat(calls).hasValue(2);
+  }
+
+  @Test
+  void insertIfAbsentByIdentityAcceptsExactPatchBaseOnConflictRetry() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
+    row.setScriptPatchBaseVersionId(7L);
+    MockDataProvider provider =
+        context -> {
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, false);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setScriptPatchBaseVersionId(7L);
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getScriptPatchBaseVersionId()).isEqualTo(7L);
+  }
+
+  @Test
   void insertIfAbsentByIdentityRejectsDifferentPinnedOwnerRequestFromFallbackLookup() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");

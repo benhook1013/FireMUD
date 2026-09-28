@@ -249,6 +249,7 @@ public interface ScriptWorkItemService {
       String pluginVersionId,
       String eventType,
       String scriptPatchVersion,
+      long scriptPatchBaseVersionId,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptEventId,

@@ -171,7 +171,7 @@ class AutomationScriptingGrpcServiceTest {
     Mockito.when(scriptDesignDigestService.getDraftDesignDigestForVersion("1", "7"))
         .thenReturn(
             new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "7", "version:7", "digest-script", 1));
+                "1", "7", 0L, "version:7", "digest-script", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -218,10 +218,10 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", "patch:é:1"))
+    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", 7L, "patch:é:1"))
         .thenReturn(
             new ScriptDesignDigestService.ScriptDraftDesignDigest(
-                "1", "patch:é:1", "patch:patch:é:1", "digest-script-patch", 1));
+                "1", "patch:é:1", 7L, "patch:patch:é:1", "digest-script-patch", 1));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
@@ -257,6 +257,66 @@ class AutomationScriptingGrpcServiceTest {
     assertEquals("7", ref.get().getBaseVersionId());
     assertEquals("patch:é:1", ref.get().getScriptPatchVersion());
     assertEquals("patch:patch:é:1", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsInvalidScriptPatchBaseBeforeOwnerRead() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    for (String baseVersionId : new String[] {"0", "9223372036854775808"}) {
+      GetDraftDesignDigestRequest request =
+          GetDraftDesignDigestRequest.newBuilder()
+              .setTenantId("1")
+              .setBaseVersionId(baseVersionId)
+              .setScriptPatchVersion("patch:1")
+              .setPublishRequestId("request-7")
+              .build();
+
+      AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+      runAsGameDesign(() -> response.set(invokeDigest(service, request)));
+
+      assertEquals("INVALID_ARGUMENT", response.get().getError().getCode());
+      assertEquals(
+          baseVersionId.equals("0")
+              ? "baseVersionId must be a canonical positive decimal"
+              : "baseVersionId exceeds signed positive long range",
+          response.get().getError().getMessage());
+    }
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestMapsOwnerBaseFailuresToFailedPrecondition() {
+    Map<String, String> expectedCodes =
+        Map.of(
+            "script_patch_base_version_unavailable", "FAILED_PRECONDITION",
+            "script_patch_base_version_unavailable:script", "FAILED_PRECONDITION",
+            "script_patch_base_version_unavailable:binding", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch:script", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch:binding", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch", "INVALID_ARGUMENT",
+            "unrelated_argument_error", "INVALID_ARGUMENT");
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    expectedCodes.forEach(
+        (message, expectedCode) -> {
+          ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+          Mockito.doThrow(new IllegalArgumentException(message))
+              .when(digestService)
+              .getDraftDesignDigestForScriptPatch("1", 7L, "patch-1");
+          AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+
+          AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+          runAsGameDesign(
+              () -> response.set(invokeDigest(service, patchDigestRequest("1", "7", "patch-1"))));
+
+          assertEquals(expectedCode, response.get().getError().getCode(), message);
+          assertEquals(message, response.get().getError().getMessage());
+        });
   }
 
   @Test
@@ -728,7 +788,7 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new IllegalArgumentException("schedule_interval_ticks_required"))
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -746,6 +806,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -768,11 +829,195 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void notifyScriptVersionUpdateMapsUnavailableBaseVersionArgumentToFailedPreconditionAppError() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalArgumentException("script_patch_base_version_unavailable"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", response.get().getError().getCode());
+    assertEquals("script_patch_base_version_unavailable", response.get().getError().getMessage());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateKeepsMismatchedBaseVersionArgumentInvalid() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalArgumentException("script_patch_base_version_mismatch"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.get().getError().getCode());
+    assertEquals("script_patch_base_version_mismatch", response.get().getError().getMessage());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateMapsUnavailableBaseVersionToFailedPreconditionAppError() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalStateException("script_patch_base_version_unavailable"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", response.get().getError().getCode());
+    assertEquals("script_patch_base_version_unavailable", response.get().getError().getMessage());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateMapsUnrelatedIllegalStateExceptionToInternalAppError() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalStateException("internal_invariant_failure"))
+        .when(versionService)
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertEquals(false, response.get().getSuccess());
+    assertEquals("INTERNAL", response.get().getError().getCode());
+  }
+
+  @Test
   void notifyScriptVersionUpdateMapsActiveOnLoadClaimToRetryableUnavailableWithoutResponse() {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     Mockito.doThrow(new ScriptIngressInProgressException())
         .when(versionService)
-        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+        .notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -791,6 +1036,7 @@ class AutomationScriptingGrpcServiceTest {
     service.notifyScriptVersionUpdate(
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setScriptPatchVersion("patch-1")
             .addAffectedScripts("guard-script")
             .build(),
@@ -930,6 +1176,7 @@ class AutomationScriptingGrpcServiceTest {
     service.updateScript(
         UpdateScriptRequest.newBuilder()
             .setTenantId("1")
+            .setBaseVersionId(1L)
             .setName("guard-script")
             .setVersion("v1")
             .setDefinition("{}")

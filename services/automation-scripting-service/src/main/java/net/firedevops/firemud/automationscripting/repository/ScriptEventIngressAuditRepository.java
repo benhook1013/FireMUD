@@ -354,6 +354,11 @@ public class ScriptEventIngressAuditRepository {
       throw new IllegalArgumentException(
           IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_patch_version");
     }
+    if (!Objects.equals(
+        submitted.getScriptPatchBaseVersionId(), persisted.getScriptPatchBaseVersionId())) {
+      throw new IllegalArgumentException(
+          IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_patch_base_version_id");
+    }
     if (!Objects.equals(submitted.getScriptPinEpoch(), persisted.getScriptPinEpoch())) {
       throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_pin_epoch");
     }
@@ -538,6 +543,7 @@ public class ScriptEventIngressAuditRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setRequestDigest(entity.getRequestDigest());
     record.setScriptEventId(entity.getScriptEventId());
     record.setSourceService(entity.getSourceService());
@@ -589,6 +595,8 @@ public class ScriptEventIngressAuditRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(
+        record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_BASE_VERSION_ID));
     entity.setRequestDigest(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST));
     entity.setScriptEventId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID));
     entity.setSourceService(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE));

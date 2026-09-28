@@ -82,7 +82,7 @@ class PublishGateServiceImplTest {
             any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null));
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null));
     when(controlPlaneDigestService.getDigestForVersion(version))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
 
@@ -193,7 +193,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
             new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 4, null, null),
             new PublishParticipantDigestDto(
@@ -207,6 +207,41 @@ class PublishGateServiceImplTest {
 
     assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
     assertTrue(thrown.getMessage().contains("ENTITY_MANAGEMENT"));
+  }
+
+  @Test
+  void fullVersionGateRejectsObsoleteAutomationDigestSchema() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
   }
 
   @Test
@@ -399,7 +434,7 @@ class PublishGateServiceImplTest {
                 7L,
                 "script-patch:patch-1",
                 "digest-1",
-                4,
+                5,
                 null,
                 null));
 
@@ -507,7 +542,7 @@ class PublishGateServiceImplTest {
   }
 
   @Test
-  void scriptPatchGateRejectsLegacyAutomationDigestSchema() {
+  void scriptPatchGateRejectsObsoleteAutomationDigestSchema() {
     VersionDto version =
         new VersionDto(
             9L,
@@ -529,7 +564,7 @@ class PublishGateServiceImplTest {
                 7L,
                 "script-patch:patch-1",
                 "digest-1",
-                3,
+                4,
                 null,
                 null),
             new PublishParticipantDigestDto(
@@ -572,7 +607,7 @@ class PublishGateServiceImplTest {
                 8L,
                 "script-patch:patch-1",
                 "digest-1",
-                4,
+                5,
                 null,
                 null),
             new PublishParticipantDigestDto(

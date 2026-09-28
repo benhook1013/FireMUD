@@ -166,7 +166,7 @@ public class VersionServiceImpl implements VersionService {
       throw ex.causeException();
     }
     if (reservation.status() == PublishAttemptStatus.SUCCEEDED) {
-      notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
+      notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
       return reservation.versionDto();
     }
     if (reservation.status() == PublishAttemptStatus.FAILED) {
@@ -188,7 +188,7 @@ public class VersionServiceImpl implements VersionService {
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
       finalizationReturned = true;
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
-        notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
+        notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {
@@ -238,7 +238,7 @@ public class VersionServiceImpl implements VersionService {
                         publishFailureCode(operationFailure),
                         publishFailureMessage(operationFailure)));
         if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
-          notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
+          notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
           return failure.versionDto();
         }
       } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
@@ -491,10 +491,13 @@ public class VersionServiceImpl implements VersionService {
         cause);
   }
 
-  private void notifyScriptPatchVersionUpdate(String tenantId, String scriptPatchVersion) {
+  private void notifyScriptPatchVersionUpdate(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
     runSafely(
         "notify script patch version update",
-        () -> scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
+        () ->
+            scriptingClient.notifyScriptVersionUpdate(
+                tenantId, baseVersionId, scriptPatchVersion, List.of()));
   }
 
   @Override

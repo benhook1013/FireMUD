@@ -8,7 +8,10 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 public interface ScriptPatchReadinessProjectionService {
   /** Returns true only when this call admitted a previously unseen immutable script set. */
   boolean beginPatchReadiness(
-      String tenantId, String scriptPatchVersion, List<String> canonicalScriptNames);
+      String tenantId,
+      long baseVersionId,
+      String scriptPatchVersion,
+      List<String> canonicalScriptNames);
 
   /** Runs database downstream work only while this is the current readiness generation. */
   boolean applyIfCurrent(
@@ -33,6 +36,7 @@ public interface ScriptPatchReadinessProjectionService {
   record ReadinessStatusSummary(
       String tenantId,
       String scriptPatchVersion,
+      long baseVersionId,
       ScriptPatchStatus status,
       String statusReason,
       String supersededByScriptPatchVersion,

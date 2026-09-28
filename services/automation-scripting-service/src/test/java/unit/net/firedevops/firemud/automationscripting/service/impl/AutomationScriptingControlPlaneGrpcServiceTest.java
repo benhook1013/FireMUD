@@ -494,6 +494,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    7L,
                     9L,
                     "npc-guard",
                     "SHARED",
@@ -528,7 +529,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         17L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
@@ -619,6 +620,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    7L,
                     9L,
                     "npc-guard",
                     "SHARED",
@@ -653,7 +655,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         18L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
@@ -726,6 +728,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "binding-npc-guard-timer",
                     "onInterval",
                     "patch-1",
+                    7L,
                     2L,
                     "pin-request-1",
                     "timer-1",
@@ -743,7 +746,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         17L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
@@ -1070,6 +1073,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "1",
                         "game-1",
                         "patch-2",
+                        7L,
                         22L,
                         "req-22",
                         222L,
@@ -1134,6 +1138,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "1",
                         "game-1",
                         "",
+                        0L,
                         0L,
                         "",
                         222L,
@@ -1818,6 +1823,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "plugin-v1",
                     "onCommand",
                     "patch-1",
+                    9L,
                     0L,
                     "",
                     "event-1",
@@ -1932,6 +1938,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
+                    9L,
                     0L,
                     "",
                     "event-1",

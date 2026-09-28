@@ -4,9 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
@@ -21,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repositories and mapper are internal Spring collaborators.")
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 4;
+  private static final int DIGEST_SCHEMA_VERSION = 5;
   private static final Comparator<String> NULLS_FIRST_STRING =
       Comparator.nullsFirst(String::compareTo);
   private static final Comparator<ScriptEventBinding> BINDING_DIGEST_ORDER =
@@ -61,6 +63,8 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                         Map.of(
                             "name", normalize(script.getName()),
                             "version", normalize(script.getScriptVersion()),
+                            "baseVersionId",
+                                Objects.requireNonNullElse(script.getBaseVersionId(), 0L),
                             "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
@@ -83,6 +87,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
       return new ScriptDraftDesignDigest(
           tenantId,
           versionId,
+          0L,
           "version:" + versionId,
           sha256(canonicalJson),
           DIGEST_SCHEMA_VERSION);
@@ -93,27 +98,42 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
 
   @Override
   public ScriptDraftDesignDigest getDraftDesignDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion) {
+      String tenantId, long requestedBaseVersionId, String scriptPatchVersion) {
+    if (requestedBaseVersionId <= 0L) {
+      throw new IllegalArgumentException("base_version_id must be positive");
+    }
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
-    List<Map<String, Object>> scripts =
-        repository
-            .findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)
-            .stream()
-            .map(
-                script ->
-                    canonicalMap(
-                        Map.of(
-                            "name", normalize(script.getName()),
-                            "version", normalize(script.getScriptVersion()),
-                            "definition", normalize(script.getDefinition()))))
-            .toList();
-    List<Map<String, Object>> bindings =
+    Long retainedBaseVersionId =
+        repository.findScriptPatchBaseVersionId(tenantId, scriptPatchVersion).orElse(null);
+    if (retainedBaseVersionId == null || retainedBaseVersionId <= 0L) {
+      throw new IllegalArgumentException("script_patch_base_version_unavailable");
+    }
+    if (retainedBaseVersionId.longValue() != requestedBaseVersionId) {
+      throw new IllegalArgumentException("script_patch_base_version_mismatch");
+    }
+    List<Map<String, Object>> scripts = new ArrayList<>();
+    for (var script :
+        repository.findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)) {
+      requireStoredBase(script.getBaseVersionId(), retainedBaseVersionId, "script");
+      scripts.add(
+          canonicalMap(
+              Map.of(
+                  "name", normalize(script.getName()),
+                  "version", normalize(script.getScriptVersion()),
+                  "baseVersionId", retainedBaseVersionId,
+                  "definition", normalize(script.getDefinition()))));
+    }
+    List<ScriptEventBinding> storedBindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                tenantKey, scriptPatchVersion)
-            .stream()
+                tenantKey, scriptPatchVersion);
+    for (ScriptEventBinding binding : storedBindings) {
+      requireStoredBase(binding.getBaseVersionId(), retainedBaseVersionId, "binding");
+    }
+    List<Map<String, Object>> bindings =
+        storedBindings.stream()
             .sorted(BINDING_DIGEST_ORDER)
-            .map(this::bindingDigest)
+            .map(binding -> bindingDigest(binding, retainedBaseVersionId))
             .toList();
     if (scripts.isEmpty()) {
       throw new IllegalArgumentException("script patch version not found");
@@ -124,12 +144,14 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
               canonicalMap(
                   Map.of(
                       "tenantId", tenantId,
+                      "baseVersionId", retainedBaseVersionId,
                       "scriptPatchVersion", scriptPatchVersion,
                       "scripts", scripts,
                       "eventBindings", bindings)));
       return new ScriptDraftDesignDigest(
           tenantId,
           scriptPatchVersion,
+          retainedBaseVersionId,
           "script-patch:" + scriptPatchVersion,
           sha256(canonicalJson),
           DIGEST_SCHEMA_VERSION);
@@ -138,10 +160,11 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     }
   }
 
-  private Map<String, Object> bindingDigest(ScriptEventBinding binding) {
+  private Map<String, Object> bindingDigest(ScriptEventBinding binding, long baseVersionId) {
     return canonicalMap(
         Map.ofEntries(
             Map.entry("scriptPatchVersion", normalize(binding.getScriptPatchVersion())),
+            Map.entry("baseVersionId", baseVersionId),
             Map.entry("eventType", normalize(binding.getEventType())),
             Map.entry("eventSchemaVersion", normalize(binding.getEventSchemaVersion())),
             Map.entry("scriptId", normalize(binding.getScriptId())),
@@ -152,6 +175,20 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
             Map.entry("priorityTag", normalize(binding.getPriorityTag())),
             Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
             Map.entry("enabled", binding.isEnabled())));
+  }
+
+  private Map<String, Object> bindingDigest(ScriptEventBinding binding) {
+    return bindingDigest(
+        binding, binding.getBaseVersionId() == null ? 0L : binding.getBaseVersionId());
+  }
+
+  private static void requireStoredBase(Long storedBaseVersionId, long expected, String ownerRow) {
+    if (storedBaseVersionId == null || storedBaseVersionId <= 0L) {
+      throw new IllegalArgumentException("script_patch_base_version_unavailable:" + ownerRow);
+    }
+    if (storedBaseVersionId.longValue() != expected) {
+      throw new IllegalArgumentException("script_patch_base_version_mismatch:" + ownerRow);
+    }
   }
 
   private static String normalize(String value) {

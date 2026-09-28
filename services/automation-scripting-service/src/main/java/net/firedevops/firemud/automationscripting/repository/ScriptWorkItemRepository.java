@@ -457,7 +457,10 @@ public class ScriptWorkItemRepository {
                 SCRIPT_WORK_ITEMS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_WORK_ITEMS.SCRIPT_PATCH_BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getScriptPatchBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -490,6 +493,7 @@ public class ScriptWorkItemRepository {
           requireMatchingPinOwnerEvidence(
               normalizedRequestId, result.workItem().getScriptPinControlPlaneRequestId());
           requireMatchingPluginFence(entity, result.workItem());
+          requireMatchingPatchBase(entity, result.workItem());
         }
         return new IdempotentInsertResult(result.workItem(), result.inserted());
       }
@@ -519,6 +523,7 @@ public class ScriptWorkItemRepository {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
         requireMatchingPluginFence(entity, existing.orElseThrow());
+        requireMatchingPatchBase(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -773,6 +778,7 @@ public class ScriptWorkItemRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.set(
         SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
@@ -849,6 +855,14 @@ public class ScriptWorkItemRepository {
     }
   }
 
+  private static void requireMatchingPatchBase(ScriptWorkItem requested, ScriptWorkItem existing) {
+    if (!Objects.equals(
+        requested.getScriptPatchBaseVersionId(), existing.getScriptPatchBaseVersionId())) {
+      throw new IllegalStateException(
+          "script_patch_base_version_id conflicts with existing trigger identity");
+    }
+  }
+
   private ScriptWorkItem toEntity(Record record) {
     ScriptWorkItem entity = new ScriptWorkItem();
     entity.setId(record.get(SCRIPT_WORK_ITEMS.ID));
@@ -875,6 +889,7 @@ public class ScriptWorkItemRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_BASE_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(

@@ -98,6 +98,7 @@ Inputs:
 
 - `tenantId`
 - `scriptPatchVersion`
+- `baseVersionId` (positive; the immutable publication base, not a current-version selector)
 
 Outputs:
 
@@ -111,6 +112,7 @@ Outputs:
 
 Contract rules:
 
+- The lookup uses the exact `(tenantId, baseVersionId, scriptPatchVersion)` tuple; a two-field lookup cannot establish historical publication provenance.
 - `designStatus=PUBLISHED` means Game Design accepted and recorded the immutable script-patch artifact for the referenced `baseVersionId`; it does not imply tenant runtime readiness.
 - Runtime readiness remains the responsibility of Automation & Scripting via `GetScriptPatchStatus`; callers must not infer `READY` from Game Design publication alone.
 - If Game Design rejects the publish attempt (`PUBLISH_FAILED_DESIGN`), Automation & Scripting must not create or expose a tenant lifecycle row for that patch version.

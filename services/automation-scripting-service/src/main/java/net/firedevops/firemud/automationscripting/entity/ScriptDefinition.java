@@ -8,6 +8,7 @@ public class ScriptDefinition {
   private Long tenantId;
   private String name;
   private String scriptVersion;
+  private Long baseVersionId;
   private String definition;
   private int rowVersion;
 }
