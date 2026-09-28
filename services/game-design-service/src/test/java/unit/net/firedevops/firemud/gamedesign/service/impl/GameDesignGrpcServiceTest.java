@@ -561,6 +561,34 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishScriptPatchVersionMapsPendingReconciliationToStableApplicationError()
+      throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new PublishAttemptPendingReconciliationException());
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals(
+        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
+    assertEquals(
+        PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
+        ref.get().getError().getMessage());
+  }
+
+  @Test
   void uploadPluginBundleReturnsPublicationId() {
     Mockito.when(
             versionService.uploadPluginBundle(

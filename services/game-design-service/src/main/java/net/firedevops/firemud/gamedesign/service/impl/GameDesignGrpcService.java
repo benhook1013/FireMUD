@@ -306,6 +306,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "PublishScriptPatchVersion",
               ex.failureCode(),
               ex.getMessage()));
+    } catch (PublishAttemptPendingReconciliationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishScriptPatchVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
