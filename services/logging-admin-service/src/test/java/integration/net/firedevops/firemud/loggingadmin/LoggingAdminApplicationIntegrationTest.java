@@ -239,6 +239,7 @@ class LoggingAdminApplicationIntegrationTest {
           .locations("classpath:db/migration")
           .schemas(schema)
           .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
           .target(MigrationVersion.fromVersion("2"))
           .load()
           .migrate();
@@ -291,6 +292,7 @@ class LoggingAdminApplicationIntegrationTest {
           .locations("classpath:db/migration")
           .schemas(schema)
           .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
           .load()
           .migrate();
 
