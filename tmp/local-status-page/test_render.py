@@ -213,10 +213,37 @@ class StatusPageTest(unittest.TestCase):
         empty = page.render_review_detail(data, review, NOW, 42, {
             "state": "empty", "runs": [], "findings": [], "routes": [], "decisions": [],
         })
-        self.assertIn("Recorded history unavailable", unavailable)
+        self.assertIn("Finding and decision history is unavailable until compatible shared controller history is available.", unavailable)
+        self.assertIn("This page currently summarizes review rounds only.", unavailable)
         self.assertNotIn("No recorded history for this PR", unavailable)
         self.assertIn("No recorded history for this PR", empty)
-        self.assertNotIn("Recorded history unavailable", empty)
+        self.assertNotIn("Finding and decision history is unavailable", empty)
+
+    def test_review_detail_embeds_responsive_activity_card_and_pill_styles(self):
+        review = {
+            "available": True,
+            "queue": {42: {
+                "head": HEAD,
+                "review_activity": {
+                    channel: {"total": 1, "recent": [{
+                        "raw": 2, "accepted": 1, "routed": 1, "current_head": True,
+                        "attributable": True, "non_counting": False,
+                        "completed_at": NOW.isoformat(),
+                    }]}
+                    for channel in ("hosted", "cli")
+                },
+            }},
+        }
+        rendered = page.render_review_detail(self.fixture(), review, NOW, 42,
+                                             {"state": "unavailable"})
+        self.assertIn(page.ACTIVITY_CSS, rendered)
+        self.assertIn('<div class="activity-grid">', rendered)
+        self.assertIn('class="round-pill"', rendered)
+        self.assertIn(".round-pills { display: flex; flex-wrap: wrap; gap:", page.ACTIVITY_CSS)
+        self.assertIn(".round-pill { display: inline-flex; flex-direction: column;", page.ACTIVITY_CSS)
+        self.assertIn(".round-age { display: block;", page.ACTIVITY_CSS)
+        self.assertIn("@media (max-width: 760px)", page.ACTIVITY_CSS)
+        self.assertIn(".activity-grid { grid-template-columns: 1fr; }", page.ACTIVITY_CSS)
 
     def test_detail_text_and_record_counts_are_bounded(self):
         history = {
@@ -498,11 +525,15 @@ class StatusPageTest(unittest.TestCase):
 
     def test_round_age_uses_compact_bounded_units(self):
         for minutes, expected in (
-            (0, "<1m"), (1, "1m"), (99, "99m"), (100, "1h"),
-            (5999, "99h"), (6000, "4d"), (99 * 1440, "99d"), (100 * 1440, "99d+"),
+            (0, "<1m"), (1, "1m"), (59, "59m"), (60, "1h 0m"),
+            (99, "1h 39m"), (1439, "23h 59m"), (1440, "1d 0h"),
+            (2879, "1d 23h"), (2880, "2d 0h"), (5999, "4d 3h"),
+            (99 * 1440 + 1439, "99d 23h"), (100 * 1440, "99d+"),
         ):
             with self.subTest(minutes=minutes):
                 self.assertEqual(expected, page.round_age(NOW - timedelta(minutes=minutes), NOW))
+        self.assertEqual("<1m", page.round_age(NOW - timedelta(seconds=59, microseconds=999_999), NOW))
+        self.assertEqual("1m", page.round_age(NOW - timedelta(minutes=1), NOW))
         self.assertIsNone(page.round_completion(None, NOW))
         self.assertIsNone(page.round_completion("not a timestamp", NOW))
         self.assertIsNone(page.round_completion("2026-09-24T12:00:00", NOW))
@@ -525,7 +556,7 @@ vm.runInNewContext(process.argv[1], {
 });
 const states = [labels.map(label => label.textContent)];
 const roundStates = [rounds.map(label => label.textContent)];
-for (const minutes of [7, 99, 100, 1439, 1440, 1680, 5999, 6000, 144000]) {
+for (const minutes of [7, 59, 60, 99, 1439, 1440, 2879, 2880, 5999, 6000, 144000, 145439, 145440]) {
   now = stamp + minutes * 60000;
   tick();
   states.push(labels.map(label => label.textContent));
@@ -536,11 +567,13 @@ process.stdout.write(JSON.stringify({states, roundStates, interval}));
         run = subprocess.run(["node", "-e", javascript, page.AGE_SCRIPT], capture_output=True, text=True, check=True)
         result = json.loads(run.stdout)
         self.assertEqual([[value, value] for value in (
-            "just now", "7m ago", "1h 39m ago", "1h 40m ago", "23h 59m ago", "1d 0h ago",
-            "1d 4h ago", "4d 3h ago", "4d 4h ago", "100d 0h ago"
+            "just now", "7m ago", "59m ago", "1h 0m ago", "1h 39m ago", "23h 59m ago",
+            "1d 0h ago", "1d 23h ago", "2d 0h ago", "4d 3h ago", "4d 4h ago",
+            "100d 0h ago", "100d 23h ago", "101d 0h ago"
         )], result["states"])
         self.assertEqual([[value, value] for value in (
-            "<1m", "7m", "99m", "1h", "23h", "24h", "28h", "99h", "4d", "99d+"
+            "<1m", "7m", "59m", "1h 0m", "1h 39m", "23h 59m", "1d 0h",
+            "1d 23h", "2d 0h", "4d 3h", "4d 4h", "99d+", "99d+", "99d+"
         )], result["roundStates"])
         self.assertEqual(30000, result["interval"])
 
@@ -794,7 +827,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertNotIn('Hosted parent changed', merged_row)
         self.assertNotIn('CLI parent changed', merged_row)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
-        self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h</time>', merged_row)
+        self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h 0m</time>', merged_row)
         self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '

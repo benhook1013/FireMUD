@@ -46,6 +46,21 @@ MAX_RECORD_VALUE_LENGTH = 80
 MAX_RECORD_TEXT_LENGTH = 500
 MAX_REVIEW_ROUNDS = 100
 MAX_REVIEW_DETAIL_RECORD_HTML_CHARS = 250_000
+ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
+.activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }
+.activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
+.activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
+.round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
+.round-pill { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 2.8rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; line-height: 1.15; white-space: nowrap; }
+.round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
+.round-pill.older { border-style: dashed; background: #f1f2f4; color: #626b77; }
+.round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
+.round-pill.zero-accepted { background: #ad3b55; color: #fff; }
+@media (max-width: 760px) {
+  .activity-grid { grid-template-columns: 1fr; }
+  .round-pills { gap: .35rem; }
+}
+"""
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -149,10 +164,10 @@ AGE_SCRIPT = """(() => {
     if (!Number.isFinite(timestamp) || timestamp > now) return '?';
     const minutes = Math.floor((now - timestamp) / 60000);
     if (minutes === 0) return '<1m';
-    if (minutes < 100) return `${minutes}m`;
-    if (minutes < 6000) return `${Math.floor(minutes / 60)}h`;
+    if (minutes < 60) return `${minutes}m`;
+    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     const days = Math.floor(minutes / 1440);
-    return days < 100 ? `${days}d` : '99d+';
+    return days < 100 ? `${days}d ${Math.floor((minutes % 1440) / 60)}h` : '99d+';
   };
   const update = () => {
     const now = Date.now();
@@ -303,12 +318,12 @@ def round_age(value: datetime, now: datetime) -> str:
     minutes = int((now - value).total_seconds() // 60)
     if minutes == 0:
         return "<1m"
-    if minutes < 100:
+    if minutes < 60:
         return f"{minutes}m"
-    if minutes < 6000:
-        return f"{minutes // 60}h"
+    if minutes < 1440:
+        return f"{minutes // 60}h {minutes % 60}m"
     days = minutes // 1440
-    return f"{days}d" if days < 100 else "99d+"
+    return f"{days}d {(minutes % 1440) // 60}h" if days < 100 else "99d+"
 
 
 def lane_items(value: object) -> list[str]:
@@ -925,7 +940,8 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
     history = history or {"state": "unavailable"}
     state = history.get("state")
     if state == "unavailable":
-        records_html = '<p class="history-note">Recorded history unavailable.</p>'
+        records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
+                        'shared controller history is available. This page currently summarizes review rounds only.</p>')
     elif state == "empty":
         records_html = '<p class="history-note">No recorded history for this PR.</p>'
     else:
@@ -957,6 +973,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .record-source {{ color: var(--muted); font-size: .8rem; }}
 .linked-record {{ margin: .35rem 0 .2rem; padding-left: 1.2rem; }}
 .history-note {{ color: var(--muted); }} footer {{ margin-top: 2rem; color: var(--muted); font-size: .8rem; }}
+{ACTIVITY_CSS}
 {SHARED_CSS}
 </style></head><body>{mast}<main>
 <section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
@@ -1306,16 +1323,6 @@ section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: 
 a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #742138; }}
 .pr-main > a {{ color: #252a32; font-weight: 650; }} .pr-main > a:hover {{ color: #742138; }} .sub {{ display: block; margin-top: .25rem; color: #626b77; font-size: .78rem; overflow-wrap: anywhere; }}
 .sub .files-over-warning, .sub .deletions {{ color: #a13047; font-weight: 650; }} .sub .additions {{ color: #237451; font-weight: 650; }}
-.activity-grid {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }}
-.activity-card {{ min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }}
-.activity-top {{ display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }}
-.activity-caption {{ display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }}
-.round-pills {{ display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }}
-.round-pill {{ display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 2.8rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; line-height: 1.15; white-space: nowrap; }}
-.round-age {{ display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }}
-.round-pill.older {{ border-style: dashed; background: #f1f2f4; color: #626b77; }}
-.round-pill.unlinked {{ border-color: #b9945a; background: #f3e9d9; color: #79562b; }}
-.round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
 .fresh {{ color: #626b77; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
 .cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; min-width: 0; }} .card {{ min-width: 0; overflow: hidden; }} .card-top {{ display: flex; flex-direction: column; align-items: stretch; gap: .35rem; background: var(--smoke); color: #f7f8f9; padding: .85rem 1rem; }} .card-top .fresh {{ align-self: flex-end; color: #f1dce1; }}
 .lane-topline {{ display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; min-width: 0; }} .lane-topline h3 {{ min-width: 0; margin: 0; }}
@@ -1326,7 +1333,8 @@ a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px;
 .lane-content li + li {{ margin-top: .3rem; }} .lane-queued, .lane-blocker {{ margin-top: .75rem; padding-top: .65rem; border-top: 1px solid #d9dfe1; font-size: .8rem; line-height: 1.4; }}
 .lane-content h4 {{ margin: 0 0 .25rem; color: #515a63; font-size: .66rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }} .lane-blocker h4 {{ color: #9c2939; }}
 footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
-@media (max-width: 760px) {{ .cards, .activity-grid {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
+@media (max-width: 760px) {{ .cards {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
+{ACTIVITY_CSS}
 {SHARED_CSS}
 .refresh-space {{ position: relative; display: flex; align-items: center; min-height: 2.1rem; }}
 .refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
