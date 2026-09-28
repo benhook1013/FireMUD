@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
@@ -296,6 +297,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               logger,
               "PublishScriptPatchVersion",
               ex.failureCode().name(),
+              ex.getMessage()));
+    } catch (ScriptPatchPublishFailureException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PublishScriptPatchVersion",
+              ex.failureCode(),
               ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);

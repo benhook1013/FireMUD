@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
@@ -508,6 +509,32 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsReplayedFailureCodeAndMessage() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new ScriptPatchPublishFailureException(
+                "LEGACY_REQUEST_IDENTITY_UNAVAILABLE", "stored identity cannot be replayed"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("LEGACY_REQUEST_IDENTITY_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals("stored identity cannot be replayed", ref.get().getError().getMessage());
   }
 
   @Test

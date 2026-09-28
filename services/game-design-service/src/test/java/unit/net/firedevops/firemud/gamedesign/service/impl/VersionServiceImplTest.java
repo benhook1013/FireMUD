@@ -45,11 +45,13 @@ import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -532,10 +534,7 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
-    assertTrue(
-        thrown
-            .getMessage()
-            .startsWith("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED:"));
+    assertTrue(thrown.getMessage().startsWith("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED:"));
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     assertEquals(VersionLifecycleState.DRAFT, draft.getVersionState());
     verify(publishAttemptService, org.mockito.Mockito.never())
@@ -575,19 +574,25 @@ class VersionServiceImplTest {
         .when(publishAttemptService)
         .executeScriptPatchTransaction(any());
 
-    IllegalStateException thrown =
+    ScriptPatchPublishFailureException thrown =
         assertThrows(
-            IllegalStateException.class,
+            ScriptPatchPublishFailureException.class,
             () ->
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
-    assertEquals("transaction completion outcome is ambiguous", thrown.getMessage());
+    assertEquals(PublishAttemptPendingReconciliationException.ERROR_CODE, thrown.failureCode());
+    assertTrue(
+        thrown
+            .getMessage()
+            .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"));
+    assertEquals("transaction completion outcome is ambiguous", thrown.getCause().getMessage());
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(scriptingClient, org.mockito.Mockito.never())
         .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
   }
 
   @Test
@@ -734,6 +739,63 @@ class VersionServiceImplTest {
                     "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
 
     assertEquals(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH, thrown.failureCode());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createScriptPatchAttempt(any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"PUBLISH_FAILED", "LEGACY_REQUEST_IDENTITY_UNAVAILABLE"})
+  void sameStableScriptPatchIdPreservesNonGateFailureCodeAndMessage(String failureCode) {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.FAILED, 11L, 8, 3L);
+    attempt.setFailureCode(failureCode);
+    attempt.setFailureMessage("stored terminal failure");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+
+    ScriptPatchPublishFailureException thrown =
+        assertThrows(
+            ScriptPatchPublishFailureException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
+
+    assertEquals(failureCode, thrown.failureCode());
+    assertEquals("stored terminal failure", thrown.getMessage());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createScriptPatchAttempt(any(), any(), any(), any());
+  }
+
+  @Test
+  void retainedDraftScriptPatchTupleRejectsFreshPublicationWithoutAllocation() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version retainedDraft =
+        scriptPatchVersion(12L, 9, 3L, VersionLifecycleState.DRAFT, "retained draft");
+    when(versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+            "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retainedDraft));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "new notes", "publish-request-2"));
+
+    assertTrue(thrown.getMessage().contains("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT"));
     verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
     verify(publishAttemptService, org.mockito.Mockito.never())
         .createScriptPatchAttempt(any(), any(), any(), any());
