@@ -105,7 +105,6 @@ import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
@@ -138,14 +137,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             invocation -> {
               long requestedBaseVersionId = invocation.getArgument(2, Long.class);
               if (requestedBaseVersionId <= 0L) {
-                return GetPublishedScriptPatchVersionResponse.newBuilder()
-                    .setError(
-                        ErrorDetail.newBuilder()
-                            .setCode("SCRIPT_PATCH_BASE_VERSION_REQUIRED")
-                            .setMessage(
-                                "base_version_id is required for script patch publication lookup")
-                            .build())
-                    .build();
+                throw new AssertionError(
+                    "Game Design must not be called without an exact positive patch base");
               }
               return GetPublishedScriptPatchVersionResponse.newBuilder()
                   .setScriptPatch(
