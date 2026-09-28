@@ -101,6 +101,7 @@ public class ScriptPatchReadinessProjectionRepository {
             .set(
                 SCRIPT_PATCH_READINESS_PROJECTIONS.SCRIPT_PATCH_VERSION,
                 entity.getScriptPatchVersion())
+            .set(SCRIPT_PATCH_READINESS_PROJECTIONS.BASE_VERSION_ID, entity.getBaseVersionId())
             .set(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_STATUS, entity.getReadinessStatus())
             .set(SCRIPT_PATCH_READINESS_PROJECTIONS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -125,7 +126,10 @@ public class ScriptPatchReadinessProjectionRepository {
                 SCRIPT_PATCH_READINESS_PROJECTIONS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_PATCH_READINESS_PROJECTIONS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_PATCH_READINESS_PROJECTIONS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_PATCH_READINESS_PROJECTIONS.BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -153,6 +157,7 @@ public class ScriptPatchReadinessProjectionRepository {
       ScriptPatchReadinessProjectionsRecord record, ScriptPatchReadinessProjection entity) {
     record.setTenantId(entity.getTenantId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setBaseVersionId(entity.getBaseVersionId());
     record.setReadinessStatus(entity.getReadinessStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setSupersededByScriptPatchVersion(entity.getSupersededByScriptPatchVersion());
@@ -172,6 +177,7 @@ public class ScriptPatchReadinessProjectionRepository {
     entity.setTenantId(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.TENANT_ID));
     entity.setScriptPatchVersion(
         record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.SCRIPT_PATCH_VERSION));
+    entity.setBaseVersionId(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.BASE_VERSION_ID));
     entity.setReadinessStatus(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.READINESS_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_READINESS_PROJECTIONS.STATUS_REASON));
     entity.setSupersededByScriptPatchVersion(

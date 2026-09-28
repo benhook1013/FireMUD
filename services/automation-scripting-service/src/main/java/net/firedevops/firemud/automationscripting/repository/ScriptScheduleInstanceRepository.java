@@ -112,6 +112,9 @@ public class ScriptScheduleInstanceRepository {
             .set(SCRIPT_SCHEDULE_INSTANCES.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_SCHEDULE_INSTANCES.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(
+                SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID,
+                entity.getScriptPatchBaseVersionId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
@@ -189,6 +192,7 @@ public class ScriptScheduleInstanceRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setScriptId(entity.getScriptId());
     record.setPlayableStateScope(entity.getPlayableStateScope());
@@ -234,6 +238,8 @@ public class ScriptScheduleInstanceRepository {
     entity.setTenantId(record.get(SCRIPT_SCHEDULE_INSTANCES.TENANT_ID));
     entity.setGameInstanceId(record.get(SCRIPT_SCHEDULE_INSTANCES.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(
+        record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptId(record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_ID));

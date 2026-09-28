@@ -51,8 +51,12 @@ public class ScriptPatchReadinessProjectionServiceImpl
   @Override
   @Transactional
   public boolean beginPatchReadiness(
-      String tenantId, String scriptPatchVersion, List<String> canonicalScriptNames) {
+      String tenantId,
+      long baseVersionId,
+      String scriptPatchVersion,
+      List<String> canonicalScriptNames) {
     requireText(tenantId, "tenant_id");
+    requirePositiveBaseVersionId(baseVersionId);
     requireText(scriptPatchVersion, "script_patch_version");
     List<String> scriptSet = canonicalScriptNames(canonicalScriptNames);
     lockTenantMutationScope(tenantId);
@@ -60,6 +64,7 @@ public class ScriptPatchReadinessProjectionServiceImpl
         repository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion);
     if (existing.isPresent()) {
       requireSameScriptSet(existing.get(), scriptSet);
+      requireSameBaseVersion(existing.get(), baseVersionId);
       // A retry preserves the first admission's script set and generation. Legacy rows without
       // either value fail closed because their original request cannot be reconstructed.
       return false;
@@ -69,6 +74,7 @@ public class ScriptPatchReadinessProjectionServiceImpl
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId(tenantId);
     projection.setScriptPatchVersion(scriptPatchVersion);
+    projection.setBaseVersionId(baseVersionId);
     projection.setScriptSetManifest(scriptSet);
     projection.setReadinessGeneration(repository.nextReadinessGeneration(tenantId));
     projection.setSupersededByScriptPatchVersion("");
@@ -175,7 +181,10 @@ public class ScriptPatchReadinessProjectionServiceImpl
             .stream()
             .filter(item -> "onLoad".equals(item.getEventType()))
             .toList();
-    if (onLoadWorkItems.isEmpty()) {
+    if (hasInvalidOnLoadBaseVersion(projection, onLoadWorkItems)) {
+      projection.setReadinessStatus("FAILED");
+      projection.setStatusReason(onLoadBaseVersionFailureReason(projection, onLoadWorkItems));
+    } else if (onLoadWorkItems.isEmpty()) {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("no_scripts_in_patch");
     } else if (onLoadWorkItems.stream()
@@ -276,6 +285,22 @@ public class ScriptPatchReadinessProjectionServiceImpl
     }
   }
 
+  private static void requireSameBaseVersion(
+      ScriptPatchReadinessProjection projection, long baseVersionId) {
+    if (projection.getBaseVersionId() == null || projection.getBaseVersionId() <= 0L) {
+      throw new IllegalStateException("script_patch_base_version_unavailable");
+    }
+    if (projection.getBaseVersionId() != baseVersionId) {
+      throw new IllegalArgumentException("script_patch_base_version_conflict");
+    }
+  }
+
+  private static void requirePositiveBaseVersionId(long baseVersionId) {
+    if (baseVersionId <= 0L) {
+      throw new IllegalArgumentException("base_version_id must be positive");
+    }
+  }
+
   private static List<String> canonicalScriptNames(List<String> scriptNames) {
     if (scriptNames == null) {
       throw new IllegalArgumentException("script_set_manifest_required");
@@ -334,6 +359,35 @@ public class ScriptPatchReadinessProjectionServiceImpl
         && "onload_budget_exceeded".equals(item.getCancelReason());
   }
 
+  private static boolean hasInvalidOnLoadBaseVersion(
+      ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
+    Long expectedBaseVersionId = projection.getBaseVersionId();
+    return !workItems.isEmpty()
+        && (expectedBaseVersionId == null
+            || expectedBaseVersionId <= 0L
+            || workItems.stream()
+                .anyMatch(
+                    item ->
+                        item.getScriptPatchBaseVersionId() == null
+                            || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId())));
+  }
+
+  private static String onLoadBaseVersionFailureReason(
+      ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
+    Long expectedBaseVersionId = projection.getBaseVersionId();
+    if (expectedBaseVersionId == null || expectedBaseVersionId <= 0L) {
+      return "onload_base_version_unavailable";
+    }
+    if (workItems.stream().anyMatch(item -> item.getScriptPatchBaseVersionId() == null)) {
+      return "onload_base_version_unavailable";
+    }
+    if (workItems.stream()
+        .anyMatch(item -> !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId()))) {
+      return "onload_base_version_mismatch";
+    }
+    throw new IllegalStateException("onload_base_version_failure_reason_unavailable");
+  }
+
   private static String latestCanceledReason(List<ScriptWorkItem> workItems, String fallback) {
     return workItems.stream()
         .filter(
@@ -366,6 +420,7 @@ public class ScriptPatchReadinessProjectionServiceImpl
     return new ReadinessStatusSummary(
         projection.getTenantId(),
         projection.getScriptPatchVersion(),
+        projection.getBaseVersionId() == null ? 0L : projection.getBaseVersionId(),
         toProtoStatus(projection.getReadinessStatus()),
         projection.getStatusReason(),
         blankToEmpty(projection.getSupersededByScriptPatchVersion()),

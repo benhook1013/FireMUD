@@ -167,7 +167,8 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!coherentPinTuple(
         incoming.getPinnedScriptPatchVersion(),
         incoming.getScriptPinEpoch(),
-        incoming.getScriptPatchPinnedControlPlaneRequestId())) {
+        incoming.getScriptPatchPinnedControlPlaneRequestId(),
+        incoming.getPinnedScriptPatchBaseVersionId())) {
       return false;
     }
     if (existing == null) {
@@ -179,10 +180,26 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (isLegacyProjection(existing)) {
       return true;
     }
+    if (existing.getPinnedScriptPatchBaseVersionId() == null) {
+      // A post-upgrade owner refresh may repair only the missing base on the exact retained pin.
+      // It cannot move the observed epoch backward or change the patch/request tuple in place.
+      if (incoming.getScriptPinEpoch() < existing.getScriptPinEpoch()) {
+        return false;
+      }
+      return incoming.getScriptPinEpoch() > existing.getScriptPinEpoch()
+          || samePinTupleWithoutBase(
+              existing.getObservedPinnedScriptPatchVersion(),
+              existing.getScriptPinEpoch(),
+              existing.getLastObservedControlPlaneRequestId(),
+              incoming.getPinnedScriptPatchVersion(),
+              incoming.getScriptPinEpoch(),
+              incoming.getScriptPatchPinnedControlPlaneRequestId());
+    }
     if (!coherentPinTuple(
         existing.getObservedPinnedScriptPatchVersion(),
         existing.getScriptPinEpoch(),
-        existing.getLastObservedControlPlaneRequestId())) {
+        existing.getLastObservedControlPlaneRequestId(),
+        existing.getPinnedScriptPatchBaseVersionId())) {
       return false;
     }
     if (incoming.getScriptPinEpoch() < existing.getScriptPinEpoch()) {
@@ -195,10 +212,28 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
             existing.getLastObservedControlPlaneRequestId(),
             incoming.getPinnedScriptPatchVersion(),
             incoming.getScriptPinEpoch(),
-            incoming.getScriptPatchPinnedControlPlaneRequestId());
+            incoming.getScriptPatchPinnedControlPlaneRequestId(),
+            existing.getPinnedScriptPatchBaseVersionId(),
+            incoming.getPinnedScriptPatchBaseVersionId());
   }
 
   private static boolean samePinTuple(
+      String existingPatch,
+      Long existingEpoch,
+      String existingRequestId,
+      String incomingPatch,
+      Long incomingEpoch,
+      String incomingRequestId,
+      Long existingBaseVersionId,
+      Long incomingBaseVersionId) {
+    return java.util.Objects.equals(existingEpoch, incomingEpoch)
+        && blankToEmpty(existingPatch).equals(blankToEmpty(incomingPatch))
+        && blankToEmpty(existingRequestId).equals(blankToEmpty(incomingRequestId))
+        && existingBaseVersionId != null
+        && java.util.Objects.equals(existingBaseVersionId, incomingBaseVersionId);
+  }
+
+  private static boolean samePinTupleWithoutBase(
       String existingPatch,
       Long existingEpoch,
       String existingRequestId,
@@ -210,12 +245,13 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         && blankToEmpty(existingRequestId).equals(blankToEmpty(incomingRequestId));
   }
 
-  private static boolean coherentPinTuple(String patchVersion, Long epoch, String requestId) {
+  private static boolean coherentPinTuple(
+      String patchVersion, Long epoch, String requestId, Long baseVersionId) {
     boolean hasPatch = !blankToEmpty(patchVersion).isBlank();
     boolean hasRequestId = !blankToEmpty(requestId).isBlank();
     return epoch == null || epoch == 0L
-        ? !hasPatch && !hasRequestId
-        : epoch > 0L && hasPatch && hasRequestId;
+        ? !hasPatch && !hasRequestId && (baseVersionId == null || baseVersionId == 0L)
+        : epoch > 0L && hasPatch && hasRequestId && baseVersionId != null && baseVersionId > 0L;
   }
 
   private static boolean isLegacyProjection(ScriptPatchPinProjection projection) {
@@ -245,6 +281,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
     projection.setScriptPinEpoch(
         runtimeState.getScriptPinEpoch() > 0 ? runtimeState.getScriptPinEpoch() : null);
+    projection.setPinnedScriptPatchBaseVersionId(
+        runtimeState.getPinnedScriptPatchBaseVersionId() > 0
+            ? runtimeState.getPinnedScriptPatchBaseVersionId()
+            : null);
     projection.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
     projection.setWorldSlug(routingBundle.worldSlug());
@@ -276,6 +316,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         gameInstanceId,
         "",
         0L,
+        0L,
         "",
         0L,
         observedAt.toEpochMilli(),
@@ -298,6 +339,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         projection.getTenantId(),
         projection.getGameInstanceId(),
         projection.getObservedPinnedScriptPatchVersion(),
+        projection.getPinnedScriptPatchBaseVersionId() == null
+            ? 0L
+            : projection.getPinnedScriptPatchBaseVersionId(),
         projection.getScriptPinEpoch() == null ? 0L : projection.getScriptPinEpoch(),
         projection.getLastObservedControlPlaneRequestId(),
         projection.getObservedAt().equals(Instant.EPOCH)

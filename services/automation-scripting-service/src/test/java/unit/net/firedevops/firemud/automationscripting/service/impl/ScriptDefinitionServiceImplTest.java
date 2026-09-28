@@ -77,13 +77,30 @@ class ScriptDefinitionServiceImplTest {
     saved.setId(5L);
     when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
         .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, true));
-    ScriptDefinitionDto dto = new ScriptDefinitionDto(null, 1L, "test", "v1", "{}", List.of());
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(null, 1L, "test", "v1", 1L, "{}", List.of());
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertNotNull(result);
     assertEquals(5L, result.id());
     verify(repository).saveWithCreationResult(any(ScriptDefinition.class));
+  }
+
+  @Test
+  void updateScriptRejectsNullOrMismatchedRetainedBindingBaseBeforeMaterialization() {
+    when(bindingRepository.existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+            1L, "v1", 1L))
+        .thenReturn(true);
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(null, 1L, "test", "v1", 1L, "{}", List.of());
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+
+    verify(bindingRepository, never())
+        .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+            1L, "v1");
+    verify(repository, never()).bindScriptPatchBaseVersionId("1", "v1", 1L);
   }
 
   @Test
@@ -98,6 +115,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -117,6 +135,19 @@ class ScriptDefinitionServiceImplTest {
   }
 
   @Test
+  void stableIdentityConflictReportsRequestedBaseVersion() {
+    ScriptDefinition existing = script(5L, "test", "v1", "{}");
+    existing.setBaseVersionId(1L);
+    when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(5L, 1L, "renamed", "v1", 2L, "{}", List.of());
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=1")
+        .hasMessageContaining("requested=(tenantId=1, version=v1, baseVersionId=2, name=renamed)");
+  }
+
+  @Test
   void updateScriptReplacesChangedDefinitionForExistingStableIdentity() throws SagaException {
     ScriptDefinition existing = script(5L, "test", "v1", "{\"original\":true}");
     existing.setRowVersion(9);
@@ -128,7 +159,7 @@ class ScriptDefinitionServiceImplTest {
     when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
         .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, false));
     ScriptDefinitionDto dto =
-        new ScriptDefinitionDto(5L, 1L, "test", "v1", "{\"changed\":true}", List.of());
+        new ScriptDefinitionDto(5L, 1L, "test", "v1", 1L, "{\"changed\":true}", List.of());
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
@@ -150,7 +181,7 @@ class ScriptDefinitionServiceImplTest {
     when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
         .thenReturn(new ScriptDefinitionRepository.SaveResult(persisted, false));
     ScriptDefinitionDto dto =
-        new ScriptDefinitionDto(5L, 1L, "test", "v1", "{\"original\":true}", List.of());
+        new ScriptDefinitionDto(5L, 1L, "test", "v1", 1L, "{\"original\":true}", List.of());
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
@@ -166,7 +197,7 @@ class ScriptDefinitionServiceImplTest {
     ScriptDefinition existing = script(5L, "test", "v1", "{\"original\":true}");
     when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
     ScriptDefinitionDto dto =
-        new ScriptDefinitionDto(5L, 1L, "renamed", "v1", "{\"replacement\":true}", List.of());
+        new ScriptDefinitionDto(5L, 1L, "renamed", "v1", 1L, "{\"replacement\":true}", List.of());
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
@@ -190,6 +221,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -224,6 +256,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -256,6 +289,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -365,6 +399,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -394,6 +429,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -419,6 +455,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -437,6 +474,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -455,6 +493,7 @@ class ScriptDefinitionServiceImplTest {
             1L,
             "test",
             "v1",
+            1L,
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
@@ -480,6 +519,7 @@ class ScriptDefinitionServiceImplTest {
     script.setTenantId(1L);
     script.setName(name);
     script.setScriptVersion(version);
+    script.setBaseVersionId(1L);
     script.setDefinition(definition);
     return script;
   }
@@ -490,6 +530,7 @@ class ScriptDefinitionServiceImplTest {
         1L,
         "test",
         "v1",
+        1L,
         definition,
         List.of(
             new ScriptDefinitionDto.EventBindingDto(

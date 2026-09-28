@@ -37,10 +37,12 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -113,6 +115,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
+  private final ScriptPatchReadinessProjectionService readinessProjectionService;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
@@ -128,7 +131,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
       MeterRegistry meterRegistry,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      ScriptPatchReadinessProjectionService readinessProjectionService) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
@@ -143,6 +147,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
     this.objectMapper = objectMapper;
+    this.readinessProjectionService = readinessProjectionService;
   }
 
   @Override
@@ -171,12 +176,26 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return;
     }
     if (runtimeState.getPinnedScriptPatchVersion().isBlank()) {
-      if (runtimeState.getScriptPinEpoch() <= 0
+      if (runtimeState.getScriptPinEpoch() == 0
+          && runtimeState.getPinnedScriptPatchBaseVersionId() == 0L
           && blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()).isBlank()) {
         scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
       } else {
         markRetainedSchedulesPending(tenantId, gameInstanceId);
       }
+      return;
+    }
+    long pinnedScriptPatchBaseVersionId = runtimeState.getPinnedScriptPatchBaseVersionId();
+    var readiness =
+        readinessProjectionService == null
+            ? Optional.<ScriptPatchReadinessProjectionService.ReadinessStatusSummary>empty()
+            : readinessProjectionService.getProjection(
+                tenantId, runtimeState.getPinnedScriptPatchVersion());
+    if (pinnedScriptPatchBaseVersionId <= 0L
+        || readiness.isEmpty()
+        || readiness.orElseThrow().baseVersionId() != pinnedScriptPatchBaseVersionId
+        || readiness.orElseThrow().status() != ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY) {
+      markRetainedSchedulesPending(tenantId, gameInstanceId);
       return;
     }
     if (runtimeState.getRegionId().isBlank()
@@ -198,8 +217,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         scheduleDefinitionRepository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
                 tenantKey, scriptPatchVersion);
+    if (definitions.stream()
+        .anyMatch(
+            definition ->
+                definition.getBaseVersionId() == null
+                    || definition.getBaseVersionId() != pinnedScriptPatchBaseVersionId)) {
+      markRetainedSchedulesPending(tenantId, gameInstanceId);
+      return;
+    }
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
-        bindingsByScriptEvent(tenantKey, scriptPatchVersion);
+        bindingsByScriptEvent(tenantKey, scriptPatchVersion, pinnedScriptPatchBaseVersionId);
+    if (bindingsByScriptEvent == null) {
+      markRetainedSchedulesPending(tenantId, gameInstanceId);
+      return;
+    }
     Map<String, PluginRuntimeState> activePluginStates =
         activePluginStates(
             tenantId,
@@ -320,6 +351,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setPinnedScriptPatchBaseVersionId(
+                  projection.getPinnedScriptPatchBaseVersionId() == null
+                      ? 0L
+                      : projection.getPinnedScriptPatchBaseVersionId())
               .setScriptPinEpoch(scriptPinEpoch)
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
@@ -741,12 +776,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private Map<String, List<ScriptEventBinding>> bindingsByScriptEvent(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, long baseVersionId) {
     Map<String, List<ScriptEventBinding>> bindings = new HashMap<>();
-    for (ScriptEventBinding binding :
+    List<ScriptEventBinding> patchBindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                tenantId, scriptPatchVersion)) {
+                tenantId, scriptPatchVersion);
+    if (patchBindings.stream()
+        .anyMatch(
+            binding ->
+                binding.getBaseVersionId() == null
+                    || binding.getBaseVersionId() != baseVersionId)) {
+      return null;
+    }
+    for (ScriptEventBinding binding : patchBindings) {
       if (!binding.isEnabled()) {
         continue;
       }
@@ -826,6 +869,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
+    instance.setScriptPatchBaseVersionId(runtimeState.getPinnedScriptPatchBaseVersionId());
     long scriptPinEpoch = runtimeState.getScriptPinEpoch();
     instance.setScriptPinEpoch(scriptPinEpoch);
     instance.setScriptId(definition.getScriptId());
@@ -1277,6 +1321,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPatchBaseVersionId(instance.getScriptPatchBaseVersionId());
     audit.setScriptPinEpoch(candidate.scriptPinEpoch());
     audit.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     audit.setScriptEventId(scriptEventId);
@@ -1433,6 +1478,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
+    item.setScriptPatchBaseVersionId(instance.getScriptPatchBaseVersionId());
     item.setScriptPinEpoch(candidate.scriptPinEpoch());
     item.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     item.setScriptEventId(scriptEventId);
@@ -1505,6 +1551,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     if (runtimeState.getScriptPinEpoch() <= 0 || instance.getScriptPinEpoch() <= 0) {
       return MaterializationEligibility.authorityUnavailable();
+    }
+    long runtimeBaseVersionId = runtimeState.getPinnedScriptPatchBaseVersionId();
+    Long instanceBaseVersionId = instance.getScriptPatchBaseVersionId();
+    if (runtimeBaseVersionId <= 0L
+        || instanceBaseVersionId == null
+        || instanceBaseVersionId <= 0L) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (runtimeBaseVersionId != instanceBaseVersionId) {
+      return MaterializationEligibility.proven("script_patch_base_version_mismatch");
     }
     String runtimeRequestId =
         blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId());
@@ -1746,6 +1802,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPatchBaseVersionId(workItem.getScriptPatchBaseVersionId());
     audit.setScriptPinEpoch(candidate.scriptPinEpoch());
     audit.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     audit.setScriptEventId(workItem.getScriptEventId());
@@ -1855,6 +1912,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.bindingId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
+        summary.scriptPatchBaseVersionId(),
         summary.scriptPinEpoch(),
         summary.scriptPinControlPlaneRequestId(),
         summary.scriptEventId(),
@@ -1869,7 +1927,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.finalReason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationLink(tenantId, 0L, summary.scriptPatchVersion()),
+        publicationLink(tenantId, summary.scriptPatchBaseVersionId(), summary.scriptPatchVersion()),
         pluginPublication);
   }
 
@@ -1881,6 +1939,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPatchBaseVersionId(),
         summary.scriptPinEpoch(),
         summary.scriptId(),
         summary.playableStateScope(),
@@ -1912,10 +1971,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.runtimeRegionEpoch(),
         summary.lastObservedTickId(),
         summary.lastRuntimeProgressObservedAtMs(),
-        publicationLink(
-            tenantId,
-            parsePositiveRuntimeVersionId(summary.observedRuntimeVersionId()),
-            summary.scriptPatchVersion()),
+        publicationLink(tenantId, summary.scriptPatchBaseVersionId(), summary.scriptPatchVersion()),
         pluginPublication);
   }
 
@@ -1924,8 +1980,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (baseVersionId <= 0L) {
       return unavailableScriptPatchPublication(
           scriptPatchVersion,
-          "INVALID_ARGUMENT",
-          "base_version_id is required for exact script-patch publication lookup");
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "base_version_id is unavailable for exact script-patch publication lookup");
     }
     GetPublishedScriptPatchVersionResponse response;
     try {
@@ -1957,6 +2013,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           blankToEmpty(response.getError().getCode()),
           blankToEmpty(response.getError().getMessage()));
     }
+    if (response.getScriptPatch().getBaseVersionId() != baseVersionId
+        || !scriptPatchVersion.equals(
+            blankToEmpty(response.getScriptPatch().getScriptPatchVersion()))) {
+      return unavailableScriptPatchPublication(
+          scriptPatchVersion,
+          "FAILED_PRECONDITION",
+          "published script-patch identity does not match the exact requested base");
+    }
     return new ScriptWorkItemService.ScriptPatchPublicationLink(
         blankToEmpty(response.getScriptPatch().getScriptPatchVersion()),
         response.getScriptPatch().getVersionId(),
@@ -1965,18 +2029,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         response.getScriptPatch().getLastChangedAtMs(),
         "",
         "");
-  }
-
-  private static long parsePositiveRuntimeVersionId(String runtimeVersionId) {
-    if (runtimeVersionId == null || runtimeVersionId.isBlank()) {
-      return 0L;
-    }
-    try {
-      long parsed = Long.parseLong(runtimeVersionId);
-      return parsed > 0L ? parsed : 0L;
-    } catch (NumberFormatException ex) {
-      return 0L;
-    }
   }
 
   private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(
@@ -2073,6 +2125,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         blankToEmpty(audit.getBindingId()),
         audit.getEventType(),
         audit.getScriptPatchVersion(),
+        audit.getScriptPatchBaseVersionId() == null ? 0L : audit.getScriptPatchBaseVersionId(),
         audit.getScriptPinEpoch() == null ? 0L : audit.getScriptPinEpoch(),
         blankToEmpty(audit.getScriptPinControlPlaneRequestId()),
         audit.getScriptEventId(),
@@ -2166,6 +2219,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getTenantId(),
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPatchBaseVersionId() == null
+            ? 0L
+            : instance.getScriptPatchBaseVersionId(),
         instance.getScriptPinEpoch(),
         instance.getScriptId(),
         blankToEmpty(instance.getPlayableStateScope()),

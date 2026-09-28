@@ -9,6 +9,7 @@ public class ScriptPatchReadinessProjection {
   private Long id;
   private String tenantId;
   private String scriptPatchVersion;
+  private Long baseVersionId;
   private String readinessStatus = "PENDING_VALIDATION";
   private String statusReason = "pending_validation";
   private String supersededByScriptPatchVersion = "";

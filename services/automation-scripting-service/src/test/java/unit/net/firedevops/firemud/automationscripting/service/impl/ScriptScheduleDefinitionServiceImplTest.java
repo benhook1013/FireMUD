@@ -22,6 +22,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import tools.jackson.databind.ObjectMapper;
 
 class ScriptScheduleDefinitionServiceImplTest {
+  private static final long TEST_PATCH_BASE_VERSION_ID = 7L;
+
   private ScriptScheduleDefinitionRepository repository;
   private ScriptScheduleDefinitionService service;
 
@@ -47,6 +49,8 @@ class ScriptScheduleDefinitionServiceImplTest {
   void refreshPatchSchedulesPersistsIntervalAndTimerMetadata() {
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         """
@@ -76,6 +80,9 @@ class ScriptScheduleDefinitionServiceImplTest {
     @SuppressWarnings("unchecked")
     List<ScriptScheduleDefinition> saved = captor.getValue();
     assertThat(saved).hasSize(2);
+    assertThat(saved)
+        .extracting(ScriptScheduleDefinition::getBaseVersionId)
+        .containsOnly(TEST_PATCH_BASE_VERSION_ID);
     assertThat(saved)
         .extracting(ScriptScheduleDefinition::getScheduleDefinitionId)
         .containsExactlyInAnyOrder("guard.patrol.v1", "guard.alert.expire.v1");
@@ -107,6 +114,8 @@ class ScriptScheduleDefinitionServiceImplTest {
   void refreshPatchSchedulesIgnoresOrdinaryHandlersAlongsideSchedules() {
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         "{\"eventHandlers\":{"
@@ -136,6 +145,8 @@ class ScriptScheduleDefinitionServiceImplTest {
         .thenReturn(List.of());
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition("{\"eventHandlers\":{\"onCommand\":{\"commandText\":\"LOOK\"}}}");
 
@@ -150,6 +161,8 @@ class ScriptScheduleDefinitionServiceImplTest {
   void refreshPatchSchedulesPersistsPluginOwnerMetadata() {
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("plugin-town-crier");
     script.setDefinition(
         """
@@ -201,6 +214,8 @@ class ScriptScheduleDefinitionServiceImplTest {
     existing.setPluginVersionId("");
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         """
@@ -230,6 +245,8 @@ class ScriptScheduleDefinitionServiceImplTest {
   void refreshPatchSchedulesIgnoresOrdinaryHandlerKinds() {
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         """
@@ -265,6 +282,8 @@ class ScriptScheduleDefinitionServiceImplTest {
     String jsonValue = quoted ? "\"" + authoredCadence + "\"" : authoredCadence;
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         "{\"eventHandlers\":{\"onInterval\":{\"scheduleDefinitionId\":\"guard.patrol.v1\",\"intervalTicks\":"
@@ -303,6 +322,8 @@ class ScriptScheduleDefinitionServiceImplTest {
         .thenReturn(List.of());
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         "{\"eventHandlers\":{\"onTimerExpire\":{\"scheduleDefinitionId\":\"guard.alert.expire.v1\",\"delayTicks\":1.5,\"delayMs\":5000}}}");
@@ -333,6 +354,8 @@ class ScriptScheduleDefinitionServiceImplTest {
     String fallback = "delayTicks".equals(cadenceField) ? ",\"delayMs\":5000" : "";
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("npc-guard");
     script.setDefinition(
         "{\"eventHandlers\":{\"onTimerExpire\":{\"scheduleDefinitionId\":\"timer.v1\",\""
@@ -387,6 +410,8 @@ class ScriptScheduleDefinitionServiceImplTest {
         .thenReturn(List.of());
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("plugin-town-crier");
     script.setDefinition(
         "{"
@@ -430,6 +455,8 @@ class ScriptScheduleDefinitionServiceImplTest {
         .thenReturn(List.of());
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(TEST_PATCH_BASE_VERSION_ID);
     script.setName("plugin-town-crier");
     script.setDefinition(
         "{\"eventHandlers\":{"

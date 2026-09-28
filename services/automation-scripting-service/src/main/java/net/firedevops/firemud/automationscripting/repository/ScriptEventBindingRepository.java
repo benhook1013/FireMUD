@@ -55,13 +55,18 @@ public class ScriptEventBindingRepository {
 
   public List<ScriptEventBinding>
       findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-          Long tenantId, String scriptPatchVersion, String eventType, String eventSchemaVersion) {
+          Long tenantId,
+          String scriptPatchVersion,
+          long baseVersionId,
+          String eventType,
+          String eventSchemaVersion) {
     return dsl.selectFrom(SCRIPT_EVENT_BINDINGS)
         .where(
             SCRIPT_EVENT_BINDINGS
                 .TENANT_ID
                 .eq(tenantId)
                 .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID.eq(baseVersionId))
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_BINDINGS.ENABLED.eq(true)))
@@ -108,6 +113,17 @@ public class ScriptEventBindingRepository {
         .fetch(this::toEntity);
   }
 
+  public boolean existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+      Long tenantId, String scriptPatchVersion, long baseVersionId) {
+    return dsl.fetchExists(
+        SCRIPT_EVENT_BINDINGS,
+        SCRIPT_EVENT_BINDINGS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID.isDistinctFrom(baseVersionId)));
+  }
+
   public List<ScriptEventBinding> saveAll(Collection<ScriptEventBinding> entities) {
     if (entities == null || entities.isEmpty()) {
       return List.of();
@@ -127,6 +143,7 @@ public class ScriptEventBindingRepository {
         dsl.update(SCRIPT_EVENT_BINDINGS)
             .set(SCRIPT_EVENT_BINDINGS.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID, entity.getBaseVersionId())
             .set(SCRIPT_EVENT_BINDINGS.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_BINDINGS.SCRIPT_ID, entity.getScriptId())
@@ -142,7 +159,10 @@ public class ScriptEventBindingRepository {
                 SCRIPT_EVENT_BINDINGS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_BINDINGS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_EVENT_BINDINGS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -161,6 +181,7 @@ public class ScriptEventBindingRepository {
   private void populate(ScriptEventBindingsRecord record, ScriptEventBinding entity) {
     record.setTenantId(entity.getTenantId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setBaseVersionId(entity.getBaseVersionId());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptId(entity.getScriptId());
@@ -179,6 +200,7 @@ public class ScriptEventBindingRepository {
     entity.setId(record.get(SCRIPT_EVENT_BINDINGS.ID));
     entity.setTenantId(record.get(SCRIPT_EVENT_BINDINGS.TENANT_ID));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION));
+    entity.setBaseVersionId(record.get(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID));
     entity.setEventType(record.get(SCRIPT_EVENT_BINDINGS.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION));
     entity.setScriptId(record.get(SCRIPT_EVENT_BINDINGS.SCRIPT_ID));

@@ -236,6 +236,7 @@ public class ScriptEventAuditRepository {
               normalizedScriptPinControlPlaneRequestId,
               result.audit().getScriptPinControlPlaneRequestId());
           requireMatchingPluginFence(entity, result.audit());
+          requireMatchingPatchBase(entity, result.audit());
         }
         return new IdempotentInsertResult(result.audit(), result.inserted());
       }
@@ -248,6 +249,7 @@ public class ScriptEventAuditRepository {
             normalizedScriptPinControlPlaneRequestId,
             existing.orElseThrow().getScriptPinControlPlaneRequestId());
         requireMatchingPluginFence(entity, existing.orElseThrow());
+        requireMatchingPatchBase(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -457,7 +459,10 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_BASE_VERSION_ID.isNotDistinctFrom(
+                            entity.getScriptPatchBaseVersionId())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -498,6 +503,7 @@ public class ScriptEventAuditRepository {
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -545,6 +551,7 @@ public class ScriptEventAuditRepository {
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_BASE_VERSION_ID));
     entity.setScriptEventId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID));
     Boolean dryRun = record.get(SCRIPT_EVENT_AUDIT.DRY_RUN);
     entity.setDryRun(Boolean.TRUE.equals(dryRun));
@@ -583,6 +590,11 @@ public class ScriptEventAuditRepository {
       throw new IllegalArgumentException(
           "script_patch_version is immutable and conflicts with persisted identity");
     }
+    if (!Objects.equals(
+        submitted.getScriptPatchBaseVersionId(), persisted.getScriptPatchBaseVersionId())) {
+      throw new IllegalArgumentException(
+          "script_patch_base_version_id is immutable and conflicts with persisted identity");
+    }
     if (!Objects.equals(normalizedScriptPinEpoch(submitted), normalizedScriptPinEpoch(persisted))) {
       throw new IllegalArgumentException(
           "script_pin_epoch is immutable and conflicts with persisted identity");
@@ -610,6 +622,15 @@ public class ScriptEventAuditRepository {
     }
     if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
       throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
+  private static void requireMatchingPatchBase(
+      ScriptEventAudit requested, ScriptEventAudit existing) {
+    if (!Objects.equals(
+        requested.getScriptPatchBaseVersionId(), existing.getScriptPatchBaseVersionId())) {
+      throw new IllegalStateException(
+          "script_patch_base_version_id conflicts with existing handler identity");
     }
   }
 

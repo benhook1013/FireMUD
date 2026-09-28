@@ -427,6 +427,30 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
 
+    Long retainedBaseVersionId = workItem.getScriptPatchBaseVersionId();
+    Long definitionBaseVersionId = definition.get().getBaseVersionId();
+    if (retainedBaseVersionId == null
+        || retainedBaseVersionId <= 0
+        || definitionBaseVersionId == null
+        || definitionBaseVersionId <= 0) {
+      deadLetter(
+          workItem,
+          STAGE_DSL_EVAL,
+          "definition_invalid",
+          "script_patch_base_version_unavailable",
+          now);
+      return false;
+    }
+    if (!retainedBaseVersionId.equals(definitionBaseVersionId)) {
+      deadLetter(
+          workItem,
+          STAGE_DSL_EVAL,
+          "definition_invalid",
+          "script_patch_base_version_mismatch",
+          now);
+      return false;
+    }
+
     JsonNode definitionRoot;
     try {
       definitionRoot = parseDefinitionRoot(definition.get().getDefinition());

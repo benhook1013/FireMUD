@@ -60,7 +60,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     indexed.setId(99L);
     ScriptWorkItem fallback = workItem();
     fallback.setId(100L);
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[]}");
     when(automationQueueService.drainIndexedWorkItemPointers(20, 10))
         .thenReturn(
@@ -120,7 +120,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -174,10 +174,97 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(commandCaptor.getValue().targetGameInstanceId()).isEqualTo("7");
     assertThat(commandCaptor.getValue().targetRegionId()).isEqualTo("region-1");
     assertThat(commandCaptor.getValue().targetRegionEpoch()).isEqualTo(12L);
+    assertThat(item.getScriptPatchBaseVersionId()).isEqualTo(definition.getBaseVersionId());
     assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("handoff_accepted");
     assertThat(audit.getFinalReason()).isEqualTo("commands_handed_off");
+  }
+
+  @Test
+  void deadLettersWorkItemWithMissingBaseBeforeDslOrHandoff() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem item = workItem();
+    item.setScriptPatchBaseVersionId(null);
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("not-json");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("script_patch_base_version_unavailable");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("definition_invalid");
+    Mockito.verifyNoInteractions(handoffService);
+  }
+
+  @Test
+  void deadLettersWorkItemWithMismatchedBaseBeforeDslOrHandoff() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem item = workItem();
+    item.setScriptPatchBaseVersionId(7L);
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("not-json");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("script_patch_base_version_mismatch");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("definition_invalid");
+    Mockito.verifyNoInteractions(handoffService);
   }
 
   @ParameterizedTest
@@ -327,7 +414,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem sibling = workItem();
     sibling.setId(100L);
     sibling.setScriptId("script-2");
-    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    ScriptDefinition siblingDefinition = scriptDefinition();
     siblingDefinition.setDefinition("{\"emitCommands\":[]}");
     when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2"))
@@ -665,7 +752,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
     ScriptWorkItem item = pluginWorkItem();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -709,7 +796,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     PluginRuntimeStateRepository pluginRepository =
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptWorkItem item = workItem();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[]}");
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -746,7 +833,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptTenantBudgetService tenantBudgetService = allowingTenantBudgetService();
     ScriptWorkItem item = pluginWorkItem();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
     PluginRuntimeState current = pluginState(1L, 1L);
     PluginRuntimeState changed = pluginState(2L, 1L);
@@ -788,7 +875,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     PluginRuntimeStateRepository pluginRepository =
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptWorkItem item = pluginWorkItem();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
     PluginRuntimeState current = pluginState(1L, 1L);
@@ -839,7 +926,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
     ScriptWorkItem item = workItem();
     Instant eligibleAtBeforeRetry = item.getNextEligibleAt();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\",\"targetEntityId\":\"entity-2\"}]}");
     List<String> operations = new ArrayList<>();
@@ -920,10 +1007,10 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem sibling = workItem();
     sibling.setId(100L);
     sibling.setScriptId("script-2");
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
-    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    ScriptDefinition siblingDefinition = scriptDefinition();
     siblingDefinition.setDefinition("{\"emitCommands\":[]}");
     PluginRuntimeState current = pluginState(1L, 1L);
     when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
@@ -978,10 +1065,10 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem sibling = workItem();
     sibling.setId(100L);
     sibling.setScriptId("script-2");
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"}]}");
-    ScriptDefinition siblingDefinition = new ScriptDefinition();
+    ScriptDefinition siblingDefinition = scriptDefinition();
     siblingDefinition.setDefinition("{\"emitCommands\":[]}");
     PluginRuntimeState current = pluginState(1L, 1L);
     when(workItemService.claimPendingForEvaluation(2)).thenReturn(List.of(item, sibling));
@@ -1034,7 +1121,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptWorkItem item = pluginWorkItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
             + "{\"commandText\":\"SAY\"}]}");
@@ -1108,7 +1195,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptWorkItem item = pluginWorkItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
             + "{\"commandText\":\"SAY\"}]}");
@@ -1355,7 +1442,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -1439,7 +1526,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setPayloadJson("{\"commandName\":\"LOOK\",\"target\":\"entity-2\"}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -1510,7 +1597,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setPayloadJson(
         "{\"targetInstance\":\"remote-7\",\"targetRegion\":\"region-9\",\"targetEpoch\":44}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -1575,7 +1662,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setPayloadJson("{\"direction\":\"north\",\"thing\":\"old chest\"}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -1652,7 +1739,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setPayloadJson("{\"targetA\":\"entity-2\",\"targetB\":\"entity-3\"}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -1734,7 +1821,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     valid.setScriptId("valid-script");
     ScriptEventAudit oversizedAudit = new ScriptEventAudit();
     ScriptEventAudit validAudit = new ScriptEventAudit();
-    ScriptDefinition oversizedDefinition = new ScriptDefinition();
+    ScriptDefinition oversizedDefinition = scriptDefinition();
     oversizedDefinition.setDefinition(
         """
         {
@@ -1746,7 +1833,7 @@ class ScriptWorkItemExecutionServiceImplTest {
           ]
         }
         """);
-    ScriptDefinition validDefinition = new ScriptDefinition();
+    ScriptDefinition validDefinition = scriptDefinition();
     validDefinition.setDefinition("{\"emitCommands\":[]}");
 
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(oversized, valid));
@@ -1929,7 +2016,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setPayloadJson("{\"shouldGreet\":true,\"muted\":false}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -2009,7 +2096,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -2065,7 +2152,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     outputProperties.setMaxCommandsPerEntityPerTrigger(1);
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -2211,7 +2298,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setEventType("onLoad");
     item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"eventHandlers\":{\"onLoad\":{}}}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -2357,9 +2444,9 @@ class ScriptWorkItemExecutionServiceImplTest {
         onLoad ? ScriptQuotaClasses.PUBLISH_READINESS : ScriptQuotaClasses.STANDARD_RUNTIME);
     ScriptEventAudit malformedAudit = new ScriptEventAudit();
     ScriptEventAudit validAudit = new ScriptEventAudit();
-    ScriptDefinition malformedDefinition = new ScriptDefinition();
+    ScriptDefinition malformedDefinition = scriptDefinition();
     malformedDefinition.setDefinition(malformedDefinitionValue);
-    ScriptDefinition validDefinition = new ScriptDefinition();
+    ScriptDefinition validDefinition = scriptDefinition();
     validDefinition.setDefinition("{\"eventHandlers\":{\"" + eventType + "\":{}}}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(malformed, valid));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(
@@ -2504,7 +2591,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setEventType("onLoad");
     item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"eventHandlers\":{\"onLoad\":{\"emitCommands\":[{\"commandText\":\"say nope\",\"targetEntityId\":\"entity-9\"}]}}}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
@@ -2550,7 +2637,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setDryRun(true);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         """
         {
@@ -2607,7 +2694,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setDryRun(true);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"say dry\"}]}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -2661,7 +2748,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setPriorityTag(priorityTag);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[]}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -2733,7 +2820,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItem item = workItem();
     item.setEventType(eventType);
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[]}");
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
@@ -2952,7 +3039,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(definitionJson);
 
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
@@ -3022,7 +3109,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
-    ScriptDefinition definition = new ScriptDefinition();
+    ScriptDefinition definition = scriptDefinition();
     definition.setDefinition(
         "{\"emitCommands\":[{\"commandText\":\"LOOK\",\"targetEntityId\":\"entity-2\"}]}");
 
@@ -3170,6 +3257,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setEventSchemaVersion("v1");
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion("patch-1");
+    item.setScriptPatchBaseVersionId(42L);
     item.setScriptEventId("event-1");
     item.setSourceKind("GAMEPLAY_EVENT");
     item.setSourceService("game-session-service");
@@ -3178,5 +3266,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setCreatedAt(Instant.EPOCH);
     item.setUpdatedAt(Instant.EPOCH);
     return item;
+  }
+
+  private static ScriptDefinition scriptDefinition() {
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setBaseVersionId(42L);
+    return definition;
   }
 }

@@ -123,7 +123,8 @@ class ScriptPatchReadinessSingletonIntegrationTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             transactionalDsl);
     transactionTemplate.executeWithoutResult(
-        status -> service.beginPatchReadiness("tenant-generation-race", "patch-old", List.of("a")));
+        status ->
+            service.beginPatchReadiness("tenant-generation-race", 7L, "patch-old", List.of("a")));
 
     CountDownLatch oldApplyEntered = new CountDownLatch(1);
     CountDownLatch releaseOldApply = new CountDownLatch(1);
@@ -153,7 +154,7 @@ class ScriptPatchReadinessSingletonIntegrationTest {
                   transactionTemplate.executeWithoutResult(
                       status ->
                           service.beginPatchReadiness(
-                              "tenant-generation-race", "patch-new", List.of("b"))));
+                              "tenant-generation-race", 8L, "patch-new", List.of("b"))));
       awaitAdvisoryLockWait(dsl);
       assertThat(newerBegin.isDone()).isFalse();
 
@@ -231,7 +232,8 @@ class ScriptPatchReadinessSingletonIntegrationTest {
             transactionalDsl);
     transactionTemplate.executeWithoutResult(
         status ->
-            service.beginPatchReadiness("tenant-downstream-rollback", "patch-retry", List.of("a")));
+            service.beginPatchReadiness(
+                "tenant-downstream-rollback", 7L, "patch-retry", List.of("a")));
 
     assertThatThrownBy(
             () ->
@@ -417,7 +419,7 @@ class ScriptPatchReadinessSingletonIntegrationTest {
           ScriptPatchReadinessProjectionServiceImpl service =
               new ScriptPatchReadinessProjectionServiceImpl(
                   repository, Mockito.mock(ScriptWorkItemRepository.class), dsl);
-          service.beginPatchReadiness("tenant-concurrent", patchVersion, List.of(patchVersion));
+          service.beginPatchReadiness("tenant-concurrent", 1L, patchVersion, List.of(patchVersion));
         });
   }
 
