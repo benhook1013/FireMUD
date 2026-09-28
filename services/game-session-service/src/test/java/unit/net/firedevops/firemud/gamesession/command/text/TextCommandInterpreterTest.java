@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -207,7 +208,7 @@ class TextCommandInterpreterTest {
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(

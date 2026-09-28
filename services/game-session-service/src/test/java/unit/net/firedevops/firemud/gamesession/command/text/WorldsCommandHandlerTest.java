@@ -223,16 +223,11 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseCharactersFallsBackToUnspecifiedRosterScopeForNullRealmScope() {
+  void browseCharactersRejectsNullRealmScopeBeforeReadingRoster() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
     addPublicProductionAuthority(gameplayCatalogProperties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    stubActivePrivateAuthorization(accountClient, "demo");
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED))
-        .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
 
@@ -242,7 +237,9 @@ class WorldsCommandHandlerTest {
             "demo",
             null);
 
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
+    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure(
+        "ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
   @Test
@@ -481,6 +478,69 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void browseCharactersRejectsIncompleteRealmPointerBeforeAuthorityOrRosterReads() {
+    UUID realmId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    GameplayWorldCatalog.RealmView complete =
+        new GameplayWorldCatalog.RealmView(
+            "production", "Live Realm", 22L, 1L, 1L, true, true, false, "SHARED",
+            "ALLOW_NEW", 1L, realmId, namespaceId);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    for (GameplayWorldCatalog.RealmView incomplete : List.of(
+        new GameplayWorldCatalog.RealmView(
+            complete.slug(), complete.displayName(), complete.tenantId(),
+            complete.gameInstanceId(), complete.pointerVersion(), complete.visible(),
+            complete.publicProductionRealm(), complete.requiresCharacterSelection(),
+            complete.stateScope(), complete.characterCreationPolicy(), 0L, realmId, namespaceId),
+        new GameplayWorldCatalog.RealmView(
+            complete.slug(), complete.displayName(), complete.tenantId(),
+            complete.gameInstanceId(), complete.pointerVersion(), complete.visible(),
+            complete.publicProductionRealm(), complete.requiresCharacterSelection(),
+            complete.stateScope(), complete.characterCreationPolicy(), 1L, null, namespaceId),
+        new GameplayWorldCatalog.RealmView(
+            complete.slug(), complete.displayName(), complete.tenantId(),
+            complete.gameInstanceId(), complete.pointerVersion(), complete.visible(),
+            complete.publicProductionRealm(), complete.requiresCharacterSelection(),
+            complete.stateScope(), complete.characterCreationPolicy(), 1L, realmId, null))) {
+      WorldsCommandHandler localHandler =
+          new WorldsCommandHandler(
+              GameplayWorldCatalog.forWorldViews(List.of(
+                  new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(incomplete)))),
+              entityManagementClient, accountClient, new DirectTextConnectScopeSessionStore());
+
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure(
+              "ADMISSION_POINTER_UNAVAILABLE"));
+    }
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void browseCharactersRejectsIncompleteOrStaleEntitlementBeforeReadingRoster() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicProductionProperties(), accountClient);
+    GetTenantEntitlementsForRuntimeResponse valid = publicEntitlement(true);
+    for (GetTenantEntitlementsForRuntimeResponse invalid : List.of(
+        valid.toBuilder().setEntitlementVersion(0L).build(),
+        valid.toBuilder().setTenantBillingSequence(0L).build(),
+        valid.toBuilder().setEvaluatedAt(Instant.now().minusSeconds(16).toString()).build(),
+        valid.toBuilder().setEvaluatedAt(Instant.now().plusSeconds(30).toString()).build())) {
+      Mockito.when(accountClient.getTenantEntitlementsForRuntime(
+              Mockito.anyString(), Mockito.anyString()))
+          .thenReturn(invalid);
+
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure(
+              "ENTITLEMENT_UNAVAILABLE"));
+    }
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
   void browseCharactersAllowsActivePublicMemberWhenJoiningIsClosedAndReadsEntityRoster() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("demo", 22L, 1L, false)));
@@ -497,7 +557,8 @@ class WorldsCommandHandlerTest {
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
@@ -623,7 +684,8 @@ class WorldsCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
@@ -661,14 +723,15 @@ class WorldsCommandHandlerTest {
                 .setTenantId("23")
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
     WorldsCommandHandler.RealmBrowseResult result =
         localHandler.browseRealms(authenticatedSession(), "preview");
 
-    assertThat(result).isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("AUTH_UNAVAILABLE"));
+    assertThat(result).isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("ENTITLEMENT_UNAVAILABLE"));
   }
 
   @Test
@@ -696,7 +759,8 @@ class WorldsCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
@@ -867,6 +931,42 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void joinRejectsRetainedScopeWhenTenantPublicRealmBecomesAmbiguous() {
+    GameplayWorldCatalog.RealmView originalRealm =
+        new GameplayWorldCatalog.RealmView(
+            "production", "A", 22L, 1L, 1L, true, true, false, "SHARED", "ALLOW_NEW", 1L,
+            UUID.randomUUID(), UUID.randomUUID());
+    GameplayWorldCatalog.RealmView conflictingRealm =
+        new GameplayWorldCatalog.RealmView(
+            "production", "B", 22L, 2L, 1L, true, true, false, "SHARED", "ALLOW_NEW", 1L,
+            UUID.randomUUID(), UUID.randomUUID());
+    GameplayWorldCatalog.WorldView originalWorld =
+        new GameplayWorldCatalog.WorldView("a", "A", List.of(originalRealm));
+    AtomicReference<List<GameplayWorldCatalog.WorldView>> worlds =
+        new AtomicReference<>(List.of(originalWorld));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(IssueDirectTextConnectScopeResponse.newBuilder()
+            .setConnectScopeId("scope-a")
+            .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+            .build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldSupplier(worlds::get), entityManagementClient,
+            accountClient, new DirectTextConnectScopeSessionStore());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "a"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    worlds.set(List.of(originalWorld,
+        new GameplayWorldCatalog.WorldView("b", "B", List.of(conflictingRealm))));
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "a"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verify(accountClient, Mockito.never())
+        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
   void authenticatedBrowseFailsClosedWhenTenantHasNoPublicProductionRealm() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
@@ -974,7 +1074,8 @@ class WorldsCommandHandlerTest {
         .setGameplayAvailable(true)
         .setAllowPublicJoin(allowPublicJoin)
         .setEntitlementVersion(1L)
-        .setEvaluatedAt("2026-03-30T00:00:00Z")
+        .setTenantBillingSequence(1L)
+        .setEvaluatedAt(Instant.now().toString())
         .build();
   }
 
@@ -1014,7 +1115,8 @@ class WorldsCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
   }
 

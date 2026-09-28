@@ -1172,7 +1172,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
     implementation_status:

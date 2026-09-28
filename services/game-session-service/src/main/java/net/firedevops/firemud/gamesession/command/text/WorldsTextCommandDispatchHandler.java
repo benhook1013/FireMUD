@@ -121,7 +121,10 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
 
   private String joinFailureMessage(String code) {
     return switch (code) {
+      case "CONNECT_SCOPE_INVALID" -> "Join scope is invalid or expired. Run REALMS again.";
       case "CONNECT_SCOPE_MISMATCH" -> "Join scope expired or changed. Run REALMS again.";
+      case "MEMBERSHIP_RECONCILIATION_REQUIRED" ->
+          "Membership needs reconciliation. Contact support before retrying JOIN.";
       case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
           "Account authority unavailable. Retry JOIN shortly.";
       case "ENTITLEMENT_UNAVAILABLE" ->

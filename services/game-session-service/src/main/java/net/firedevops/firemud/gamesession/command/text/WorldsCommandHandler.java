@@ -225,7 +225,7 @@ public class WorldsCommandHandler {
           : NonPublicRealmAuthorization.DENIED;
     }
     if (!isValidEntitlement(entitlementResponse, realm)) {
-      return NonPublicRealmAuthorization.AUTHORITY_UNAVAILABLE;
+      return NonPublicRealmAuthorization.ENTITLEMENT_UNAVAILABLE;
     }
     return entitlementResponse.getGameplayAvailable()
         ? NonPublicRealmAuthorization.AUTHORIZED
@@ -236,7 +236,22 @@ public class WorldsCommandHandler {
       GetTenantEntitlementsForRuntimeResponse response,
       GameplayWorldCatalog.RealmView realm) {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
-        && isInstant(response.getEvaluatedAt());
+        && response.getEntitlementVersion() > 0L
+        && response.getTenantBillingSequence() > 0L
+        && isFreshEntitlementEvaluation(response.getEvaluatedAt());
+  }
+
+  private boolean isFreshEntitlementEvaluation(String evaluatedAt) {
+    if (!StringUtils.hasText(evaluatedAt)) {
+      return false;
+    }
+    try {
+      Instant evaluated = Instant.parse(evaluatedAt);
+      Instant now = Instant.now();
+      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
+    } catch (DateTimeParseException ex) {
+      return false;
+    }
   }
 
   private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
@@ -330,6 +345,15 @@ public class WorldsCommandHandler {
     }
     DirectTextConnectScopeSessionStore.JoinScope joinScope = maybeJoinScope.orElseThrow();
     DirectTextConnectScopeSessionStore.ScopedRealm scope = joinScope.scope();
+    long tenantId;
+    try {
+      tenantId = Long.parseLong(scope.playerContext().getTenantId());
+    } catch (NumberFormatException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+    }
+    if (!worldCatalog.hasValidPublicProductionRealm(tenantId)) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+    }
     String requestId = joinScope.requestId();
     PlayerExecutionContext playerContext =
         scope.playerContext().toBuilder().setRequestId(requestId).build();
@@ -580,7 +604,7 @@ public class WorldsCommandHandler {
     }
     if (!isValidEntitlement(entitlementResponse, realm)) {
       return new PublicEntitlementAuthorization(
-          CharacterBrowseAuthorization.AUTH_UNAVAILABLE, false);
+          CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE, false);
     }
     if (!entitlementResponse.getGameplayAvailable()) {
       return new PublicEntitlementAuthorization(
@@ -635,7 +659,11 @@ public class WorldsCommandHandler {
     return realm.visible()
         && realm.tenantId() > 0L
         && realm.gameInstanceId() > 0L
+        && realm.catalogRevision() > 0L
         && realm.pointerVersion() > 0L
+        && realm.realmId() != null
+        && realm.playableStateNamespaceId() != null
+        && ("SHARED".equals(realm.stateScope()) || "ISOLATED".equals(realm.stateScope()))
         && StringUtils.hasText(realm.slug());
   }
 

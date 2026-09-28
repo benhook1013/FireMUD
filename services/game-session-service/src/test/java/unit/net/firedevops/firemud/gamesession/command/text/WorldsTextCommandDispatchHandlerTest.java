@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -117,7 +118,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setTenantId("1")
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
@@ -182,7 +184,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -262,7 +265,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
@@ -425,6 +429,105 @@ class WorldsTextCommandDispatchHandlerTest {
         .publishCommandEvent(
             Mockito.eq(context),
             Mockito.argThat(gameplayCommand -> "REALMS".equals(gameplayCommand.getCommandName())));
+  }
+
+  @Test
+  void joinPreservesTerminalAccountOutcomesWithSpecificGuidance() {
+    UUID realmId = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
+    UUID namespaceId = UUID.fromString("42d234a2-7487-4dda-a7e5-a3831214328e");
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo-world",
+                    "Demo World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            22L,
+                            9L,
+                            4L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW",
+                            7L,
+                            realmId,
+                            namespaceId)))));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                catalog, entityManagementClient, accountClient, new DirectTextConnectScopeSessionStore()),
+            scriptEventPublisher);
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("opaque-account-scope-1")
+                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .build(),
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("opaque-account-scope-2")
+                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .build());
+    when(accountClient.joinPublicProductionMembership(Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(
+            JoinPublicProductionMembershipResponse.newBuilder()
+                .setSuccess(false)
+                .setOutcomeCode("CONNECT_SCOPE_INVALID")
+                .build(),
+            JoinPublicProductionMembershipResponse.newBuilder()
+                .setSuccess(false)
+                .setOutcomeCode("MEMBERSHIP_RECONCILIATION_REQUIRED")
+                .build());
+    SessionContext context =
+        new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
+
+    scopedHandler.handle(
+        new TextCommandDispatchRequest(
+            "7",
+            new TextCommand(TextCommandType.REALMS, List.of("demo-world"), "REALMS demo-world"),
+            false,
+            Optional.of(context)));
+    TextCommandInterpretationResult invalidScopeResult =
+        scopedHandler.handle(
+            new TextCommandDispatchRequest(
+                "7",
+                new TextCommand(TextCommandType.JOIN, List.of("demo-world"), "JOIN demo-world"),
+                false,
+                Optional.of(context)));
+    scopedHandler.handle(
+        new TextCommandDispatchRequest(
+            "7",
+            new TextCommand(TextCommandType.REALMS, List.of("demo-world"), "REALMS demo-world"),
+            false,
+            Optional.of(context)));
+    TextCommandInterpretationResult reconciliationResult =
+        scopedHandler.handle(
+            new TextCommandDispatchRequest(
+                "7",
+                new TextCommand(TextCommandType.JOIN, List.of("demo-world"), "JOIN demo-world"),
+                false,
+                Optional.of(context)));
+
+    assertThat(invalidScopeResult.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(invalidScopeResult.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isEqualTo(
+            new net.firedevops.firemud.gamesession.presentation.ErrorOutput(
+                "CONNECT_SCOPE_INVALID", "Join scope is invalid or expired. Run REALMS again."));
+    assertThat(reconciliationResult.commandResult().errorCode())
+        .isEqualTo("MEMBERSHIP_RECONCILIATION_REQUIRED");
+    assertThat(reconciliationResult.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isEqualTo(
+            new net.firedevops.firemud.gamesession.presentation.ErrorOutput(
+                "MEMBERSHIP_RECONCILIATION_REQUIRED",
+                "Membership needs reconciliation. Contact support before retrying JOIN."));
   }
 
   private static GameplayCatalogProperties.World world(
