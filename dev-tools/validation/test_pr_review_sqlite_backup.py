@@ -263,6 +263,13 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"review target {sha256} matched"))
         self.assertFalse(sqlite_backup._looks_secret(f"route proof names {code_identifier}"))
 
+    def test_secret_screen_matches_write_valid_segmented_identifiers(self) -> None:
+        long_identifier = "review_v2_route-reconciliation_source-proof_identifier_with-many-segments"
+        very_long_identifier = "_".join(["review"] + [f"segment{index}" for index in range(1, 18)])
+
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {long_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {very_long_identifier}"))
+
     def test_secret_screen_still_rejects_unknown_tokens_and_credentials(self) -> None:
         high_entropy_token = "Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA"
 

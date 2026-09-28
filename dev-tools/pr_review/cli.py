@@ -495,10 +495,11 @@ def _load_records_import(
     path = Path(path_value).expanduser().absolute()
     if path.is_symlink() or not path.is_file():
         raise CliError("batch import input must be an existing regular file, not a symlink")
-    if path.stat().st_size > 512_000:
-        raise CliError("batch import input exceeds the 512 KB limit")
     try:
-        content = path.read_bytes()
+        with path.open("rb") as input_file:
+            content = input_file.read(512_001)
+        if len(content) > 512_000:
+            raise CliError("batch import input exceeds the 512 KB limit")
         document = json.loads(
             content,
             object_pairs_hook=_reject_duplicate_json_keys,

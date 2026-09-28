@@ -3734,6 +3734,7 @@ class ReviewController:
                     and view["status"] in {"PROMISED", "CAP_ACTIVE"}
                     and (view.get("remaining") is None or view.get("remaining", 0) > 0)
                 )
+                or view["status"] == "PROMISED"
             },
             taper_history_by_pr=taper_history_by_pr,
             active_review_prs=active_review_prs,
@@ -4117,7 +4118,7 @@ class ReviewController:
             selected,
             pr,
             policy.ReviewStatus.READY if completed_allocation_override else decision.status,
-            "explicit allocation reopens a fresh taper after completion"
+            "explicit allocation reopens review selection after completion"
             if completed_allocation_override
             else decision.reason,
             selected_target,

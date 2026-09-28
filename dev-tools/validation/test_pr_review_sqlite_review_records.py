@@ -108,8 +108,18 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(observation.title, f"fixed in commit {sha1}")
         self.assertEqual(observation.detail, f"verified against {sha256}.")
 
+        identifiers = FindingObservation(
+            "identifier-context",
+            "test_v2_long_snake_case_identifier_for_review_context",
+            detail="hyphenated-review-context-identifier-with-many-parts",
+        )
+        self.assertEqual(identifiers.title, "test_v2_long_snake_case_identifier_for_review_context")
+        self.assertEqual(identifiers.detail, "hyphenated-review-context-identifier-with-many-parts")
+
         with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
             FindingObservation("token-context", "Z" * 40)
+        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
+            FindingObservation("mixed-case-token", "AbCdEf0123456789" * 3)
         for key, value in (
             ("prefixed-sha", f"prefix_{sha1}"),
             ("suffixed-sha", f"{sha256}_suffix"),

@@ -180,6 +180,20 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void missingScriptPatchBaseVersionUsesDedicatedInfrastructureReason() {
+    assertThat(
+            ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(
+                new ScriptGameplayCommandHandoffService.HandoffResult(
+                    false,
+                    "REMOTE_REJECTED",
+                    "",
+                    "",
+                    "",
+                    ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE)))
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+  }
+
+  @Test
   void recognizesOnlyExplicitTransientHandoffCodesAsRetryable() {
     for (String code :
         List.of(
@@ -1343,6 +1357,103 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(currentRuntimeState());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem workItem = workItem();
+    workItem.setScriptPatchBaseVersionId(null);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    assertThat(workItem.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItem.getCancelReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    assertThat(audit.getFinalStage()).isEqualTo(ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
+    assertThat(audit.getFinalOutcome())
+        .isEqualTo(ScriptHandoffOutcomeSupport.OUTCOME_INFRASTRUCTURE_ERROR);
+    assertThat(audit.getFinalReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    verify(handoffEventRepository)
+        .save(
+            Mockito.argThat(
+                event ->
+                    "remote_rejected".equals(event.getHandoffOutcome())
+                        && ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE
+                            .equals(event.getHandoffReason())));
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"0", "-1"})
+  void nonPositiveWorkItemBaseVersionFailsClosedBeforeRuntimeOwnerLookup(
+      long scriptPatchBaseVersionId) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem workItem = workItem();
+    workItem.setScriptPatchBaseVersionId(scriptPatchBaseVersionId);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    assertThat(workItem.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItem.getCancelReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    assertThat(audit.getFinalStage()).isEqualTo(ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
+    assertThat(audit.getFinalOutcome())
+        .isEqualTo(ScriptHandoffOutcomeSupport.OUTCOME_INFRASTRUCTURE_ERROR);
+    assertThat(audit.getFinalReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
+    verify(handoffEventRepository)
+        .save(
+            Mockito.argThat(
+                event ->
+                    "remote_rejected".equals(event.getHandoffOutcome())
+                        && ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE
+                            .equals(event.getHandoffReason())));
+    verifyNoInteractions(gameSessionClient);
+  }
+
+  @Test
+  void missingWorkItemBaseVersionFailsClosedBeforeRemoteSchedule() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -1356,10 +1467,11 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+            workItem, emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
 
     assertThat(result.accepted()).isFalse();
-    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    assertThat(result.errorCode())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE);
     verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
     verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
   }

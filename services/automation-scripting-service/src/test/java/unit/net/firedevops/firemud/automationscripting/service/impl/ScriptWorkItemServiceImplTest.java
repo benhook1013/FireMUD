@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -657,6 +658,58 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
     assertThat(statuses.get(0).publication().lookupErrorMessage())
         .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
+  }
+
+  @Test
+  void patchStatusListDoesNotReusePublicationAcrossConflictingBaseVersions() {
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.listProjections("1"))
+        .thenReturn(
+            List.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    7L,
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    200L),
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    8L,
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    200L)));
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    ScriptWorkItemService service =
+        service(
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService);
+
+    List<ScriptWorkItemService.PatchStatusSummary> statuses =
+        service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED, 0L, 0L);
+
+    assertThat(statuses).hasSize(2);
+    assertThat(statuses)
+        .extracting(ScriptWorkItemService.PatchStatusSummary::baseVersionId)
+        .containsExactlyInAnyOrder(7L, 0L);
+    assertThat(statuses)
+        .extracting(summary -> summary.publication().lookupErrorCode())
+        .containsExactlyInAnyOrder("", "FAILED_PRECONDITION");
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 8L, "patch-1");
   }
 
   @Test
@@ -1642,6 +1695,166 @@ class ScriptWorkItemServiceImplTest {
     verify(workItemRepository)
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
+  }
+
+  @Test
+  void listDeadLettersCachesPublicationLookupPerTenantBaseAndPatch() {
+    ScriptWorkItem first = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    first.setId(99L);
+    first.setGameInstanceId("game-1");
+    first.setRegionId("region-1");
+    first.setRegionEpoch(1L);
+    first.setScriptPinEpoch(1L);
+    first.setCreatedAt(Instant.ofEpochMilli(100));
+    ScriptWorkItem second = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(200));
+    second.setId(98L);
+    second.setGameInstanceId("game-1");
+    second.setRegionId("region-1");
+    second.setRegionEpoch(1L);
+    second.setScriptPinEpoch(1L);
+    second.setCreatedAt(Instant.ofEpochMilli(100));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptDefinitionRepository patchBaseRepository = retainedPatchBase();
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "", "", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of(first, second));
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            patchBaseRepository);
+
+    List<ScriptWorkItemService.DeadLetterSummary> summaries =
+        service.listDeadLetters("1", "", "", 25);
+
+    assertThat(summaries).hasSize(2);
+    assertThat(summaries)
+        .allSatisfy(summary -> assertThat(summary.scriptPatchBaseVersionId()).isEqualTo(7L));
+    verify(patchBaseRepository, never()).findScriptPatchBaseVersionId("1", "patch-1");
+    verify(gameDesignControlPlaneClient, times(1))
+        .getPublishedScriptPatchVersion("1", 7L, "patch-1");
+    verify(gameDesignControlPlaneClient, times(1)).getPublishedReleaseBundle("1", 7L);
+  }
+
+  @Test
+  void listDeadLettersUsesTheWorkItemsRetainedPatchBase() {
+    ScriptWorkItem deadLetter = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    deadLetter.setId(99L);
+    deadLetter.setRegionEpoch(1L);
+    deadLetter.setScriptPatchBaseVersionId(11L);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptDefinitionRepository patchBaseRepository = retainedPatchBase();
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "", "", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of(deadLetter));
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion("1", 11L, "patch-1"))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
+                        .setBaseVersionId(11L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
+    when(gameDesignControlPlaneClient.getPublishedReleaseBundle("1", 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("ability-1")
+                                .build())
+                        .build())
+                .build());
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            patchBaseRepository);
+
+    List<ScriptWorkItemService.DeadLetterSummary> summaries =
+        service.listDeadLetters("1", "", "", 25);
+
+    assertThat(summaries)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.scriptPatchBaseVersionId()).isEqualTo(11L);
+              assertThat(summary.publication().baseVersionId()).isEqualTo(11L);
+            });
+    verify(patchBaseRepository, never()).findScriptPatchBaseVersionId("1", "patch-1");
+    verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 11L, "patch-1");
+  }
+
+  @Test
+  void listDeadLettersFailsClosedWhenRetainedPatchBaseIsNull() {
+    ScriptWorkItem deadLetter = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    deadLetter.setId(99L);
+    deadLetter.setRegionEpoch(1L);
+    deadLetter.setScriptPatchBaseVersionId(null);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "", "", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of(deadLetter));
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService(),
+            retainedPatchBase());
+
+    List<ScriptWorkItemService.DeadLetterSummary> summaries =
+        service.listDeadLetters("1", "", "", 25);
+
+    assertThat(summaries)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.scriptPatchBaseVersionId()).isZero();
+              assertThat(summary.publication().baseVersionId()).isZero();
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+            });
+    verify(gameDesignControlPlaneClient, never())
+        .getPublishedScriptPatchVersion(
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
   }
 
   @Test
