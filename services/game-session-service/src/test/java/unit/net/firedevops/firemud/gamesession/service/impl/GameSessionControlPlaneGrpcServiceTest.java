@@ -43,7 +43,6 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
-import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -1168,7 +1167,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void setAdmissionPointerAllowsAdminCaller() {
+  void setAdmissionPointerRejectsInitialCreateUntilOwnerContractsAreSupported() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
@@ -1180,67 +1179,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.findPointer(1L, "demo", "production"))
-        .thenReturn(
-            Optional.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    5L,
-                    2L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
-    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerAuditEntry(
-                    "demo",
-                    "production",
-                    "Demo World",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    1L,
-                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
-                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW",
-                    "tester",
-                    "cutover",
-                    "req-1",
-                    "pvu-1",
-                    Instant.parse("2026-04-15T00:00:00Z"))));
+        .thenReturn(Optional.empty());
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
-    Mockito.when(versionUpgradePreparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
-        .thenReturn(
-            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
-                "pvu-1",
-                "prep-req-1",
-                1L,
-                5L,
-                7L,
-                9L,
-                "ld-9",
-                "remap-1",
-                "COMPATIBLE",
-                List.of(),
-                List.of("WORLD", "ENTITY"),
-                Instant.parse("2026-04-16T00:00:00Z"),
-                List.of(),
-                null,
-                null,
-                null,
-                null));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1267,11 +1208,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setStateScope("SHARED")
             .setCharacterCreationPolicy("ALLOW_NEW")
             .setActorPrincipal("tester")
-            .setReason("cutover")
+            .setReason("initial create")
             .setControlPlaneRequestId("req-1")
-            .setExpectedPointerVersion(2L)
-            .setExpectedCatalogRevision(1L)
-            .setPreparedVersionUpgradeId("pvu-1")
+            .setExpectedPointerVersion(0L)
             .build(),
         new NoopObserver<>() {
           @Override
@@ -1280,20 +1219,14 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("demo", responseRef.get().getPointer().getWorldSlug());
-    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
-    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
-    Mockito.verify(authorityService)
-        .upsertPointer(
-            Mockito.argThat(
-                mutation ->
-                    Objects.equals(mutation.expectedPointerVersion(), 2L)
-                        && Objects.equals(mutation.expectedCatalogRevision(), 1L)
-                        && Objects.equals(mutation.preparedVersionUpgradeId(), "pvu-1")));
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+    Mockito.verifyNoInteractions(gameInstanceRepository);
+    Mockito.verifyNoInteractions(versionUpgradePreparationService);
   }
 
   @Test
-  void setAdmissionPointerRejectsTargetChangeWithoutPreparedUpgrade() {
+  void setAdmissionPointerRejectsExistingTargetMetadataEditUntilOwnerContractsAreSupported() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
@@ -1335,20 +1268,19 @@ class GameSessionControlPlaneGrpcServiceTest {
     service.setAdmissionPointer(
         SetAdmissionPointerRequest.newBuilder()
             .setWorldSlug("demo")
-            .setWorldDisplayName("Demo World")
+            .setWorldDisplayName("Renamed Demo World")
             .setRealmSlug("production")
             .setRealmDisplayName("Live Realm")
             .setTenantId("1")
-            .setGameInstanceId("7")
+            .setGameInstanceId("5")
             .setVisible(true)
             .setRequiresCharacterSelection(false)
             .setStateScope("SHARED")
             .setCharacterCreationPolicy("ALLOW_NEW")
             .setActorPrincipal("tester")
-            .setReason("cutover")
+            .setReason("metadata edit")
             .setControlPlaneRequestId("req-1")
             .setExpectedPointerVersion(2L)
-            .setExpectedCatalogRevision(1L)
             .build(),
         new NoopObserver<>() {
           @Override
@@ -1357,12 +1289,13 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("CUTOVER_PREPARATION_INVALID", responseRef.get().getError().getCode());
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
     Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
+    Mockito.verifyNoInteractions(gameInstanceRepository);
   }
 
   @Test
-  void setAdmissionPointerRejectsStaleExpectedVersion() {
+  void setAdmissionPointerRejectsExistingTargetMoveUntilOwnerContractsAreSupported() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
@@ -1389,10 +1322,6 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    Mockito.when(authorityService.upsertPointer(Mockito.any()))
-        .thenThrow(
-            new AdmissionPointerVersionMismatchException(
-                "expected_pointer_version does not match current pointer version"));
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
     Mockito.when(versionUpgradePreparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
@@ -1455,6 +1384,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
+    Mockito.verifyNoInteractions(gameInstanceRepository);
+    Mockito.verifyNoInteractions(versionUpgradePreparationService);
   }
 
   @Test
@@ -1510,7 +1442,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void executePreparedVersionCutoverSwapsPointerUsingPreparedProof() {
+  void executePreparedVersionCutoverFailsClosedBeforeAuthorityMutation() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
@@ -1616,22 +1548,14 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
-    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
-    Mockito.verify(versionUpgradePreparationService)
-        .markPreparedVersionUpgradeExecuted(1L, "pvu-1", 7L, 3L, "req-1");
-    Mockito.verify(authorityService)
-        .upsertPointer(
-            Mockito.argThat(
-                mutation ->
-                    Objects.equals(mutation.preparedVersionUpgradeId(), "pvu-1")
-                        && Objects.equals(mutation.expectedPointerVersion(), 2L)
-                        && Objects.equals(mutation.expectedCatalogRevision(), 1L)
-                        && mutation.gameInstanceId() == 7L));
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+    Mockito.verifyNoInteractions(versionUpgradePreparationService);
+    Mockito.verifyNoInteractions(gameInstanceRepository);
   }
 
   @Test
-  void executePreparedVersionCutoverIsIdempotentAfterSameRequestAlreadyMovedPointer() {
+  void executePreparedVersionCutoverDoesNotMarkPreparedExecutionWhenDisabled() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.findPointer(1L, "demo", "production"))
@@ -1730,16 +1654,9 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
-    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
-    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
-    Mockito.verify(versionUpgradePreparationService, Mockito.never())
-        .markPreparedVersionUpgradeExecuted(
-            Mockito.anyLong(),
-            Mockito.anyString(),
-            Mockito.anyLong(),
-            Mockito.anyLong(),
-            Mockito.anyString());
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+    Mockito.verifyNoInteractions(versionUpgradePreparationService);
   }
 
   @Test

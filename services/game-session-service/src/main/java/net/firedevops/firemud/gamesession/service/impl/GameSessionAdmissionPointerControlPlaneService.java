@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -76,6 +77,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
+    rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported();
     validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -108,6 +110,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+    rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported();
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
@@ -301,6 +304,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
           "prepared_version_upgrade_id execution state does not match current admission pointer");
     }
     return entry;
+  }
+
+  private void rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported() {
+    throw new AdmissionPointerVersionMismatchException(
+        "admission-pointer mutations are temporarily disabled until owner hold, drain, and "
+            + "durable execution contracts are supported");
   }
 
   private GameInstance getInstanceOrThrow(long gameInstanceId) {
