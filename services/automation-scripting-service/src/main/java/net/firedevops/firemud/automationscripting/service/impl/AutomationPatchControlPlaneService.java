@@ -5,7 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
@@ -52,7 +51,6 @@ import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry
 import net.firedevops.firemud.automationscripting.v1.ScriptTimerAuditEventEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
-import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
@@ -64,7 +62,6 @@ final class AutomationPatchControlPlaneService {
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
-  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
   private final TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver;
@@ -74,7 +71,6 @@ final class AutomationPatchControlPlaneService {
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptRuntimeProperties runtimeProperties,
       TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver) {
@@ -82,7 +78,6 @@ final class AutomationPatchControlPlaneService {
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
-    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
     this.workflowMetadataResolver = workflowMetadataResolver;
@@ -544,25 +539,22 @@ final class AutomationPatchControlPlaneService {
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       String tenantId, String scriptPatchVersion) {
-    GetPublishedScriptPatchVersionResponse response =
-        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
-    if (response.hasError() && !response.getError().getCode().isBlank()) {
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
-          .setScriptPatchVersion(AutomationControlPlaneSupport.normalize(scriptPatchVersion))
-          .setVersionId(0L)
-          .setBaseVersionId(0L)
-          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
-          .setLastChangedAtMs(0L)
-          .setLookupErrorCode(response.getError().getCode())
-          .setLookupErrorMessage(response.getError().getMessage())
+          .setLookupErrorCode("INVALID_ARGUMENT")
+          .setLookupErrorMessage("script_patch_version is required")
           .build();
     }
+    // Pin convergence exposes only the patch identity. It does not carry the immutable base
+    // version tuple, so do not rediscover a base by patch-only lookup.
     return ScriptPatchPublicationLink.newBuilder()
-        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
-        .setVersionId(response.getScriptPatch().getVersionId())
-        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
-        .setPublicationState(response.getScriptPatch().getPublicationState())
-        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
+        .setScriptPatchVersion(AutomationControlPlaneSupport.normalize(scriptPatchVersion))
+        .setBaseVersionId(0L)
+        .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+        .setLookupErrorCode("PUBLICATION_SCOPE_UNAVAILABLE")
+        .setLookupErrorMessage(
+            "base_version_id is unavailable in the pin projection required for exact "
+                + "script-patch publication lookup")
         .build();
   }
 

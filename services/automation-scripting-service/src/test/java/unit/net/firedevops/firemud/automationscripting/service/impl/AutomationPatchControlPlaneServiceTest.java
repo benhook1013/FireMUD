@@ -3,7 +3,6 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
-import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
@@ -16,8 +15,6 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersReques
 import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
@@ -27,25 +24,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationPatchControlPlaneServiceTest {
-  private static GameDesignControlPlaneClient gameDesignClient() {
-    GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
-    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setScriptPatchVersion("patch-2")
-                        .setVersionId(17L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setLastChangedAtMs(150L)
-                        .build())
-                .build());
-    return client;
-  }
-
   private static AutomationPatchControlPlaneService newService(
       ScriptWorkItemService workItemService,
       AutomationAdmissionStateService automationAdmissionStateService,
@@ -58,7 +36,6 @@ class AutomationPatchControlPlaneServiceTest {
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
-        gameDesignClient(),
         gameSessionControlPlaneClient,
         runtimeProperties,
         new TemporalScriptPatchReadinessWorkflowMetadataResolver(

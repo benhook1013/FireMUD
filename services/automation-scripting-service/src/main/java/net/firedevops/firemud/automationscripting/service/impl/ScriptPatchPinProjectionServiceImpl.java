@@ -68,8 +68,11 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
               "RUNTIME_SCOPE_MISMATCH",
               "GetAutomationPinConvergence failed: runtime_scope_mismatch");
         }
-        if (!acceptObservation(existing.orElse(null), runtimeState)) {
-          return existing
+        repository.lockPinProjectionScope(tenantId, gameInstanceId);
+        Optional<ScriptPatchPinProjection> current =
+            repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+        if (!acceptObservation(current.orElse(null), runtimeState)) {
+          return current
               .map(value -> new PinConvergenceLookup(Optional.of(toSummary(value, now)), "", ""))
               .orElseGet(
                   () ->
@@ -78,9 +81,21 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                           "INVALID_RUNTIME_PIN_TUPLE",
                           "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
+        if (!hasPositiveScriptPinEpoch(runtimeState)) {
+          if (hasLegacyPositivePinProjection(current.orElse(null))) {
+            return new PinConvergenceLookup(
+                Optional.empty(),
+                "PIN_PROJECTION_CONFLICT",
+                "GetAutomationPinConvergence failed: unpinned_runtime_conflicts_with_legacy_pin_projection");
+          }
+          scheduleInstanceService.reconcileObservedRuntimeState(
+              tenantId, gameInstanceId, runtimeState);
+          return new PinConvergenceLookup(
+              Optional.of(toUnpinnedSummary(tenantId, gameInstanceId, runtimeState, now)), "", "");
+        }
         ScriptPatchPinProjection refreshed =
             saveObservation(
-                existing.orElseGet(ScriptPatchPinProjection::new),
+                current.orElseGet(ScriptPatchPinProjection::new),
                 tenantId,
                 gameInstanceId,
                 runtimeState,
@@ -113,6 +128,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return;
+    }
+    repository.lockPinProjectionScope(tenantId, gameInstanceId);
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     if (!acceptObservation(existing.orElse(null), runtimeState)) {
@@ -133,6 +152,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     return runtimeState != null
         && tenantId.equals(runtimeState.getTenantId())
         && gameInstanceId.equals(runtimeState.getGameInstanceId());
+  }
+
+  private static boolean hasPositiveScriptPinEpoch(GameInstanceRuntimeState runtimeState) {
+    return runtimeState != null && runtimeState.getScriptPinEpoch() > 0;
   }
 
   /**
@@ -200,12 +223,21 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     return epoch == null || epoch == 0L;
   }
 
+  private static boolean hasLegacyPositivePinProjection(ScriptPatchPinProjection projection) {
+    return projection != null
+        && isLegacyProjection(projection)
+        && !blankToEmpty(projection.getObservedPinnedScriptPatchVersion()).isBlank();
+  }
+
   private ScriptPatchPinProjection saveObservation(
       ScriptPatchPinProjection projection,
       String tenantId,
       String gameInstanceId,
       GameInstanceRuntimeState runtimeState,
       Instant now) {
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return projection;
+    }
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
     projection.setTenantId(tenantId);
@@ -230,6 +262,30 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
             : now);
     projection.setProjectionRefreshedAt(now);
     return repository.save(projection);
+  }
+
+  private static PinConvergenceSummary toUnpinnedSummary(
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant observedAt) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
+    return new PinConvergenceSummary(
+        tenantId,
+        gameInstanceId,
+        "",
+        0L,
+        "",
+        0L,
+        observedAt.toEpochMilli(),
+        0L,
+        false,
+        blankToEmpty(runtimeState.getRegionId()),
+        Math.max(0L, runtimeState.getRegionEpoch()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion());
   }
 
   private PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {

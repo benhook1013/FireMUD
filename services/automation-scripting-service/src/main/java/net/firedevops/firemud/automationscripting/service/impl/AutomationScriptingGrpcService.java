@@ -40,13 +40,16 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -66,11 +69,12 @@ public class AutomationScriptingGrpcService
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
+  private final PublicationReadGuard publicationReadGuard;
 
-  @org.springframework.beans.factory.annotation.Autowired
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
       justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
+  @org.springframework.beans.factory.annotation.Autowired
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
@@ -80,7 +84,8 @@ public class AutomationScriptingGrpcService
       ScriptEventIngressService scriptEventIngressService,
       ScriptWorkItemRepository workItemRepository,
       NpcFormationService formationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.pingService = pingService;
     this.scriptService = scriptService;
     this.scriptDesignDigestService = scriptDesignDigestService;
@@ -90,6 +95,7 @@ public class AutomationScriptingGrpcService
     this.workItemRepository = Objects.requireNonNull(workItemRepository);
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   @Override
@@ -372,21 +378,30 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
-      requireAdminRole();
+      requirePublicationRead();
+      PublicationDigestRequestBinding binding = publicationBinding(request);
+      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
       var digest =
-          request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
+          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
-                  request.getTenantId(), request.getVersionId())
+                  binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  request.getTenantId(), request.getScriptPatchVersion());
-      responseObserver.onNext(
+                  binding.tenantId(), binding.scriptPatchVersion());
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
+      GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(digest.tenantId())
-              .setScopeValue(digest.scopeValue())
+              .setTenantId(binding.tenantId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion())
-              .build());
+              .setDigestSchemaVersion(digest.digestSchemaVersion());
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+        response.setVersionId(binding.versionId());
+      } else {
+        response
+            .setScriptPatchVersion(binding.scriptPatchVersion())
+            .setBaseVersionId(binding.baseVersionId());
+      }
+      responseObserver.onNext(response.build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -413,6 +428,37 @@ public class AutomationScriptingGrpcService
               .build());
       responseObserver.onCompleted();
     }
+  }
+
+  private static PublicationDigestRequestBinding publicationBinding(
+      GetDraftDesignDigestRequest request) {
+    return switch (request.getScopeCase()) {
+      case VERSION_ID ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCOPE_NOT_SET -> throw new IllegalArgumentException("publication scope is required");
+    };
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(
+        PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
   }
 
   @Override

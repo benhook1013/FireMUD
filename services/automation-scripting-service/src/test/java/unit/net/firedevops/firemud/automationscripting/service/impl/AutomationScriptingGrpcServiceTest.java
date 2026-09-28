@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -36,6 +37,8 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -45,6 +48,51 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
+
+  private static void runAsGameDesign(Runnable action) {
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/test/sa/game-design-service",
+                TEST_NAMESPACE,
+                "game-design-service"))
+        .run(action);
+  }
+
+  private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(tenantId, versionId, "request-7");
+    return GetDraftDesignDigestRequest.newBuilder()
+        .setTenantId(binding.tenantId())
+        .setVersionId(binding.versionId())
+        .setPublishRequestId(binding.publishRequestId())
+        .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+        .setRequestDigest(binding.requestDigest())
+        .build();
+  }
+
+  private static GetDraftDesignDigestRequest patchDigestRequest(
+      String tenantId, String baseVersionId, String scriptPatchVersion) {
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch(
+            tenantId, baseVersionId, scriptPatchVersion, "request-7");
+    return GetDraftDesignDigestRequest.newBuilder()
+        .setTenantId(binding.tenantId())
+        .setScriptPatchVersion(binding.scriptPatchVersion())
+        .setBaseVersionId(binding.baseVersionId())
+        .setPublishRequestId(binding.publishRequestId())
+        .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+        .setRequestDigest(binding.requestDigest())
+        .build();
+  }
+
   @BeforeEach
   void setSessionContext() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -53,6 +101,60 @@ class AutomationScriptingGrpcServiceTest {
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
+  }
+
+  private AutomationScriptingGrpcService configuredService(
+      String workloadNamespace, ScriptDesignDigestService digestService) {
+    return new AutomationScriptingGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(ScriptDefinitionService.class),
+        digestService,
+        Mockito.mock(ScriptVersionService.class),
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        Mockito.mock(ScriptEventIngressService.class),
+        Mockito.mock(ScriptWorkItemRepository.class),
+        Mockito.mock(NpcFormationService.class),
+        new SimpleMeterRegistry(),
+        workloadNamespace);
+  }
+
+  @Test
+  void missingOrInvalidConfiguredWorkloadNamespaceDeniesDigestReadBeforeOwnerRead() {
+    for (String workloadNamespace : new String[] {null, "", " ", "not a namespace"}) {
+      ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+      AutomationScriptingGrpcService service = configuredService(workloadNamespace, digestService);
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+      Mockito.verifyNoInteractions(digestService);
+    }
+
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            null);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    runAsGameDesign(
+        () ->
+            assertEquals(
+                "PERMISSION_DENIED",
+                invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
@@ -64,6 +166,8 @@ class AutomationScriptingGrpcServiceTest {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     ScriptEventIngressService ingressService = Mockito.mock(ScriptEventIngressService.class);
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     Mockito.when(scriptDesignDigestService.getDraftDesignDigestForVersion("1", "7"))
         .thenReturn(
             new ScriptDesignDigestService.ScriptDraftDesignDigest(
@@ -78,11 +182,119 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            TEST_NAMESPACE);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                fullDigestRequest("1", "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
+
+                  @Override
+                  public void onError(Throwable t) {}
+
+                  @Override
+                  public void onCompleted() {}
+                }));
+
+    assertEquals("7", ref.get().getVersionId());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestSupportsBoundScriptPatchScope() {
+    PingService pingService = Mockito.mock(PingService.class);
+    ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptDesignDigestService scriptDesignDigestService =
+        Mockito.mock(ScriptDesignDigestService.class);
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    ScriptEventIngressService ingressService = Mockito.mock(ScriptEventIngressService.class);
+    NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForScriptPatch("1", "patch:é:1"))
+        .thenReturn(
+            new ScriptDesignDigestService.ScriptDraftDesignDigest(
+                "1", "patch:é:1", "patch:patch:é:1", "digest-script-patch", 1));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            pingService,
+            scriptService,
+            scriptDesignDigestService,
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            formationService,
+            new SimpleMeterRegistry(),
+            TEST_NAMESPACE);
+
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                patchDigestRequest("1", "7", "patch:é:1"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
+
+                  @Override
+                  public void onError(Throwable t) {}
+
+                  @Override
+                  public void onCompleted() {}
+                }));
+
+    assertEquals("1", ref.get().getTenantId());
+    assertEquals("7", ref.get().getBaseVersionId());
+    assertEquals("patch:é:1", ref.get().getScriptPatchVersion());
+    assertEquals("patch:patch:é:1", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsInactiveBaseVersionForFullScope() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    GetDraftDesignDigestRequest request =
+        fullDigestRequest("1", "7").toBuilder().setBaseVersionId("6").build();
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(() -> ref.set(invokeDigest(service, request)));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            TEST_NAMESPACE);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        fullDigestRequest("1", "7"),
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -95,9 +307,103 @@ class AutomationScriptingGrpcServiceTest {
           @Override
           public void onCompleted() {}
         });
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
 
-    assertEquals("7", ref.get().getScopeValue());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerAndUserOrAdminJwt() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            TEST_NAMESPACE);
+    GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    withPeer(
+        WRONG_PEER,
+        () ->
+            assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+
+    runAsGameDesign(
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongDigestBeforeOwnerRead() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            TEST_NAMESPACE);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            ref.set(
+                invokeDigest(
+                    service,
+                    fullDigestRequest("1", "7").toBuilder()
+                        .setRequestDigest("0".repeat(64))
+                        .build())));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      AutomationScriptingGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test
@@ -120,7 +426,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -161,7 +468,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -204,7 +512,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -248,7 +557,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<TriggerScriptEventResponse> ref = new AtomicReference<>();
     service.triggerScriptEvent(
@@ -301,7 +611,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -344,7 +655,8 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
     AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
     service.triggerScriptEvent(
@@ -387,7 +699,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             workItemRepository,
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
     AtomicReference<GetScriptStatusResponse> ref = new AtomicReference<>();
 
     service.getScriptStatus(
@@ -426,7 +739,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
     AtomicReference<NotifyScriptVersionUpdateResponse> ref = new AtomicReference<>();
 
     service.notifyScriptVersionUpdate(
@@ -469,7 +783,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
     AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
 
@@ -518,7 +833,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
     AtomicReference<ObserveRuntimeTickProgressResponse> ref = new AtomicReference<>();
 
     service.observeRuntimeTickProgress(
@@ -561,7 +877,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
     service.updateScript(
@@ -606,7 +923,8 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            "");
 
     AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
     service.updateScript(

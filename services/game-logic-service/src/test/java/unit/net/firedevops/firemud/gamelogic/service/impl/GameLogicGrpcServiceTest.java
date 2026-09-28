@@ -5,13 +5,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
@@ -44,12 +51,52 @@ import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameLogicGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
+
+  private static PublicationReadGuard publicationReadGuard() {
+    return new PublicationReadGuard(TEST_NAMESPACE);
+  }
+
+  private static void runAsGameDesign(Runnable action) {
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/test/sa/game-design-service",
+                TEST_NAMESPACE,
+                "game-design-service"))
+        .run(action);
+  }
+
+  private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(tenantId, versionId, "request-7");
+    return GetDraftDesignDigestRequest.newBuilder()
+        .setTenantId(binding.tenantId())
+        .setVersionId(binding.versionId())
+        .setPublishRequestId(binding.publishRequestId())
+        .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+        .setRequestDigest(binding.requestDigest())
+        .build();
+  }
+
   private GameLogicDraftDesignDigestService mockDigestService() {
     return Mockito.mock(GameLogicDraftDesignDigestService.class);
+  }
+
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
   }
 
   private GameplaySessionAttestationService mockAttestationService() {
@@ -210,7 +257,7 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestReturnsVersionScopedDigest() {
+  void getDraftDesignDigestMapsUnavailableManifestToErrorResponse() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
@@ -221,9 +268,11 @@ class GameLogicGrpcServiceTest {
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
-        .thenReturn(
-            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
-                "1", "7", "version:7", "digest-logic", 1));
+        .thenThrow(
+            new GameLogicDraftDesignDigestService.UnsupportedDigestScopeException(
+                "Game Logic owner-local manifest and provenance are unavailable"));
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     GameLogicGrpcService service =
         new GameLogicGrpcService(
             pingService,
@@ -234,11 +283,185 @@ class GameLogicGrpcServiceTest {
             Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                fullDigestRequest("1", "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
+
+                  @Override
+                  public void onError(Throwable t) {
+                    fail(t);
+                  }
+
+                  @Override
+                  public void onCompleted() {}
+                }));
+
+    assertTrue(ref.get().hasError());
+    assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
+    assertEquals(
+        "Game Logic cannot attest the requested full-version digest scope",
+        ref.get().getError().getMessage());
+    assertEquals("", ref.get().getAppliedCommitId());
+    assertEquals("", ref.get().getContentDigest());
+    assertEquals(0, ref.get().getDigestSchemaVersion());
+  }
+
+  @Test
+  void getDraftDesignDigestMapsUnexpectedUnsupportedOperationToInternalError() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
+        .thenThrow(new UnsupportedOperationException("unexpected implementation failure"));
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    GameLogicGrpcService service = newDigestService(digestService);
+    AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+
+    runAsGameDesign(() -> response.set(invokeDigest(service, fullDigestRequest("1", "7"))));
+
+    assertTrue(response.get().hasError());
+    assertEquals("INTERNAL", response.get().getError().getCode());
+    assertEquals("Internal error", response.get().getError().getMessage());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsMissingPeerIdentityForInternalCaller() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            new PingServiceImpl(),
+            new CommandServiceImpl(
+                new DefaultCommandParser(),
+                new SimpleCommandProcessor(new EventDispatcher(), new NoOpScriptingHook())),
+            Mockito.mock(LookAggregationService.class),
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            Mockito.mock(ItemRuntimeService.class),
+            digestService,
+            mockAttestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, null)
+        .run(
+            () ->
+                service.getDraftDesignDigest(
+                    fullDigestRequest("1", "7"),
+                    new StreamObserver<>() {
+                      @Override
+                      public void onNext(GetDraftDesignDigestResponse value) {
+                        ref.set(value);
+                      }
+
+                      @Override
+                      public void onError(Throwable t) {}
+
+                      @Override
+                      public void onCompleted() {}
+                    }));
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerAndUserOrAdminJwt() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    GameLogicGrpcService service = newDigestService(digestService);
+    GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    withPeer(
+        WRONG_PEER,
+        () ->
+            assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+
+    withPeer(
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/test/sa/game-design-service",
+            TEST_NAMESPACE,
+            "game-design-service"),
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private GameLogicGrpcService newDigestService(GameLogicDraftDesignDigestService digestService) {
+    return newDigestService(digestService, TEST_NAMESPACE);
+  }
+
+  private GameLogicGrpcService newDigestService(
+      GameLogicDraftDesignDigestService digestService, String workloadNamespace) {
+    return new GameLogicGrpcService(
+        new PingServiceImpl(),
+        new CommandServiceImpl(
+            new DefaultCommandParser(),
+            new SimpleCommandProcessor(new EventDispatcher(), new NoOpScriptingHook())),
+        Mockito.mock(LookAggregationService.class),
+        Mockito.mock(CommunicationAggregationService.class),
+        Mockito.mock(MoveAggregationService.class),
+        Mockito.mock(ItemRuntimeService.class),
+        digestService,
+        mockAttestationService(),
+        new SimpleMeterRegistry(),
+        workloadNamespace);
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
+      GameLogicGrpcService service = newDigestService(digestService, workloadNamespace);
+
+      runAsGameDesign(
+          () ->
+              assertEquals(
+                  "PERMISSION_DENIED",
+                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    }
+    Mockito.verifyNoInteractions(digestService);
+
+    GameLogicDraftDesignDigestService configuredDigestService = mockDigestService();
+    Mockito.when(configuredDigestService.getDraftDesignDigest("1", "7"))
+        .thenReturn(
+            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
+                "1", "7", "version:7", "digest-game-logic", 1));
+    GameLogicGrpcService configuredService =
+        newDigestService(configuredDigestService, TEST_NAMESPACE);
+    AtomicReference<GetDraftDesignDigestResponse> configuredResponse = new AtomicReference<>();
+    runAsGameDesign(
+        () -> configuredResponse.set(invokeDigest(configuredService, fullDigestRequest("1", "7"))));
+
+    assertTrue(configuredResponse.get().getError().getCode().isEmpty());
+    assertEquals("1", configuredResponse.get().getTenantId());
+    assertEquals("7", configuredResponse.get().getVersionId());
+    Mockito.verify(configuredDigestService).getDraftDesignDigest("1", "7");
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      GameLogicGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> failure = new AtomicReference<>();
     service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        request,
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -247,15 +470,30 @@ class GameLogicGrpcServiceTest {
 
           @Override
           public void onError(Throwable t) {
-            fail(t);
+            failure.set(t);
           }
 
           @Override
           public void onCompleted() {}
         });
+    if (failure.get() != null) {
+      throw new AssertionError("getDraftDesignDigest completed with an error", failure.get());
+    }
+    GetDraftDesignDigestResponse response = ref.get();
+    if (response == null) {
+      throw new AssertionError("getDraftDesignDigest completed without a response");
+    }
+    return response;
+  }
 
-    assertEquals("7", ref.get().getScopeValue());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test

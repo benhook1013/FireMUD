@@ -18,6 +18,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptPatchPinProjectionRepository {
+  private static final long PIN_PROJECTION_LOCK_NAMESPACE = 0x534350494eL;
+
   private final DSLContext dsl;
 
   public ScriptPatchPinProjectionRepository(DSLContext dsl) {
@@ -26,7 +28,8 @@ public class ScriptPatchPinProjectionRepository {
 
   public Optional<ScriptPatchPinProjection> findByTenantIdAndGameInstanceId(
       String tenantId, String gameInstanceId) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
                 .TENANT_ID
@@ -35,9 +38,20 @@ public class ScriptPatchPinProjectionRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /** Serializes pin projection refresh and schedule reconciliation for one instance. */
+  public void lockPinProjectionScope(String tenantId, String gameInstanceId) {
+    String scope =
+        tenantId.length() + ":" + tenantId + gameInstanceId.length() + ":" + gameInstanceId;
+    dsl.fetch(
+        "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, ?))",
+        scope,
+        PIN_PROJECTION_LOCK_NAMESPACE);
+  }
+
   public List<ScriptPatchPinProjection> findByTenantIdAndObservedPinnedScriptPatchVersion(
       String tenantId, String observedPinnedScriptPatchVersion) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
                 .TENANT_ID
@@ -52,7 +66,15 @@ public class ScriptPatchPinProjectionRepository {
     if (entity.getId() == null) {
       ScriptPatchPinProjectionsRecord record = dsl.newRecord(SCRIPT_PATCH_PIN_PROJECTIONS);
       populate(record, entity);
-      record.store();
+      Long id =
+          dsl.insertInto(SCRIPT_PATCH_PIN_PROJECTIONS)
+              .set(record)
+              .returning(SCRIPT_PATCH_PIN_PROJECTIONS.ID)
+              .fetchOne(SCRIPT_PATCH_PIN_PROJECTIONS.ID);
+      if (id == null) {
+        throw new IllegalStateException("Saved script_patch_pin_projection did not return an id");
+      }
+      record.setId(id);
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
@@ -93,7 +115,8 @@ public class ScriptPatchPinProjectionRepository {
   }
 
   private Optional<ScriptPatchPinProjection> findById(Long id) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(SCRIPT_PATCH_PIN_PROJECTIONS.ID.eq(id))
         .fetchOptional(this::toEntity);
   }

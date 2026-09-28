@@ -75,7 +75,8 @@ class ScriptWorkItemServiceImplTest {
 
   private static GameDesignControlPlaneClient gameDesignClient() {
     GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
-    when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
+    when(client.getPublishedScriptPatchVersion(
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -559,13 +560,13 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING);
     assertThat(status.get().statusReason()).isEqualTo("tenant_readiness_running");
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
-    assertThat(status.get().baseVersionId()).isEqualTo(7L);
-    assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
-    assertThat(status.get().publication().versionId()).isEqualTo(17L);
-    assertThat(status.get().publication().publicationState())
-        .isEqualTo(
-            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                .VERSION_LIFECYCLE_STATE_PUBLISHED);
+    assertThat(status.get().baseVersionId()).isZero();
+    assertThat(status.get().abilitySchemaDigest()).isEmpty();
+    assertThat(status.get().publication().versionId()).isZero();
+    assertThat(status.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(status.get().publication().lookupErrorMessage())
+        .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
   }
 
   @Test
@@ -612,9 +613,13 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses.get(0).scriptPatchVersion()).isEqualTo("patch-failed");
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
     assertThat(statuses.get(0).statusReason()).isEqualTo("runtime_region_scope_advanced");
-    assertThat(statuses.get(0).baseVersionId()).isEqualTo(7L);
-    assertThat(statuses.get(0).abilitySchemaDigest()).isEqualTo("ability-1");
-    assertThat(statuses.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(statuses.get(0).baseVersionId()).isZero();
+    assertThat(statuses.get(0).abilitySchemaDigest()).isEmpty();
+    assertThat(statuses.get(0).publication().versionId()).isZero();
+    assertThat(statuses.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+    assertThat(statuses.get(0).publication().lookupErrorMessage())
+        .isEqualTo("base_version_id is unavailable for exact script-patch publication lookup");
   }
 
   @Test
@@ -1265,7 +1270,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("runtime_pin_matches_patch");
     assertThat(summary.get().projectionLagMs()).isZero();
     assertThat(summary.get().projectionStale()).isFalse();
-    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
+    assertThat(summary.get().publication().versionId()).isZero();
+    assertThat(summary.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1356,7 +1363,9 @@ class ScriptWorkItemServiceImplTest {
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
     assertThat(summary.get().statusReason()).isEqualTo("projection_lag_exceeded");
     assertThat(summary.get().projectionStale()).isTrue();
-    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
+    assertThat(summary.get().publication().versionId()).isZero();
+    assertThat(summary.get().publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1458,7 +1467,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summaries.get(0).rolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
-    assertThat(summaries.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(summaries.get(0).publication().versionId()).isZero();
+    assertThat(summaries.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
@@ -1508,7 +1519,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
-    assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(deadLetters.get(0).publication().versionId()).isZero();
+    assertThat(deadLetters.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
     verify(workItemRepository)
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
@@ -1690,7 +1703,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
-    assertThat(events.get(0).publication().versionId()).isEqualTo(17L);
+    assertThat(events.get(0).publication().versionId()).isZero();
+    assertThat(events.get(0).publication().lookupErrorCode())
+        .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
   }
 
   @Test
