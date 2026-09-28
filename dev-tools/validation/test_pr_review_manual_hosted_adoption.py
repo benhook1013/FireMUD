@@ -87,6 +87,10 @@ def public_payload(
     }
 
 
+def payload_fetcher(payload):
+    return lambda: payload
+
+
 class ManualHostedAdoptionTest(unittest.TestCase):
     def test_cli_exposes_exact_manual_identity(self):
         args = cli._parser().parse_args(
@@ -102,10 +106,14 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             common = Path(directory)
             record_path = hosted.default_trigger_record_path(REPO, 42, common)
             with patch.object(evidence, "git_common_dir", return_value=common):
-                adopted = hosted.adopt_manual_completed_trigger(REPO, 42, 10, HEAD, ANCHOR, payload, path=record_path)
+                adopted = hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(payload), path=record_path
+                )
                 self.assertEqual(adopted["response_id"], 55)
                 with self.assertRaisesRegex(ValueError, "already has a durable record"):
-                    hosted.adopt_manual_completed_trigger(REPO, 42, 10, HEAD, ANCHOR, payload, path=record_path)
+                    hosted.adopt_manual_completed_trigger(
+                        REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(payload), path=record_path
+                    )
                 live = LiveGitHub(REPO)
                 snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 73)
                 with (
@@ -136,7 +144,7 @@ class ManualHostedAdoptionTest(unittest.TestCase):
 
             with self.assertRaises(ValueError) as raised:
                 hosted.adopt_manual_completed_trigger(
-                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=record_path, common=common
+                    REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(public_payload()), path=record_path, common=common
                 )
 
             self.assertIn(str(candidate), str(raised.exception))
@@ -149,12 +157,12 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             second_path = common / "second-adoption.json"
 
             hosted.adopt_manual_completed_trigger(
-                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+                REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(public_payload()), path=first_path, common=common
             )
 
             with self.assertRaisesRegex(ValueError, "already has a durable record"):
                 hosted.adopt_manual_completed_trigger(
-                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=second_path, common=common
+                    REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(public_payload()), path=second_path, common=common
                 )
 
             self.assertTrue(first_path.exists())
@@ -174,12 +182,12 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             )
 
             hosted.adopt_manual_completed_trigger(
-                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+                REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(public_payload()), path=first_path, common=common
             )
 
             with self.assertRaisesRegex(ValueError, "already has a durable record"):
                 hosted.adopt_manual_completed_trigger(
-                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=legacy_path
+                    REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(public_payload()), path=legacy_path
                 )
 
             self.assertTrue(first_path.exists())
@@ -226,10 +234,12 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "trigger.json"
                 with self.assertRaisesRegex(ValueError, error):
-                    hosted.adopt_manual_completed_trigger(REPO, 42, 10, HEAD, ANCHOR, payload, path=path)
+                    hosted.adopt_manual_completed_trigger(
+                        REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(payload), path=path
+                    )
                 self.assertFalse(path.exists())
 
-    def test_cli_refuses_live_base_that_differs_from_reconciled_parent(self):
+    def test_cli_rejects_base_advanced_before_locked_manual_adoption_fetch(self):
         candidate = SimpleNamespace(head=HEAD)
         anchor = SimpleNamespace(as_dict=lambda: ANCHOR)
         controller = SimpleNamespace(
@@ -246,20 +256,32 @@ class ManualHostedAdoptionTest(unittest.TestCase):
         )
 
         for payload in stale_payloads:
-            with self.subTest(base_name=payload["data"]["repository"]["pullRequest"].get("baseRefName"),
-                              base_oid=payload["data"]["repository"]["pullRequest"].get("baseRefOid")):
+            with (
+                self.subTest(
+                    base_name=payload["data"]["repository"]["pullRequest"].get("baseRefName"),
+                    base_oid=payload["data"]["repository"]["pullRequest"].get("baseRefOid"),
+                ),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                common = Path(directory)
+                record_path = hosted.default_trigger_record_path(REPO, 42, common)
+
+                def fetch_after_lock(_repo, _pr, payload=payload, record_path=record_path):
+                    self.assertTrue((record_path.parent / "request.lock").exists())
+                    return payload
+
                 args = cli._parser().parse_args(
                     ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]
                 )
                 with (
                     patch.object(cli, "_controller", return_value=(controller, None)),
-                    patch.object(github, "fetch_pull_request", return_value=payload),
-                    patch.object(hosted, "adopt_manual_completed_trigger") as adopt,
-                    self.assertRaisesRegex(cli.CliError, "live PR base to match its verified parent"),
+                    patch.object(evidence, "git_common_dir", return_value=common),
+                    patch.object(github, "fetch_pull_request", side_effect=fetch_after_lock),
+                    self.assertRaisesRegex(ValueError, "live PR base to match its verified parent"),
                 ):
                     cli._dispatch(args)
 
-                adopt.assert_not_called()
+                self.assertFalse(record_path.exists())
 
 
 if __name__ == "__main__":
