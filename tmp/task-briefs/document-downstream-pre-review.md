@@ -2,7 +2,7 @@
 
 ## Standing mission
 
-Gameplay's current active front #2887 is outside this allocation. Document owns #2882, #2839, #2846, #2848, #2857, #2853, #2873, and #2876. Its prior Unit1B/corpus assignment stays parked except for necessary candidate preparation on its own #2873 and #2876 drafts; neither draft is pre-reviewed or merge-ready by virtue of that assignment.
+At this allocation, Gameplay's #2887 front is excluded. General owns #2879, #2829, #2840, #2847, #2856, #2861, and #2872. Document owns #2882, #2839, #2846, #2848, #2857, #2853, #2873, and #2876. Its prior Unit1B/corpus assignment stays parked except for necessary candidate preparation on its own #2873 and #2876 drafts; neither draft is pre-reviewed or merge-ready by virtue of that assignment.
 
 For every owned PR, reconcile its parent while preserving its unique patch, and run independent subagent pre-CodeRabbit review and fix passes. Repeat passes while they continue to find worthwhile, in-scope work; move on only after recording why another pass is no longer useful. There is no numeric dry-pass taper and independent review earns no CodeRabbit credit. Validate and publish at safe checkpoints. If a PR is blocked, continue with the next safe owned PR.
 
