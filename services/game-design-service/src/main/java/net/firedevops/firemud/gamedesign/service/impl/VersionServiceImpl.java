@@ -166,7 +166,7 @@ public class VersionServiceImpl implements VersionService {
       throw replayFailedScriptPatch(reservation.failureCode(), reservation.failureMessage());
     }
 
-    boolean finalizationStarted = false;
+    boolean notificationAttempted = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
@@ -174,9 +174,9 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
+      notificationAttempted = true;
       scriptingClient.notifyScriptVersionUpdate(
           tenantId, baseVersionId, scriptPatchVersion, List.of());
-      finalizationStarted = true;
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
@@ -193,18 +193,19 @@ public class VersionServiceImpl implements VersionService {
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
-      if (finalizationStarted) {
-        // Automation has accepted the notification. Neither an in-transaction rollback nor an
-        // ambiguous transaction-manager failure can undo that external effect, so retain the
-        // durable PENDING reservation for exact-request reconciliation.
-        if (ex instanceof PublishAttemptService.ScriptPatchTransactionException) {
-          throw new IllegalStateException(
-              "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: finalization failed after Automation accepted the notification; retry exact publish request",
-              operationFailure);
-        }
-        throw ex;
+      boolean localPreflightFailure =
+          operationFailure instanceof AutomationScriptingClient.PreDispatchValidationException;
+      if (!localPreflightFailure && notificationAttempted) {
+        // The notification invocation has begun. Neither an in-transaction rollback nor an
+        // ambiguous notification or transaction-manager failure can undo a possibly-dispatched
+        // external effect, so retain the durable PENDING reservation for exact-request
+        // reconciliation.
+        throw new IllegalStateException(
+            "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: notification outcome may be ambiguous; retry exact publish request",
+            operationFailure);
       }
-      if (!finalizationStarted
+      if (!localPreflightFailure
+          && !notificationAttempted
           && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
               operationFailure)) {
         throw new IllegalStateException(
