@@ -555,7 +555,7 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
     routed = sum(disposition == "routed" for disposition, _ in capture.decisions.values())
     if accepted != checkpoint.accepted:
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")
-    if routed != (checkpoint.routed or 0):
+    if checkpoint.routed is not None and routed != checkpoint.routed:
         raise CaptureInvalid("CLI checkpoint routed count does not match linked findings decisions")
 
 

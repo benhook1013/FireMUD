@@ -1275,7 +1275,14 @@ def trigger_state(
                 state = "failed_incomplete_coverage"
             else:
                 state = "ambiguous"
-            candidates.append((created, state, item, None))
+            terminal = parse_timestamp(item.get("updatedAt"))
+            if terminal is not None and terminal > created:
+                if next_dt is not None and terminal >= next_dt:
+                    candidates.append((terminal, "ambiguous", item, None))
+                    continue
+                candidates.append((terminal, state, item, None))
+            else:
+                candidates.append((created, state, item, None))
     for review in reviews:
         if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
             continue
@@ -1381,7 +1388,21 @@ def trigger_state(
             ),
         )
     response_dt = parse_timestamp(response_at)
-    elapsed = math.ceil((response_dt - trigger_dt).total_seconds()) if response_dt and trigger_dt else None
+    terminal_dt = response_dt
+    if (
+        state == "completed"
+        and response in comments
+        and FINISHED_REVIEW_PATTERN.search(_unquoted(response.get("body") or ""))
+    ):
+        created_dt = parse_timestamp(response.get("createdAt"))
+        updated_dt = parse_timestamp(response.get("updatedAt"))
+        if created_dt and updated_dt and updated_dt > created_dt:
+            # A finished-review reply can be created as an acknowledgment and
+            # edited when the review actually completes. Use that terminal
+            # edit for duration only while it remains inside this trigger's
+            # window; response identity and displayed creation time stay fixed.
+            terminal_dt = updated_dt if next_dt is None or updated_dt < next_dt else None
+    elapsed = math.ceil((terminal_dt - trigger_dt).total_seconds()) if terminal_dt and trigger_dt else None
     if response_id is None:
         return TriggerState(
             "unattributed",

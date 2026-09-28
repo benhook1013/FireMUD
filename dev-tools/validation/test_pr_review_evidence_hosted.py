@@ -1173,6 +1173,77 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "completed")
         self.assertEqual(state.duration_seconds, 60)
 
+    def test_zero_finding_finished_reply_uses_terminal_edit_for_duration_only_within_trigger_window(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 1. Files reviewed: 1. Files not reviewed: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:00:30Z",
+        )
+        summary["updatedAt"] = "2026-09-23T00:07:20Z"
+        reply = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:01:08Z")
+        reply["body"] = "Full review finished."
+        reply["updatedAt"] = "2026-09-23T00:07:48Z"
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary, reply]), trigger_record())
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
+        self.assertEqual(state.duration_seconds, 408)
+
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:07:30Z")
+        state_after_next_trigger = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, summary, reply, next_trigger]), trigger_record()
+        )
+        self.assertEqual(state_after_next_trigger.state, "ambiguous")
+        self.assertEqual(state_after_next_trigger.response_id, 11)
+        self.assertIsNone(state_after_next_trigger.duration_seconds)
+
+    def test_finished_reply_edited_after_next_trigger_keeps_ambiguous_response_identity(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:08Z")
+        reply["updatedAt"] = "2026-09-23T00:03:00Z"
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, reply, next_trigger]),
+            trigger_record(),
+        )
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
+        self.assertIsNone(state.duration_seconds)
+
+    def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            (
+                "0 actionable comments found.\n"
+                "Files selected: 1. Files reviewed: 1. Files not reviewed: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "2026-09-23T00:01:50Z",
+        )
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary, reply]), trigger_record())
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_created_at, "2026-09-23T00:02:00Z")
+        self.assertEqual(state.duration_seconds, 60)
+
     def test_substantive_exact_head_review_wins_over_incidental_failure_wording(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(
