@@ -76,6 +76,25 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void listPointersMapsUnavailableAuthorityToServiceUnavailable() {
+    when(gameSessionControlPlaneClient.listAdmissionPointers())
+        .thenReturn(
+            ListAdmissionPointersResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("AUTHORITY_UNAVAILABLE")
+                        .setMessage("current pointer authority unavailable")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.listPointers());
+
+    assertEquals(503, ex.getStatusCode().value());
+    assertEquals("current pointer authority unavailable", ex.getReason());
+  }
+
+  @Test
   void listPointerAuditRequiresAccessibleTenant() {
     SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
 
@@ -102,6 +121,28 @@ class AdmissionPointerServiceImplTest {
     assertEquals(
         java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"),
         result.get(0).playableStateNamespaceId());
+  }
+
+  @Test
+  void listPointerAuditMapsAdmissionPointerAuthorityUnavailableToServiceUnavailable() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.listAdmissionPointerAudit(2L, "sandbox", "preview"))
+        .thenReturn(
+            ListAdmissionPointerAuditResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE")
+                        .setMessage("current admission pointer authority unavailable")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.listPointerAudit(2L, "sandbox", "preview"));
+
+    assertEquals(503, ex.getStatusCode().value());
+    assertEquals("current admission pointer authority unavailable", ex.getReason());
   }
 
   @Test

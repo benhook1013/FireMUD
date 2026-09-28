@@ -388,6 +388,8 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         switch (error.getCode()) {
           case "INVALID_ARGUMENT" -> HttpStatus.BAD_REQUEST;
           case "PERMISSION_DENIED" -> HttpStatus.FORBIDDEN;
+          case "AUTHORITY_UNAVAILABLE", "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE" ->
+              HttpStatus.SERVICE_UNAVAILABLE;
           case "POINTER_VERSION_MISMATCH" -> HttpStatus.CONFLICT;
           case "CUTOVER_PREPARATION_INVALID" -> HttpStatus.CONFLICT;
           case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
