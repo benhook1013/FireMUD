@@ -245,6 +245,19 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("The round counts above remain complete.", rendered)
         self.assertIn("No detailed finding records have been imported", rendered)
 
+    def test_record_history_keeps_later_runs_visible(self):
+        history = {
+            "runs": [
+                {"run_id": f"run-{number}", "channel": "cli", "outcome": "completed",
+                 "counts": {"found": number}}
+                for number in range(1, 66)
+            ],
+            "findings": [], "routes": [], "decisions": [],
+        }
+        rendered = page.render_record_sections(history)
+        self.assertIn("found: 65", rendered)
+        self.assertNotIn("Additional runs omitted", rendered)
+
     def test_review_detail_embeds_responsive_activity_card_and_pill_styles(self):
         review = {
             "available": True,
