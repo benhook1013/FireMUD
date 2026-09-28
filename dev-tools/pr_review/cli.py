@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, github, hosted, sqlite_provider_imports
+from . import acceptance, cli_attempts, github, hosted, sqlite_provider_imports
 from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
@@ -350,6 +350,14 @@ def _parser() -> argparse.ArgumentParser:
     prepost_recovery.add_argument("--reason", required=True)
     prepost_recovery.add_argument("--confirmed-not-posted", action="store_true")
     prepost_recovery.add_argument("--json", action="store_true", dest="as_json")
+    manual_adoption = decide_commands.add_parser(
+        "trigger-adopt-manual",
+        help="audit a completed, uniquely attributable manual Hosted request without posting another",
+    )
+    manual_adoption.add_argument("--pr", required=True, type=_positive_int)
+    manual_adoption.add_argument("--trigger-id", required=True, type=_positive_int)
+    manual_adoption.add_argument("--head", required=True, type=_exact_sha)
+    manual_adoption.add_argument("--json", action="store_true", dest="as_json")
     stuck_recovery = decide_commands.add_parser(
         "trigger-retire-stuck",
         help="retire a stuck trigger after the live PR head advanced",
@@ -376,7 +384,7 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
         fixture = acceptance.load(fixture_path, isolated_state)
         return fixture.controller(), fixture
     if args.command == "stack" and args.stack_command == "show":
-        return ReviewController(), None
+        return ReviewController(store=ControllerStateStore()), None
     return default_controller(), None
 
 
@@ -604,7 +612,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         store.bootstrap()
         return {"api_version": 1, "result": {"status": "bootstrapped"}}, 0
     if args.records_command == "history":
-        return {"api_version": 1, "result": store.history(args.pr, include_legacy_routes=True)}, 0
+        history = store.history(args.pr, include_legacy_routes=True)
+        history["cli_attempts"] = cli_attempts.failed_attempts(_records_database_path(args), args.pr)
+        return {"api_version": 1, "result": history}, 0
     if args.records_command == "routes":
         routes = store.open_routes(
             target_pr=args.target_pr if args.target_pr is not None else None,
@@ -1035,6 +1045,28 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 args.reason,
                 args.confirmed_not_posted,
                 lambda: github.fetch_pull_request(controller.repository, args.pr),
+            ), 0
+        if args.decide_command == "trigger-adopt-manual":
+            if fixture is not None:
+                raise CliError("manual Hosted adoption requires live GitHub and Git evidence")
+            state = controller.store.load()
+            if args.pr not in state.ordered_prs:
+                raise CliError(f"PR #{args.pr} is not in the configured review queue")
+            live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+            candidate = live.get(args.pr)
+            if candidate is None or candidate.head.casefold() != args.head.casefold():
+                raise CliError("manual Hosted adoption requires the current published PR head")
+            anchor = controller._reconciled_anchor(args.pr, candidate, reconciliation)
+            if anchor is None:
+                raise CliError("manual Hosted adoption requires a verified current parent and patch")
+            payload = github.fetch_pull_request(controller.repository, args.pr)
+            return hosted.adopt_manual_completed_trigger(
+                controller.repository,
+                args.pr,
+                args.trigger_id,
+                args.head,
+                anchor.as_dict(),
+                payload,
             ), 0
         if args.decide_command == "trigger-retire":
             paths = hosted.trigger_record_paths(controller.repository, args.pr)

@@ -104,3 +104,13 @@ Entry format:
   - Context: the #2828 delivery page reverted to two-number review pills even though recent public checkpoints recorded `found / accepted / routed`.
   - Observation: the controller parsed `routed` from those checkpoints but omitted it from completed review history, so status returned an unknown third count. The page's separate evidence fallback also failed when an unrelated queued PR had unavailable identity, leaving the omission silent.
   - Expected pattern: carry explicit checkpoint fields through the status projection, test modern and legacy checkpoint shapes together, and verify the rendered latest-five results against public checkpoints. A failure to enrich one PR must not silently turn its known three-count results into legacy two-count results.
+
+- `2026-09-28`: Manual Hosted requests need explicit attribution before checkpoint credit
+  - Context: a human-posted full-review command on #2879 produced a completed CodeRabbit review and a public checkpoint, but the controller had no private trigger record and omitted the round from counted history.
+  - Observation: the public command and review IDs uniquely identified the completed round; a checkpoint alone did not establish the controller's request-time attribution.
+  - Expected pattern: when an external full-review command has already completed, verify and adopt its public trigger/result through the guarded controller command before relying on its checkpoint. Never post a duplicate request or infer a trigger from the checkpoint alone.
+
+- `2026-09-29`: A failed CLI attempt is not a missing completed review
+  - Context: #2879 had a long interval between CLI checkpoints while its private captures included a nine-second rate-limited attempt.
+  - Observation: seven successful captures matched seven public CLI checkpoints; the failed attempt had an exit status and a provider limit but no review result. Completed-result pills alone did not explain the gap.
+  - Expected pattern: keep failed attempts separate from review and taper counts, expose only coarse non-counting status from private captures, and compare successful captures with public checkpoints before claiming a result was lost.

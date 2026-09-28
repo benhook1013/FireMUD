@@ -54,6 +54,9 @@ _COMMAND_TIMEOUT_SECONDS = 120
 _DEFAULT_RETENTION_COUNT = 30
 _GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
 _SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
+# Legacy route notes can name long Java test classes; keep this exception to
+# alphabetic PascalCase test names, after the explicit credential patterns run.
+_JAVA_TEST_IDENTIFIER = re.compile(r"(?:[A-Z][a-z]{2,}){4,}Test")
 _EXPECTED_COLUMNS = {
     "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
     "review_state": ("singleton", "state_json"),
@@ -520,6 +523,8 @@ def _looks_secret(value: str) -> bool:
 
 def _is_known_identifier(token: str) -> bool:
     if _FULL_COMMIT_SHA.fullmatch(token):
+        return True
+    if _JAVA_TEST_IDENTIFIER.fullmatch(token):
         return True
     if not _LOW_ENTROPY_IDENTIFIER.fullmatch(token):
         return False

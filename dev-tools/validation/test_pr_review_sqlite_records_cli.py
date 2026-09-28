@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import cli
+from pr_review import cli, cli_attempts
 from pr_review.controller import ReviewController
 from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
@@ -37,6 +37,60 @@ class ReviewRecordsCliTest(unittest.TestCase):
         if result == 0:
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
+
+    def test_history_exposes_failed_cli_attempt_without_counting_success_or_raw_output(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        root = self.database.parent / "pr-review" / "runs"
+        failed = root / ("run." + "a" * 32)
+        successful = root / ("run." + "b" * 32)
+        for directory in (failed, successful):
+            directory.mkdir(parents=True)
+            (directory / "metadata.json").write_text(json.dumps({"pull_request": 2879}))
+        (failed / "exit-status").write_text("1\n")
+        (failed / "stderr").write_text("Error: Rate limit exceeded; private provider details")
+        (successful / "exit-status").write_text("0\n")
+
+        code, response = self.invoke("history", "--pr", "2879", "--database", str(self.database))
+
+        self.assertEqual(code, 0)
+        attempts = response["result"]["cli_attempts"]
+        self.assertTrue(attempts["available"])
+        self.assertEqual(1, len(attempts["attempts"]))
+        self.assertEqual("rate_limited", attempts["attempts"][0]["outcome"])
+        self.assertEqual(failed.name, attempts["attempts"][0]["run_id"])
+        self.assertNotIn("private provider details", str(response))
+
+    def test_failed_cli_attempt_reads_only_bounded_stderr_prefix_for_rate_limit_classification(self) -> None:
+        root = self.database.parent / "pr-review" / "runs"
+        failed = root / ("run." + "c" * 32)
+        failed.mkdir(parents=True)
+        (failed / "metadata.json").write_text(json.dumps({"pull_request": 2890}), encoding="utf-8")
+        (failed / "exit-status").write_text("1\n", encoding="utf-8")
+        stderr_path = failed / "stderr"
+
+        class GuardedStream(io.BytesIO):
+            requested_bytes: int | None = None
+
+            def read(self, size: int = -1) -> bytes:
+                self.requested_bytes = size
+                if size < 0 or size > cli_attempts.MAX_STDERR_BYTES:
+                    raise AssertionError("stderr read was not bounded")
+                return super().read(size)
+
+        stream = GuardedStream(b"Error: Rate limit exceeded\n" + b"x" * 1_000_000)
+        stderr_path.touch()
+        original_open = Path.open
+
+        def open_stderr(path: Path, *args: object, **kwargs: object) -> object:
+            if path == stderr_path:
+                return stream
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", autospec=True, side_effect=open_stderr):
+            attempts = cli_attempts.failed_attempts(self.database, 2890)
+
+        self.assertEqual(stream.requested_bytes, 4096)
+        self.assertEqual(attempts["attempts"][0]["outcome"], "rate_limited")
 
     def test_default_records_require_cutover_and_status_ignores_orphan_sibling_database(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "controller.json"

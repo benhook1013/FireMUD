@@ -1131,6 +1131,18 @@ class RuntimeTest(unittest.TestCase):
         ):
             return list(LiveEvidence("owner/repo", live).history(42, channel))
 
+    def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", side_effect=AssertionError("redundant metadata read")),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+            self.assertEqual(HEAD, history[0]["head"])
+
     def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
         valid = {
             "databaseId": 90,
@@ -1591,6 +1603,86 @@ class RuntimeTest(unittest.TestCase):
         conflicted = history_for([trigger, summary, reply, checkpoint], [conflicting_review])
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in conflicted))
 
+    def test_later_explicit_terminal_comment_overrides_immutable_review(self) -> None:
+        trigger_at = "2026-09-27T17:27:32Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T17:30:00Z",
+            "commit": {"oid": HEAD},
+        }
+        terminal_comment = {
+            "databaseId": 56,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": "2026-09-27T17:31:00Z",
+            "updatedAt": "2026-09-27T17:31:00Z",
+        }
+
+        state = hosted.trigger_state(
+            "owner/repo",
+            42,
+            self._payload([trigger, terminal_comment], [review]),
+            self._trigger_record(created=trigger_at),
+        )
+
+        self.assertEqual((state.state, state.response_id), ("rate_limited", 56))
+
+    def test_edited_finished_acknowledgment_cannot_supersede_immutable_review(self) -> None:
+        trigger_at = "2026-09-27T17:27:32Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        summary = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": "2026-09-27T17:31:00Z",
+            "updatedAt": "2026-09-27T17:31:00Z",
+        }
+        acknowledgment = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-27T17:28:00Z",
+            "updatedAt": "2026-09-27T17:34:00Z",
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T17:30:00Z",
+            "commit": {"oid": HEAD},
+        }
+
+        state = hosted.trigger_state(
+            "owner/repo",
+            42,
+            self._payload([trigger, summary, acknowledgment], [review]),
+            self._trigger_record(created=trigger_at),
+        )
+
+        self.assertEqual((state.state, state.response_id), ("completed", 55))
+
     def test_archived_zero_reply_checkpoint_survives_a_later_hosted_review(self) -> None:
         first_head = "932ff6e0027214d7e5303941de11e52501230220"
         second_head = "52a" + "8" * 37
@@ -1619,7 +1711,8 @@ class RuntimeTest(unittest.TestCase):
             "author": {"login": "coderabbitai"},
             "body": "Full review finished.",
             "createdAt": "2026-09-27T17:27:40Z",
-            "updatedAt": "2026-09-27T17:34:20Z",
+            # A later edit must not erase this already-attributed review.
+            "updatedAt": "2026-09-27T21:38:20Z",
         }
         first_checkpoint = {
             "databaseId": 5858176568,

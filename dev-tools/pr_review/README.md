@@ -1,5 +1,7 @@
 # PR Review SQLite Store and Backup
 
+A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current stack anchor before writing a private attribution record. It does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
+
 ## Controller state and review records
 
 Use these operations only after the controller change has merged and its version-matched tooling has been installed wherever the shared controller runs. Select `dev-tools/pr-review` from that trusted post-merge checkout, not from an older stacked worktree, and inspect its promoted version before any shared write:
@@ -37,6 +39,8 @@ dev-tools/pr-review records import-provider \
 For an independent manual or subagent review, create a curated version-1 JSON batch and register it with `records import-run --input <file>`. Required top-level fields are `api_version`, `run`, and `findings`; optional top-level `decisions` supplies source decisions. Required `run` fields are `run_id`, `source_pr`, `channel` (`manual` or `subagent`), `reviewer`, `scope`, `coverage_limits`, and `outcome`; optional fields are `source_head`, `started_at`, and `finished_at`. Each finding requires `source_finding_key` and `title`, with optional `detail`, `disposition`, `target_pr`, and inline decision fields `decision_id`, `decision`, `actor`, `reason`, and `decided_at`. A complete batch with a completed outcome and exactly one decision per finding is imported and finalized atomically. Partial source decisions are rejected; batches without decisions remain unresolved for later adjudication with `records source decide` and finalization with `records source finalize`. Batch files are bounded to 512 KB and 200 findings/decisions. Do not put credentials, raw captures, or stdout in this file.
 
 These history and route queries, `state status`, and controller `status` are read-only. `records history` and `records routes` read structured review records and read through migrated legacy controller routes from the same SQLite snapshot. Returned routes label their origin as `review_records` or `legacy_controller`, keeping the two sources distinct:
+
+`records history` also summarizes up to five failed CLI attempts from the existing private captures. Those failures are not completed reviews and never enter taper counts. The summary contains only a coarse outcome and completion time; raw provider output remains private. Successful captures await adjudication and a public checkpoint before appearing in completed review history.
 
 ```sh
 dev-tools/pr-review records history --pr <number>
