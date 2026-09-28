@@ -963,11 +963,16 @@ def _zero_finding_summary(
         if not is_coderabbit_login((comment.get("author") or {}).get("login")):
             continue
         body = comment.get("body")
+        created = parse_timestamp(comment.get("createdAt"))
         updated = parse_timestamp(comment.get("updatedAt"))
-        if not isinstance(body, str) or updated is None:
+        if not isinstance(body, str) or created is None or updated is None:
             return None
         if updated <= after or (before is not None and updated >= before):
             continue
+        # An edited standing summary may describe an earlier same-head run.
+        # Its edit time alone cannot attribute it to this trigger.
+        if created <= after or (before is not None and created >= before):
+            return None
         if immutable_database_id(comment) == response_id:
             continue
         if (
@@ -1348,6 +1353,7 @@ def provider_format_incomplete_coverage_summary(
 
 def finished_reply_without_findings(
     payload: dict[str, Any],
+    head: str,
     after: datetime,
     response_id: int | None,
     before: datetime | None = None,
@@ -1400,6 +1406,20 @@ def finished_reply_without_findings(
             continue
         created_in_window = in_window(item.get("createdAt"))
         updated_in_window = in_window(item.get("updatedAt"))
+        body = item.get("body")
+        if (
+            created_in_window is False
+            and updated_in_window is True
+            and isinstance(body, str)
+            and "No actionable comments were generated in the recent review." in body
+            and _matches_head(body, head)
+            and not _summary_has_explicit_incompleteness(body)
+            and not any(pattern.search(_unquoted(body)) for pattern in POSITIVE_FINDING_COUNT_PATTERNS)
+        ):
+            # CodeRabbit reuses its standing PR summary. A benign old zero
+            # summary is not attributed to this trigger; the exact finished
+            # reply and absence of reviews/threads are the zero proof.
+            continue
         if created_in_window is None or updated_in_window is None or created_in_window or updated_in_window:
             return False
     for item in connections["reviews"]:
@@ -1594,6 +1614,7 @@ def trigger_state(
                 state = "failed_incomplete_coverage"
             elif finished_reply_without_findings(
                 payload,
+                record["head_sha"],
                 trigger_dt,
                 immutable_database_id(item),
                 next_dt,

@@ -1206,6 +1206,29 @@ class HostedEvidenceTests(unittest.TestCase):
         cross_trigger = review_payload([trigger, late_reply, later, late_summary])
         self.assertEqual(hosted.trigger_state(REPO, PR, cross_trigger, trigger_record()).state, "ambiguous")
 
+    def test_legacy_zero_sentence_edit_is_not_attributed_as_a_new_summary(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        old_summary = comment(
+            12,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-22T23:59:00Z",
+        )
+        old_summary["updatedAt"] = "2026-09-23T00:02:30Z"
+        payload = review_payload([old_summary, trigger, reply])
+        self.assertIsNone(
+            hosted._zero_finding_summary(
+                payload,
+                HEAD,
+                hosted.parse_timestamp(trigger["createdAt"]),
+                11,
+                None,
+            )
+        )
+        self.assertEqual(hosted.trigger_state(REPO, PR, payload, trigger_record()).state, "completed")
+
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(

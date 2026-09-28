@@ -1171,7 +1171,7 @@ class LiveEvidence:
             next_trigger,
         )
         finished_only = hosted.finished_reply_without_findings(
-            payload, trigger_at, response_id, next_trigger
+            payload, captured_head, trigger_at, response_id, next_trigger
         )
         if legacy_summary is None and provider_summary is None and not finished_only:
             return None
@@ -1898,8 +1898,25 @@ class HostedRunner:
     ) -> None:
         terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
         current = self._repository_current_trigger_paths(self.repo, common)
+        configured_prs: tuple[int, ...] = ()
+        open_prs = set(current)
+        if self.state_store is not None:
+            try:
+                configured_prs = self.state_store.load().ordered_prs
+                numbers = tuple(sorted((set(current) | set(configured_prs)) - {pr}))
+                identities = github.fetch_pr_identity_batch(self.repo, numbers)
+            except (OSError, RuntimeError, ValueError, StateError) as exc:
+                raise ControllerError("configured Hosted queue cannot be checked before posting") from exc
+            if any(not isinstance(identities.get(number), Mapping) for number in numbers):
+                raise ControllerError("configured Hosted queue has an unverifiable PR identity")
+            open_prs = {
+                number
+                for number in numbers
+                if identities[number].get("state") == "OPEN" and identities[number].get("mergedAt") is None
+            }
+        payloads: dict[int, dict[str, Any]] = {}
         for other_pr, paths in current.items():
-            if other_pr == pr:
+            if other_pr == pr or other_pr not in open_prs:
                 continue
             if len(paths) != 1:
                 raise ControllerError(f"multiple current Hosted reservations for PR #{other_pr} require resolution")
@@ -1924,6 +1941,7 @@ class HostedRunner:
                             f"another Hosted request is unresolved for PR #{other_pr}: ambiguous"
                         )
                     payload = github.fetch_pull_request(self.repo, other_pr)
+                    payloads[other_pr] = payload
                     state = hosted.trigger_state(self.repo, other_pr, payload, record, path)
                 except ControllerError:
                     raise
@@ -1949,17 +1967,13 @@ class HostedRunner:
                     raise ControllerError(
                         f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
                     )
-        if self.state_store is None:
-            return
-        try:
-            configured_prs = self.state_store.load().ordered_prs
-        except (OSError, StateError) as exc:
-            raise ControllerError("configured Hosted queue cannot be checked for manual requests") from exc
         for other_pr in configured_prs:
-            if other_pr == pr or other_pr in current:
+            if other_pr == pr or other_pr not in open_prs:
                 continue
             try:
-                payload = github.fetch_pull_request(self.repo, other_pr)
+                payload = payloads.get(other_pr)
+                if payload is None:
+                    payload = github.fetch_pull_request(self.repo, other_pr)
                 command = self._latest_untracked_manual_trigger(other_pr, payload)
                 if command is None:
                     continue

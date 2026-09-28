@@ -6248,6 +6248,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result.target, 2)
         self.assertEqual(result.status, ReviewStatus.MISSING_EVIDENCE)
 
+        dry = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "hosted-dry-before-allocation",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+        }
+        allocated_gap = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [dry, terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.COHERENT, 2: stack.ReconciliationStatus.COHERENT},
+            allocation_reopen_prs={1},
+        )
+        self.assertEqual(allocated_gap.target, 2)
+        self.assertEqual(allocated_gap.status, ReviewStatus.MISSING_EVIDENCE)
+
         unreconciled = select_review_target(
             state,
             Channel.HOSTED,

@@ -1018,6 +1018,72 @@ class RuntimeTest(unittest.TestCase):
                     "fetch_pull_request",
                     side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
                 ),
+                patch.object(
+                    github,
+                    "fetch_pr_identity_batch",
+                    return_value={43: {"state": "OPEN", "mergedAt": None}},
+                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #43"),
+            ):
+                HostedRunner("owner/repo", live, store)(target, expect_pr=42)
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_request_checks_new_manual_command_after_other_prs_terminal_record(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), PATCH, BASE, "owner/repo")
+        live = LiveGitHub("owner/repo")
+        old_command = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/10",
+        }
+        old_finish = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        new_manual = {
+            "databaseId": 12,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/12",
+        }
+        payload42 = self._payload()
+        payload43 = self._payload([old_command, old_finish, new_manual])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        calls = []
+
+        def gh_call(args, **kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("a new manual Hosted request must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            other = common / "firemud" / "hosted" / "owner_repo" / "pr-43" / "trigger.json"
+            other.parent.mkdir(parents=True)
+            record = self._trigger_record()
+            record["pr_number"] = 43
+            record["anchor"]["pr"] = 43
+            other.write_text(json.dumps(record), encoding="utf-8")
+            store = StateStore(common / "state.json")
+            store.save(ReviewState(ordered_prs=(42, 43)))
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]),
+                patch.object(github, "fetch_pr_identity_batch", return_value={43: {"state": "OPEN", "mergedAt": None}}),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
                 patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
