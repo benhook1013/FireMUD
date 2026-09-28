@@ -173,11 +173,11 @@ public class PlayCommandHandler {
             null);
       }
 
-      ResolvedPlaySelection selection = maybeSelection.orElseThrow();
+      ResolvedPlaySelection requestedSelection = maybeSelection.orElseThrow();
       GameplayWorldCatalog.DiscoverySnapshot currentCatalog =
           gameplayWorldCatalog.readDiscoverySnapshot();
       WorldSelectorResolution worldSelection =
-          resolvePlayWorld(context, selection.worldSelector(), currentCatalog);
+          resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);
       if (worldSelection instanceof WorldSelectorResolution.Unavailable) {
         return failure(
             GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
@@ -213,6 +213,7 @@ public class PlayCommandHandler {
       }
       GameplayWorldCatalog.WorldView selectedWorld =
           ((WorldSelectorResolution.Selected) worldSelection).world();
+      ResolvedPlaySelection selection = disambiguateSelection(requestedSelection, selectedWorld);
       if (!gameplayWorldCatalog.hasValidPublicProductionRealm(currentCatalog, selectedWorld)) {
         return failure(
             "ADMISSION_POINTER_UNAVAILABLE",
@@ -1202,21 +1203,18 @@ public class PlayCommandHandler {
       return Optional.of(
           new ResolvedPlaySelection(worldSelector.trim(), secondSelector, characterSelector));
     }
-
-    if (StringUtils.hasText(secondSelector)
-        && (GameplayWorldCatalog.isOrdinalSelector(worldSelector)
-            || GameplayWorldCatalog.isOrdinalSelector(secondSelector))) {
-      return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
-    }
-    Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        gameplayWorldCatalog.resolveStableWorld(
-            gameplayWorldCatalog.readDiscoverySnapshot(), worldSelector);
-    if (maybeWorld.isPresent()
-        && StringUtils.hasText(secondSelector)
-        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
-      return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
-    }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
+  }
+
+  private ResolvedPlaySelection disambiguateSelection(
+      ResolvedPlaySelection requestedSelection, GameplayWorldCatalog.WorldView selectedWorld) {
+    String secondSelector = requestedSelection.explicitRealmSelector();
+    if (!StringUtils.hasText(secondSelector)
+        || GameplayWorldCatalog.isOrdinalSelector(secondSelector)
+        || gameplayWorldCatalog.hasRealmForAdmission(selectedWorld, secondSelector)) {
+      return requestedSelection;
+    }
+    return new ResolvedPlaySelection(requestedSelection.worldSelector(), null, secondSelector);
   }
 
   private Optional<GameplayWorldCatalog.RealmView> selectDefaultRealm(
