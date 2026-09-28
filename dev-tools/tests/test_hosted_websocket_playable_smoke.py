@@ -5,7 +5,6 @@ import sys
 import unittest
 from collections import deque
 
-
 HELPER = pathlib.Path(__file__).parents[1] / "hosted/shared/hosted-websocket-playable-smoke.py"
 SPEC = importlib.util.spec_from_file_location("hosted_websocket_playable_smoke", HELPER)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -229,7 +228,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 http = FakeHttp()
                 accepted = []
 
-                def socket_factory(url, timeout, headers):
+                def socket_factory(url, timeout, headers, *, accepted=accepted, failure=failure):
                     if not accepted:
                         socket = FakeWebSocket()
                         accepted.append(socket)
@@ -302,15 +301,14 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             "https://frontend.preview.example/path",
         ):
             http = FakeHttp()
-            with self.subTest(origin=origin):
-                with self.assertRaisesRegex(
-                    MODULE.HostedWebSocketPlayableSmokeError, "first-party Origin"
-                ):
-                    MODULE.run_smoke(
-                        self.config(origin=origin),
-                        http_request=http,
-                        websocket_factory=FakeWebSocket,
-                    )
+            with self.subTest(origin=origin), self.assertRaisesRegex(
+                MODULE.HostedWebSocketPlayableSmokeError, "first-party Origin"
+            ):
+                MODULE.run_smoke(
+                    self.config(origin=origin),
+                    http_request=http,
+                    websocket_factory=FakeWebSocket,
+                )
             self.assertEqual(http.calls, [])
 
     def test_wrong_allowlisted_origin_is_not_treated_as_a_pass(self):
@@ -350,13 +348,14 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             MODULE.HttpResponse(200, {}, {"ready": True}),
         ):
             http = FakeHttp(readiness=readiness)
-            with self.subTest(readiness=readiness):
-                with self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError):
-                    MODULE.run_smoke(
-                        self.config(readiness_url="https://preview.example/ready"),
-                        http_request=http,
-                        websocket_factory=FakeWebSocket,
-                    )
+            with self.subTest(readiness=readiness), self.assertRaises(
+                MODULE.HostedWebSocketPlayableSmokeError
+            ):
+                MODULE.run_smoke(
+                    self.config(readiness_url="https://preview.example/ready"),
+                    http_request=http,
+                    websocket_factory=FakeWebSocket,
+                )
             self.assertEqual(len(http.calls), 1)
 
     def test_failure_does_not_echo_credentials(self):
