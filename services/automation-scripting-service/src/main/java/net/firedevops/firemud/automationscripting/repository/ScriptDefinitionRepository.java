@@ -166,7 +166,7 @@ public class ScriptDefinitionRepository {
                     .and(SCRIPTS.ROW_VERSION.eq(entity.getRowVersion()))
                     .and(SCRIPTS.TENANT_ID.eq(entity.getTenantId()))
                     .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
-                    .and(SCRIPTS.BASE_VERSION_ID.eq(entity.getBaseVersionId()))
+                    .and(SCRIPTS.BASE_VERSION_ID.isNotDistinctFrom(entity.getBaseVersionId()))
                     .and(SCRIPTS.NAME.eq(entity.getName())))
             .execute();
     if (updated != 1) {

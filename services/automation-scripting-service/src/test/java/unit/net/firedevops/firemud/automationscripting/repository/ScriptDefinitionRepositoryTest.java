@@ -110,7 +110,7 @@ class ScriptDefinitionRepositoryTest {
     assertThat(persisted.getRowVersion()).isEqualTo(9);
     assertThat(saveResult.created()).isFalse();
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
-        .contains("is distinct from", "row_version", "where");
+        .contains("is distinct from", "is not distinct from", "row_version", "where");
     assertExpectedRowVersionBinding(updateSql.get(), updateBindings.get(), 9);
   }
 

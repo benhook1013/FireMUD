@@ -176,6 +176,52 @@ class ScriptDefinitionRepositoryIntegrationTest {
   }
 
   @Test
+  void explicitIdUpdateRetainsNullBaseVersionAndUpdatesContent() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    ScriptDefinition replacement = script("{\"value\":2}");
+    replacement.setId(retained.getId());
+    replacement.setBaseVersionId(null);
+    replacement.setRowVersion(retained.getRowVersion());
+
+    ScriptDefinition saved = repository.save(replacement);
+
+    assertThat(saved.getId()).isEqualTo(retained.getId());
+    assertThat(saved.getBaseVersionId()).isNull();
+    assertThat(saved.getDefinition()).isEqualTo("{\"value\":2}");
+    assertThat(saved.getRowVersion()).isEqualTo(retained.getRowVersion() + 1);
+    assertThat(repository.findById(retained.getId())).contains(saved);
+  }
+
+  @Test
+  void explicitIdNullBaseIdentityConflictPreservesRetainedRow() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    ScriptDefinition changedIdentity = script("{\"value\":2}");
+    changedIdentity.setId(retained.getId());
+    changedIdentity.setBaseVersionId(7L);
+    changedIdentity.setRowVersion(retained.getRowVersion());
+
+    assertThatThrownBy(() -> repository.save(changedIdentity))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=null")
+        .hasMessageContaining("requested=(tenantId=1, version=v1, baseVersionId=7");
+
+    assertThat(repository.findById(retained.getId()))
+        .get()
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+  }
+
+  @Test
   void changedContentReplacesSameRowAndIncrementsRowVersionExactlyOnce() {
     ScriptDefinition initial = repository.save(script("{\"value\":1}"));
 
