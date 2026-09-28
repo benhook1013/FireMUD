@@ -289,7 +289,9 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null));
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
 
     PublishGateFailureException thrown =
         assertThrows(
@@ -323,7 +325,9 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null));
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
 
     PublishGateFailureException thrown =
         assertThrows(

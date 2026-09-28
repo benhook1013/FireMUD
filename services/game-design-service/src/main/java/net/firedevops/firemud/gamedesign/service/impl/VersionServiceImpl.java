@@ -40,11 +40,13 @@ import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
@@ -172,6 +174,7 @@ public class VersionServiceImpl implements VersionService {
     }
 
     boolean finalizationStarted = false;
+    boolean finalizationReturned = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
@@ -183,6 +186,7 @@ public class VersionServiceImpl implements VersionService {
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
+      finalizationReturned = true;
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
         notifyScriptPatchVersionUpdate(tenantId, scriptPatchVersion);
         return finalization.versionDto();
@@ -190,20 +194,33 @@ public class VersionServiceImpl implements VersionService {
       if (finalization.status() == PublishAttemptStatus.FAILED) {
         throw replayFailedScriptPatch(finalization.failureCode(), finalization.failureMessage());
       }
-      throw new IllegalStateException(
-          "PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
+      throw pendingScriptPatchFinalization(
+          new IllegalStateException("finalization returned a pending publish attempt"));
     } catch (RuntimeException ex) {
-      if (finalizationStarted
-          && !(ex instanceof PublishAttemptService.ScriptPatchTransactionException)) {
-        // A transaction-manager failure after the callback returned is ambiguous. Leave the
-        // durable PENDING reservation for reconciliation instead of guessing whether cleanup is
-        // safe.
+      if (finalizationStarted && !finalizationReturned) {
+        if (ex instanceof PublishAttemptService.ScriptPatchTransactionException) {
+          // The transaction wrapper reports a definite failure from the callback.
+        } else {
+          // The transaction call did not return, so commit status is unknown. Keep the durable
+          // PENDING receipt for reconciliation rather than guessing whether cleanup is safe.
+          throw pendingScriptPatchFinalization(ex);
+        }
+      } else if (finalizationReturned) {
+        // A returned terminal receipt is authoritative; do not reinterpret its stored failure as
+        // a new attempt failure or run cleanup against it.
         throw ex;
       }
       RuntimeException operationFailure =
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
+      if (operationFailure instanceof PublishAttemptPendingReconciliationException
+          || (operationFailure.getMessage() != null
+              && operationFailure
+                  .getMessage()
+                  .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"))) {
+        throw operationFailure;
+      }
       if (!finalizationStarted
           && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
               operationFailure)) {
@@ -458,9 +475,20 @@ public class VersionServiceImpl implements VersionService {
       return new PublishGateFailureException(
           PublishGateFailureCode.valueOf(failureCode), failureMessage);
     } catch (IllegalArgumentException ignored) {
-      return new IllegalStateException(
+      return new ScriptPatchPublishFailureException(
+          failureCode,
           failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
+  }
+
+  private ScriptPatchPublishFailureException pendingScriptPatchFinalization(
+      RuntimeException cause) {
+    String errorCode = PublishAttemptPendingReconciliationException.ERROR_CODE;
+    return new ScriptPatchPublishFailureException(
+        errorCode,
+        errorCode
+            + ": script-patch finalization outcome is unknown; retry the exact publish request",
+        cause);
   }
 
   private void notifyScriptPatchVersionUpdate(String tenantId, String scriptPatchVersion) {
