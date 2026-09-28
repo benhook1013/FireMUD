@@ -918,6 +918,7 @@ class SqliteReviewRecords:
         changed_at = _timestamp(changed_at, "changed_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 row = connection.execute(
                     "SELECT source_pr, source_channel, status FROM routes WHERE route_id = ?", (route_id,)
                 ).fetchone()
@@ -960,6 +961,7 @@ class SqliteReviewRecords:
         decided_at = _timestamp(decided_at, "decided_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 route = connection.execute(
                     "SELECT finding_id, target_pr, status FROM routes WHERE route_id = ?",
                     (route_id,),
@@ -1017,6 +1019,7 @@ class SqliteReviewRecords:
         resolved_at = _timestamp(resolved_at, "resolved_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 route = connection.execute(
                     "SELECT target_pr, status FROM routes WHERE route_id = ?", (route_id,)
                 ).fetchone()
@@ -1291,6 +1294,15 @@ class SqliteReviewRecords:
             return ReviewState.from_dict(document)
         except (TypeError, ValueError) as exc:
             raise ReviewRecordsError("controller SQLite review state is invalid") from exc
+
+    @classmethod
+    def _reject_legacy_route_write(cls, connection: sqlite3.Connection, route_id: str) -> None:
+        """Keep controller-owned route IDs writable only through the controller."""
+
+        if any(route.route_id == route_id for route in cls._controller_state(connection).routes):
+            raise ReviewRecordsError(
+                "legacy controller owns this route; use `dev-tools/pr-review decide route` to update it"
+            )
 
     @staticmethod
     def _legacy_route_record(route: FindingRoute) -> dict[str, Any]:

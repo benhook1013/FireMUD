@@ -58,6 +58,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         *,
         state: str = "COMMENTED",
         review_body: str | None = None,
+        finding_body: str = "Use the checked value before dereferencing it.",
         decision_text: str = "701\taccepted\tvalid source finding\n",
     ) -> None:
         capture_dir = self.common / "firemud" / f"hosted-review.{review_id}"
@@ -79,7 +80,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
                     "pull_request_review_id": review_id,
                     "in_reply_to_id": None,
                     "user": {"login": "coderabbitai[bot]"},
-                    "body": "Use the checked value before dereferencing it.",
+                    "body": finding_body,
                     "created_at": "2026-09-27T11:58:00Z",
                 }
             ],
@@ -144,6 +145,35 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertEqual(history["findings"][0]["title"], "Use the checked value before dereferencing it.")
         self.assertEqual(len(history["decisions"]), 1)
         self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
+
+    def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "**[P1] Bug**\n\n"
+                "**Validate the current route target before recording the decision.**\n\n"
+                "The target can change after this row is read."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "Validate the current route target before recording the decision.",
+        )
+        self.assertEqual(
+            pr_review.sqlite_provider_imports._first_line("**[P1] Bug**\nA non-bold explanation follows."),
+            "A non-bold explanation follows.",
+        )
 
     def test_cli_import_replay_records_provider_finding_and_route_reason(self) -> None:
         self.cli_capture()

@@ -1,3 +1,4 @@
+import dataclasses
 import sqlite3
 import sys
 import tempfile
@@ -8,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.state import FindingRoute
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -420,6 +422,75 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         assigned_history = self.records.history(2879)
         self.assertEqual(len(assigned_history["routes"]), 2)
         self.assertEqual(len(assigned_history["routes"][1]["target_history"]), 2)
+
+    def test_legacy_controller_route_rejects_sqlite_target_writes(self) -> None:
+        self.bootstrap()
+        legacy_route = FindingRoute(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="summary:review:700",
+            source_finding="duplicate:ref:legacy-summary",
+            observations=("owned by another PR",),
+            target_pr=2879,
+            target_history=(2879,),
+        )
+        state_store = SqliteStateStore(self.database)
+        state_store.update(lambda state: dataclasses.replace(state, routes=(legacy_route,)))
+        self.records.import_completed_run(
+            run_id="legacy-shadow-run",
+            source_pr=2828,
+            channel="manual",
+            findings=(self.observation("legacy-shadow"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "legacy-shadow",
+                    "decision_id": "legacy-shadow-source-route",
+                    "decision": "routed",
+                    "route_id": legacy_route.route_id,
+                    "route_status": "open",
+                    "target_pr": 2879,
+                    "actor": "reviewer",
+                    "reason": "mirrors the controller-owned route",
+                },
+            ),
+        )
+
+        visible_routes_before = self.records.open_routes(target_pr=2879, include_legacy_routes=True)
+        visible_history_before = self.records.history(2879, include_legacy_routes=True)["routes"]
+        shadow_history_before = self.records.history(2828)["routes"]
+        self.assertEqual([route["origin"] for route in visible_routes_before], ["legacy_controller"])
+        self.assertEqual(visible_routes_before[0]["route_id"], legacy_route.route_id)
+
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.retarget_route(
+                legacy_route.route_id,
+                target_pr=2999,
+                actor="owner",
+                reason="retarget legacy route",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.record_decision(
+                legacy_route.route_id,
+                decision_id="legacy-target-decision",
+                decision_pr=2879,
+                decision="accepted",
+                actor="owner",
+                reason="decide legacy route",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.record_resolution(
+                legacy_route.route_id,
+                resolution_id="legacy-target-resolution",
+                resolution_pr=2879,
+                outcome="accepted_fixed",
+                actor="owner",
+                proof_or_reason="resolve legacy route",
+            )
+
+        self.assertEqual(state_store.load().routes, (legacy_route,))
+        self.assertEqual(self.records.open_routes(target_pr=2879, include_legacy_routes=True), visible_routes_before)
+        self.assertEqual(self.records.history(2879, include_legacy_routes=True)["routes"], visible_history_before)
+        self.assertEqual(self.records.history(2828)["routes"], shadow_history_before)
 
     def test_manual_and_subagent_runs_do_not_change_controller_policy_state(self) -> None:
         self.bootstrap()

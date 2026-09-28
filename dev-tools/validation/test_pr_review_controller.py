@@ -5872,6 +5872,7 @@ class ControllerTests(unittest.TestCase):
             "accepted": 0,
             "raw": 0,
         }
+        stored_fingerprint = observation_fingerprint(legacy)
         controller = self.make(
             {1: pr(1, HEAD_1)},
             {(1, "hosted"): [timeline, legacy]},
@@ -5887,8 +5888,12 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(
             result["transition"]["hosted_fingerprints"],
-            (observation_fingerprint(legacy),),
+            (stored_fingerprint,),
         )
+        # Historical records gain routed=None when projected through the
+        # current three-count evidence shape; this must not change identity.
+        legacy["routed"] = None
+        self.assertEqual(observation_fingerprint(legacy), stored_fingerprint)
         state = controller._state()
         _, reconciliation = controller._reconciliation(state)
         projected = controller._policy_history(
@@ -5896,6 +5901,13 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertTrue(projected[0]["scope_timeline"])
         self.assertTrue(projected[0]["non_counting"])
+        self.assertTrue(projected[1]["non_counting"])
+
+        self.assertNotEqual(
+            observation_fingerprint({**legacy, "routed": 0}),
+            stored_fingerprint,
+            "an explicit modern routed count remains part of the observation identity",
+        )
 
         for name, rows, message in (
             (

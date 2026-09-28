@@ -44,7 +44,7 @@ dev-tools/pr-review records routes --target-pr <number>
 dev-tools/pr-review records routes --unassigned
 ```
 
-Receiving owners use `records route decide` and `records route resolve` (or `records route retarget`) to record their own outcome; those target decisions do not rewrite source counts. Provider history and independent manual/subagent runs are records, not CodeRabbit policy input: they never grant, reset, block, or substitute for either channel's taper. Keep the private database free of credentials and raw secret material.
+Receiving owners use `records route decide` and `records route resolve` (or `records route retarget`) for routes whose origin is `review_records`; those target decisions do not rewrite source counts. Routes whose origin is `legacy_controller` remain owned by the controller, including any SQLite shadow row with the same route ID. Update those routes with the canonical `dev-tools/pr-review decide route` command; SQLite target-side writes reject legacy-owned IDs and direct operators to that command. Provider history and independent manual/subagent runs are records, not CodeRabbit policy input: they never grant, reset, block, or substitute for either channel's taper. Keep the private database free of credentials and raw secret material.
 
 ## Separate one-shot backup and restore
 
