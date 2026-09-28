@@ -979,6 +979,30 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void ageRetentionKeepsOldParentUntilItsCompleteHandoffChildIsOldEnough() {
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("newer-complete-child");
+    handoff.setObservedAt(Instant.parse("2022-01-01T00:00:00Z"));
+    handoff = handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", cutoff)).isZero();
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isTrue();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(handoff.getId())))
+        .isTrue();
+
+    Instant laterCutoff = Instant.parse("2023-01-01T00:00:00Z");
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", laterCutoff))
+        .isEqualTo(1L);
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isFalse();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(handoff.getId())))
+        .isFalse();
+  }
+
+  @Test
   void canceledRowCapRetentionLeavesParentWhenChildOutcomeIsWhitespace() {
     ScriptWorkItem parent = retainedWorkItem();
     parent.setScriptEventId("canceled-incomplete-cap");
