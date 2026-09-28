@@ -834,6 +834,51 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(calls, [])
 
+    def test_hosted_request_rechecks_target_after_repository_sweep(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE,
+            repository="owner/repo",
+        )
+        manual = {
+            "databaseId": 321,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        sweep_finished = False
+        calls = []
+
+        def repository_sweep(*_args):
+            nonlocal sweep_finished
+            sweep_finished = True
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("manual trigger must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(LiveGitHub, "pull_request", return_value=snapshot),
+                patch.object(LiveGitHub, "branch_head", return_value=BASE),
+                patch.object(
+                    github, "fetch_pull_request",
+                    side_effect=lambda *_: self._payload([manual] if sweep_finished else []),
+                ),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations", side_effect=repository_sweep),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "latest public full-review trigger is not tracked privately"),
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))(target, expect_pr=42)
+            self.assertTrue(sweep_finished)
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
     def test_hosted_request_allows_tracked_command_and_other_terminal_ambiguous_reply(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(

@@ -2179,6 +2179,10 @@ class HostedRunner:
             # floor-fetch failure must leave no trigger.json and must never
             # reach the POST below.
             try:
+                # The repository-wide sweep can take seconds. Complete it
+                # before the final target identity/comment check so a manual
+                # target command during that sweep cannot race our POST.
+                self._assert_no_other_active_reservations(pr, common)
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
                 self._assert_latest_manual_trigger_is_tracked(pr, reservation_payload)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
@@ -2216,7 +2220,6 @@ class HostedRunner:
                         raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("effective parent changed before the Hosted posting boundary")
                 posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
-                self._assert_no_other_active_reservations(pr, common)
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 if isinstance(exc, ControllerError):
                     raise
