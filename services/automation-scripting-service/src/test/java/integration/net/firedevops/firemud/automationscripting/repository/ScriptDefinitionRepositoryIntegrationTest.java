@@ -170,6 +170,32 @@ class ScriptDefinitionRepositoryIntegrationTest {
   }
 
   @Test
+  void existingPatchRowsRequireAnExactNonNullBaseVersion() {
+    repository.requireExistingScriptPatchRowsMatchBase("1", "empty-patch", 7L);
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'matching-script', 'matching-patch', '{\"value\":1}', 7)");
+    repository.requireExistingScriptPatchRowsMatchBase("1", "matching-patch", 7L);
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'null-base-script', 'null-patch', '{\"value\":1}', NULL)");
+    assertThatThrownBy(
+            () -> repository.requireExistingScriptPatchRowsMatchBase("1", "null-patch", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'different-base-script', 'different-patch', '{\"value\":1}', 8)");
+    assertThatThrownBy(
+            () -> repository.requireExistingScriptPatchRowsMatchBase("1", "different-patch", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
   void patchBaseTenantValidationFailsClosedWithoutPersistingAnInvalidBinding() {
     assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("0", "patch-1", 7L))
         .isInstanceOf(IllegalArgumentException.class)

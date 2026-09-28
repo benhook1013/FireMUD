@@ -1698,7 +1698,7 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void listDeadLettersCachesPublicationLookupPerTenantAndPatch() {
+  void listDeadLettersCachesPublicationLookupPerTenantBaseAndPatch() {
     ScriptWorkItem first = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     first.setId(99L);
     first.setGameInstanceId("game-1");

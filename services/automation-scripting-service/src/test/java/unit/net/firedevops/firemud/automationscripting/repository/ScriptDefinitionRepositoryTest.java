@@ -28,6 +28,39 @@ import org.junit.jupiter.api.Test;
 
 class ScriptDefinitionRepositoryTest {
   @Test
+  void retainedPatchBaseGuardUsesOneNullSafeExistsQuery() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return existsResult(resultDsl, false);
+        };
+    ScriptDefinitionRepository repository = repository(provider);
+
+    repository.requireExistingScriptPatchRowsMatchBase("0001", "patch-1", 7L);
+
+    assertThat(sql.get())
+        .contains("exists", "tenant_id", "version", "base_version_id", "is distinct from");
+  }
+
+  @Test
+  void retainedPatchBaseGuardMapsExistsMismatchToConflict() {
+    ScriptDefinitionRepository repository = repositoryReturningExists(true);
+
+    assertThatThrownBy(() -> repository.requireExistingScriptPatchRowsMatchBase("1", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
+  void retainedPatchBaseGuardAcceptsFalseExistsResult() {
+    ScriptDefinitionRepository repository = repositoryReturningExists(false);
+
+    repository.requireExistingScriptPatchRowsMatchBase("1", "patch-1", 7L);
+  }
+
+  @Test
   void patchBaseBindingCanonicalizesTenantForInsertAndLookup() {
     AtomicReference<Object[]> insertBindings = new AtomicReference<>();
     AtomicReference<Object[]> lookupBindings = new AtomicReference<>();
@@ -71,6 +104,9 @@ class ScriptDefinitionRepositoryTest {
     assertThatThrownBy(() -> repository.findScriptPatchBaseVersionId("not-a-number", "patch-1"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("tenantId must be numeric");
+    assertThatThrownBy(() -> repository.requireExistingScriptPatchRowsMatchBase("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
 
     assertThat(databaseAccessed).isFalse();
   }
@@ -251,6 +287,11 @@ class ScriptDefinitionRepositoryTest {
     return new ScriptDefinitionRepository(dsl);
   }
 
+  private static ScriptDefinitionRepository repositoryReturningExists(boolean exists) {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    return repository(context -> existsResult(resultDsl, exists));
+  }
+
   private static ScriptDefinition script(Long id, String definition) {
     ScriptDefinition script = new ScriptDefinition();
     script.setId(id);
@@ -288,6 +329,15 @@ class ScriptDefinitionRepositoryTest {
 
   private static MockResult[] rowResult(DSLContext resultDsl, ScriptsRecord row) {
     Result<ScriptsRecord> result = resultDsl.newResult(SCRIPTS);
+    result.add(row);
+    return new MockResult[] {new MockResult(1, result)};
+  }
+
+  private static MockResult[] existsResult(DSLContext resultDsl, boolean exists) {
+    Field<Boolean> existsField = DSL.field("exists", Boolean.class);
+    Record1<Boolean> row = resultDsl.newRecord(existsField);
+    row.set(existsField, exists);
+    Result<Record1<Boolean>> result = resultDsl.newResult(existsField);
     result.add(row);
     return new MockResult[] {new MockResult(1, result)};
   }

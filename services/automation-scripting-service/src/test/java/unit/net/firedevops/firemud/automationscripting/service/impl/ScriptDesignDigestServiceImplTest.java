@@ -104,9 +104,12 @@ class ScriptDesignDigestServiceImplTest {
   void getDraftDesignDigestFailsClosedWhenOwnerBaseIsUnknown() {
     when(repository.findScriptPatchBaseVersionId("1", "patch-1")).thenReturn(Optional.empty());
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+
+    assertEquals("script_patch_base_version_unavailable", exception.getMessage());
   }
 
   @Test

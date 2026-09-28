@@ -181,7 +181,7 @@ class ScriptPatchVersionCommandServiceTest {
 
     assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_patch_base_version_mismatch");
+        .hasMessage("script_patch_base_version_unavailable");
 
     verifyNoInteractions(
         scheduleDefinitionService,
