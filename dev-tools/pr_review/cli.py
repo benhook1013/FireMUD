@@ -1060,12 +1060,26 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             if anchor is None:
                 raise CliError("manual Hosted adoption requires a verified current parent and patch")
             payload = github.fetch_pull_request(controller.repository, args.pr)
+            pull_request = (
+                payload.get("data", {}).get("repository", {}).get("pullRequest")
+                if isinstance(payload, Mapping)
+                else None
+            )
+            anchor_data = anchor.as_dict()
+            if (
+                not isinstance(pull_request, Mapping)
+                or pull_request.get("baseRefName") != anchor_data.get("parent_identity")
+                or not isinstance(pull_request.get("baseRefOid"), str)
+                or pull_request["baseRefOid"].casefold()
+                != str(anchor_data.get("parent_head", "")).casefold()
+            ):
+                raise CliError("manual Hosted adoption requires the live PR base to match its verified parent")
             return hosted.adopt_manual_completed_trigger(
                 controller.repository,
                 args.pr,
                 args.trigger_id,
                 args.head,
-                anchor.as_dict(),
+                anchor_data,
                 payload,
             ), 0
         if args.decide_command == "trigger-retire":
