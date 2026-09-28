@@ -51,7 +51,7 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
 .activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
 .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
-.round-pill { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 2.8rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; line-height: 1.15; white-space: nowrap; }
+.round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.older { border-style: dashed; background: #f1f2f4; color: #626b77; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
@@ -966,6 +966,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .detail-title {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .7rem; }}
 .detail-title h2 {{ margin: 0; }} .detail-title .queue-status {{ margin-left: auto; }}
 .history-card {{ margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }}
+.history-card > h2 {{ margin: 0 0 .75rem; }}
 .history-group {{ margin-top: 1.4rem; }} .history-group:first-child {{ margin-top: 0; }}
 .history-group h2 {{ font-size: 1.2rem; }} .history-list {{ margin: 0; padding-left: 1.3rem; }}
 .history-list li + li {{ margin-top: .35rem; }} .history-list p {{ margin: .25rem 0; overflow-wrap: anywhere; }}
@@ -1115,7 +1116,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
                 if stats["changedFiles"] > 90 else files_label
             )
             size_html = (
-                f'{files_html} · <span class="additions">+{stats["additions"]:,}</span>/'
+                f'{files_html} · <span class="additions">+{stats["additions"]:,}</span> / '
                 f'<span class="deletions">−{stats["deletions"]:,}</span> lines'
             )
         else:
@@ -1357,7 +1358,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
 .front-evidence .round-pill {{ background: #fff; color: #423039; }}
-.front-evidence .round-pill.zero-accepted {{ background: #25212a; color: #fff; }}
+.front-evidence .round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
 .section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}

@@ -240,10 +240,14 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<div class="activity-grid">', rendered)
         self.assertIn('class="round-pill"', rendered)
         self.assertIn(".round-pills { display: flex; flex-wrap: wrap; gap:", page.ACTIVITY_CSS)
-        self.assertIn(".round-pill { display: inline-flex; flex-direction: column;", page.ACTIVITY_CSS)
+        self.assertIn(".round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column;", page.ACTIVITY_CSS)
+        self.assertIn("flex: 0 0 5rem;", page.ACTIVITY_CSS)
+        self.assertIn("width: 5rem;", page.ACTIVITY_CSS)
+        self.assertIn("font-variant-numeric: tabular-nums;", page.ACTIVITY_CSS)
         self.assertIn(".round-age { display: block;", page.ACTIVITY_CSS)
         self.assertIn("@media (max-width: 760px)", page.ACTIVITY_CSS)
         self.assertIn(".activity-grid { grid-template-columns: 1fr; }", page.ACTIVITY_CSS)
+        self.assertIn(".history-card > h2 { margin: 0 0 .75rem; }", rendered)
 
     def test_detail_text_and_record_counts_are_bounded(self):
         history = {
@@ -352,7 +356,7 @@ class StatusPageTest(unittest.TestCase):
         front = result.split('<section class="front-board"', 1)[1].split("</section>", 1)[0]
         front_copy = front.split('<div class="front-copy">', 1)[1].split('<div class="front-evidence">', 1)[0]
         front_evidence = front.split('<div class="front-evidence">', 1)[1]
-        self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span>/'
+        self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span> / '
                       '<span class="deletions">−531</span> lines</span>', front_evidence)
         self.assertIn('<span class="front-controller-state">Hosted request status unknown · CLI new request blocked</span>', front_evidence)
         self.assertNotIn('front-fact', front_copy)
@@ -828,7 +832,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertNotIn('CLI parent changed', merged_row)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>1 completed</span>', merged_row)
         self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h 0m</time>', merged_row)
-        self.assertIn('5 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
+        self.assertIn('5 files · <span class="additions">+10</span> / <span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>', result)
         self.assertIn('<span class="round-pill older" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '
                       'title="Completed 24 Sep 2026 23:46 NZST"><span>4/3</span>'
@@ -940,9 +944,9 @@ vm.runInNewContext(process.argv[1], {
                   "stats": {42: {"changedFiles": 90, "additions": 10, "deletions": 3},
                             43: {"changedFiles": 91, "additions": 12, "deletions": 4}}}
         result = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github)
-        self.assertIn('90 files · <span class="additions">+10</span>/<span class="deletions">−3</span> lines', result)
+        self.assertIn('90 files · <span class="additions">+10</span> / <span class="deletions">−3</span> lines', result)
         self.assertIn('<span class="files-over-warning">91 files</span> · '
-                      '<span class="additions">+12</span>/<span class="deletions">−4</span> lines', result)
+                      '<span class="additions">+12</span> / <span class="deletions">−4</span> lines', result)
         self.assertNotIn('class="files-over-warning">90 files', result)
 
     def test_zero_accepted_badges_keep_evidence_distinctions(self):
@@ -963,6 +967,7 @@ vm.runInNewContext(process.argv[1], {
                       'aria-label="2/0 (older head, unlinked, non-counting), Completion time unavailable" '
                       'title="Completion time unavailable"><span>2/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
+        self.assertIn('.front-evidence .round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
         self.assertNotIn('.round-pill.unlinked.zero-accepted', result)
         self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
                       '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
