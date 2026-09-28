@@ -296,6 +296,11 @@ class ScriptScheduleInstanceServiceImplTest {
 
   @Test
   void reconcileObservedRuntimeStateFailsClosedWhenPinnedBaseIsUnknown() {
+    ScriptScheduleInstance retained = wallClockTimerInstance();
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(retained));
     GameInstanceRuntimeState runtimeState =
         runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
             .setPinnedScriptPatchBaseVersionId(0L)
@@ -305,6 +310,9 @@ class ScriptScheduleInstanceServiceImplTest {
 
     verifyNoInteractions(scheduleDefinitionRepository, bindingRepository);
     verify(readinessProjectionService).getProjection("1", "patch-1");
+    verify(scheduleInstanceRepository).saveAll(List.of(retained));
+    verify(scheduleInstanceRepository, never()).deleteByTenantIdAndGameInstanceId("1", "game-1");
+    assertThat(retained.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
   }
 
   @Test

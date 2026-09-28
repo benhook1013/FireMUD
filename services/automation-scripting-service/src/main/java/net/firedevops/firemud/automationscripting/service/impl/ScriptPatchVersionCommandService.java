@@ -93,6 +93,12 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException("script_patch_base_version_mismatch");
     }
     defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();
+    if (repository
+        .findScriptPatchBaseVersionId(tenantId, scriptPatchVersion)
+        .filter(retainedBaseVersionId -> retainedBaseVersionId == baseVersionId)
+        .isEmpty()) {
+      throw new IllegalArgumentException("script_patch_base_version_mismatch");
+    }
     readinessProjectionService.beginPatchReadiness(
         tenantId, baseVersionId, scriptPatchVersion, canonicalScriptNames);
     List<ScriptDefinition> canonicalDefinitions = defs;

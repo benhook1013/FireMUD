@@ -1365,6 +1365,33 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void missingWorkItemBaseVersionFailsClosedBeforeRemoteSchedule() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem workItem = workItem();
+    workItem.setScriptPatchBaseVersionId(null);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem, emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @Test
   void mismatchedRuntimeBaseVersionFailsClosedBeforeRemoteSchedule() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
