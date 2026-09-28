@@ -331,15 +331,16 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
   }
 
   private long bindingRowId(String scriptName) {
-    return dsl.select(SCRIPT_EVENT_BINDINGS.ID)
-        .from(SCRIPT_EVENT_BINDINGS)
-        .where(
-            SCRIPT_EVENT_BINDINGS
-                .TENANT_ID
-                .eq(TENANT_ID)
-                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(VERSION))
-                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_ID.eq(scriptName)))
-        .fetchOne(SCRIPT_EVENT_BINDINGS.ID);
+    return java.util.Objects.requireNonNull(
+        dsl.select(SCRIPT_EVENT_BINDINGS.ID)
+            .from(SCRIPT_EVENT_BINDINGS)
+            .where(
+                SCRIPT_EVENT_BINDINGS
+                    .TENANT_ID
+                    .eq(TENANT_ID)
+                    .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(VERSION))
+                    .and(SCRIPT_EVENT_BINDINGS.SCRIPT_ID.eq(scriptName)))
+            .fetchOne(SCRIPT_EVENT_BINDINGS.ID));
   }
 
   private static ScriptDefinitionDto request(

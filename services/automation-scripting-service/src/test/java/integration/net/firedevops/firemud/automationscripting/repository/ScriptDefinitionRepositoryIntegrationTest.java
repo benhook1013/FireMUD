@@ -68,6 +68,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
   @BeforeEach
   void cleanScripts() {
     dsl.execute("TRUNCATE TABLE scripts RESTART IDENTITY");
+    dsl.execute("TRUNCATE TABLE script_patch_base_bindings RESTART IDENTITY");
   }
 
   @AfterAll
@@ -154,6 +155,30 @@ class ScriptDefinitionRepositoryIntegrationTest {
     assertThat(retry.getRowVersion()).isEqualTo(initial.getRowVersion()).isZero();
     assertThat(dsl.fetchValue(SCRIPTS.ROW_VERSION, SCRIPTS.ID.eq(initial.getId()))).isZero();
     assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+  }
+
+  @Test
+  void patchBaseBindingCanonicalizesEquivalentPositiveTenantIdsAndRetainsConflict() {
+    repository.bindScriptPatchBaseVersionId("01", "patch-1", 7L);
+
+    assertThat(repository.findScriptPatchBaseVersionId("1", "patch-1")).contains(7L);
+    assertThat(repository.findScriptPatchBaseVersionId("0001", "patch-1")).contains(7L);
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("1", "patch-1", 8L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+    assertThat(repository.findScriptPatchBaseVersionId("1", "patch-1")).contains(7L);
+  }
+
+  @Test
+  void patchBaseTenantValidationFailsClosedWithoutPersistingAnInvalidBinding() {
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
+    assertThatThrownBy(() -> repository.findScriptPatchBaseVersionId("not-a-number", "patch-1"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be numeric");
+
+    assertThat(dsl.fetch("select * from script_patch_base_bindings")).isEmpty();
   }
 
   @Test

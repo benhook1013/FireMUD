@@ -85,9 +85,14 @@ public class ScriptDefinitionRepository {
   }
 
   public Optional<Long> findScriptPatchBaseVersionId(String tenantId, String scriptPatchVersion) {
+    String canonicalTenantId =
+        Long.toString(RequestIdValidation.requirePositiveLong(tenantId, "tenantId"));
     return dsl.select(PATCH_BASE_VERSION_ID)
         .from(SCRIPT_PATCH_BASE_BINDINGS)
-        .where(PATCH_BASE_TENANT_ID.eq(tenantId).and(PATCH_BASE_VERSION.eq(scriptPatchVersion)))
+        .where(
+            PATCH_BASE_TENANT_ID
+                .eq(canonicalTenantId)
+                .and(PATCH_BASE_VERSION.eq(scriptPatchVersion)))
         .fetchOptional(PATCH_BASE_VERSION_ID);
   }
 
@@ -97,17 +102,19 @@ public class ScriptDefinitionRepository {
    */
   public void bindScriptPatchBaseVersionId(
       String tenantId, String scriptPatchVersion, long baseVersionId) {
+    String canonicalTenantId =
+        Long.toString(RequestIdValidation.requirePositiveLong(tenantId, "tenantId"));
     if (baseVersionId <= 0L) {
       throw new IllegalArgumentException("base_version_id must be positive");
     }
     dsl.insertInto(SCRIPT_PATCH_BASE_BINDINGS)
         .columns(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION, PATCH_BASE_VERSION_ID)
-        .values(tenantId, scriptPatchVersion, baseVersionId)
+        .values(canonicalTenantId, scriptPatchVersion, baseVersionId)
         .onConflict(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION)
         .doNothing()
         .execute();
     Long retainedBaseVersionId =
-        findScriptPatchBaseVersionId(tenantId, scriptPatchVersion).orElse(null);
+        findScriptPatchBaseVersionId(canonicalTenantId, scriptPatchVersion).orElse(null);
     if (retainedBaseVersionId == null) {
       throw new IllegalStateException("script_patch_base_binding_unavailable");
     }

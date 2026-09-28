@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentity
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Record1;
 import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -25,6 +27,54 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptDefinitionRepositoryTest {
+  @Test
+  void patchBaseBindingCanonicalizesTenantForInsertAndLookup() {
+    AtomicReference<Object[]> insertBindings = new AtomicReference<>();
+    AtomicReference<Object[]> lookupBindings = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    Field<Long> baseVersionId = DSL.field("base_version_id", Long.class);
+    MockDataProvider provider =
+        context -> {
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("insert")) {
+            insertBindings.set(context.bindings());
+            return new MockResult[] {new MockResult(1)};
+          }
+          lookupBindings.set(context.bindings());
+          Record1<Long> row = resultDsl.newRecord(baseVersionId);
+          row.set(baseVersionId, 7L);
+          Result<Record1<Long>> result = resultDsl.newResult(baseVersionId);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+
+    ScriptDefinitionRepository repository = repository(provider);
+
+    repository.bindScriptPatchBaseVersionId("0001", "patch-1", 7L);
+
+    assertThat(insertBindings.get()).containsExactly("1", "patch-1", 7L);
+    assertThat(lookupBindings.get()).containsExactly("1", "patch-1");
+  }
+
+  @Test
+  void patchBaseTenantValidationFailsClosedBeforeDatabaseAccess() {
+    AtomicBoolean databaseAccessed = new AtomicBoolean();
+    MockDataProvider provider =
+        context -> {
+          databaseAccessed.set(true);
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptDefinitionRepository repository = repository(provider);
+
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
+    assertThatThrownBy(() -> repository.findScriptPatchBaseVersionId("not-a-number", "patch-1"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be numeric");
+
+    assertThat(databaseAccessed).isFalse();
+  }
+
   @Test
   void identityInsertReturnsDurableWinnerAndReportsCreation() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
