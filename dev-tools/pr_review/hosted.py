@@ -1450,9 +1450,19 @@ def trigger_state(
         review_candidates.append((submitted, "completed" if matched else "ambiguous", review, None))
     # A GitHub review has an immutable submitted time and commit. A bot's
     # finished-reply comment may be edited later, so it cannot supersede the
-    # review object that actually records this trigger's result.
+    # review object that actually records this trigger's result. Explicit
+    # terminal status comments created after the latest review still describe
+    # the final request state and must not be hidden by that review.
     if review_candidates:
-        candidates = review_candidates
+        latest_review_at = max(item[0] for item in review_candidates)
+        later_terminal_comments = [
+            item
+            for item in candidates
+            if item[1] in {"rate_limited", "noop", "failed"}
+            and (created := parse_timestamp(item[2].get("createdAt"))) is not None
+            and created > latest_review_at
+        ]
+        candidates = [*review_candidates, *later_terminal_comments]
     if not candidates:
         if newer:
             return TriggerState(

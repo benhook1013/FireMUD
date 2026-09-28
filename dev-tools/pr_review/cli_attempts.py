@@ -11,6 +11,7 @@ from typing import Any
 RUN_NAME = re.compile(r"run\.[0-9a-f]{32}\Z")
 MAX_METADATA_BYTES = 16_384
 MAX_ATTEMPTS = 5
+MAX_STDERR_BYTES = 4096
 
 
 def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
@@ -43,7 +44,11 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
                     outcome = "timed_out"
                 else:
                     stderr_path = directory / "stderr"
-                    stderr = stderr_path.read_bytes()[:4096].decode("utf-8", errors="replace") if stderr_path.exists() else ""
+                    if stderr_path.exists():
+                        with stderr_path.open("rb") as stderr_file:
+                            stderr = stderr_file.read(MAX_STDERR_BYTES).decode("utf-8", errors="replace")
+                    else:
+                        stderr = ""
                     outcome = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "provider_failed"
             elif (directory / "error").exists():
                 when = (directory / "error").stat().st_mtime
