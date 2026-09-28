@@ -81,7 +81,7 @@ Implementation Notes:
 
 - The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
 - Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
-- The current item projection includes optional `equipmentSlotGroupKey`, normalized like runtime equipment admission (null/blank to empty; otherwise trim and uppercase), and reports `digestSchemaVersion=2`. Focused producer proof covers normalized equivalents, distinct slot-group constraints, and tenant/version-scoped reads; Game Design's publish gate accepts Entity v2 and rejects v1 or unsupported evidence. Previously recorded v1 evidence still requires affected-scope replay or recomputation, re-recording, and readback before publish; this code change does not perform a live-data migration.
+- The current item projection includes optional `equipmentSlot` and `equipmentSlotGroupKey`, normalized like runtime equipment admission (null/blank to empty; otherwise trim and uppercase), and optional `effectPayloadJson`, canonicalized as parsed JSON with recursively stable object-key ordering (null/blank to empty; malformed nonblank JSON fails closed). It reports `digestSchemaVersion=2`. Focused producer proof covers normalized slot and slot-group equivalents, distinct slot and slot-group constraints, equivalent and distinct effect payloads, malformed payload rejection, and tenant/version-scoped reads; Game Design's publish gate accepts Entity v2 and rejects v1 or unsupported evidence. Previously recorded v1 evidence still requires affected-scope replay or recomputation, re-recording, and readback before publish; this code change does not perform a live-data migration.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
@@ -93,7 +93,7 @@ Implementation Notes:
 - Canonicalization rules:
   - serialize included relations in stable table order, then primary-key order;
   - include only semantic fields plus stable identifiers referenced cross-service;
-  - normalize encoded structured fields before hashing.
+  - normalize encoded structured fields before hashing; for `effectPayloadJson`, parse nonblank JSON and serialize nested objects with stable lexicographic key ordering, failing closed on malformed nonblank JSON.
 - `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change. For this manifest, once `v2` is deployed, `v1` is unsupported. The schema bump invalidates previously recorded participant evidence for the affected scope: publish/reconciliation must not compare a new-schema digest with a recorded `v1` digest, and Entity must reject a requested or reported unsupported version until the compatible canonicalization is deployed. The migration must explicitly replay or recompute each affected `(tenantId, versionId)` digest, re-record its `appliedCommitId`, digest, and schema version, and provide readback proof before the publish gate accepts the new version; it must not silently reinterpret or migrate old hashes in place.
 
 Publish gating must fail closed if Entity Management cannot attest a digest consistent with this manifest.

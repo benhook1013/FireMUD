@@ -283,8 +283,9 @@ openssl x509 -req -in "$TEMP_DIR/leaf.csr" -CA "$TEMP_DIR/ca.crt" \
 jq -n \
   --arg name firemud-grpc-game-design-baseline-migrator \
   --arg leaf "$(base64 -w0 "$TEMP_DIR/leaf.crt")" \
+  --arg key "$(base64 -w0 "$TEMP_DIR/leaf.key")" \
   --arg ca "$(base64 -w0 "$TEMP_DIR/ca.crt")" \
-  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":"c2VjcmV0","ca.crt":$ca}}' \
+  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":$key,"ca.crt":$ca}}' \
   >"$TEMP_DIR/migrator-secret.json"
 PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
   FAKE_KUBECTL_SECRET_JSON="$TEMP_DIR/migrator-secret.json" \
@@ -308,9 +309,28 @@ openssl x509 -req -in "$TEMP_DIR/wrong-leaf.csr" -CA "$TEMP_DIR/ca.crt" \
   -out "$TEMP_DIR/wrong-leaf.crt" >/dev/null 2>&1
 jq -n \
   --arg name firemud-grpc-game-design-baseline-migrator \
-  --arg leaf "$(base64 -w0 "$TEMP_DIR/wrong-leaf.crt")" \
+  --arg leaf "$(base64 -w0 "$TEMP_DIR/leaf.crt")" \
+  --arg key "$(base64 -w0 "$TEMP_DIR/wrong-leaf.key")" \
   --arg ca "$(base64 -w0 "$TEMP_DIR/ca.crt")" \
-  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":"c2VjcmV0","ca.crt":$ca}}' \
+  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":$key,"ca.crt":$ca}}' \
+  >"$TEMP_DIR/wrong-key-migrator-secret.json"
+if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+  FAKE_KUBECTL_SECRET_JSON="$TEMP_DIR/wrong-key-migrator-secret.json" \
+  FAKE_KUBECTL_TRUST_CA="$TEMP_DIR/ca.crt" \
+  "$SCRIPT" --verify-migrator dev >"$TEMP_DIR/wrong-key-migrator.out" \
+  2>"$TEMP_DIR/wrong-key-migrator.err"; then
+  echo "migrator verifier accepted a private key that does not match its leaf certificate" >&2
+  exit 1
+fi
+grep -Fq 'private key does not match its leaf certificate' \
+  "$TEMP_DIR/wrong-key-migrator.err"
+
+jq -n \
+  --arg name firemud-grpc-game-design-baseline-migrator \
+  --arg leaf "$(base64 -w0 "$TEMP_DIR/wrong-leaf.crt")" \
+  --arg key "$(base64 -w0 "$TEMP_DIR/wrong-leaf.key")" \
+  --arg ca "$(base64 -w0 "$TEMP_DIR/ca.crt")" \
+  '{metadata:{name:$name},type:"kubernetes.io/tls",data:{"tls.crt":$leaf,"tls.key":$key,"ca.crt":$ca}}' \
   >"$TEMP_DIR/wrong-migrator-secret.json"
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
   FAKE_KUBECTL_SECRET_JSON="$TEMP_DIR/wrong-migrator-secret.json" \

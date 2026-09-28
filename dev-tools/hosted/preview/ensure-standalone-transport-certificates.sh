@@ -213,8 +213,24 @@ verify_migrator_secret() {
   chmod 700 "$temp_dir"
   trap 'rm -rf -- "$temp_dir"' RETURN
   jq -r '.data["tls.crt"]' <<<"$secret_json" | base64 --decode >"$temp_dir/tls.crt"
+  if ! jq -r '.data["tls.key"]' <<<"$secret_json" | base64 --decode >"$temp_dir/tls.key"; then
+    echo "Secret/${migrator_secret} private key is not valid base64." >&2
+    return 1
+  fi
   jq -r '.data["ca.crt"]' <<<"$secret_json" | base64 --decode >"$temp_dir/ca.crt"
   base64 --decode <<<"$trusted_ca_data" >"$temp_dir/trusted-ca.crt"
+  if ! openssl pkey -in "$temp_dir/tls.key" -passin pass: -pubout -outform DER \
+    -out "$temp_dir/key-public.der" >/dev/null 2>&1 ||
+    ! openssl x509 -in "$temp_dir/tls.crt" -pubkey -noout >"$temp_dir/leaf-public.pem" 2>/dev/null ||
+    ! openssl pkey -pubin -in "$temp_dir/leaf-public.pem" -outform DER \
+      -out "$temp_dir/leaf-public.der" >/dev/null 2>&1; then
+    echo "Secret/${migrator_secret} private key or leaf certificate has invalid public material." >&2
+    return 1
+  fi
+  if ! cmp -s "$temp_dir/key-public.der" "$temp_dir/leaf-public.der"; then
+    echo "Secret/${migrator_secret} private key does not match its leaf certificate." >&2
+    return 1
+  fi
   if ! openssl verify -CAfile "$temp_dir/ca.crt" "$temp_dir/tls.crt" >/dev/null; then
     echo "Secret/${migrator_secret} leaf does not verify against its projected CA." >&2
     return 1
