@@ -12,18 +12,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -64,6 +66,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -79,7 +82,6 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.FakeGameplayPresenceService;
-import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -163,6 +165,15 @@ class TextCommandInterpreterTest {
                 .setAuthToken("auth-token")
                 .setAccountId("123")
                 .build());
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTH_UNAVAILABLE")
+                        .setMessage("scope authority unavailable")
+                        .build())
+                .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -172,6 +183,8 @@ class TextCommandInterpreterTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
@@ -191,6 +204,7 @@ class TextCommandInterpreterTest {
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setTenantId("22")
                 .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -329,8 +343,8 @@ class TextCommandInterpreterTest {
         .thenReturn(CommandEnqueueResult.success());
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -348,11 +362,10 @@ class TextCommandInterpreterTest {
             gameSessionProperties,
             sessionRoutingNormalizationService(),
             gameplayPresenceLifecycleService);
-    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
-    gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     GameplayWorldCatalog worldCatalog =
-        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
+        GameplayWorldCatalog.forWorldViews(
+            List.of(worldView("demo", "Demo World", 22L, 1L, false),
+                worldView("sandbox", "Builder Sandbox", 23L, 2L, true)));
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
@@ -411,7 +424,11 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     WorldsCommandHandler worldsHandler =
-        new WorldsCommandHandler(worldCatalog, entityManagementClient);
+        new WorldsCommandHandler(
+            worldCatalog,
+            entityManagementClient,
+            accountClient,
+            new DirectTextConnectScopeSessionStore());
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -1028,25 +1045,31 @@ class TextCommandInterpreterTest {
         interpretation.outputs());
   }
 
-  private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug(slug);
-    world.setDisplayName(
-        switch (slug) {
-          case "demo" -> "Demo World";
-          case "sandbox" -> "Builder Sandbox";
-          default -> slug;
-        });
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("production");
-    realm.setDisplayName("Live Realm");
-    realm.setTenantId(tenantId);
-    realm.setGameInstanceId(gameInstanceId);
-    realm.setVisible(true);
-    realm.setRequiresCharacterSelection(requiresCharacterSelection);
-    world.setRealms(List.of(realm));
-    return world;
+  private static GameplayWorldCatalog.WorldView worldView(
+      String slug,
+      String displayName,
+      long tenantId,
+      long gameInstanceId,
+      boolean requiresCharacterSelection) {
+    return new GameplayWorldCatalog.WorldView(
+        slug,
+        displayName,
+        List.of(
+            new GameplayWorldCatalog.RealmView(
+                "production",
+                "Live Realm",
+                tenantId,
+                gameInstanceId,
+                1L,
+                true,
+                true,
+                requiresCharacterSelection,
+                "SHARED",
+                "ALLOW_NEW",
+                1L,
+                UUID.nameUUIDFromBytes((slug + ":realm").getBytes(StandardCharsets.UTF_8)),
+                UUID.nameUUIDFromBytes(
+                    (slug + ":namespace").getBytes(StandardCharsets.UTF_8)))));
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(

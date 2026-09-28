@@ -49,6 +49,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -143,11 +144,11 @@ class SessionResumptionFlowTest {
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -172,6 +173,8 @@ class SessionResumptionFlowTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
@@ -191,6 +194,7 @@ class SessionResumptionFlowTest {
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setTenantId("22")
                 .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -279,7 +283,12 @@ class SessionResumptionFlowTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
+    worldsHandler =
+        new WorldsCommandHandler(
+            worldCatalog,
+            entityManagementClient,
+            accountClient,
+            new DirectTextConnectScopeSessionStore());
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -471,7 +480,7 @@ class SessionResumptionFlowTest {
     assertTrue(secondLogin.commandResult().accepted());
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
-    assertEquals("WORLD_ACCESS_DENIED", deniedPlay.commandResult().errorCode());
+    assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -572,8 +581,12 @@ class SessionResumptionFlowTest {
     realm.setDisplayName("Live Realm");
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
+    realm.setPointerVersion(1L);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     world.setRealms(List.of(realm));
     return world;
   }
