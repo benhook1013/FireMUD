@@ -233,7 +233,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
               "",
               "",
               "",
-              ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
+              ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE,
               "script_patch_base_version_id is required for handoff");
       applyOutcome(workItem, command, dispatchId, result, now);
       return result;

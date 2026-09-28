@@ -516,7 +516,9 @@ public class AutomationScriptingGrpcService
                   meterRegistry,
                   logger,
                   "NotifyScriptVersionUpdate",
-                  "INVALID_ARGUMENT",
+                  "script_patch_base_version_unavailable".equals(ex.getMessage())
+                      ? "FAILED_PRECONDITION"
+                      : "INVALID_ARGUMENT",
                   ex.getMessage()));
     } catch (IllegalStateException ex) {
       if ("script_patch_base_version_unavailable".equals(ex.getMessage())) {

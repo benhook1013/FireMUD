@@ -125,14 +125,14 @@ public class ScriptDefinitionRepository {
 
   public void requireExistingScriptPatchRowsMatchBase(
       String tenantId, String scriptPatchVersion, long baseVersionId) {
-    List<ScriptDefinition> definitions =
-        findByTenantIdAndScriptVersionOrderByNameAsc(
-            RequestIdValidation.requirePositiveLong(tenantId, "tenantId"), scriptPatchVersion);
-    if (definitions.stream()
-        .anyMatch(
-            definition ->
-                definition.getBaseVersionId() == null
-                    || definition.getBaseVersionId() != baseVersionId)) {
+    Long canonicalTenantId = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    if (dsl.fetchExists(
+        SCRIPTS,
+        SCRIPTS
+            .TENANT_ID
+            .eq(canonicalTenantId)
+            .and(SCRIPTS.VERSION.eq(scriptPatchVersion))
+            .and(SCRIPTS.BASE_VERSION_ID.isDistinctFrom(baseVersionId)))) {
       throw new IllegalArgumentException("script_patch_base_version_conflict");
     }
   }
