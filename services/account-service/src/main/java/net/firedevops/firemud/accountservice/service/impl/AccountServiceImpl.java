@@ -101,11 +101,13 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -1019,12 +1021,27 @@ public class AccountServiceImpl implements AccountService {
           throw new IllegalStateException("Committed JOIN authority checkpoint is incomplete");
         }
       } catch (RuntimeException exception) {
+        boolean unavailable = isCommittedOutcomeEventReadbackUnavailable(exception);
         throw new AuthenticationException(
-            "AUTH_UNAVAILABLE",
-            "Committed JOIN authority evidence is unavailable or mismatched",
+            unavailable ? "AUTH_UNAVAILABLE" : "AUTH_SESSION_REVOKED",
+            unavailable
+                ? "Committed JOIN authority evidence is unavailable or mismatched"
+                : "Committed JOIN authority evidence is missing, malformed, or contradictory",
             exception);
       }
     }
+  }
+
+  private boolean isCommittedOutcomeEventReadbackUnavailable(Throwable exception) {
+    // Readback validators may retain dependency details as causes; only the top-level category
+    // determines availability so reachable malformed or contradictory evidence stays revoked.
+    if (exception instanceof AuthenticationException authenticationException) {
+      return "AUTH_UNAVAILABLE".equals(authenticationException.getCode());
+    }
+    return exception instanceof DataAccessException
+        || exception instanceof TransactionException
+        || exception instanceof org.jooq.exception.DataAccessException
+        || exception instanceof java.sql.SQLException;
   }
 
   private Checkpoint requireCommittedOutcomeEventEvidence(JoinOperation operation) {

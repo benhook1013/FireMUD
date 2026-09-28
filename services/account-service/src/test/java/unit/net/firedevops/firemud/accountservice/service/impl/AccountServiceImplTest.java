@@ -542,6 +542,54 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void committedJoinReplayClassifiesReadbackDependencyFailureAsUnavailable() {
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    CommittedJoinFixture fixture =
+        prepareCommittedJoinOperation(retainedOperation, "join-readback-db-1");
+    when(membershipAuthorityEventProducer.requireCommittedJoinEvent(
+            org.mockito.ArgumentMatchers.any()))
+        .thenThrow(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "authority readback transaction unavailable"));
+
+    JoinPublicProductionResult replayed =
+        service.joinPublicProduction(
+            fixture.bootstrapToken(),
+            new JoinPublicProductionRequest(fixture.connectScopeId(), "join-readback-db-1"));
+
+    assertFalse(replayed.success());
+    assertEquals("AUTH_UNAVAILABLE", replayed.outcomeCode());
+    org.mockito.ArgumentCaptor<AccountJoinOperationRepository.JoinOperation> operationCaptor =
+        org.mockito.ArgumentCaptor.forClass(AccountJoinOperationRepository.JoinOperation.class);
+    verify(membershipAuthorityEventProducer).requireCommittedJoinEvent(operationCaptor.capture());
+    assertEquals(retainedOperation.get(), operationCaptor.getValue());
+  }
+
+  @Test
+  void committedJoinReplayClassifiesReachableMalformedReadbackAsSessionRevoked() {
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    CommittedJoinFixture fixture =
+        prepareCommittedJoinOperation(retainedOperation, "join-readback-invalid-1");
+    when(membershipAuthorityEventProducer.requireCommittedJoinEvent(
+            org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalStateException("committed authority event is missing"));
+
+    JoinPublicProductionResult replayed =
+        service.joinPublicProduction(
+            fixture.bootstrapToken(),
+            new JoinPublicProductionRequest(fixture.connectScopeId(), "join-readback-invalid-1"));
+
+    assertFalse(replayed.success());
+    assertEquals("AUTH_SESSION_REVOKED", replayed.outcomeCode());
+    org.mockito.ArgumentCaptor<AccountJoinOperationRepository.JoinOperation> operationCaptor =
+        org.mockito.ArgumentCaptor.forClass(AccountJoinOperationRepository.JoinOperation.class);
+    verify(membershipAuthorityEventProducer).requireCommittedJoinEvent(operationCaptor.capture());
+    assertEquals(retainedOperation.get(), operationCaptor.getValue());
+  }
+
+  @Test
   void closedPublicJoinRetainsFailureAndCannotCreateMembershipOrAudit() {
     Account account = new Account();
     account.setId(11L);
@@ -1197,6 +1245,51 @@ class AccountServiceImplTest {
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
   }
+
+  private CommittedJoinFixture prepareCommittedJoinOperation(
+      AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation,
+      String requestId) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    AtomicReference<AccountTenantMembership> joinedMembership = new AtomicReference<>();
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenAnswer(invocation -> Optional.ofNullable(joinedMembership.get()));
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              joinedMembership.set(membership);
+              return membership;
+            });
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    JoinPublicProductionResult joined =
+        service.joinPublicProduction(
+            bootstrap.bootstrapToken(), new JoinPublicProductionRequest(connectScopeId, requestId));
+    assertTrue(joined.success());
+    assertEquals("JOINED", joined.outcomeCode());
+    assertEquals("COMMITTED", retainedOperation.get().status());
+    return new CommittedJoinFixture(bootstrap.bootstrapToken(), connectScopeId);
+  }
+
+  private record CommittedJoinFixture(String bootstrapToken, String connectScopeId) {}
 
   private void retainJoinEvidence(
       AtomicReference<VerifiedJoinScope> retainedScope,
