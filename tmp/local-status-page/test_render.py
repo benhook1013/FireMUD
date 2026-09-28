@@ -269,6 +269,22 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("three-number pills mean found / accepted here / routed.", rendered)
         self.assertIn(".history-card > h2 { margin: 0 0 .75rem; }", rendered)
 
+    def test_activity_cards_show_only_nonzero_exception_counts(self):
+        ordinary = {"raw": 2, "accepted": 1, "current_head": True, "attributable": True,
+                    "non_counting": False}
+        exceptional = {"raw": 3, "accepted": 1, "current_head": True, "attributable": False,
+                       "non_counting": True}
+        cards = page.render_activity_cards({"review_activity": {
+            "hosted": {"total": 2, "recent": [ordinary, exceptional]},
+            "cli": {"total": 1, "recent": [ordinary]},
+        }}, NOW)
+
+        self.assertIn('<p class="activity-note">1 unlinked to a verified review · 1 excluded from taper</p>', cards)
+        self.assertEqual(1, cards.count('class="activity-note"'))
+        cli_card = cards.split('<strong>CLI CodeRabbit</strong>', 1)[1]
+        self.assertNotIn('class="activity-note"', cli_card)
+        self.assertNotIn('class="activity-caption"', cards)
+
     def test_detail_text_and_record_counts_are_bounded(self):
         history = {
             "state": "available",
@@ -902,7 +918,6 @@ vm.runInNewContext(process.argv[1], {
         self.assertNotIn('class="activity-caption">', result)
         self.assertNotIn('from older heads', result)
         self.assertIn('aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST"', result)
-        self.assertNotIn('class="activity-note"', result)
         age_markup = ('PR data refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
                       'title="25 Sep 00:00 NZST">just now</time>')
         self.assertEqual(1, result.count(age_markup))

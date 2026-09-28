@@ -50,6 +50,7 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }
 .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
 .activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
+.activity-note { margin: .3rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.25; overflow-wrap: anywhere; }
 .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
 .round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
@@ -1042,13 +1043,23 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                     f'{"/" + safe(routed) if routed is not None else ""}</span>{age_html}</span>'
                 )
             channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
+            unlinked_count = sum(not result["attributable"] for result in recent if isinstance(result, dict))
+            non_counting_count = sum(result["non_counting"] for result in recent if isinstance(result, dict))
+            notes = []
+            if unlinked_count:
+                notes.append(f"{unlinked_count} unlinked to a verified review")
+            if non_counting_count:
+                notes.append(f"{non_counting_count} excluded from taper")
+            activity_note = (
+                f'<p class="activity-note">{safe(" · ".join(notes))}</p>' if notes else ""
+            )
             total = activity.get("total", 0)
             if type(total) is not int or total < 0:
                 total = 0
             activity_cards.append(
                 f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
                 f'<span>{safe(total)} completed</span></div>'
-                f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
+                f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>{activity_note}</div>'
             )
     return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
 
