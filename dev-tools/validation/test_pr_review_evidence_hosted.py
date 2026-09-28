@@ -1206,6 +1206,24 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state_after_next_trigger.response_id, 11)
         self.assertIsNone(state_after_next_trigger.duration_seconds)
 
+    def test_finished_reply_edited_after_next_trigger_keeps_ambiguous_response_identity(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:08Z")
+        reply["updatedAt"] = "2026-09-23T00:03:00Z"
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, reply, next_trigger]),
+            trigger_record(),
+        )
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
+        self.assertIsNone(state.duration_seconds)
+
     def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(

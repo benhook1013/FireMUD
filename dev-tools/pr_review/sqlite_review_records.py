@@ -85,6 +85,7 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"\b[A-Za-z0-9_-]{40,}\b"),
 )
+_FULL_COMMIT_SHA = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
 
 
 def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
@@ -97,7 +98,12 @@ def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) ->
 
 def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
     value = _text(value, label, maximum=maximum, allow_empty=allow_empty)
-    if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
+    # A full commit identifier is useful bounded review context, including in
+    # a sentence. Permit it only as a standalone long-token match; prefixes,
+    # suffixes, and all other token-like strings remain rejected.
+    if any(pattern.search(value) for pattern in _SECRET_PATTERNS[:-1]) or any(
+        not _FULL_COMMIT_SHA.fullmatch(match.group()) for match in _SECRET_PATTERNS[-1].finditer(value)
+    ):
         raise ReviewRecordsError(f"{label} resembles credential or raw secret material")
     return value
 
@@ -746,7 +752,12 @@ class SqliteReviewRecords:
                             or prior["actor"] != item["actor"]
                             or prior["reason"] != item["reason"]
                             or prior["route_id"] != expected_route_id
-                            or prior["target_pr"] != item["target_pr"]
+                            # An externally identified legacy route can be
+                            # retargeted after import. Its first recorded target
+                            # remains part of the source decision; the current
+                            # target is mutable route state and must not change
+                            # the completed run's immutable identity on replay.
+                            or (item["route_id"] is None and prior["target_pr"] != item["target_pr"])
                             or (item["supplied_decided_at"] and prior["decided_at"] != item["decided_at"])
                         ):
                             raise ReviewRecordsError("existing source decision conflicts with this completed import")
@@ -907,6 +918,7 @@ class SqliteReviewRecords:
         changed_at = _timestamp(changed_at, "changed_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 row = connection.execute(
                     "SELECT source_pr, source_channel, status FROM routes WHERE route_id = ?", (route_id,)
                 ).fetchone()
@@ -949,6 +961,7 @@ class SqliteReviewRecords:
         decided_at = _timestamp(decided_at, "decided_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 route = connection.execute(
                     "SELECT finding_id, target_pr, status FROM routes WHERE route_id = ?",
                     (route_id,),
@@ -1006,6 +1019,7 @@ class SqliteReviewRecords:
         resolved_at = _timestamp(resolved_at, "resolved_at")
         try:
             with self._write_connection() as connection:
+                self._reject_legacy_route_write(connection, route_id)
                 route = connection.execute(
                     "SELECT target_pr, status FROM routes WHERE route_id = ?", (route_id,)
                 ).fetchone()
@@ -1072,6 +1086,12 @@ class SqliteReviewRecords:
                 ]
                 routes = self._routes_for_pr(connection, pr)
                 if controller_state is not None:
+                    legacy_route_ids = {route.route_id for route in controller_state.routes}
+                    # Hosted summary imports mirror legacy routes for SQLite
+                    # foreign keys. The controller copy is authoritative and
+                    # can be retargeted independently, so never expose a stale
+                    # shadow row under its former target.
+                    routes = [route for route in routes if route["route_id"] not in legacy_route_ids]
                     routes.extend(
                         self._legacy_route_record(route)
                         for route in controller_state.routes
@@ -1274,6 +1294,15 @@ class SqliteReviewRecords:
             return ReviewState.from_dict(document)
         except (TypeError, ValueError) as exc:
             raise ReviewRecordsError("controller SQLite review state is invalid") from exc
+
+    @classmethod
+    def _reject_legacy_route_write(cls, connection: sqlite3.Connection, route_id: str) -> None:
+        """Keep controller-owned route IDs writable only through the controller."""
+
+        if any(route.route_id == route_id for route in cls._controller_state(connection).routes):
+            raise ReviewRecordsError(
+                "legacy controller owns this route; use `dev-tools/pr-review decide route` to update it"
+            )
 
     @staticmethod
     def _legacy_route_record(route: FindingRoute) -> dict[str, Any]:

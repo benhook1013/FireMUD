@@ -58,6 +58,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         *,
         state: str = "COMMENTED",
         review_body: str | None = None,
+        finding_body: str = "Use the checked value before dereferencing it.",
         decision_text: str = "701\taccepted\tvalid source finding\n",
     ) -> None:
         capture_dir = self.common / "firemud" / f"hosted-review.{review_id}"
@@ -79,7 +80,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
                     "pull_request_review_id": review_id,
                     "in_reply_to_id": None,
                     "user": {"login": "coderabbitai[bot]"},
-                    "body": "Use the checked value before dereferencing it.",
+                    "body": finding_body,
                     "created_at": "2026-09-27T11:58:00Z",
                 }
             ],
@@ -138,10 +139,89 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(len(history["runs"]), 1)
+        self.assertEqual(history["runs"][0]["started_at"], "2026-09-27T11:59:00Z")
+        self.assertEqual(history["runs"][0]["finished_at"], "2026-09-27T11:59:00Z")
         self.assertEqual(len(history["findings"]), 1)
         self.assertEqual(history["findings"][0]["title"], "Use the checked value before dereferencing it.")
         self.assertEqual(len(history["decisions"]), 1)
         self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
+
+    def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "**[P1] Bug**\n\n"
+                "**Validate the current route target before recording the decision.**\n\n"
+                "The target can change after this row is read."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "Validate the current route target before recording the decision.",
+        )
+        self.assertEqual(
+            pr_review.sqlite_provider_imports._first_line("**[P1] Bug**\nA non-bold explanation follows."),
+            "A non-bold explanation follows.",
+        )
+
+    def test_hosted_import_skips_multitag_badge_when_no_bold_headline_exists(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_\n"
+                "An actionable fallback explanation follows."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "An actionable fallback explanation follows.",
+        )
+
+    def test_hosted_import_skips_heavy_lift_badge_when_no_bold_headline_exists(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "_🎯 Functional Correctness_ | _🟡 Minor_ | _🏗️ Heavy lift_\n"
+                "The route target must be checked before writing."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "The route target must be checked before writing.",
+        )
 
     def test_cli_import_replay_records_provider_finding_and_route_reason(self) -> None:
         self.cli_capture()
@@ -172,6 +252,8 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(history["runs"][0]["channel"], "cli")
+        self.assertEqual(history["runs"][0]["started_at"], checkpoint.created_at)
+        self.assertEqual(history["runs"][0]["finished_at"], checkpoint.created_at)
         self.assertEqual(history["findings"][0]["title"], "Validate the route before using it.")
         self.assertNotIn("Then replace the surrounding control flow", history["findings"][0]["title"])
         self.assertEqual(history["findings"][0]["disposition"], "routed")
@@ -363,11 +445,27 @@ class SqliteProviderImportsTest(unittest.TestCase):
         )
         ControllerStateStore(state_path(self.common)).update(replace_legacy_route)
         pr_review.sqlite_store.SqliteStateStore(self.database).update(replace_legacy_route)
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+            summary_dispositions=dispositions,
+        )
+        self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(
             [route["route_id"] for route in self.records.open_routes(target_pr=2999, include_legacy_routes=True)],
             [legacy_route.route_id],
         )
         self.assertEqual(self.records.open_routes(target_pr=2879, include_legacy_routes=True), [])
+        self.assertEqual(self.records.history(2879, include_legacy_routes=True)["routes"], [])
+        new_target_history = self.records.history(2999, include_legacy_routes=True)["routes"]
+        self.assertEqual(len(new_target_history), 1)
+        self.assertEqual(new_target_history[0]["route_id"], legacy_route.route_id)
+        self.assertEqual(new_target_history[0]["target_pr"], 2999)
 
     def test_hosted_import_refuses_summary_bucket_without_exact_disposition(self) -> None:
         self.hosted_capture(review_body="### Outside diff range comments (1)")
