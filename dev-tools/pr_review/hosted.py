@@ -937,24 +937,75 @@ def _rate_limit(body: str, created: datetime) -> datetime | None:
     )
 
 
-def _zero_finding_summary(comments: list[dict[str, Any]], head: str, after: datetime) -> dict[str, Any] | None:
-    matches: list[tuple[datetime, dict[str, Any]]] = []
-    for comment in comments:
+def _zero_finding_summary(
+    payload: dict[str, Any],
+    head: str,
+    after: datetime,
+    response_id: int | None,
+    before: datetime | None,
+) -> dict[str, Any] | None:
+    """Link the legacy zero sentence only within one empty, complete trigger window."""
+
+    if type(response_id) is not int or response_id <= 0:
+        return None
+    pr = (payload.get("data") or {}).get("repository", {}).get("pullRequest")
+    if not isinstance(pr, dict):
+        return None
+    connections: dict[str, list[dict[str, Any]]] = {}
+    for name in ("comments", "reviews", "reviewThreads"):
+        connection = pr.get(name)
+        nodes = connection.get("nodes") if isinstance(connection, dict) else None
+        if not isinstance(nodes, list) or any(not isinstance(item, dict) for item in nodes):
+            return None
+        connections[name] = nodes
+    matches: list[dict[str, Any]] = []
+    for comment in connections["comments"]:
         if not is_coderabbit_login((comment.get("author") or {}).get("login")):
             continue
-        body = comment.get("body") or ""
-        if (
-            "No actionable comments were generated in the recent review." not in body
-            or not _matches_head(body, head)
-            or _summary_has_explicit_incompleteness(body)
-        ):
-            continue
-        if _rate_limit(body, parse_timestamp(comment.get("updatedAt")) or datetime.min.replace(tzinfo=timezone.utc)):
-            continue
+        body = comment.get("body")
         updated = parse_timestamp(comment.get("updatedAt"))
-        if updated and updated > after:
-            matches.append((updated, comment))
-    return max(matches, key=lambda value: value[0])[1] if matches else None
+        if not isinstance(body, str) or updated is None:
+            return None
+        if updated <= after or (before is not None and updated >= before):
+            continue
+        if immutable_database_id(comment) == response_id:
+            continue
+        if (
+            "No actionable comments were generated in the recent review." in body
+            and _matches_head(body, head)
+            and not _summary_has_explicit_incompleteness(body)
+            and not any(pattern.search(_unquoted(body)) for pattern in POSITIVE_FINDING_COUNT_PATTERNS)
+            and _rate_limit(body, updated) is None
+        ):
+            matches.append(comment)
+        else:
+            return None
+    if len(matches) != 1:
+        return None
+
+    def in_window(value: Any) -> bool | None:
+        when = parse_timestamp(value)
+        return None if when is None else when > after and (before is None or when < before)
+
+    for review in connections["reviews"]:
+        if not is_coderabbit_login((review.get("author") or {}).get("login")):
+            continue
+        submitted = in_window(review.get("submittedAt"))
+        if submitted is None or submitted:
+            return None
+    for thread in connections["reviewThreads"]:
+        comments = thread.get("comments")
+        nodes = comments.get("nodes") if isinstance(comments, dict) else None
+        if not isinstance(nodes, list) or any(not isinstance(item, dict) for item in nodes):
+            return None
+        for item in nodes:
+            if not is_coderabbit_login((item.get("author") or {}).get("login")):
+                continue
+            created = in_window(item.get("createdAt"))
+            updated = in_window(item.get("updatedAt"))
+            if created is None or updated is None or created or updated:
+                return None
+    return matches[0]
 
 
 def _summary_proves_complete_zero_findings(body: str) -> bool:
@@ -1295,6 +1346,83 @@ def provider_format_incomplete_coverage_summary(
     )
 
 
+def finished_reply_without_findings(
+    payload: dict[str, Any],
+    after: datetime,
+    response_id: int | None,
+    before: datetime | None = None,
+) -> bool:
+    """Accept CodeRabbit's terminal full-review reply when its complete window is empty.
+
+    The captured trigger supplies the reviewed PR and head. A separate summary
+    comment is not required for a zero-finding result, but any other bot output
+    in this trigger window must be classified by the normal evidence path.
+    """
+
+    if type(response_id) is not int or response_id <= 0:
+        return False
+    pr = (payload.get("data") or {}).get("repository", {}).get("pullRequest")
+    if not isinstance(pr, dict):
+        return False
+    connections: dict[str, list[dict[str, Any]]] = {}
+    for name in ("comments", "reviews", "reviewThreads"):
+        connection = pr.get(name)
+        nodes = connection.get("nodes") if isinstance(connection, dict) else None
+        if not isinstance(nodes, list) or any(not isinstance(item, dict) for item in nodes):
+            return False
+        connections[name] = nodes
+    replies = [item for item in connections["comments"] if immutable_database_id(item) == response_id]
+    if len(replies) != 1:
+        return False
+    reply = replies[0]
+    created = parse_timestamp(reply.get("createdAt"))
+    updated = parse_timestamp(reply.get("updatedAt"))
+    if (
+        not is_coderabbit_login((reply.get("author") or {}).get("login"))
+        or not isinstance(reply.get("body"), str)
+        or not _is_finished_action_response(reply["body"], allow_action_wrapper=True)
+        or created is None
+        or updated is None
+        or created <= after
+        or updated < created
+        or (before is not None and updated >= before)
+    ):
+        return False
+
+    def in_window(value: Any) -> bool | None:
+        when = parse_timestamp(value)
+        return None if when is None else when > after and (before is None or when < before)
+
+    for item in connections["comments"]:
+        if not is_coderabbit_login((item.get("author") or {}).get("login")):
+            continue
+        if immutable_database_id(item) == response_id:
+            continue
+        created_in_window = in_window(item.get("createdAt"))
+        updated_in_window = in_window(item.get("updatedAt"))
+        if created_in_window is None or updated_in_window is None or created_in_window or updated_in_window:
+            return False
+    for item in connections["reviews"]:
+        if not is_coderabbit_login((item.get("author") or {}).get("login")):
+            continue
+        submitted_in_window = in_window(item.get("submittedAt"))
+        if submitted_in_window is None or submitted_in_window:
+            return False
+    for thread in connections["reviewThreads"]:
+        comments = thread.get("comments")
+        nodes = comments.get("nodes") if isinstance(comments, dict) else None
+        if not isinstance(nodes, list) or any(not isinstance(item, dict) for item in nodes):
+            return False
+        for item in nodes:
+            if not is_coderabbit_login((item.get("author") or {}).get("login")):
+                continue
+            created_in_window = in_window(item.get("createdAt"))
+            updated_in_window = in_window(item.get("updatedAt"))
+            if created_in_window is None or updated_in_window is None or created_in_window or updated_in_window:
+                return False
+    return True
+
+
 def _state_base(repo: str, pr: int, record: dict[str, Any], current_head: str) -> dict[str, Any]:
     trigger = record.get("trigger") or {}
     return {
@@ -1340,7 +1468,7 @@ def trigger_state(
     if (
         trigger.get("type") != "full"
         or normalize_command(trigger.get("command") or "") != FULL_COMMAND
-        or not isinstance(trigger_id, int)
+        or type(trigger_id) is not int
         or trigger_id <= 0
         or trigger_dt is None
         or not isinstance(trigger.get("url"), str)
@@ -1348,8 +1476,8 @@ def trigger_state(
         raise ValueError("trigger record has invalid full-review identity")
     comments = list((pr.get("comments") or {}).get("nodes", []))
     reviews = list((pr.get("reviews") or {}).get("nodes", []))
-    captured = next((item for item in comments if immutable_database_id(item) == trigger_id), None)
-    if captured is None:
+    captured_matches = [item for item in comments if immutable_database_id(item) == trigger_id]
+    if len(captured_matches) != 1:
         return TriggerState(
             "unattributed",
             True,
@@ -1359,8 +1487,9 @@ def trigger_state(
             response_created_at=None,
             response_url=None,
             cooldown_until=None,
-            reason="captured trigger comment is absent from complete GitHub history",
+            reason="captured trigger comment is missing or duplicated in complete GitHub history",
         )
+    captured = captured_matches[0]
     captured_author = _comment_author_login(captured)
     recorded_author = trigger.get("author_login")
     if (
@@ -1442,7 +1571,9 @@ def trigger_state(
         elif ACTIVE_PATTERN.search(_unquoted(body)):
             candidates.append((created, "active", item, None))
         elif FINISHED_REVIEW_PATTERN.search(_unquoted(body)):
-            zero_summary = _zero_finding_summary(comments, record["head_sha"], trigger_dt)
+            zero_summary = _zero_finding_summary(
+                payload, record["head_sha"], trigger_dt, immutable_database_id(item), next_dt
+            )
             if zero_summary is None:
                 zero_summary = provider_format_zero_finding_summary(
                     payload,
@@ -1461,6 +1592,13 @@ def trigger_state(
                 next_dt,
             ) is not None:
                 state = "failed_incomplete_coverage"
+            elif finished_reply_without_findings(
+                payload,
+                trigger_dt,
+                immutable_database_id(item),
+                next_dt,
+            ):
+                state = "completed"
             else:
                 state = "ambiguous"
             terminal = parse_timestamp(item.get("updatedAt"))

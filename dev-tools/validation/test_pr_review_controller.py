@@ -6217,6 +6217,53 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(allocated.target, 1)
         self.assertEqual(allocated.status, ReviewStatus.PARENT_MOVED)
 
+    def test_terminal_noncounting_hosted_reply_defers_only_its_pr(self):
+        controller = self.make(
+            {1: pr(1, HEAD_3), 2: pr(2, HEAD_2, "feature-1", HEAD_3)},
+            heads={"feature-1": HEAD_3, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        state = controller._state()
+        terminal = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "trigger:10",
+            "held": True,
+            "unstable": True,
+            "terminal_ambiguous": True,
+            "terminal": True,
+            "attributable": False,
+            "state": "ambiguous",
+            "trigger_id": 10,
+            "response_id": 11,
+            "fingerprint": "a" * 64,
+        }
+        result = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.COHERENT, 2: stack.ReconciliationStatus.COHERENT},
+        )
+        self.assertEqual(result.target, 2)
+        self.assertEqual(result.status, ReviewStatus.MISSING_EVIDENCE)
+
+        no_later_target = select_review_target(
+            state, Channel.HOSTED, [1], {1: [terminal]}
+        )
+        self.assertEqual(no_later_target.target, 1)
+        self.assertEqual(no_later_target.status, ReviewStatus.HELD)
+
+        other_hold = {**terminal, "checkpoint": "trigger:12", "terminal_ambiguous": False}
+        held = select_review_target(
+            state, Channel.HOSTED, [1, 2], {1: [terminal, other_hold], 2: []}
+        )
+        self.assertEqual(held.target, 1)
+        self.assertEqual(held.status, ReviewStatus.HELD)
+
+        cli = select_review_target(state, Channel.CLI, [1, 2], {1: [], 2: []})
+        self.assertEqual(cli.target, 1)
+
     def test_anchorless_historical_evidence_is_readable_without_false_parent_movement(self):
         values = {1: pr(1, HEAD_1)}
         evidence = {

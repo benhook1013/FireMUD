@@ -932,19 +932,43 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "rate_limited")
         self.assertNotEqual(state.state, "completed")
 
-    def test_missing_hosted_evidence_cannot_count_as_completion(self):
+    def test_finished_reply_with_empty_complete_history_is_clean_completion(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         finished = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), trigger_record())
-        self.assertEqual(state.state, "ambiguous")
+        self.assertEqual(state.state, "completed")
         self.assertTrue(state.terminal)
-        self.assertFalse(state.attributed)
+        self.assertTrue(state.attributed)
         self.assertEqual(state.response_id, 11)
         self.assertEqual(state.response_url, "https://example.test/comments/11")
-        self.assertIn("without a head-attributed result", state.reason)
-        self.assertNotEqual(state.state, "completed")
+        self.assertEqual(state.duration_seconds, 60)
         checkpoint = evidence.Checkpoint(1, "2026-09-23T00:03:00Z", "Hosted", 0, 0, HEAD[:7], 1, False, None, None, 99)
         self.assertEqual(evidence.hosted_checkpoint_evidence(checkpoint, [], HEAD)["status"], "missing")
+
+        missing_threads = review_payload([trigger, finished])
+        del missing_threads["data"]["repository"]["pullRequest"]["reviewThreads"]
+        self.assertEqual(hosted.trigger_state(REPO, PR, missing_threads, trigger_record()).state, "ambiguous")
+
+        inline = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A late finding",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        contradicted = review_payload([trigger, finished], threads=[{"comments": {"nodes": [inline]}}])
+        self.assertEqual(hosted.trigger_state(REPO, PR, contradicted, trigger_record()).state, "ambiguous")
+
+        duplicate_trigger = review_payload([trigger, {**trigger}, finished])
+        self.assertEqual(
+            hosted.trigger_state(REPO, PR, duplicate_trigger, trigger_record()).state,
+            "unattributed",
+        )
+
+        bool_record = trigger_record()
+        bool_record["trigger"]["id"] = True
+        with self.assertRaisesRegex(ValueError, "invalid full-review identity"):
+            hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), bool_record)
 
     def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
         trigger_at = "2026-09-23T00:01:00Z"
@@ -1022,9 +1046,8 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(incomplete_state.response_id, 11)
         self.assertIn("incomplete file coverage", incomplete_state.reason)
 
-        for invalid_summary in (stale, mismatched_head):
-            with self.subTest(summary=invalid_summary["body"]):
-                self.assertEqual(state_for(invalid_summary).state, "ambiguous")
+        self.assertEqual(state_for(stale).state, "completed")
+        self.assertEqual(state_for(mismatched_head).state, "ambiguous")
         self.assertEqual(
             state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
             "ambiguous",
@@ -1160,6 +1183,28 @@ class HostedEvidenceTests(unittest.TestCase):
         }
         self.assertTrue(hosted._summary_has_explicit_incompleteness(nonquantitative_incomplete["body"]))
         self.assertEqual(state_for(nonquantitative_incomplete).state, "ambiguous")
+
+    def test_legacy_zero_sentence_cannot_hide_inline_finding_or_cross_later_trigger(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:30Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-23T00:01:45Z",
+        )
+        thread_comment = comment(13, "coderabbitai[bot]", "A real finding", "2026-09-23T00:01:50Z")
+        conflicted = review_payload(
+            [trigger, reply, summary], threads=[{"comments": {"nodes": [thread_comment]}}]
+        )
+        self.assertEqual(hosted.trigger_state(REPO, PR, conflicted, trigger_record()).state, "ambiguous")
+
+        later = comment(14, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
+        late_summary = {**summary, "createdAt": "2026-09-23T00:02:30Z", "updatedAt": "2026-09-23T00:02:30Z"}
+        late_reply = {**reply, "updatedAt": "2026-09-23T00:02:10Z"}
+        cross_trigger = review_payload([trigger, late_reply, later, late_summary])
+        self.assertEqual(hosted.trigger_state(REPO, PR, cross_trigger, trigger_record()).state, "ambiguous")
 
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

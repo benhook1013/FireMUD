@@ -10,6 +10,7 @@ import re
 import stat
 import subprocess
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1159,25 +1160,9 @@ class LiveEvidence:
         if next_trigger is not None and response_at >= next_trigger:
             return None
 
-        summaries: list[tuple[datetime, int, bool]] = []
-        for item in comments:
-            author = ((item.get("author") or {}).get("login"))
-            body = item.get("body") or ""
-            updated = hosted.parse_timestamp(item.get("updatedAt"))
-            if (
-                not hosted.is_coderabbit_login(author)
-                or updated is None
-                or updated <= trigger_at
-                or (next_trigger is not None and updated >= next_trigger)
-                or hosted._rate_limit(body, updated) is not None
-            ):
-                continue
-            exact_head = hosted._matches_head(body, captured_head)
-            zero_finding = (
-                "No actionable comments were generated in the recent review." in body and exact_head
-            )
-            if zero_finding or (hosted._substantive(body) and exact_head):
-                summaries.append((updated, github.immutable_database_id(item) or 0, zero_finding))
+        legacy_summary = hosted._zero_finding_summary(
+            payload, captured_head, trigger_at, response_id, next_trigger
+        )
         provider_summary = hosted.provider_format_zero_finding_summary(
             payload,
             captured_head,
@@ -1185,12 +1170,10 @@ class LiveEvidence:
             response_id,
             next_trigger,
         )
-        if provider_summary is not None:
-            provider_updated = hosted.parse_timestamp(provider_summary.get("updatedAt"))
-            provider_id = github.immutable_database_id(provider_summary)
-            if provider_updated is not None and provider_id is not None:
-                summaries.append((provider_updated, provider_id, True))
-        if not summaries or not max(summaries)[2]:
+        finished_only = hosted.finished_reply_without_findings(
+            payload, trigger_at, response_id, next_trigger
+        )
+        if legacy_summary is None and provider_summary is None and not finished_only:
             return None
 
         # A reply-only checkpoint is intentionally limited to runs with no PR
@@ -1810,6 +1793,146 @@ class HostedRunner:
             and target.has_current_default_test_merge_proof()
         )
 
+    def _assert_latest_manual_trigger_is_tracked(self, pr: int, payload: Mapping[str, Any]) -> None:
+        """Refuse a new request when the latest public manual trigger has no private attribution."""
+
+        try:
+            comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+        except (KeyError, TypeError) as exc:
+            raise ControllerError("complete paginated Hosted comment history is unavailable before posting") from exc
+        if not isinstance(comments, list):
+            raise ControllerError("complete paginated Hosted comment history is malformed before posting")
+
+        commands: list[tuple[datetime, int]] = []
+        for item in comments:
+            if not isinstance(item, Mapping):
+                raise ControllerError("complete paginated Hosted comment history contains a malformed comment")
+            author = item.get("author")
+            login = author.get("login") if isinstance(author, Mapping) else None
+            body = item.get("body")
+            if github.is_coderabbit_login(login) or not isinstance(body, str):
+                continue
+            if hosted.normalize_command(body) != hosted.FULL_COMMAND:
+                continue
+            comment_id = github.immutable_database_id(dict(item))
+            created = hosted.parse_timestamp(item.get("createdAt"))
+            if comment_id is None or created is None:
+                raise ControllerError("a public full-review trigger has incomplete immutable identity")
+            commands.append((created, comment_id))
+        if not commands:
+            return
+
+        latest_time = max(created for created, _ in commands)
+        latest_ids = {comment_id for created, comment_id in commands if created == latest_time}
+        tracked_ids: set[int] = set()
+        try:
+            for record_path in hosted.trigger_record_paths(self.repo, pr):
+                record = hosted.load_trigger_reservation(record_path, self.repo, pr)
+                trigger = record.get("trigger")
+                if not isinstance(trigger, Mapping):
+                    continue
+                trigger_id = trigger.get("id")
+                if (
+                    isinstance(trigger_id, int)
+                    and not isinstance(trigger_id, bool)
+                    and trigger_id > 0
+                    and trigger.get("type") == "full"
+                    and hosted.normalize_command(str(trigger.get("command") or "")) == hosted.FULL_COMMAND
+                ):
+                    tracked_ids.add(trigger_id)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ControllerError("private Hosted trigger records cannot be verified before posting") from exc
+
+        if not latest_ids.issubset(tracked_ids):
+            raise ControllerError(
+                "the latest public full-review trigger is not tracked privately; resolve or adopt it before posting"
+            )
+
+    @staticmethod
+    def _repository_current_trigger_paths(repo: str, common: Path) -> dict[int, list[Path]]:
+        """Discover current reservations in both supported private record locations."""
+
+        safe_repo = repo.replace("/", "_")
+        current: dict[int, list[Path]] = {}
+        for namespace in ("firemud", "coderabbit-review-logs"):
+            repository_dir = common / namespace / "hosted" / safe_repo
+            if repository_dir.is_symlink() or not repository_dir.is_dir():
+                continue
+            try:
+                pr_dirs = list(repository_dir.iterdir())
+            except OSError as exc:
+                raise ControllerError("current Hosted reservations cannot be inspected repository-wide") from exc
+            for pr_dir in pr_dirs:
+                match = re.fullmatch(r"pr-([1-9][0-9]*)", pr_dir.name)
+                if match is None:
+                    continue
+                if pr_dir.is_symlink() or not pr_dir.is_dir():
+                    raise ControllerError("a current Hosted reservation directory is ambiguous")
+                trigger_path = pr_dir / "trigger.json"
+                if trigger_path.is_symlink():
+                    raise ControllerError("a current Hosted reservation is a symbolic link")
+                if trigger_path.is_file():
+                    current.setdefault(int(match.group(1)), []).append(trigger_path)
+        return current
+
+    def _assert_no_other_active_reservations(
+        self,
+        pr: int,
+        common: Path,
+    ) -> None:
+        terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
+        for other_pr, paths in self._repository_current_trigger_paths(self.repo, common).items():
+            if other_pr == pr:
+                continue
+            if len(paths) != 1:
+                raise ControllerError(f"multiple current Hosted reservations for PR #{other_pr} require resolution")
+            path = paths[0]
+            with ExitStack() as reservation_lock:
+                try:
+                    other_lock = reservation_lock.enter_context(
+                        (path.parent / "request.lock").open("a+", encoding="utf-8")
+                    )
+                    fcntl.flock(other_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ControllerError(f"another Hosted reservation is being updated for PR #{other_pr}") from exc
+                except OSError as exc:
+                    raise ControllerError(f"could not lock the current Hosted reservation for PR #{other_pr}") from exc
+                try:
+                    record = hosted.load_trigger_reservation(path, self.repo, other_pr)
+                    status = record.get("status")
+                    if status == "retired":
+                        continue
+                    if status in {"posting", "posted_boundary_changed", "posted_boundary_unverified"}:
+                        raise ControllerError(
+                            f"another Hosted request is unresolved for PR #{other_pr}: ambiguous"
+                        )
+                    payload = github.fetch_pull_request(self.repo, other_pr)
+                    state = hosted.trigger_state(self.repo, other_pr, payload, record, path)
+                except ControllerError:
+                    raise
+                except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                    raise ControllerError(f"current Hosted reservation for PR #{other_pr} cannot be verified") from exc
+                if state.state in {"active", "awaiting_response"}:
+                    raise ControllerError(
+                        f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
+                    )
+                if state.state == "ambiguous":
+                    response_id = state.response_id
+                    if (
+                        state.terminal is not True
+                        or isinstance(response_id, bool)
+                        or not isinstance(response_id, int)
+                        or response_id <= 0
+                    ):
+                        raise ControllerError(
+                            f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
+                        )
+                    continue
+                if state.state not in terminal_states:
+                    raise ControllerError(
+                        f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
+                    )
+
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
         if target.default_base_front and not target.has_current_default_test_merge_proof():
             raise ControllerError("direct default-base target has no verified current base/head test merge")
@@ -1836,20 +1959,37 @@ class HostedRunner:
                 raise StaleReviewTarget("default base advanced after Hosted target selection")
             raise ControllerError("effective parent changed after Hosted target selection")
         path = hosted.default_trigger_record_path(self.repo, pr)
+        common = evidence.git_common_dir()
+        repository_dir = common / "firemud" / "hosted" / self.repo.replace("/", "_")
+        repository_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        repo_lock_path = repository_dir / "repository.request.lock"
         lock_path = path.parent / "request.lock"
-        with lock_path.open("a+", encoding="utf-8") as lock:
+        with ExitStack() as locks:
             try:
+                repo_lock = locks.enter_context(repo_lock_path.open("a+", encoding="utf-8"))
+                fcntl.flock(repo_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ControllerError(f"another Hosted request is active for repository {self.repo}") from exc
+            except OSError as exc:
+                raise ControllerError(
+                    f"could not acquire the Hosted repository admission lock for {self.repo}"
+                ) from exc
+            try:
+                lock = locks.enter_context(lock_path.open("a+", encoding="utf-8"))
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise ControllerError(f"another Hosted request is active for PR #{pr}") from exc
+            except OSError as exc:
+                raise ControllerError(f"could not acquire the Hosted request lock for PR #{pr}") from exc
+            archive_current_path: Path | None = None
             current_records = hosted.current_trigger_record_paths(self.repo, pr)
             if len(current_records) > 1:
                 raise ControllerError("multiple current Hosted reservations require operator resolution")
+            payload = github.fetch_pull_request(self.repo, pr)
             if current_records:
                 current_path = current_records[0]
                 record = hosted.load_trigger_reservation(current_path, self.repo, pr)
-                payload = github.fetch_pull_request(self.repo, pr)
                 if record.get("status") == "posting" and not isinstance(record.get("trigger"), dict):
                     try:
                         record = hosted._adopt_posting_reservation_locked(
@@ -1872,9 +2012,10 @@ class HostedRunner:
                     archive = current_path.with_name(f"trigger-{trigger_id}.json")
                     if archive.exists():
                         raise ControllerError(f"Hosted trigger archive already exists: {archive}")
-                    os.replace(current_path, archive)
+                    archive_current_path = current_path
                 else:
                     raise ControllerError("existing Hosted trigger has no archivable identity")
+            self._assert_latest_manual_trigger_is_tracked(pr, payload)
             anchor = {
                 "pr": pr,
                 "child_head": target.snapshot.head_sha,
@@ -1902,6 +2043,7 @@ class HostedRunner:
             # reach the POST below.
             try:
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
+                self._assert_latest_manual_trigger_is_tracked(pr, reservation_payload)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
                 reservation_head = reservation_pr.get("headRefOid") if isinstance(reservation_pr, dict) else None
                 reservation_base_ref = reservation_pr.get("baseRefName") if isinstance(reservation_pr, dict) else None
@@ -1937,12 +2079,17 @@ class HostedRunner:
                         raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("effective parent changed before the Hosted posting boundary")
                 posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
+                self._assert_no_other_active_reservations(pr, common)
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 if isinstance(exc, ControllerError):
                     raise
                 raise ControllerError(
                     f"could not establish the Hosted pre-POST comment identity floor: {exc}"
                 ) from exc
+            if archive_current_path is not None:
+                trigger_id = (record.get("trigger") or {}).get("id")
+                archive = archive_current_path.with_name(f"trigger-{trigger_id}.json")
+                os.replace(archive_current_path, archive)
             hosted.atomic_write_json(path, posting)
             try:
                 completed = subprocess.run(
