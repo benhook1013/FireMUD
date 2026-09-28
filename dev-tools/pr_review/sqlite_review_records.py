@@ -29,7 +29,7 @@ from .state import FindingRoute, ReviewState
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
-_RECORDS_SCHEMA_VERSION = 3
+_RECORDS_SCHEMA_VERSION = 4
 _RECORDS_METADATA_TABLE = "review_records_metadata"
 _RECORDS_TABLES = {
     _RECORDS_METADATA_TABLE,
@@ -443,14 +443,15 @@ class SqliteReviewRecords:
                 )
                 connection.execute(
                     "INSERT INTO decisions (decision_id, decision_scope, run_id, finding_id, route_id, "
-                    "decision_pr, decision, actor, reason, decided_at) "
-                    "VALUES (?, 'source', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "decision_pr, target_pr, decision, actor, reason, decided_at) "
+                    "VALUES (?, 'source', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         decision_id,
                         run_id,
                         finding_id,
                         route_id,
                         source_pr,
+                        target_pr,
                         decision,
                         actor,
                         reason,
@@ -712,11 +713,8 @@ class SqliteReviewRecords:
                 existing_decision_rows = list(
                     connection.execute(
                         "SELECT d.decision_id, f.source_finding_key, d.decision, d.actor, d.reason, "
-                        "d.decided_at, d.route_id, route_history.target_pr "
+                        "d.decided_at, d.route_id, d.target_pr "
                         "FROM decisions d JOIN findings f USING (finding_id) "
-                        "LEFT JOIN route_target_history route_history ON route_history.route_id = d.route_id "
-                        "AND route_history.sequence = (SELECT MIN(sequence) FROM route_target_history first_history "
-                        "WHERE first_history.route_id = d.route_id) "
                         "WHERE d.decision_scope = 'source' AND d.run_id = ?",
                         (run_id,),
                     )
@@ -752,11 +750,9 @@ class SqliteReviewRecords:
                             or prior["actor"] != item["actor"]
                             or prior["reason"] != item["reason"]
                             or prior["route_id"] != expected_route_id
-                            # An externally identified legacy route can be
-                            # retargeted after import. Its first recorded target
-                            # remains part of the source decision; the current
-                            # target is mutable route state and must not change
-                            # the completed run's immutable identity on replay.
+                            # Externally identified legacy routes remain owned
+                            # by the controller, so their shadow decision does
+                            # not claim authority over later target changes.
                             or (item["route_id"] is None and prior["target_pr"] != item["target_pr"])
                             or (item["supplied_decided_at"] and prior["decided_at"] != item["decided_at"])
                         ):
@@ -800,14 +796,15 @@ class SqliteReviewRecords:
                     )
                     connection.execute(
                         "INSERT INTO decisions (decision_id, decision_scope, run_id, finding_id, route_id, "
-                        "decision_pr, decision, actor, reason, decided_at) "
-                        "VALUES (?, 'source', ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "decision_pr, target_pr, decision, actor, reason, decided_at) "
+                        "VALUES (?, 'source', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             item["decision_id"],
                             run_id,
                             finding_id,
                             route_id,
                             observed_pr,
+                            item["target_pr"],
                             item["decision"],
                             item["actor"],
                             item["reason"],
@@ -984,9 +981,9 @@ class SqliteReviewRecords:
                     )
                 connection.execute(
                     "INSERT INTO decisions (decision_id, decision_scope, run_id, finding_id, route_id, "
-                    "decision_pr, decision, actor, reason, decided_at) "
-                    "VALUES (?, 'target', NULL, ?, ?, ?, ?, ?, ?, ?)",
-                    (decision_id, route[0], route_id, decision_pr, decision, actor, reason, decided_at),
+                    "decision_pr, target_pr, decision, actor, reason, decided_at) "
+                    "VALUES (?, 'target', NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (decision_id, route[0], route_id, decision_pr, decision_pr, decision, actor, reason, decided_at),
                 )
         except ReviewRecordsError:
             raise
@@ -1106,13 +1103,14 @@ class SqliteReviewRecords:
                         "finding_id": row[3],
                         "route_id": row[4],
                         "decision_pr": row[5],
-                        "decision": row[6],
-                        "actor": row[7],
-                        "reason": row[8],
-                        "decided_at": row[9],
+                        "target_pr": row[6],
+                        "decision": row[7],
+                        "actor": row[8],
+                        "reason": row[9],
+                        "decided_at": row[10],
                     }
                     for row in connection.execute(
-                        "SELECT decision_id, decision_scope, run_id, finding_id, route_id, decision_pr, "
+                        "SELECT decision_id, decision_scope, run_id, finding_id, route_id, decision_pr, target_pr, "
                         "decision, actor, reason, decided_at FROM decisions WHERE decision_pr = ? "
                         "ORDER BY decided_at, decision_id",
                         (pr,),
@@ -1568,6 +1566,7 @@ class SqliteReviewRecords:
             "CREATE TABLE decisions ("
             "decision_id TEXT PRIMARY KEY, decision_scope TEXT NOT NULL CHECK (decision_scope IN ('source', 'target')), "
             "run_id TEXT, finding_id TEXT NOT NULL, route_id TEXT, decision_pr INTEGER NOT NULL CHECK (decision_pr > 0), "
+            "target_pr INTEGER CHECK (target_pr IS NULL OR target_pr > 0), "
             "decision TEXT NOT NULL CHECK (decision IN ('accepted', 'routed', 'rejected', 'deferred')), "
             "actor TEXT NOT NULL, reason TEXT NOT NULL, decided_at TEXT NOT NULL, "
             "CHECK ((decision_scope = 'source' AND run_id IS NOT NULL) OR "

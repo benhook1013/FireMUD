@@ -422,14 +422,13 @@ def _records_database_path(args: argparse.Namespace) -> Path:
         selected = Path(database).expanduser().absolute()
     else:
         selected_state = state_path()
-        if selected_state.is_dir():
-            try:
-                active_store = ControllerStateStore(selected_state)._active_store()
-            except StateError as exc:
-                raise CliError("selected controller SQLite database is incompatible") from exc
-            selected = active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
-        else:
-            selected = sqlite_state_path(selected_state)
+        if not selected_state.is_dir():
+            raise CliError("controller state has not been migrated to SQLite; pass --database explicitly")
+        try:
+            active_store = ControllerStateStore(selected_state)._active_store()
+        except StateError as exc:
+            raise CliError("selected controller SQLite database is incompatible") from exc
+        selected = active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
     if selected.is_symlink():
         raise CliError("review-records database path must not be a symlink")
     return selected
@@ -723,6 +722,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
 
 
 def _read_record_incoming_routes(pr: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not state_path().is_dir():
+        return [], {"status": "not_bootstrapped", "reason": "controller state has not been migrated to SQLite"}
     try:
         database = _records_database_path(argparse.Namespace(database=None))
     except CliError:

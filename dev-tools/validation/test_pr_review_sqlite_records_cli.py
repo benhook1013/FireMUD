@@ -38,6 +38,23 @@ class ReviewRecordsCliTest(unittest.TestCase):
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
+    def test_default_records_require_cutover_and_status_ignores_orphan_sibling_database(self) -> None:
+        legacy_path = Path(self.temporary_directory.name) / "controller.json"
+        StateStore(legacy_path).save(ReviewState())
+        orphan_database = legacy_path.with_suffix(".sqlite3")
+        SqliteStateStore(orphan_database).update(lambda state: state)
+        SqliteReviewRecords(orphan_database).bootstrap()
+
+        with patch.object(cli, "state_path", return_value=legacy_path):
+            status, result = self.invoke("history", "--pr", "2828")
+            self.assertEqual(status, 2)
+            self.assertIn("has not been migrated to SQLite", result["error"])
+            routes, route_state = cli._read_record_incoming_routes(2828)
+
+        self.assertEqual(routes, [])
+        self.assertEqual(route_state["status"], "not_bootstrapped")
+        self.assertIn("has not been migrated to SQLite", route_state["reason"])
+
     def test_versioned_manual_run_readback_and_route_disposition(self) -> None:
         _, bootstrapped = self.invoke("bootstrap", "--database", str(self.database))
         self.assertEqual(bootstrapped["api_version"], 1)
@@ -273,7 +290,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
 
     def test_migrated_legacy_routes_are_read_through_and_keep_controller_dispositions_authoritative(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "legacy-review-state.json"
-        database = Path(self.temporary_directory.name) / "migrated-controller.sqlite3"
+        database = legacy_path.with_suffix(".sqlite3")
         incoming = FindingRoute(
             source_pr=2600,
             source_channel="hosted",
@@ -416,10 +433,13 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "verdict": "READY",
             "mergeability": {"clean": True, "diagnosis": "READY"},
         }
+        cutover_state_path = Path(self.temporary_directory.name) / "cutover-state"
+        cutover_state_path.mkdir()
         output = io.StringIO()
         with (
             patch.object(cli, "default_controller", return_value=controller),
             patch.object(cli.status_module, "status", return_value=base_report.copy()),
+            patch.object(cli, "state_path", return_value=cutover_state_path),
             patch.object(cli, "_records_database_path", return_value=self.database),
             contextlib.redirect_stdout(output),
         ):
@@ -451,7 +471,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             target_pr=2879,
         )
         legacy_path = Path(self.temporary_directory.name) / "legacy-shadow-state.json"
-        database = Path(self.temporary_directory.name) / "shadow-controller.sqlite3"
+        database = legacy_path.with_suffix(".sqlite3")
         StateStore(legacy_path).save(ReviewState(routes=(retargeted, resolved)))
         migrated = SqliteStateStore.migrate_legacy_json(legacy_path, database)
         records = SqliteReviewRecords(database)
@@ -506,7 +526,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
             proof="verified fix in the receiving owner",
         )
 
-        with patch.object(cli, "_records_database_path", return_value=database):
+        cutover_state_path = Path(self.temporary_directory.name) / "cutover-shadow-state"
+        cutover_state_path.mkdir()
+        with (
+            patch.object(cli, "state_path", return_value=cutover_state_path),
+            patch.object(cli, "_records_database_path", return_value=database),
+        ):
             incoming, state = cli._read_record_incoming_routes(2879)
         self.assertEqual(state["status"], "available")
         self.assertEqual(incoming, [])

@@ -755,6 +755,23 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
+    def test_bounded_hosted_judgment_override_requires_fresh_taper(self):
+        controller, _ = self.hosted_judgment_allocation_fixture()
+
+        with self.assertRaisesRegex(ControllerError, "must explicitly reopen fresh taper"):
+            controller.decide_allocation(
+                action="grant",
+                pr=1,
+                channel="hosted",
+                head=HEAD_3,
+                reason="bounded review allowance after judgment-required taper",
+                min_additional_completed=1,
+                max_additional_completed=1,
+                fresh_taper=False,
+            )
+
+        self.assertNotIn("1:hosted", controller._state().allocations)
+
     def test_bounded_hosted_allocation_reopens_equivalent_old_head_identity(self):
         controller, _ = self.hosted_judgment_allocation_fixture(
             hosted_patch_id=f"patch-{HEAD_3[:4]}"
@@ -4630,6 +4647,56 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
 
+    def test_active_review_target_hold_is_channel_specific(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+        state = controller.store.load()
+        live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+        hosted_active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "hosted-active",
+            "active_review": True,
+        }
+        histories = {
+            Channel.HOSTED: {1: [hosted_active]},
+            Channel.CLI: {1: []},
+        }
+
+        cli_decision = ReviewController._select_review_decision(
+            state,
+            Channel.CLI,
+            live,
+            reconciliation,
+            histories,
+            {},
+            [1],
+        )
+
+        self.assertEqual(cli_decision.target, 1)
+        self.assertEqual(cli_decision.status, ReviewStatus.MISSING_EVIDENCE)
+
+        histories[Channel.CLI][1] = [
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "cli-active",
+                "active_review": True,
+            }
+        ]
+        cli_active_decision = ReviewController._select_review_decision(
+            state,
+            Channel.CLI,
+            live,
+            reconciliation,
+            histories,
+            {},
+            [1],
+        )
+
+        self.assertEqual(cli_active_decision.target, 1)
+        self.assertEqual(cli_active_decision.status, ReviewStatus.HELD)
+
     def test_same_head_active_hosted_review_with_changed_anchor_holds_cli(self):
         cases = {
             "missing anchor": None,
@@ -5292,7 +5359,7 @@ class ControllerTests(unittest.TestCase):
             {},
             [1, 2],
         )
-        self.assertEqual((active.target, active.status.value), (1, "HELD"))
+        self.assertEqual((active.target, active.status.value), (2, "MISSING_EVIDENCE"))
 
     def test_cli_taper_is_complete_but_unproven_candidate_needs_explicit_reopen(self):
         def make_controller():

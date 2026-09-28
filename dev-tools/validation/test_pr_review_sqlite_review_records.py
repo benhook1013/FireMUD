@@ -380,6 +380,86 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(self.records.open_routes(target_pr=2879)[0]["route_id"], route_id)
 
+    def test_replayed_decision_uses_its_run_target_after_route_retargeting(self) -> None:
+        self.bootstrap()
+        first_import = {
+            "run_id": "route-owner-first-run",
+            "source_pr": 2828,
+            "channel": "hosted",
+            "findings": (self.observation("shared-route"),),
+            "source_decisions": (
+                {
+                    "source_finding_key": "shared-route",
+                    "decision_id": "route-owner-first-decision",
+                    "decision": "routed",
+                    "target_pr": 2879,
+                    "actor": "reviewer",
+                    "reason": "initial owner",
+                },
+            ),
+        }
+        self.records.import_completed_run(**first_import)
+        route_id = self.records.open_routes()[0]["route_id"]
+        self.records.retarget_route(
+            route_id,
+            target_pr=2999,
+            actor="reviewer",
+            reason="ownership moved",
+        )
+        second_import = {
+            **first_import,
+            "run_id": "route-owner-second-run",
+            "source_decisions": (
+                {
+                    "source_finding_key": "shared-route",
+                    "decision_id": "route-owner-second-decision",
+                    "decision": "routed",
+                    "target_pr": 2999,
+                    "actor": "reviewer",
+                    "reason": "current owner",
+                },
+            ),
+        }
+
+        imported = self.records.import_completed_run(**second_import)
+        replay = self.records.import_completed_run(**second_import)
+        self.assertFalse(imported["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        source_decisions = self.records.history(2828)["decisions"]
+        self.assertEqual(
+            {decision["decision_id"]: decision["target_pr"] for decision in source_decisions},
+            {"route-owner-first-decision": 2879, "route-owner-second-decision": 2999},
+        )
+
+        conflicting_replay = {
+            **second_import,
+            "source_decisions": (
+                {
+                    **second_import["source_decisions"][0],
+                    "target_pr": 2879,
+                },
+            ),
+        }
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts with this completed import"):
+            self.records.import_completed_run(**conflicting_replay)
+
+    def test_previous_records_schema_version_fails_closed_without_migration(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_records_metadata SET records_schema_version = 3 WHERE singleton = 1"
+            )
+
+        with self.assertRaisesRegex(ReviewRecordsError, "schema version 3"):
+            self.records.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT records_schema_version FROM review_records_metadata WHERE singleton = 1"
+                ).fetchone()[0],
+                3,
+            )
+
     def test_route_targeting_is_validated_and_unassigned_routes_are_readable(self) -> None:
         self.bootstrap()
         self.records.record_run(

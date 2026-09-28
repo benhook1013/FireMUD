@@ -3645,8 +3645,7 @@ class ReviewController:
             if any(
                 _field(value, "active_review") is True
                 or _field(value, "active_reservation") is True
-                for selected_channel in (policy.Channel.HOSTED, policy.Channel.CLI)
-                for value in histories[selected_channel].get(pr, ())
+                for value in histories[channel].get(pr, ())
             )
         }
         for pr, view in channel_allocations.items():
@@ -5245,6 +5244,10 @@ class ReviewController:
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.JUDGMENT_REQUIRED
                 ):
+                    if not fresh_taper:
+                        raise ControllerError(
+                            "bounded Hosted allocation after a judgment-required taper must explicitly reopen fresh taper"
+                        )
                     if not stop_evidence_checked:
                         self._check_stop_evidence(
                             state,
