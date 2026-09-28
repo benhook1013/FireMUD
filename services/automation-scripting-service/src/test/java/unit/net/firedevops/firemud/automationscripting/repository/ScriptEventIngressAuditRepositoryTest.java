@@ -706,7 +706,7 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
-  void insertIfAbsentByIdentityRejectsDifferentPatchBaseFromOnConflict() {
+  void insertIfAbsentByIdentityReturnsStoredRowForDifferentPatchBaseFromOnConflict() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
     MockDataProvider provider =
@@ -728,13 +728,16 @@ class ScriptEventIngressAuditRepositoryTest {
     ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
     entity.setScriptPatchBaseVersionId(7L);
 
-    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("script_patch_base_version_id conflicts with existing ingress identity");
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(13L);
+    assertThat(result.audit().getScriptPatchBaseVersionId()).isNull();
   }
 
   @Test
-  void insertIfAbsentByIdentityRejectsDifferentPatchBaseFromFallbackLookup() {
+  void insertIfAbsentByIdentityReturnsStoredRowForDifferentPatchBaseFromFallbackLookup() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
     row.setScriptPatchBaseVersionId(7L);
@@ -758,9 +761,12 @@ class ScriptEventIngressAuditRepositoryTest {
 
     ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
     entity.setScriptPatchBaseVersionId(8L);
-    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("script_patch_base_version_id conflicts with existing ingress identity");
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(13L);
+    assertThat(result.audit().getScriptPatchBaseVersionId()).isEqualTo(7L);
     assertThat(calls).hasValue(2);
   }
 
