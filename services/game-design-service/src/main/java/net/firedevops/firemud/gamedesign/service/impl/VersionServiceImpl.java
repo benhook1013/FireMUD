@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
@@ -204,6 +205,13 @@ public class VersionServiceImpl implements VersionService {
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
+      if (operationFailure instanceof PublishAttemptPendingReconciliationException
+          || (operationFailure.getMessage() != null
+              && operationFailure
+                  .getMessage()
+                  .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"))) {
+        throw operationFailure;
+      }
       if (!finalizationStarted
           && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
               operationFailure)) {
