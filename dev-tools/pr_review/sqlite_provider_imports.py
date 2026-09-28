@@ -494,6 +494,18 @@ def _is_badge_line(line: str) -> bool:
     """Identify severity/category-only lines so they cannot become a title."""
 
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
+    sections = [section.strip() for section in candidate.split("|")]
+    if len(sections) == 3 and all(
+        section.startswith("_") and section.endswith("_") for section in sections
+    ):
+        severity_words = re.findall(r"[a-z0-9]+", sections[1].casefold())
+        effort_words = set(re.findall(r"[a-z0-9]+", sections[2].casefold()))
+        severity_labels = {"critical", "high", "major", "medium", "minor", "p0", "p1", "p2", "p3"}
+        effort_labels = ({"quick", "win"}, {"heavy", "lift"})
+        if any(word in severity_labels for word in severity_words) and any(
+            label <= effort_words for label in effort_labels
+        ):
+            return True
     for delimiter in ("**", "__"):
         if candidate.startswith(delimiter) and candidate.endswith(delimiter) and len(candidate) > 4:
             candidate = candidate[2:-2]

@@ -175,6 +175,54 @@ class SqliteProviderImportsTest(unittest.TestCase):
             "A non-bold explanation follows.",
         )
 
+    def test_hosted_import_skips_multitag_badge_when_no_bold_headline_exists(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_\n"
+                "An actionable fallback explanation follows."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "An actionable fallback explanation follows.",
+        )
+
+    def test_hosted_import_skips_heavy_lift_badge_when_no_bold_headline_exists(self) -> None:
+        self.hosted_capture(
+            finding_body=(
+                "_🎯 Functional Correctness_ | _🟡 Minor_ | _🏗️ Heavy lift_\n"
+                "The route target must be checked before writing."
+            )
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["title"],
+            "The route target must be checked before writing.",
+        )
+
     def test_cli_import_replay_records_provider_finding_and_route_reason(self) -> None:
         self.cli_capture()
         stdout_path = self.common / "coderabbit-review-logs" / "run.Importer" / "stdout"
