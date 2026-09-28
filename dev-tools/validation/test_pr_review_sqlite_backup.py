@@ -186,6 +186,28 @@ class SqliteBackupTest(unittest.TestCase):
         commands = {line.split(maxsplit=1)[0].lstrip("-") for batch in self.sftp_batches for line in batch.splitlines()}
         self.assertLessEqual(commands, {"cd", "pwd", "put", "chmod", "ls", "get", "rename", "rm"})
 
+    def test_final_remote_verification_failure_removes_new_final_artifact(self) -> None:
+        original_verify = sqlite_backup._verify_remote_file
+        verifications = 0
+
+        def fail_final_verification(remote: object, binary: str, path: str) -> None:
+            nonlocal verifications
+            verifications += 1
+            if verifications == 2:
+                raise BackupError("synthetic final verification failure")
+            original_verify(remote, binary, path)
+
+        (sftp_patch,) = self._transport_patches()
+        with (
+            sftp_patch,
+            patch("pr_review.sqlite_backup._verify_remote_file", side_effect=fail_final_verification),
+            self.assertRaisesRegex(BackupError, "synthetic final verification failure"),
+        ):
+            backup_database(self.database, **self._backup_arguments())
+
+        self.assertEqual(verifications, 2)
+        self.assertEqual(self.remote_files, {})
+
     def test_arbitrary_sqlite_schema_is_rejected_before_sftp(self) -> None:
         arbitrary = self.root / "arbitrary.sqlite3"
         with sqlite3.connect(arbitrary) as connection:
@@ -312,16 +334,22 @@ class SqliteBackupTest(unittest.TestCase):
         with sftp_patch, patch("sys.stdout.write"):
             self.assertEqual(sqlite_backup.main(arguments), 0)
         self.assertEqual(report.stat().st_mode & 0o777, 0o600)
-        success = json.loads(report.read_text(encoding="utf-8"))
+        report_text = report.read_text(encoding="utf-8")
+        success = json.loads(report_text)
         self.assertEqual(success["lastAttempt"]["status"], "success")
         self.assertEqual(len(success["lastSuccess"]["sha256"]), 64)
         self.assertTrue(success["lastSuccess"]["filename"].endswith(".sqlite3"))
-        self.assertNotIn("identity", report.read_text(encoding="utf-8"))
-        self.assertNotIn("synthetic review state", report.read_text(encoding="utf-8"))
+        self.assertNotIn("identity", report_text)
+        self.assertNotIn("synthetic review state", report_text)
+        self.assertNotIn("Synthetic backup finding", report_text)
+        self.assertNotIn("Synthetic bounded review detail.", report_text)
+        self.assertNotIn("fixture reviewer", report_text)
 
         arguments[0] = str(self.root / "missing.sqlite3")
-        with patch("sys.stderr.write"):
+        batches_before_failure = len(self.sftp_batches)
+        with sftp_patch, patch("sys.stderr.write"):
             self.assertEqual(sqlite_backup.main(arguments), 1)
+        self.assertEqual(len(self.sftp_batches), batches_before_failure)
         failure = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(failure["lastAttempt"]["status"], "failure")
         self.assertEqual(failure["lastSuccess"], success["lastSuccess"])

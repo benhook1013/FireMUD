@@ -3855,7 +3855,8 @@ class ScriptScheduleInstanceServiceImplTest {
             summary -> {
               assertThat(summary.scriptPatchBaseVersionId()).isZero();
               assertThat(summary.publication().baseVersionId()).isZero();
-              assertThat(summary.publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
             });
     verify(gameDesignControlPlaneClient, never())
         .getPublishedScriptPatchVersion(any(), anyLong(), any());
@@ -3919,6 +3920,35 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
     verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
+  }
+
+  @Test
+  void listInstancesReportsUnavailablePublicationScopeWhenPersistedBaseIsUnknown() {
+    ScriptScheduleInstance instance = wallClockTimerInstance();
+    instance.setScriptPatchBaseVersionId(0L);
+    instance.setObservedRuntimeVersionId("7");
+    instance.setPluginId("plugin-1");
+    instance.setPluginVersionId("plugin-v1");
+    setPluginFence(instance);
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1", "patch-1"))
+        .thenReturn(List.of(instance));
+
+    List<ScriptScheduleInstanceService.ScheduleInstanceSummary> result =
+        service.listInstances("1", "game-1", "patch-1", 25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+              assertThat(summary.publication().lookupErrorMessage())
+                  .contains("base_version_id");
+            });
+    verify(gameDesignControlPlaneClient, never())
+        .getPublishedScriptPatchVersion(any(), anyLong(), any());
   }
 
   @Test

@@ -1275,7 +1275,14 @@ def trigger_state(
                 state = "failed_incomplete_coverage"
             else:
                 state = "ambiguous"
-            candidates.append((created, state, item, None))
+            terminal = parse_timestamp(item.get("updatedAt"))
+            if terminal is not None and terminal > created:
+                if next_dt is not None and terminal >= next_dt:
+                    candidates.append((terminal, "ambiguous", item, None))
+                    continue
+                candidates.append((terminal, state, item, None))
+            else:
+                candidates.append((created, state, item, None))
     for review in reviews:
         if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
             continue
