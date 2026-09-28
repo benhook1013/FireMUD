@@ -308,8 +308,7 @@ class LoggingAdminApplicationIntegrationTest {
           .isEqualTo(0L);
       assertThat(
               dsl.fetchValue(
-                  "SELECT COUNT(*) FROM " + schema + ".account_audit_receipts",
-                  Integer.class))
+                  "SELECT COUNT(*) FROM " + schema + ".account_audit_receipts", Integer.class))
           .isEqualTo(4);
       assertThat(
               dsl.fetchValue(
@@ -367,7 +366,7 @@ class LoggingAdminApplicationIntegrationTest {
           "legacy insert",
           LocalDateTime.of(2025, 3, 1, 13, 0));
       Long legacyLogId =
-          dsl.fetchOne(
+          dsl.fetchSingle(
                   "SELECT id FROM " + schema + ".log_events WHERE message = ?", "legacy insert")
               .get("id", Long.class);
       assertThat(
@@ -399,9 +398,7 @@ class LoggingAdminApplicationIntegrationTest {
           "Account audit event 60000000-0000-4000-8000-000000000001");
       assertThat(
               dsl.fetchValue(
-                  "SELECT tenant_key FROM "
-                      + schema
-                      + ".log_events WHERE audit_event_id = ?",
+                  "SELECT tenant_key FROM " + schema + ".log_events WHERE audit_event_id = ?",
                   Long.class,
                   "60000000-0000-4000-8000-000000000001"))
           .isEqualTo(86L);
@@ -429,6 +426,7 @@ class LoggingAdminApplicationIntegrationTest {
       Instant occurredAt,
       boolean minimized) {
     byte[] originalPayload = "{\"retained\":true}".getBytes(StandardCharsets.UTF_8);
+    long tenantKey = tenantId == null ? 0L : tenantId.longValue();
     dsl.execute(
         "INSERT INTO "
             + schema
@@ -439,7 +437,7 @@ class LoggingAdminApplicationIntegrationTest {
         receiptId,
         scope,
         tenantId,
-        tenantId == null ? 0L : tenantId,
+        tenantKey,
         eventId,
         "account-service",
         "ACCOUNT_REGISTRATION",
@@ -485,7 +483,8 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(receipt.get("producer_service", String.class)).isEqualTo("account-service");
     assertThat(receipt.get("event_type", String.class)).isEqualTo("ACCOUNT_REGISTRATION");
     Instant occurredAt = Instant.parse(timestamp + "Z");
-    assertThat(receipt.get("occurred_at_seconds", Long.class)).isEqualTo(occurredAt.getEpochSecond());
+    assertThat(receipt.get("occurred_at_seconds", Long.class))
+        .isEqualTo(occurredAt.getEpochSecond());
     assertThat(receipt.get("occurred_at_nanos", Integer.class)).isEqualTo(occurredAt.getNano());
     assertThat(receipt.get("schema_version", Integer.class)).isEqualTo(1);
     assertThat(receipt.get("payload_digest_version", Integer.class)).isEqualTo(1);
