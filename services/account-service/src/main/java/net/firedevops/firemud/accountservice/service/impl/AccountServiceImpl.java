@@ -388,7 +388,19 @@ public class AccountServiceImpl implements AccountService {
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     return listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug).stream()
-        .map(realm -> requireRealmTarget(realm.tenantId(), realm.worldSlug(), realm.realmSlug()))
+        .map(
+            discovered -> {
+              RuntimeRealmTarget current =
+                  requireRealmTarget(
+                      discovered.tenantId(), discovered.worldSlug(), discovered.realmSlug());
+              if (discovered.visible() != current.visible()
+                  || discovered.publicProductionRealm() != current.publicProductionRealm()) {
+                throw admissionPointerUnavailable(
+                    new IllegalStateException(
+                        "Public realm is no longer visible for bootstrap discovery"));
+              }
+              return current;
+            })
         .map(
             realm ->
                 new BootstrapRealmDto(
@@ -562,6 +574,10 @@ public class AccountServiceImpl implements AccountService {
       } catch (RuntimeException ex) {
         Optional<JoinOperation> claimReadback = safeFindJoinOperation(requestId);
         if (claimReadback.isEmpty()) {
+          if (connectScopeEvidenceIsMissing(request.connectScopeId())) {
+            throw new AuthenticationException(
+                "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable", ex);
+          }
           throw new AuthenticationException(
               "AUTH_UNAVAILABLE", "JOIN request claim is uncertain; retry the same request", ex);
         }
@@ -611,7 +627,7 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return replayJoinOperation(operation, callerBinding, scope);
+      return resultFromJoinOperation(operation, true);
     }
 
     if (isConnectScopeExpired(scope)) {
@@ -783,6 +799,14 @@ public class AccountServiceImpl implements AccountService {
                     "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
   }
 
+  private boolean connectScopeEvidenceIsMissing(String connectScopeId) {
+    try {
+      return accountConnectScopeRepository.find(connectScopeId).isEmpty();
+    } catch (RuntimeException ex) {
+      return false;
+    }
+  }
+
   private void validateSignedJoinScope(
       ConnectScopeContext signedScope, VerifiedJoinScope retained, long accountId) {
     if (retained.accountId() != accountId
@@ -818,29 +842,6 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "IDEMPOTENCY_CONFLICT", "JOIN request ID was reused with different input");
     }
-  }
-
-  private JoinPublicProductionResult replayJoinOperation(
-      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
-    if (operation.requestDigest() != null) {
-      JoinEvaluation evaluation = evaluateJoin(scope);
-      if (evaluation.failureCode() != null) {
-        throw new AuthenticationException(
-            evaluation.failureCode(), "Current JOIN authority could not be revalidated");
-      }
-      if (!"AVAILABLE".equals(evaluation.authorityAvailability())) {
-        throw new AuthenticationException(
-            "ENTITLEMENT_UNAVAILABLE", "Current JOIN policy could not be revalidated");
-      }
-      String currentDigest =
-          AccountJoinDigest.request(
-              scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
-      if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
-          || !operation.requestDigest().equals(currentDigest)) {
-        throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
-      }
-    }
-    return resultFromJoinOperation(operation, true);
   }
 
   private JoinPublicProductionResult resultFromJoinOperation(

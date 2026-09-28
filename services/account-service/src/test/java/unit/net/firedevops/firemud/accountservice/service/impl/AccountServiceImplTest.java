@@ -444,15 +444,16 @@ class AccountServiceImplTest {
     assertEquals("FAILED", retainedOperation.get().status());
     grace.setStatus("active");
     grace.setEntitlementVersion(2L);
-    AuthenticationException changedPolicy =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
-    assertEquals("IDEMPOTENCY_CONFLICT", changedPolicy.getCode());
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenReturn(java.util.List.of());
+    JoinPublicProductionResult unavailableAuthorityReplay =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    assertFalse(unavailableAuthorityReplay.success());
+    assertTrue(unavailableAuthorityReplay.replayed());
+    assertEquals(denied.outcomeCode(), unavailableAuthorityReplay.outcomeCode());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
         .findByTenantIdForUpdate(7L);
   }
 
@@ -866,6 +867,52 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+  }
+
+  @Test
+  void reclaimedScopeRaceReturnsConnectScopeInvalid() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    VerifiedJoinScope scope = retainedScope.get();
+    org.mockito.Mockito.clearInvocations(
+        subscriptionRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
+    when(accountConnectScopeRepository.find(connectScopeId))
+        .thenReturn(Optional.of(scope), Optional.empty());
+    org.mockito.Mockito.doThrow(new org.jooq.exception.DataAccessException("scope reclaimed"))
+        .when(accountJoinOperationRepository)
+        .insertIntent(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProduction(
+                    bootstrap.bootstrapToken(),
+                    new JoinPublicProductionRequest(connectScopeId, "join-reclaimed-scope")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", exception.getCode());
+    verifyNoInteractions(
+        subscriptionRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -1711,6 +1758,41 @@ class AccountServiceImplTest {
 
     assertEquals(1, realms.size());
     assertEquals("production", realms.getFirst().realmSlug());
+  }
+
+  @Test
+  void listBootstrapRealmsDoesNotIssueScopeWhenPublicPointerBecomesPrivateBeforeFinalRead() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "production"))
+        .thenReturn(true);
+
+    var initiallyPublic = gameSessionClient.listGameplayRealms("demo").getFirst();
+    var currentlyPrivate = initiallyPublic.toBuilder().setPublicProductionRealm(false).build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(initiallyPublic), java.util.List.of(currentlyPrivate));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            admissionPointer(
+                7L, "demo", "production", "44", 17L, true, false, "SHARED", "ALLOW_NEW"));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
   }
 
   @ParameterizedTest
