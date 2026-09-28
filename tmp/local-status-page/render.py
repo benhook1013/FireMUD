@@ -58,8 +58,7 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: #ad3b55; color: #fff; }
-.independent-review { margin-top: .5rem; padding: .48rem .7rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; color: #37414a; font-size: .77rem; line-height: 1.35; }
-.independent-review strong { display: block; margin-bottom: .12rem; }
+.independent-review { margin-top: .5rem; color: #37414a; }
 @media (max-width: 760px) {
   .activity-grid { grid-template-columns: 1fr; }
   .round-pills { gap: .35rem; }
@@ -1087,7 +1086,7 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
         raise ValueError("review details require a configured queue PR")
     queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
     history = history or {"state": "unavailable"}
-    activity_html = render_activity_cards(queue_item, now) + render_independent_activity(history)
+    activity_html = render_activity_cards(queue_item, now) + render_independent_activity(history, now)
     state = history.get("state")
     if state == "unavailable":
         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
@@ -1226,30 +1225,49 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
     return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
 
 
-def render_independent_activity(history: dict | None) -> str:
-    """Show recorded preparation separately from CodeRabbit rounds and taper."""
+def render_independent_activity(history: dict | None, now: datetime) -> str:
+    """Show each completed independent pass without granting CodeRabbit taper."""
     if not isinstance(history, dict) or history.get("state") != "available":
         return ""
     runs = history.get("runs", [])
     if not isinstance(runs, list):
         return ""
     independent = [run for run in runs if isinstance(run, dict)
-                   and run.get("channel") in {"manual", "subagent"}]
+                   and run.get("channel") == "subagent"]
     if not independent:
         return ""
-    subagents = sum(run.get("channel") == "subagent" for run in independent)
-    manual = len(independent) - subagents
-    counts = []
-    for field in ("found", "accepted", "routed"):
-        values = [run.get("counts", {}).get(field) for run in independent
-                  if isinstance(run.get("counts"), dict)]
-        counts.append(sum(value for value in values if type(value) is int and value >= 0)
-                      if len(values) == len(independent) and all(type(value) is int and value >= 0 for value in values)
-                      else None)
-    count_text = (f" · {counts[0]} found / {counts[1]} accepted here / {counts[2]} routed"
-                  if all(value is not None for value in counts) else "")
-    return (f'<div class="independent-review"><strong>Independent pre-review · {len(independent)} recorded</strong>'
-            f'{subagents} subagent · {manual} manual{count_text} · separate from CodeRabbit taper</div>')
+    completed = [run for run in independent if run.get("outcome") == "completed"
+                 and run.get("finalized") is True]
+    pills = []
+    for run in completed[-5:]:
+        counts = run.get("counts")
+        if not isinstance(counts, dict):
+            continue
+        found, accepted, routed = (counts.get(key) for key in ("found", "accepted", "routed"))
+        if (any(type(value) is not int or value < 0 for value in (found, accepted, routed))
+                or accepted + routed > found):
+            continue
+        completed_at = round_completion(run.get("finished_at"), now)
+        if completed_at is None:
+            age_html = '<span class="round-age">age n/a</span>'
+            completion_label = "Completion time unavailable"
+        else:
+            age_html = (f'<time class="round-age" datetime="{safe(completed_at.isoformat())}">'
+                        f'{safe(round_age(completed_at, now))}</time>')
+            completion_label = f"Completed {local_time(completed_at)}"
+        label = f"Subagent pre-review: {found} found, {accepted} accepted here, {routed} routed. {completion_label}"
+        pill_class = "round-pill zero-accepted" if accepted == 0 else "round-pill"
+        pills.append(f'<span class="{pill_class}" aria-label="{safe(label)}" title="{safe(label)}">'
+                     f'<span>{found}/{accepted}/{routed}</span>{age_html}</span>')
+    pending = len(independent) - len(completed)
+    note = ""
+    if pending:
+        note = f"{pending} awaiting completion or decisions · "
+    note += "no CodeRabbit taper credit"
+    return (f'<div class="activity-card independent-review"><div class="activity-top">'
+            f'<strong>Subagent pre-review</strong><span>{len(completed)} completed</span></div>'
+            f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>'
+            f'<p class="activity-note">{safe(note)}</p></div>')
 
 
 def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: datetime,
@@ -1389,7 +1407,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         elif queue_item and queue_item.get("detail_level") == "unknown":
             status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
         activity_grid = (render_activity_cards(queue_item, now)
-                         + render_independent_activity((histories or {}).get(number)))
+                         + render_independent_activity((histories or {}).get(number), now))
         if number == front_number:
             front_size_html = size_html
             if has_controller_states:
