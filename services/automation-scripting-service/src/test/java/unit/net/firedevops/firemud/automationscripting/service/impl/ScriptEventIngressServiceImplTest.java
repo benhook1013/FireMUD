@@ -187,6 +187,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptDefinitionRepository scriptDefinitionRepository = scriptDefinitionRepositoryForTests();
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
     ScriptQuotaService quotaService = allowingQuotaService();
@@ -204,7 +205,7 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService,
             pinProjectionService,
             rolloutProjectionService,
-            scriptDefinitionRepositoryForTests(),
+            scriptDefinitionRepository,
             pluginRuntimeStateService,
             quotaService,
             dryRunQuotaService);
@@ -232,7 +233,7 @@ class ScriptEventIngressServiceImplTest {
         admissionStateService,
         pinProjectionService,
         rolloutProjectionService,
-        scriptDefinitionRepositoryForTests(),
+        scriptDefinitionRepository,
         pluginRuntimeStateService,
         quotaService,
         dryRunQuotaService);

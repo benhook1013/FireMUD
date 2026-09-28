@@ -3041,6 +3041,71 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void missingRuntimeBaseRetainsDueTimerWithoutAuditOrWork() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setPinnedScriptPatchBaseVersionId(0L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(timerInstance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(5_000L));
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
+  void missingRetainedInstanceBaseRetainsDueTimerWithoutAuditOrWork() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    timerInstance.setScriptPatchBaseVersionId(null);
+    stubScheduleObservation(timerInstance);
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(timerInstance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(5_000L));
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
+  void unequalPositiveBasesRemainAProvenMismatch() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setPinnedScriptPatchBaseVersionId(8L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(timerInstance.getNextDueAt()).isNull();
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason())
+        .isEqualTo("script_patch_base_version_mismatch");
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+  }
+
+  @Test
   void matchingPatchWithDifferentEpochPersistsDistinctSkipReason() {
     ScriptScheduleInstance timerInstance = wallClockTimerInstance();
     stubScheduleObservation(timerInstance);
@@ -3925,7 +3990,7 @@ class ScriptScheduleInstanceServiceImplTest {
   @Test
   void listInstancesReportsUnavailablePublicationScopeWhenPersistedBaseIsUnknown() {
     ScriptScheduleInstance instance = wallClockTimerInstance();
-    instance.setScriptPatchBaseVersionId(0L);
+    instance.setScriptPatchBaseVersionId(null);
     instance.setObservedRuntimeVersionId("7");
     instance.setPluginId("plugin-1");
     instance.setPluginVersionId("plugin-v1");

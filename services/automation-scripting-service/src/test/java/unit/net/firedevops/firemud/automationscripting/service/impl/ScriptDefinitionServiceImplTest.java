@@ -118,6 +118,19 @@ class ScriptDefinitionServiceImplTest {
   }
 
   @Test
+  void stableIdentityConflictReportsRequestedBaseVersion() {
+    ScriptDefinition existing = script(5L, "test", "v1", "{}");
+    existing.setBaseVersionId(1L);
+    when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(5L, 1L, "renamed", "v1", 2L, "{}", List.of());
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=1")
+        .hasMessageContaining("requested=(tenantId=1, version=v1, baseVersionId=2, name=renamed)");
+  }
+
+  @Test
   void updateScriptReplacesChangedDefinitionForExistingStableIdentity() throws SagaException {
     ScriptDefinition existing = script(5L, "test", "v1", "{\"original\":true}");
     existing.setRowVersion(9);

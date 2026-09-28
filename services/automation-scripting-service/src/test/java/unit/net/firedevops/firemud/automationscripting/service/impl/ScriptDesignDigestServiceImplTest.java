@@ -127,6 +127,23 @@ class ScriptDesignDigestServiceImplTest {
   }
 
   @Test
+  void getDraftDesignDigestFailsClosedForScriptRowWithUnknownBase() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setDefinition("return 1");
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+
+    assertEquals("script_patch_base_version_unavailable:script", exception.getMessage());
+  }
+
+  @Test
   void getDraftDesignDigestFailsClosedForMixedBaseBindingRows() {
     ScriptDefinition script = new ScriptDefinition();
     script.setName("alpha");
@@ -145,6 +162,30 @@ class ScriptDesignDigestServiceImplTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedForBindingRowWithUnknownBase() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(1L);
+    script.setDefinition("return 1");
+    ScriptEventBinding binding = binding("binding-1");
+    binding.setBaseVersionId(null);
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+
+    assertEquals("script_patch_base_version_unavailable:binding", exception.getMessage());
   }
 
   @Test

@@ -529,7 +529,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         17L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
@@ -655,7 +655,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         18L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
@@ -746,7 +746,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     new ScriptWorkItemService.ScriptPatchPublicationLink(
                         "patch-1",
                         17L,
-                        9L,
+                        7L,
                         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
