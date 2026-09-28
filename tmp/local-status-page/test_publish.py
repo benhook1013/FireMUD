@@ -205,6 +205,7 @@ class PublishedPageTest(unittest.TestCase):
             run.assert_not_called()
 
     def test_public_copy_links_to_local_page_without_exposing_refresh_endpoint(self):
+        age_bootstrap_script = "document.documentElement.classList.add('age-pending');"
         age_script = "read-only relative age behavior"
         snapshot_script = "read-only snapshot polling behavior"
         source = (
@@ -216,12 +217,14 @@ class PublishedPageTest(unittest.TestCase):
             '<span class="round-pill" aria-label="2/2, Completed 24 Sep 2026 23:46 NZST" '
             'title="Completed 24 Sep 2026 23:46 NZST"><span>2/2</span>'
             '<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time></span>'
+            f'<script id="age-pending-bootstrap">{age_bootstrap_script}</script>'
             f'<script id="relative-age-updates">{age_script}</script>'
             f'<script id="snapshot-updates">{snapshot_script}</script>'
             '<h2>Worker lanes</h2><h2>Configured review queue</h2>'
             '<footer>Local refresh instructions</footer>'
         )
         result = publisher.public_html(source, "http://192.168.50.100:8877/")
+        age_bootstrap_hash = base64.b64encode(hashlib.sha256(age_bootstrap_script.encode()).digest()).decode()
         age_hash = base64.b64encode(hashlib.sha256(age_script.encode()).digest()).decode()
         snapshot_hash = base64.b64encode(hashlib.sha256(snapshot_script.encode()).digest()).decode()
         self.assertIn('href="http://192.168.50.100:8877/"', result)
@@ -231,11 +234,14 @@ class PublishedPageTest(unittest.TestCase):
                       '<time datetime="2026-09-24T12:00:00Z">just now</time></span>', result)
         self.assertIn("form-action 'none'", result)
         self.assertIn("connect-src 'self'", result)
-        self.assertIn(f"script-src 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result)
+        self.assertIn(
+            f"script-src 'sha256-{age_bootstrap_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result
+        )
         self.assertNotIn("sha256-abc", result)
         self.assertNotIn('id="local-refresh-progress"', result)
         self.assertNotIn('/refresh-status', result)
         self.assertIn(f'<script id="relative-age-updates">{age_script}</script>', result)
+        self.assertIn(f'<script id="age-pending-bootstrap">{age_bootstrap_script}</script>', result)
         self.assertIn(f'<script id="snapshot-updates">{snapshot_script}</script>', result)
         self.assertIn('<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time>', result)
         self.assertIn('aria-label="2/2, Completed 24 Sep 2026 23:46 NZST"', result)
@@ -245,11 +251,21 @@ class PublishedPageTest(unittest.TestCase):
     def test_public_copy_rejects_missing_relative_age_script(self):
         with self.assertRaisesRegex(ValueError, "read-only relative-time script"):
             publisher.public_html('<span class="refresh-time">Refreshed now</span>'
+                                  '<script id="age-pending-bootstrap">bootstrap</script>'
                                   '<h2>Worker lanes</h2><h2>Configured review queue</h2>', "http://192.168.50.100:8877/")
+
+    def test_public_copy_rejects_missing_age_bootstrap_script(self):
+        with self.assertRaisesRegex(ValueError, "age bootstrap script"):
+            publisher.public_html('<span class="refresh-time">Refreshed now</span>'
+                                  '<script id="relative-age-updates">age</script>'
+                                  '<script id="snapshot-updates">snapshot</script>'
+                                  '<h2>Worker lanes</h2><h2>Configured review queue</h2>',
+                                  "http://192.168.50.100:8877/")
 
     def test_public_copy_rejects_missing_snapshot_script(self):
         with self.assertRaisesRegex(ValueError, "read-only snapshot script"):
             publisher.public_html('<span class="refresh-time">Refreshed now</span>'
+                                  '<script id="age-pending-bootstrap">bootstrap</script>'
                                   '<script id="relative-age-updates">age</script>', "http://192.168.50.100:8877/")
 
     def test_public_copy_rejects_refresh_form_without_timestamp(self):

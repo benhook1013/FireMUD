@@ -103,9 +103,10 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("form-action 'self'", result)
         self.assertIn("connect-src 'self'", result)
         refresh_hash = base64.b64encode(hashlib.sha256(page.REFRESH_SCRIPT.encode()).digest()).decode()
+        age_bootstrap_hash = base64.b64encode(hashlib.sha256(page.AGE_BOOTSTRAP_SCRIPT.encode()).digest()).decode()
         age_hash = base64.b64encode(hashlib.sha256(page.AGE_SCRIPT.encode()).digest()).decode()
         snapshot_hash = base64.b64encode(hashlib.sha256(page.SNAPSHOT_SCRIPT.encode()).digest()).decode()
-        self.assertIn(f"script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result)
+        self.assertIn(f"script-src 'sha256-{refresh_hash}' 'sha256-{age_bootstrap_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result)
         self.assertIn(f'<script id="local-refresh-progress">{page.REFRESH_SCRIPT}</script>', result)
         self.assertIn(f'<script id="relative-age-updates">{page.AGE_SCRIPT}</script>', result)
         self.assertIn(f'<script id="snapshot-updates">{page.SNAPSHOT_SCRIPT}</script>', result)
@@ -359,6 +360,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span> / '
                       '<span class="deletions">−531</span> lines</span>', front_evidence)
         self.assertIn('<span class="front-controller-state">Hosted request status unknown · CLI new request blocked</span>', front_evidence)
+        self.assertIn('.front-fact-value .additions { color: #237451; } .front-fact-value .deletions, .front-fact-value .files-over-warning { color: #a13047; }', result)
         self.assertNotIn('front-fact', front_copy)
         self.assertLess(front_evidence.index('<div class="front-facts">'), front_evidence.index('<div class="activity-grid">'))
         self.assertNotIn('At the review front', front)
@@ -543,6 +545,24 @@ class StatusPageTest(unittest.TestCase):
         self.assertIsNone(page.round_completion("2026-09-24T12:00:00", NOW))
         self.assertIsNone(page.round_completion((NOW + timedelta(minutes=1)).isoformat(), NOW))
 
+    def test_age_bootstrap_is_hash_authorized_before_styles_and_keeps_ssr_fallback(self):
+        result = page.render(self.fixture(), page.review_snapshot(None, 42, HEAD, NOW), NOW)
+        head = result.split("</head>", 1)[0]
+        bootstrap = f'<script id="age-pending-bootstrap">{page.AGE_BOOTSTRAP_SCRIPT}</script>'
+        self.assertIn(bootstrap, head)
+        self.assertLess(head.index(bootstrap), head.index("<style>"))
+        bootstrap_hash = base64.b64encode(hashlib.sha256(page.AGE_BOOTSTRAP_SCRIPT.encode()).digest()).decode()
+        self.assertIn(f"'sha256-{bootstrap_hash}'", head)
+        self.assertIn(":root.age-pending .relative-age, :root.age-pending .round-age[datetime] { visibility: hidden; }", result)
+        self.assertNotIn('class="age-pending"', result)
+        queue_item = {"review_activity": {"hosted": {"recent": [{
+            "raw": 1, "accepted": 0, "routed": 0, "current_head": True,
+            "attributable": True, "non_counting": False,
+            "completed_at": (NOW - timedelta(minutes=31)).isoformat(),
+        }]}}}
+        self.assertIn('<time class="round-age" datetime="2026-09-24T11:29:00+00:00">31m</time>',
+                      page.render_activity_cards(queue_item, NOW))
+
     @unittest.skipUnless(shutil.which("node"), "Node is unavailable")
     def test_relative_age_script_updates_both_labels_over_time(self):
         javascript = """
@@ -551,25 +571,43 @@ const stamp = Date.parse('2026-09-24T12:00:00Z');
 let now = stamp;
 let tick;
 let interval;
-const labels = Array.from({length: 2}, () => ({dateTime: '2026-09-24T12:00:00Z', textContent: ''}));
+const classes = new Set();
+const classList = {add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name)};
+vm.runInNewContext(process.argv[2], {document: {documentElement: {classList}}});
+const pendingBeforeUpdate = classList.contains('age-pending');
+const agePendingAtWrites = [];
+const labels = Array.from({length: 2}, () => {
+  const label = {dateTime: '2026-09-24T12:00:00Z'};
+  Object.defineProperty(label, 'textContent', {
+    set(value) { this.value = value; agePendingAtWrites.push(classList.contains('age-pending')); },
+    get() { return this.value; },
+  });
+  return label;
+});
 const rounds = Array.from({length: 2}, () => ({dateTime: '2026-09-24T12:00:00Z', textContent: ''}));
 vm.runInNewContext(process.argv[1], {
-  document: {querySelectorAll: selector => selector === '.relative-age' ? labels : rounds},
+  document: {documentElement: {classList}, querySelectorAll: selector => selector === '.relative-age' ? labels : rounds},
   Date: {now: () => now, parse: Date.parse},
   setInterval: (callback, milliseconds) => { tick = callback; interval = milliseconds; }
 });
 const states = [labels.map(label => label.textContent)];
 const roundStates = [rounds.map(label => label.textContent)];
+const pendingAtInitialWrites = agePendingAtWrites.slice(0, labels.length);
+const pendingAfterUpdate = classList.contains('age-pending');
 for (const minutes of [7, 59, 60, 99, 1439, 1440, 2879, 2880, 5999, 6000, 144000, 145439, 145440]) {
   now = stamp + minutes * 60000;
   tick();
   states.push(labels.map(label => label.textContent));
   roundStates.push(rounds.map(label => label.textContent));
 }
-process.stdout.write(JSON.stringify({states, roundStates, interval}));
+process.stdout.write(JSON.stringify({states, roundStates, interval, pendingBeforeUpdate, pendingAfterUpdate, pendingAtInitialWrites}));
 """
-        run = subprocess.run(["node", "-e", javascript, page.AGE_SCRIPT], capture_output=True, text=True, check=True)
+        run = subprocess.run(["node", "-e", javascript, page.AGE_SCRIPT, page.AGE_BOOTSTRAP_SCRIPT],
+                             capture_output=True, text=True, check=True)
         result = json.loads(run.stdout)
+        self.assertTrue(result["pendingBeforeUpdate"])
+        self.assertFalse(result["pendingAfterUpdate"])
+        self.assertTrue(all(result["pendingAtInitialWrites"]))
         self.assertEqual([[value, value] for value in (
             "just now", "7m ago", "59m ago", "1h 0m ago", "1h 39m ago", "23h 59m ago",
             "1d 0h ago", "1d 23h ago", "2d 0h ago", "4d 3h ago", "4d 4h ago",

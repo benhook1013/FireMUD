@@ -31,6 +31,7 @@ BRIEF_LINK = re.compile(r'<a href="\.\./\.\./task-briefs/[^"]+">([^<]+)</a>')
 REFRESH_FORM = re.compile(r'<form class="refresh-form"[^>]*>.*?</form>', re.DOTALL)
 REFRESH_TIME = re.compile(r'<span class="refresh-time">.*?</span>', re.DOTALL)
 REFRESH_SCRIPT = re.compile(r'<script id="local-refresh-progress">.*?</script>', re.DOTALL)
+AGE_BOOTSTRAP_SCRIPT = re.compile(r'<script id="age-pending-bootstrap">(.*?)</script>', re.DOTALL)
 AGE_SCRIPT = re.compile(r'<script id="relative-age-updates">(.*?)</script>', re.DOTALL)
 SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re.DOTALL)
 REVIEW_LINK = re.compile(r'href="review/pr-(\d+)\.html"')
@@ -46,17 +47,26 @@ def public_html(source: str, local_url: str) -> str:
         raise ValueError("the published page needs its read-only refresh timestamp")
     result = REFRESH_FORM.sub("", result)
     result = REFRESH_SCRIPT.sub("", result)
+    age_bootstrap = AGE_BOOTSTRAP_SCRIPT.search(result)
+    if age_bootstrap is None:
+        raise ValueError("the published page needs its age bootstrap script")
     age_script = AGE_SCRIPT.search(result)
     if age_script is None:
         raise ValueError("the published page needs its read-only relative-time script")
     snapshot_script = SNAPSHOT_SCRIPT.search(result)
     if snapshot_script is None:
         raise ValueError("the published page needs its read-only snapshot script")
+    age_bootstrap_hash = base64.b64encode(
+        hashlib.sha256(age_bootstrap.group(1).encode()).digest()
+    ).decode()
     age_hash = base64.b64encode(hashlib.sha256(age_script.group(1).encode()).digest()).decode()
     snapshot_hash = base64.b64encode(hashlib.sha256(snapshot_script.group(1).encode()).digest()).decode()
     result = result.replace("form-action 'self'", "form-action 'none'")
     result, policy_count = re.subn(
-        r"script-src(?: 'sha256-[^']+')+", f"script-src 'sha256-{age_hash}' 'sha256-{snapshot_hash}'", result, count=1
+        r"script-src(?: 'sha256-[^']+')+",
+        f"script-src 'sha256-{age_bootstrap_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'",
+        result,
+        count=1,
     )
     if policy_count != 1:
         raise ValueError("the published page needs a matching script policy")

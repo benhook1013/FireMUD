@@ -157,6 +157,8 @@ REFRESH_SCRIPT = """(() => {
   });
 })();"""
 
+AGE_BOOTSTRAP_SCRIPT = "document.documentElement.classList.add('age-pending');"
+
 AGE_SCRIPT = """(() => {
   const labels = document.querySelectorAll('.relative-age');
   const rounds = document.querySelectorAll('.round-age[datetime]');
@@ -183,6 +185,7 @@ AGE_SCRIPT = """(() => {
     for (const round of rounds) {
       round.textContent = roundAge(Date.parse(round.dateTime), now);
     }
+    document.documentElement.classList.remove('age-pending');
   };
   update();
   setInterval(update, 30000);
@@ -1284,15 +1287,18 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
          (REPO_HOME, "FireMUD on GitHub ↗", "GitHub ↗")),
     )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
+    age_bootstrap_hash = base64.b64encode(hashlib.sha256(AGE_BOOTSTRAP_SCRIPT.encode()).digest()).decode()
     age_hash = base64.b64encode(hashlib.sha256(AGE_SCRIPT.encode()).digest()).decode()
     snapshot_hash = base64.b64encode(hashlib.sha256(SNAPSHOT_SCRIPT.encode()).digest()).decode()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="status-snapshot" content="{safe(now.isoformat())}">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_bootstrap_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <link rel="icon" type="image/svg+xml" href="/flame-ember.svg">
 <title>FireMUD Delivery Status</title>
+<script id="age-pending-bootstrap">{AGE_BOOTSTRAP_SCRIPT}</script>
 <style>
+:root.age-pending .relative-age, :root.age-pending .round-age[datetime] {{ visibility: hidden; }}
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
 * {{ box-sizing: border-box; }} body {{ margin: 0; overflow-x: hidden; }} main {{ max-width: 1160px; margin: auto; padding: 2rem 1.25rem 4rem; }}
 header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
@@ -1349,7 +1355,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
 .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 .front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
-.front-fact-value .additions {{ color: #9de0bd; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #ffc390; }}
+.front-fact-value .additions {{ color: #237451; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #a13047; }}
 .front-controller-unavailable {{ color: #f1dfe1; font-weight: 600; }}
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
 @media (min-width: 901px) {{ .front-copy {{ padding: 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
