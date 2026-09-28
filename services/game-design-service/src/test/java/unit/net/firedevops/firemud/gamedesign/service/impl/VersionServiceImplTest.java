@@ -1091,6 +1091,23 @@ class VersionServiceImplTest {
         () -> service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2"));
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = VersionLifecycleState.class,
+      names = {"PUBLISHED", "ACTIVE", "RETIRED"})
+  void getPublishedScriptPatchVersionReadsRetainedPublicationStates(VersionLifecycleState state) {
+    Version retained = scriptPatchVersion(11L, 8, 3L, state, "notes");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retained));
+
+    VersionDto result = service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2");
+
+    assertEquals(state, result.versionState());
+    assertEquals(11L, result.id());
+  }
+
   @Test
   void getPublishedScriptPatchVersionRejectsAmbiguousBaseScope() {
     Version first = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
@@ -1158,6 +1175,31 @@ class VersionServiceImplTest {
         () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", 3L, "patch-2"));
     verify(controlPlaneDigestService, org.mockito.Mockito.never())
         .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = VersionLifecycleState.class,
+      names = {"PUBLISHED", "ACTIVE", "RETIRED"})
+  void getDesignControlPlaneDigestForScriptPatchReadsRetainedPublicationStates(
+      VersionLifecycleState state) {
+    Version retained = scriptPatchVersion(11L, 8, 3L, state, "notes");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retained));
+    when(controlPlaneDigestService.getDigestForScriptPatch(any(VersionDto.class)))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "tenant-1", "patch-2", "script-patch:patch-2", "digest-1", 1));
+
+    DesignControlPlaneDigestDto result =
+        service.getDesignControlPlaneDigestForScriptPatch("tenant-1", 3L, "patch-2");
+
+    assertEquals("digest-1", result.contentDigest());
+    ArgumentCaptor<VersionDto> versionCaptor = ArgumentCaptor.forClass(VersionDto.class);
+    verify(controlPlaneDigestService).getDigestForScriptPatch(versionCaptor.capture());
+    assertEquals(state, versionCaptor.getValue().versionState());
   }
 
   @Test

@@ -20,8 +20,7 @@ import org.junit.jupiter.api.Test;
 class VersionTemplateRemapSetRepositoryTest {
   @Test
   void savePersistsReturnedEntryIdAndCreatedAt() throws Exception {
-    try (var connection =
-        DriverManager.getConnection("jdbc:h2:mem:remap-entry-returning;DB_CLOSE_DELAY=-1")) {
+    try (var connection = DriverManager.getConnection("jdbc:h2:mem:remap-entry-returning")) {
       List<String> executedSql = new ArrayList<>();
       DefaultConfiguration configuration = new DefaultConfiguration();
       configuration.set(connection);
