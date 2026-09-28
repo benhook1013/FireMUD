@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -285,7 +286,10 @@ public final class GameplayWorldCatalog {
         pointer.publicProductionRealm(),
         pointer.requiresCharacterSelection(),
         pointer.stateScope(),
-        pointer.characterCreationPolicy());
+        pointer.characterCreationPolicy(),
+        pointer.catalogRevision(),
+        pointer.realmId(),
+        pointer.playableStateNamespaceId());
   }
 
   private static WorldView copyWorldView(WorldView input) {
@@ -312,7 +316,10 @@ public final class GameplayWorldCatalog {
         input.publicProductionRealm(),
         input.requiresCharacterSelection(),
         input.stateScope(),
-        input.characterCreationPolicy());
+        input.characterCreationPolicy(),
+        input.catalogRevision(),
+        input.realmId(),
+        input.playableStateNamespaceId());
   }
 
   public record WorldView(String slug, String displayName, List<RealmView> realms) {
@@ -331,7 +338,65 @@ public final class GameplayWorldCatalog {
       boolean publicProductionRealm,
       boolean requiresCharacterSelection,
       String stateScope,
-      String characterCreationPolicy) {}
+      String characterCreationPolicy,
+      long catalogRevision,
+      UUID realmId,
+      UUID playableStateNamespaceId) {
+    /** Creates a synthetic realm view without authoritative identity evidence. */
+    public RealmView(
+        String slug,
+        String displayName,
+        long tenantId,
+        long gameInstanceId,
+        long pointerVersion,
+        boolean visible,
+        boolean publicProductionRealm,
+        boolean requiresCharacterSelection,
+        String stateScope,
+        String characterCreationPolicy,
+        long catalogRevision) {
+      this(
+          slug,
+          displayName,
+          tenantId,
+          gameInstanceId,
+          pointerVersion,
+          visible,
+          publicProductionRealm,
+          requiresCharacterSelection,
+          stateScope,
+          characterCreationPolicy,
+          catalogRevision,
+          null,
+          null);
+    }
+
+    /** Creates a synthetic realm view without authoritative catalog revision evidence. */
+    public RealmView(
+        String slug,
+        String displayName,
+        long tenantId,
+        long gameInstanceId,
+        long pointerVersion,
+        boolean visible,
+        boolean publicProductionRealm,
+        boolean requiresCharacterSelection,
+        String stateScope,
+        String characterCreationPolicy) {
+      this(
+          slug,
+          displayName,
+          tenantId,
+          gameInstanceId,
+          pointerVersion,
+          visible,
+          publicProductionRealm,
+          requiresCharacterSelection,
+          stateScope,
+          characterCreationPolicy,
+          0L);
+    }
+  }
 
   public record RuntimeRealmTarget(
       String worldSlug, String worldDisplayName, String realmSlug, String realmDisplayName) {}
