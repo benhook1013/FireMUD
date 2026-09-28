@@ -1,0 +1,17 @@
+# Document: downstream reconciliation and pre-review
+
+## Standing mission
+
+Gameplay's current active front #2887 is outside this allocation. Document owns #2882, #2839, #2846, #2848, #2857, #2853, #2873, and #2876. Its prior Unit1B/corpus assignment stays parked except for necessary candidate preparation on its own #2873 and #2876 drafts; neither draft is pre-reviewed or merge-ready by virtue of that assignment.
+
+For every owned PR, reconcile its parent while preserving its unique patch, and run independent subagent pre-CodeRabbit review and fix passes. Repeat passes while they continue to find worthwhile, in-scope work; move on only after recording why another pass is no longer useful. There is no numeric dry-pass taper and independent review earns no CodeRabbit credit. Validate and publish at safe checkpoints. If a PR is blocked, continue with the next safe owned PR.
+
+## Working boundary
+
+Use the live configured queue and each PR's owning architecture, tracker, and current published topology as authority. Keep volatile heads, review rounds, and progress in the controller, PR records, or concise handoffs rather than this brief. New split children inherit their owning PR's worker until explicitly reassigned; coordinate ownership before edits and never overlap edits. Do not edit Gameplay's active branch.
+
+Independent pre-review is preparation only: do not request or run CodeRabbit, claim CodeRabbit findings or taper credit, or claim merge readiness from independent passes. Do not merge or enable auto-merge. At each resumption, read the version-matched PR lifecycle, validation and runtime proof, and AI delegation and review guides in the active FireMUD worktree. After these changes merge, use the stable [PR lifecycle on develop](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/pr-lifecycle.md), [validation and runtime proof on develop](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/validation-and-runtime-proof.md), and [AI delegation and review on develop](https://github.com/benhook1013/FireMUD/blob/develop/design/developer-workflows/ai-delegation-and-review.md) copies. Apply the active review-safety rules: do not publish a review-invalidating change while Hosted review is active; prepare fixes locally and publish at a safe checkpoint after that review completes.
+
+## Handoff
+
+For each PR, report the exact PR/head and parent worked on, unique changes preserved, independent pass count and scope, findings and disposition, fixes and focused proof, pass limits or blockers, why further passes are or are not useful, publication safety, and the next safe queue boundary. Do not imply historical PR completion without evidence. Keep this brief stable; record current progress in the live status page, controller, PR records, or handoff.
