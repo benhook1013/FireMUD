@@ -1,3 +1,4 @@
+import dataclasses
 import sqlite3
 import sys
 import tempfile
@@ -8,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.state import FindingRoute
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -94,6 +96,29 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
             FindingObservation("safe-key", "title", detail="token=ghp_" + "A" * 30)
+
+    def test_bounded_free_text_accepts_only_exact_full_commit_shas_among_long_tokens(self) -> None:
+        sha1 = "a" * 40
+        sha256 = "b" * 64
+        observation = FindingObservation(
+            "sha-context",
+            f"fixed in commit {sha1}",
+            detail=f"verified against {sha256}.",
+        )
+        self.assertEqual(observation.title, f"fixed in commit {sha1}")
+        self.assertEqual(observation.detail, f"verified against {sha256}.")
+
+        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
+            FindingObservation("token-context", "Z" * 40)
+        for key, value in (
+            ("prefixed-sha", f"prefix_{sha1}"),
+            ("suffixed-sha", f"{sha256}_suffix"),
+            ("provider-token", f"ghp_{sha1}"),
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ReviewRecordsError, "credential or raw secret"
+            ):
+                FindingObservation(key, value)
 
     def test_routed_source_finding_cannot_be_changed_into_an_orphan_route(self) -> None:
         self.bootstrap()
@@ -355,6 +380,86 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(self.records.open_routes(target_pr=2879)[0]["route_id"], route_id)
 
+    def test_replayed_decision_uses_its_run_target_after_route_retargeting(self) -> None:
+        self.bootstrap()
+        first_import = {
+            "run_id": "route-owner-first-run",
+            "source_pr": 2828,
+            "channel": "hosted",
+            "findings": (self.observation("shared-route"),),
+            "source_decisions": (
+                {
+                    "source_finding_key": "shared-route",
+                    "decision_id": "route-owner-first-decision",
+                    "decision": "routed",
+                    "target_pr": 2879,
+                    "actor": "reviewer",
+                    "reason": "initial owner",
+                },
+            ),
+        }
+        self.records.import_completed_run(**first_import)
+        route_id = self.records.open_routes()[0]["route_id"]
+        self.records.retarget_route(
+            route_id,
+            target_pr=2999,
+            actor="reviewer",
+            reason="ownership moved",
+        )
+        second_import = {
+            **first_import,
+            "run_id": "route-owner-second-run",
+            "source_decisions": (
+                {
+                    "source_finding_key": "shared-route",
+                    "decision_id": "route-owner-second-decision",
+                    "decision": "routed",
+                    "target_pr": 2999,
+                    "actor": "reviewer",
+                    "reason": "current owner",
+                },
+            ),
+        }
+
+        imported = self.records.import_completed_run(**second_import)
+        replay = self.records.import_completed_run(**second_import)
+        self.assertFalse(imported["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
+        source_decisions = self.records.history(2828)["decisions"]
+        self.assertEqual(
+            {decision["decision_id"]: decision["target_pr"] for decision in source_decisions},
+            {"route-owner-first-decision": 2879, "route-owner-second-decision": 2999},
+        )
+
+        conflicting_replay = {
+            **second_import,
+            "source_decisions": (
+                {
+                    **second_import["source_decisions"][0],
+                    "target_pr": 2879,
+                },
+            ),
+        }
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts with this completed import"):
+            self.records.import_completed_run(**conflicting_replay)
+
+    def test_previous_records_schema_version_fails_closed_without_migration(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_records_metadata SET records_schema_version = 3 WHERE singleton = 1"
+            )
+
+        with self.assertRaisesRegex(ReviewRecordsError, "schema version 3"):
+            self.records.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT records_schema_version FROM review_records_metadata WHERE singleton = 1"
+                ).fetchone()[0],
+                3,
+            )
+
     def test_route_targeting_is_validated_and_unassigned_routes_are_readable(self) -> None:
         self.bootstrap()
         self.records.record_run(
@@ -397,6 +502,75 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         assigned_history = self.records.history(2879)
         self.assertEqual(len(assigned_history["routes"]), 2)
         self.assertEqual(len(assigned_history["routes"][1]["target_history"]), 2)
+
+    def test_legacy_controller_route_rejects_sqlite_target_writes(self) -> None:
+        self.bootstrap()
+        legacy_route = FindingRoute(
+            source_pr=2828,
+            source_channel="hosted",
+            source_review="summary:review:700",
+            source_finding="duplicate:ref:legacy-summary",
+            observations=("owned by another PR",),
+            target_pr=2879,
+            target_history=(2879,),
+        )
+        state_store = SqliteStateStore(self.database)
+        state_store.update(lambda state: dataclasses.replace(state, routes=(legacy_route,)))
+        self.records.import_completed_run(
+            run_id="legacy-shadow-run",
+            source_pr=2828,
+            channel="manual",
+            findings=(self.observation("legacy-shadow"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "legacy-shadow",
+                    "decision_id": "legacy-shadow-source-route",
+                    "decision": "routed",
+                    "route_id": legacy_route.route_id,
+                    "route_status": "open",
+                    "target_pr": 2879,
+                    "actor": "reviewer",
+                    "reason": "mirrors the controller-owned route",
+                },
+            ),
+        )
+
+        visible_routes_before = self.records.open_routes(target_pr=2879, include_legacy_routes=True)
+        visible_history_before = self.records.history(2879, include_legacy_routes=True)["routes"]
+        shadow_history_before = self.records.history(2828)["routes"]
+        self.assertEqual([route["origin"] for route in visible_routes_before], ["legacy_controller"])
+        self.assertEqual(visible_routes_before[0]["route_id"], legacy_route.route_id)
+
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.retarget_route(
+                legacy_route.route_id,
+                target_pr=2999,
+                actor="owner",
+                reason="retarget legacy route",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.record_decision(
+                legacy_route.route_id,
+                decision_id="legacy-target-decision",
+                decision_pr=2879,
+                decision="accepted",
+                actor="owner",
+                reason="decide legacy route",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "legacy controller owns this route.*decide route"):
+            self.records.record_resolution(
+                legacy_route.route_id,
+                resolution_id="legacy-target-resolution",
+                resolution_pr=2879,
+                outcome="accepted_fixed",
+                actor="owner",
+                proof_or_reason="resolve legacy route",
+            )
+
+        self.assertEqual(state_store.load().routes, (legacy_route,))
+        self.assertEqual(self.records.open_routes(target_pr=2879, include_legacy_routes=True), visible_routes_before)
+        self.assertEqual(self.records.history(2879, include_legacy_routes=True)["routes"], visible_history_before)
+        self.assertEqual(self.records.history(2828)["routes"], shadow_history_before)
 
     def test_manual_and_subagent_runs_do_not_change_controller_policy_state(self) -> None:
         self.bootstrap()

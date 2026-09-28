@@ -255,6 +255,11 @@ def _parser() -> argparse.ArgumentParser:
         metavar="N",
         help="maximum additional completed attributable results after the decision",
     )
+    allocation.add_argument(
+        "--fresh-taper",
+        action="store_true",
+        help="start a new taper streak at the allocation decision; prior results remain historical",
+    )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
     stop = decide_commands.add_parser(
@@ -417,14 +422,13 @@ def _records_database_path(args: argparse.Namespace) -> Path:
         selected = Path(database).expanduser().absolute()
     else:
         selected_state = state_path()
-        if selected_state.is_dir():
-            try:
-                active_store = ControllerStateStore(selected_state)._active_store()
-            except StateError as exc:
-                raise CliError("selected controller SQLite database is incompatible") from exc
-            selected = active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
-        else:
-            selected = sqlite_state_path(selected_state)
+        if not selected_state.is_dir():
+            raise CliError("controller state has not been migrated to SQLite; pass --database explicitly")
+        try:
+            active_store = ControllerStateStore(selected_state)._active_store()
+        except StateError as exc:
+            raise CliError("selected controller SQLite database is incompatible") from exc
+        selected = active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
     if selected.is_symlink():
         raise CliError("review-records database path must not be a symlink")
     return selected
@@ -610,7 +614,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         return {"api_version": 1, "result": {"routes": routes}}, 0
     if args.records_command == "import-run":
         run, findings, decisions = _load_records_import(args.input)
-        if len(decisions) == len(findings) and (decisions or not findings):
+        if len(decisions) == len(findings) and (decisions or run["outcome"] == "completed"):
             if run["outcome"] != "completed":
                 raise CliError("atomic batch finalization requires a completed run outcome")
             result = store.import_completed_run(
@@ -718,6 +722,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
 
 
 def _read_record_incoming_routes(pr: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not state_path().is_dir():
+        return [], {"status": "not_bootstrapped", "reason": "controller state has not been migrated to SQLite"}
     try:
         database = _records_database_path(argparse.Namespace(database=None))
     except CliError:
@@ -733,7 +739,10 @@ def _read_record_incoming_routes(pr: int) -> tuple[list[dict[str, Any]], dict[st
     try:
         routes = [
             route
-            for route in SqliteReviewRecords(database).open_routes(target_pr=pr)
+            for route in SqliteReviewRecords(database).open_routes(
+                target_pr=pr,
+                include_legacy_routes=True,
+            )
             if route["origin"] == "review_records"
         ]
     except ReviewRecordsError as exc:
@@ -1096,6 +1105,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 min_additional_completed=args.min_additional_completed,
                 max_additional_completed=args.max_additional_completed,
+                fresh_taper=args.fresh_taper,
             ), 0
         if args.decide_command == "stop":
             return controller.decide_stop(

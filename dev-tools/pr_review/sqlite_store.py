@@ -22,7 +22,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .state import ReviewState, StateError, _locked
+from .state import ReviewState, StateError, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
 WRITER_BUILD = 2
@@ -319,6 +319,9 @@ class SqliteStateStore:
         target_input = Path(database_path).expanduser().absolute()
         source = source_input.parent.resolve() / source_input.name
         target = target_input.parent.resolve() / target_input.name
+        canonical_target = sqlite_state_path(source)
+        if target != canonical_target:
+            raise StateError(f"SQLite migration target must be the canonical sibling path: {canonical_target}")
         retained_source = source.with_name(f"{source.name}.migrated")
         if (
             target == source

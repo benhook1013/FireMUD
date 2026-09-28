@@ -49,8 +49,14 @@ def observation_fingerprint(value: Any) -> str:
     """Hash one immutable evidence observation for a legacy transition."""
 
     try:
+        normalized = _fingerprint_value(value)
+        # Historical two-count checkpoints had no routed field. Runtime
+        # projections expose that unknown count as None; keep their identity
+        # stable while retaining explicit modern routed counts in the hash.
+        if isinstance(normalized, dict) and "routed" in normalized and normalized["routed"] is None:
+            normalized.pop("routed")
         encoded = json.dumps(
-            _fingerprint_value(value),
+            normalized,
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
