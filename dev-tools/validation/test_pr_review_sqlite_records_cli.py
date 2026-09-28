@@ -92,6 +92,56 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(stream.requested_bytes, 4096)
         self.assertEqual(attempts["attempts"][0]["outcome"], "rate_limited")
 
+    def test_failed_cli_attempt_metadata_is_bounded_at_the_size_limit(self) -> None:
+        root = self.database.parent / "pr-review" / "runs"
+        exact = root / ("run." + "d" * 32)
+        oversized = root / ("run." + "e" * 32)
+        exact.mkdir(parents=True)
+        oversized.mkdir()
+        metadata = b'{"pull_request":2890}'
+        exact_bytes = metadata + b" " * (cli_attempts.MAX_METADATA_BYTES - len(metadata))
+        (exact / "metadata.json").write_bytes(exact_bytes)
+        (exact / "exit-status").write_text("1\n", encoding="utf-8")
+        oversized_path = oversized / "metadata.json"
+        oversized_path.touch()
+        (oversized / "exit-status").write_text("1\n", encoding="utf-8")
+
+        class GuardedStream(io.BytesIO):
+            requested_bytes: int | None = None
+
+            def read(self, size: int = -1) -> bytes:
+                self.requested_bytes = size
+                if size < 0 or size > cli_attempts.MAX_METADATA_BYTES + 1:
+                    raise AssertionError("metadata read was not bounded")
+                return super().read(size)
+
+        stream = GuardedStream(exact_bytes + b" ")
+        original_open = Path.open
+
+        def open_metadata(path: Path, *args: object, **kwargs: object) -> object:
+            if path == oversized_path:
+                return stream
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", autospec=True, side_effect=open_metadata):
+            attempts = cli_attempts.failed_attempts(self.database, 2890)
+
+        self.assertEqual(stream.requested_bytes, cli_attempts.MAX_METADATA_BYTES + 1)
+        self.assertEqual([exact.name], [attempt["run_id"] for attempt in attempts["attempts"]])
+
+    def test_failed_cli_attempt_ignores_symlinked_metadata(self) -> None:
+        root = self.database.parent / "pr-review" / "runs"
+        failed = root / ("run." + "f" * 32)
+        failed.mkdir(parents=True)
+        metadata_target = self.database.parent / "metadata-target.json"
+        metadata_target.write_text(json.dumps({"pull_request": 2890}), encoding="utf-8")
+        (failed / "metadata.json").symlink_to(metadata_target)
+        (failed / "exit-status").write_text("1\n", encoding="utf-8")
+
+        attempts = cli_attempts.failed_attempts(self.database, 2890)
+
+        self.assertEqual(attempts["attempts"], [])
+
     def test_default_records_require_cutover_and_status_ignores_orphan_sibling_database(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "controller.json"
         StateStore(legacy_path).save(ReviewState())

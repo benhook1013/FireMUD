@@ -29,9 +29,13 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
             continue
         metadata_path = directory / "metadata.json"
         try:
-            if metadata_path.stat().st_size > MAX_METADATA_BYTES:
+            if metadata_path.is_symlink():
                 continue
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            with metadata_path.open("rb") as metadata_file:
+                metadata_bytes = metadata_file.read(MAX_METADATA_BYTES + 1)
+            if len(metadata_bytes) > MAX_METADATA_BYTES:
+                continue
+            metadata = json.loads(metadata_bytes.decode("utf-8"))
             if not isinstance(metadata, dict) or str(metadata.get("pull_request")) != str(pr):
                 continue
             exit_path = directory / "exit-status"

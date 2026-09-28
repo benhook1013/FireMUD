@@ -109,6 +109,32 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             self.assertTrue(matched[0]["anchored"])
             self.assertEqual(matched[0]["accepted"], 2)
 
+    def test_malformed_existing_candidate_reports_path_and_refuses_adoption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            candidate = (
+                common
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text("{", encoding="utf-8")
+            record_path = common / "adopted-trigger.json"
+
+            with (
+                patch.object(evidence, "git_common_dir", return_value=common),
+                self.assertRaises(ValueError) as raised,
+            ):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=record_path
+                )
+
+            self.assertIn(str(candidate), str(raised.exception))
+            self.assertFalse(record_path.exists())
+
     def test_ambiguous_or_mismatched_public_identity_is_not_adopted(self):
         duplicated_review = public_payload()
         duplicated_review["data"]["repository"]["pullRequest"]["reviews"]["nodes"].append(

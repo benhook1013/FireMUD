@@ -539,12 +539,13 @@ def adopt_manual_completed_trigger(
     record_path = Path(path) if path is not None else default_trigger_record_path(repo, pr_number)
     descriptor = _with_lock(record_path)
     try:
-        if any(
-            (loaded.get("trigger") or {}).get("id") == trigger_id
-            for candidate in trigger_record_paths(repo, pr_number)
-            for loaded in [load_trigger_record(candidate, repo, pr_number)]
-        ):
-            raise ValueError("manual trigger already has a durable record")
+        for candidate in trigger_record_paths(repo, pr_number):
+            try:
+                loaded = load_trigger_record(candidate, repo, pr_number)
+            except (OSError, ValueError, TypeError) as error:
+                raise ValueError(f"cannot inspect existing trigger record {candidate}: {error}") from error
+            if (loaded.get("trigger") or {}).get("id") == trigger_id:
+                raise ValueError("manual trigger already has a durable record")
         if record_path.exists():
             previous = load_trigger_record(record_path, repo, pr_number)
             previous_at = parse_timestamp(previous["trigger"].get("created_at"))
