@@ -45,12 +45,12 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -411,7 +411,8 @@ class LoggingAdminApplicationIntegrationTest {
                           + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
                           + "VALUES ('tenant', 73, 74, '50000000-0000-4000-8000-000000000001', "
                           + "'ACCOUNT_AUDIT', 'mismatched key')"))
-          .isInstanceOf(DataAccessException.class);
+          .isInstanceOf(DataIntegrityViolationException.class)
+          .hasMessageContaining("chk_log_events_scope_tenant");
     } finally {
       dsl.execute("DROP SCHEMA " + schema + " CASCADE");
     }
