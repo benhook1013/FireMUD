@@ -405,6 +405,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
     canceledOnLoad.setTenantId("1");
@@ -412,6 +413,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     canceledOnLoad.setEventType("onLoad");
     canceledOnLoad.setStatus("CANCELED");
     canceledOnLoad.setCancelReason("rollback_epoch_advanced");
+    canceledOnLoad.setScriptPatchBaseVersionId(7L);
     canceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(250));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
@@ -450,6 +452,65 @@ class ScriptPatchReadinessProjectionServiceImplTest {
         .thenReturn(Optional.of(projection));
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(List.of(retainedOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_base_version_unavailable");
+  }
+
+  @Test
+  void failsReadinessWhenProjectionExpectedBaseVersionIsNull() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem onLoad = new ScriptWorkItem();
+    onLoad.setTenantId("1");
+    onLoad.setScriptPatchVersion("patch-1");
+    onLoad.setEventType("onLoad");
+    onLoad.setStatus("HANDED_OFF");
+    onLoad.setScriptPatchBaseVersionId(7L);
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(onLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_base_version_unavailable");
+  }
+
+  @Test
+  void failsReadinessWhenProjectionExpectedBaseVersionIsNonPositive() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(0L);
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem onLoad = new ScriptWorkItem();
+    onLoad.setTenantId("1");
+    onLoad.setScriptPatchVersion("patch-1");
+    onLoad.setEventType("onLoad");
+    onLoad.setStatus("HANDED_OFF");
+    onLoad.setScriptPatchBaseVersionId(7L);
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(onLoad));
 
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
@@ -535,6 +596,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     ScriptWorkItem deadLetteredOnLoad = new ScriptWorkItem();
     deadLetteredOnLoad.setTenantId("1");
@@ -542,6 +604,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     deadLetteredOnLoad.setEventType("onLoad");
     deadLetteredOnLoad.setStatus("DEAD_LETTERED");
     deadLetteredOnLoad.setCancelReason("onload_commands_not_allowed");
+    deadLetteredOnLoad.setScriptPatchBaseVersionId(7L);
     deadLetteredOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
@@ -568,6 +631,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     ScriptWorkItem deadLetteredOnLoad = new ScriptWorkItem();
     deadLetteredOnLoad.setTenantId("1");
@@ -575,18 +639,21 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     deadLetteredOnLoad.setEventType("onLoad");
     deadLetteredOnLoad.setStatus("DEAD_LETTERED");
     deadLetteredOnLoad.setCancelReason("onload_commands_not_allowed");
+    deadLetteredOnLoad.setScriptPatchBaseVersionId(7L);
     deadLetteredOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
     ScriptWorkItem activeOnLoad = new ScriptWorkItem();
     activeOnLoad.setTenantId("1");
     activeOnLoad.setScriptPatchVersion("patch-1");
     activeOnLoad.setEventType("onLoad");
     activeOnLoad.setStatus("EVALUATING");
+    activeOnLoad.setScriptPatchBaseVersionId(7L);
     ScriptWorkItem newerCanceledOnLoad = new ScriptWorkItem();
     newerCanceledOnLoad.setTenantId("1");
     newerCanceledOnLoad.setScriptPatchVersion("patch-1");
     newerCanceledOnLoad.setEventType("onLoad");
     newerCanceledOnLoad.setStatus("CANCELED");
     newerCanceledOnLoad.setCancelReason("rollback_epoch_advanced");
+    newerCanceledOnLoad.setScriptPatchBaseVersionId(7L);
     newerCanceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(500));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
@@ -610,6 +677,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
     canceledOnLoad.setTenantId("1");
@@ -617,6 +685,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     canceledOnLoad.setEventType("onLoad");
     canceledOnLoad.setStatus("CANCELED");
     canceledOnLoad.setCancelReason("onload_budget_exceeded");
+    canceledOnLoad.setScriptPatchBaseVersionId(7L);
     canceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
@@ -643,6 +712,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     projection.setStatusReason("tenant_readiness_running");
     ScriptWorkItem handoffInFlightOnLoad = new ScriptWorkItem();
@@ -650,6 +720,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     handoffInFlightOnLoad.setScriptPatchVersion("patch-1");
     handoffInFlightOnLoad.setEventType("onLoad");
     handoffInFlightOnLoad.setStatus("HANDOFF_IN_FLIGHT");
+    handoffInFlightOnLoad.setScriptPatchBaseVersionId(7L);
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
@@ -673,6 +744,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId("1");
     projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
     projection.setReadinessStatus("ONLOAD_RUNNING");
     ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
     canceledOnLoad.setTenantId("1");
@@ -680,11 +752,13 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     canceledOnLoad.setEventType("onLoad");
     canceledOnLoad.setStatus("CANCELED");
     canceledOnLoad.setCancelReason("onload_budget_exceeded");
+    canceledOnLoad.setScriptPatchBaseVersionId(7L);
     ScriptWorkItem activeOnLoad = new ScriptWorkItem();
     activeOnLoad.setTenantId("1");
     activeOnLoad.setScriptPatchVersion("patch-1");
     activeOnLoad.setEventType("onLoad");
     activeOnLoad.setStatus("EVALUATING");
+    activeOnLoad.setScriptPatchBaseVersionId(7L);
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))

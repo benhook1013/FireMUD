@@ -362,18 +362,22 @@ public class ScriptPatchReadinessProjectionServiceImpl
   private static boolean hasInvalidOnLoadBaseVersion(
       ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
     Long expectedBaseVersionId = projection.getBaseVersionId();
-    return expectedBaseVersionId != null
-        && expectedBaseVersionId > 0L
-        && workItems.stream()
-            .anyMatch(
-                item ->
-                    item.getScriptPatchBaseVersionId() == null
-                        || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId()));
+    return !workItems.isEmpty()
+        && (expectedBaseVersionId == null
+            || expectedBaseVersionId <= 0L
+            || workItems.stream()
+                .anyMatch(
+                    item ->
+                        item.getScriptPatchBaseVersionId() == null
+                            || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId())));
   }
 
   private static String onLoadBaseVersionFailureReason(
       ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
     Long expectedBaseVersionId = projection.getBaseVersionId();
+    if (expectedBaseVersionId == null || expectedBaseVersionId <= 0L) {
+      return "onload_base_version_unavailable";
+    }
     if (workItems.stream().anyMatch(item -> item.getScriptPatchBaseVersionId() == null)) {
       return "onload_base_version_unavailable";
     }
