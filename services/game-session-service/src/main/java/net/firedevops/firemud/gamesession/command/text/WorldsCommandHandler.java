@@ -163,7 +163,7 @@ public class WorldsCommandHandler {
         if (target == null) {
           return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
         }
-        PlayerExecutionContext playerContext = playerContext(sessionContext, realm);
+        PlayerExecutionContext playerContext = playerContext(sessionContext, realm, requestId);
         IssueDirectTextConnectScopeResponse scopeResponse =
             accountClient.issueDirectTextConnectScope(playerContext, target);
         if (scopeResponse.hasError()) {
@@ -535,7 +535,7 @@ public class WorldsCommandHandler {
   }
 
   private PlayerExecutionContext playerContext(
-      SessionContext caller, GameplayWorldCatalog.RealmView realm) {
+      SessionContext caller, GameplayWorldCatalog.RealmView realm, String requestId) {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(Long.toString(caller.accountId()))
         .setSessionId(Long.toString(caller.sessionId()))
@@ -544,6 +544,7 @@ public class WorldsCommandHandler {
         .setPlayableStateNamespaceId(realm.playableStateNamespaceId().toString())
         .setPlayableStateScope(realm.stateScope())
         .setGameInstanceId(Long.toString(realm.gameInstanceId()))
+        .setRequestId(requestId)
         .build();
   }
 

@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionS
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -1046,6 +1047,52 @@ class WorldsCommandHandlerTest {
     Mockito.verify(accountClient, Mockito.never())
         .getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
+  void authenticatedBrowseCarriesGeneratedRequestIdIntoPublicScopeContext() {
+    UUID realmId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    GameplayWorldCatalog.RealmView realm =
+        new GameplayWorldCatalog.RealmView(
+            "production",
+            "Live Realm",
+            22L,
+            1L,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            realmId,
+            namespaceId);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    AtomicReference<PlayerExecutionContext> issuedContext = new AtomicReference<>();
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              issuedContext.set(invocation.getArgument(0));
+              return IssueDirectTextConnectScopeResponse.newBuilder()
+                  .setConnectScopeId("scope-1")
+                  .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                  .build();
+            });
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(
+                List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    WorldsCommandHandler.RealmBrowseResult result =
+        localHandler.browseRealms(authenticatedSession(), "demo");
+
+    assertThat(result).isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(issuedContext)
+        .hasValueSatisfying(context -> assertThat(context.getRequestId()).isNotBlank());
   }
 
   @Test
