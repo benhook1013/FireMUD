@@ -219,17 +219,17 @@ class StatusPageTest(unittest.TestCase):
                            "decision": "accepted", "reason": "Fixed in this PR"}],
         }
         result = page.render_review_detail(data, review, NOW, 42, history)
-        self.assertIn("Hosted review", result)
-        self.assertIn("CLI review", result)
+        self.assertIn("Hosted Review", result)
+        self.assertIn("CLI Review", result)
         self.assertIn("Manual pre-review", result)
         self.assertIn("Subagent pre-review", result)
-        self.assertIn("Hosted review</strong> · completed", result)
-        self.assertIn("CLI review</strong> · completed", result)
+        self.assertIn("Hosted Review</strong> · completed", result)
+        self.assertIn("CLI Review</strong> · completed", result)
         self.assertEqual(4, result.count('class="run-card"'))
         self.assertIn('<ol class="history-list finding-list"><li class="finding-card">', result)
         self.assertIn('class="linked-record route-card"', result)
         self.assertIn('class="decision-card"', result)
-        self.assertNotIn('accepted <span class="record-source">(CLI review)</span>', result)
+        self.assertNotIn('accepted <span class="record-source">(CLI Review)</span>', result)
         self.assertIn('<strong>CLI issue</strong></div>', result)
         self.assertIn('<li class="decision-card">accepted<p>Fixed in this PR</p></li>', result)
         self.assertIn("found: 3", result)
@@ -246,7 +246,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn('<script>alert(', result)
         self.assertNotIn("raw cli capture", result)
         self.assertNotIn("Unspecified", result)
-        hosted_run = result.split('<strong>Hosted review</strong>', 1)[1].split('<strong>CLI review', 1)[0]
+        hosted_run = result.split('<strong>Hosted Review</strong>', 1)[1].split('<strong>CLI Review', 1)[0]
         self.assertIn("A &lt;private&gt; issue &amp; context", hosted_run)
         self.assertIn("Need &lt;proof&gt; &amp; response", hosted_run)
         self.assertIn("PR #51 · open", hosted_run)

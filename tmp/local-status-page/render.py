@@ -899,9 +899,9 @@ def _run_source(run: dict) -> str:
     if "manual" in normalized:
         return "Manual pre-review"
     if "hosted" in normalized:
-        return "Hosted review"
+        return "Hosted Review"
     if normalized == "cli" or normalized.startswith("cli-"):
-        return "CLI review"
+        return "CLI Review"
     return "Other review source"
 
 
