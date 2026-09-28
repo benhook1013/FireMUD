@@ -925,14 +925,23 @@ def _run_counts(run: dict) -> str:
 def _decision_rows(records: list[dict]) -> str:
     rows = []
     for index, record in enumerate(records[:MAX_RECORDS_PER_KIND], 1):
-        decision = _bounded_category(record.get("decision", record.get("disposition")))
+        raw_decision = record.get("decision", record.get("disposition"))
+        decision = _bounded_category(raw_decision)
+        normalized = str(raw_decision or "").strip().casefold().replace("_", " ")
+        kind = ("accepted" if normalized.startswith("accept") else
+                "rejected" if normalized.startswith("reject") else
+                "routed" if normalized.startswith("rout") else "other")
         reason = _record_text(record.get("reason"))
         response = _record_text(record.get("response", record.get("response_text", record.get("proof_or_reason"))))
-        content = f'{decision}{_history_source_label(record)}'
+        label = f'<span class="decision-label decision-label-{kind}">{decision}</span>'
+        body = ""
         if reason:
-            content += f'<p>{reason}</p>'
+            body += f'<p>{reason}</p>'
         if response:
-            content += f'<p>{response}</p>'
+            body += f'<p>{response}</p>'
+        source = _history_source_label(record)
+        content = (f'<details><summary>{label}{source}</summary><div class="decision-body">{body}</div></details>'
+                   if body else f'{label}{source}')
         rows.append(f'<li class="decision-card">{content}</li>')
     if len(records) > MAX_RECORDS_PER_KIND:
         rows.append("<li>Additional records omitted from this bounded page.</li>")
@@ -1073,7 +1082,7 @@ def render_record_sections(history: dict) -> str:
             f'<span class="record-counts">{_run_counts(run)}</span>'
             f'</div>'
         )
-        findings_list = "".join(rendered_findings) or '<li class="finding-card">No findings recorded for this run.</li>'
+        findings_list = "".join(rendered_findings) or '<li class="finding-card">No findings recorded for this run</li>'
         decision_list = _decision_rows(run_decisions)
         if decision_list:
             findings_list += decision_list
@@ -1200,6 +1209,13 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .linked-record.route-card, .history-group > .history-list > .route-card {{ padding: .5rem .65rem; border: 1px solid #d8dce2; border-radius: 7px; background: #f5f6f8; }}
 .decision-list {{ display: grid; gap: .35rem; padding-left: 0; }}
 .decision-card {{ padding: .4rem .6rem; border-left: 3px solid var(--fire); border-radius: 4px; background: #f5f6f8; overflow-wrap: anywhere; }}
+.decision-card summary {{ display: list-item; width: fit-content; cursor: pointer; }}
+.decision-card summary::marker {{ color: var(--muted); font-size: .75rem; }}
+.decision-card .decision-body {{ padding: .1rem 0 .2rem .8rem; }}
+.decision-label {{ display: inline-flex; padding: .1rem .5rem; border: 1px solid #c7cdd5; border-radius: 999px; background: #edf0f4; color: #43505d; font-size: .73rem; font-weight: 700; }}
+.decision-label-accepted {{ background: #e4f4e8; border-color: #88c89a; color: #236239; }}
+.decision-label-rejected {{ background: #f3e5e7; border-color: #d9a6ae; color: #82293b; }}
+.decision-label-routed {{ background: #fff1d6; border-color: #d7aa61; color: #755018; }}
 .record-counts {{ display: flex; flex-wrap: wrap; gap: .35rem .7rem; color: var(--muted); font-size: .8rem; }}
 .record-source {{ color: var(--muted); font-size: .8rem; }}
 .linked-record {{ margin: .35rem 0 .2rem; padding-left: 1.2rem; }}

@@ -236,7 +236,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<div class="route-summary"><span class="route-status route-status-open">1 open</span>', result)
         self.assertNotIn('accepted <span class="record-source">(CLI Review)</span>', result)
         self.assertIn('<strong>CLI issue</strong></div>', result)
-        self.assertIn('<li class="decision-card">accepted<p>Fixed in this PR</p></li>', result)
+        self.assertIn('<summary><span class="decision-label decision-label-accepted">accepted</span></summary>', result)
+        self.assertIn('<div class="decision-body"><p>Fixed in this PR</p></div>', result)
         self.assertIn("found: 3", result)
         self.assertIn("accepted: 2", result)
         self.assertIn("3/2/1", result)
@@ -283,6 +284,14 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<span class="route-status route-status-accepted">2 accepted/fixed</span>', summary)
         self.assertIn('<span class="route-status route-status-rejected">1 rejected</span>', summary)
         self.assertIn('<span class="route-status route-status-other">1 other</span>', summary)
+
+    def test_empty_review_finding_has_no_period(self):
+        sections = page.render_record_sections({
+            "runs": [{"run_id": "clean", "channel": "cli", "outcome": "completed"}],
+            "findings": [], "routes": [], "decisions": [],
+        })
+        self.assertIn('No findings recorded for this run</li>', sections)
+        self.assertNotIn('No findings recorded for this run.', sections)
 
     def test_detail_reports_missing_imports_without_hiding_review_rounds(self):
         review = {
