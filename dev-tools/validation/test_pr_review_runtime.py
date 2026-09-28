@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,28 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            return []
+
+        endpoint_patcher = patch.object(github, "fetch_api_endpoint", side_effect=quiet_repository)
+        endpoint_patcher.start()
+        self.addCleanup(endpoint_patcher.stop)
+
+    @staticmethod
+    def _rest_issue_comment(comment: Mapping[str, Any]) -> dict[str, Any]:
+        author = comment.get("author")
+        return {
+            "id": comment.get("databaseId"),
+            "user": {"login": author.get("login")} if isinstance(author, Mapping) else None,
+            "body": comment.get("body"),
+            "created_at": comment.get("createdAt"),
+            "updated_at": comment.get("updatedAt"),
+            "html_url": comment.get("url"),
+        }
+
     def test_prepost_abandoned_trigger_audit_requires_the_existing_closure_proof(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepost-abandoned-0123456789abcdefabcd.json"
@@ -977,7 +1000,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(calls, [["gh", "api", "user"]])
 
-    def test_hosted_request_refuses_untracked_manual_request_on_another_configured_pr(self) -> None:
+    def test_hosted_request_refuses_untracked_manual_request_on_another_open_pr(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
             snapshot,
@@ -1005,11 +1028,16 @@ class RuntimeTest(unittest.TestCase):
                 return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
             raise AssertionError("an unresolved manual Hosted request must prevent POST")
 
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
-            store = StateStore(common / "state.json")
-            store.save(ReviewState(ordered_prs=(42, 43)))
             with (
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
@@ -1018,17 +1046,14 @@ class RuntimeTest(unittest.TestCase):
                     "fetch_pull_request",
                     side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
                 ),
-                patch.object(
-                    github,
-                    "fetch_pr_identity_batch",
-                    return_value={43: {"state": "OPEN", "mergedAt": None}},
-                ),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
                 patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
                 self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #43"),
             ):
-                HostedRunner("owner/repo", live, store)(target, expect_pr=42)
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
             self.assertFalse(path.exists())
             self.assertEqual(calls, [["gh", "api", "user"]])
 
@@ -1068,6 +1093,13 @@ class RuntimeTest(unittest.TestCase):
                 return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
             raise AssertionError("a new manual Hosted request must prevent POST")
 
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return [self._rest_issue_comment(comment) for comment in (old_command, old_finish, new_manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
@@ -1083,7 +1115,8 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
                 patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]),
-                patch.object(github, "fetch_pr_identity_batch", return_value={43: {"state": "OPEN", "mergedAt": None}}),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
                 patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
@@ -1092,6 +1125,156 @@ class RuntimeTest(unittest.TestCase):
                 HostedRunner("owner/repo", live, store)(target, expect_pr=42)
             self.assertFalse(path.exists())
             self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_global_scan_skips_full_history_for_quiet_open_pr(self) -> None:
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return []
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        live = LiveGitHub("owner/repo")
+        runner = HostedRunner("owner/repo", live)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(
+                github,
+                "fetch_pull_request",
+                side_effect=AssertionError("quiet PRs must not load review threads"),
+            ) as fetch_full,
+        ):
+            runner._assert_no_other_active_reservations(42, Path(directory))
+        fetch_full.assert_not_called()
+
+    def test_hosted_global_scan_blocks_off_queue_active_manual_request(self) -> None:
+        manual = {
+            "databaseId": 901,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/901",
+        }
+        payload = self._payload([manual])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+            self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+        fetch_full.assert_called_once_with("owner/repo", 99)
+        preceding.assert_called_once_with(payload, 901)
+
+    def test_hosted_global_scan_blocks_new_manual_request_after_tracked_current_record(self) -> None:
+        old_command = {
+            "databaseId": 910,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/910",
+        }
+        new_command = {
+            "databaseId": 912,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/912",
+        }
+        completed_review = {
+            "databaseId": 911,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nActionable comments posted: 1\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([old_command, new_command], [completed_review])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(old_command), self._rest_issue_comment(new_command)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        record = self._trigger_record(created=old_command["createdAt"])
+        record.update({"pr_number": 99})
+        record["anchor"]["pr"] = 99
+        record["trigger"].update(
+            {
+                "id": old_command["databaseId"],
+                "url": old_command["url"],
+                "author_login": "maintainer",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = common / "firemud" / "hosted" / "owner_repo" / "pr-99" / "trigger.json"
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                    42, common
+                )
+        fetch_full.assert_called_once_with("owner/repo", 99)
+        preceding.assert_called_once_with(payload, 912)
+
+    def test_hosted_global_scan_allows_terminal_manual_request_off_queue(self) -> None:
+        manual = {
+            "databaseId": 920,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/920",
+        }
+        completed_review = {
+            "databaseId": 921,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nActionable comments posted: 1\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([manual], [completed_review])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+        preceding.assert_called_once_with(payload, 920)
 
     def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
         snapshots = {

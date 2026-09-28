@@ -453,6 +453,77 @@ def record_posted_trigger(
     return record_path
 
 
+def unresolved_preceding_full_trigger(payload: dict[str, Any], trigger_id: int) -> bool:
+    """Detect a prior public command with no terminal bot output before this command.
+
+    A plain finished reply after two commands cannot be assigned to the later
+    one while the first remains unresolved. This is an admission/attribution
+    guard, not a review result or taper judgment.
+    """
+
+    try:
+        pr = payload["data"]["repository"]["pullRequest"]
+        comments = pr["comments"]["nodes"]
+        reviews = pr["reviews"]["nodes"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("complete public command and review history is required") from exc
+    if not isinstance(comments, list) or not isinstance(reviews, list):
+        raise TypeError("complete public command and review history is required")
+    commands: list[tuple[datetime, int]] = []
+    for item in comments:
+        if not isinstance(item, dict):
+            raise TypeError("public command history contains a malformed comment")
+        if is_coderabbit_login(_comment_author_login(item)) or normalize_command(item.get("body") or "") != FULL_COMMAND:
+            continue
+        identity = immutable_database_id(item)
+        created = parse_timestamp(item.get("createdAt"))
+        if identity is None or created is None:
+            raise ValueError("public full-review command has incomplete identity")
+        commands.append((created, identity))
+    commands.sort()
+    positions = [index for index, (_, identity) in enumerate(commands) if identity == trigger_id]
+    if len(positions) != 1:
+        raise ValueError("public full-review command is missing or duplicated")
+    for index in range(positions[0]):
+        start, _ = commands[index]
+        end, _ = commands[index + 1]
+        if end <= start:
+            return True
+        terminal_comment = False
+        for item in comments:
+            if not is_coderabbit_login(_comment_author_login(item)):
+                continue
+            created = parse_timestamp(item.get("createdAt"))
+            if created is None:
+                raise ValueError("bot response has no creation time")
+            if not start < created < end:
+                continue
+            body = item.get("body") or ""
+            terminal_comment = bool(
+                FINISHED_REVIEW_PATTERN.search(_unquoted(body))
+                or FAILED_PATTERN.search(_unquoted(body))
+                or NOOP_MARKER in body
+                or REVIEW_LIMIT_MARKER in body
+                or _rate_limit(body, created) is not None
+                or _substantive(body)
+            )
+            if terminal_comment:
+                break
+        terminal_review = False
+        for item in reviews:
+            if not isinstance(item, dict) or not is_coderabbit_login((item.get("author") or {}).get("login")):
+                continue
+            submitted = parse_timestamp(item.get("submittedAt"))
+            if submitted is None:
+                raise ValueError("bot review has no submission time")
+            if start < submitted < end and item.get("state") != "DISMISSED":
+                terminal_review = True
+                break
+        if not terminal_comment and not terminal_review:
+            return True
+    return False
+
+
 def adopt_manual_completed_trigger(
     repo: str,
     pr_number: int,
@@ -587,6 +658,9 @@ def adopt_manual_completed_trigger(
         if len(in_window) > 1 or (in_window and in_window[0] != state.response_id):
             raise ValueError("manual request has ambiguous CodeRabbit review responses")
         record["adoption"]["response_id"] = state.response_id
+
+        if unresolved_preceding_full_trigger(payload, trigger_id):
+            raise ValueError("an earlier full-review command is unresolved before the manual request")
 
         for candidate in trigger_record_paths(repo, pr_number, record_common):
             try:

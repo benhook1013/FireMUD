@@ -1856,6 +1856,35 @@ class HostedRunner:
         comment_id, comment = latest[0]
         return None if comment_id in tracked_ids else comment
 
+    @staticmethod
+    def _normalize_rest_issue_comments(pr: int, comments: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        """Project a complete REST issue-comment history into the matcher shape."""
+
+        nodes: list[dict[str, Any]] = []
+        for item in comments:
+            if not isinstance(item, Mapping):
+                raise ControllerError(f"issue-comment history for PR #{pr} contains a malformed comment")
+            comment_id = github.immutable_database_id(dict(item))
+            body = item.get("body")
+            created_at = item.get("created_at")
+            if not isinstance(body, str):
+                raise ControllerError(f"issue-comment history for PR #{pr} has an unreadable comment body")
+            user = item.get("user")
+            login = user.get("login") if isinstance(user, Mapping) else None
+            if not isinstance(login, str):
+                login = None
+            nodes.append(
+                {
+                    "databaseId": comment_id,
+                    "author": {"login": login},
+                    "body": body,
+                    "createdAt": created_at,
+                    "updatedAt": item.get("updated_at"),
+                    "url": item.get("html_url"),
+                }
+            )
+        return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
+
     def _assert_latest_manual_trigger_is_tracked(self, pr: int, payload: Mapping[str, Any]) -> None:
         """Refuse a target-PR request until its latest manual trigger is adopted."""
 
@@ -1898,22 +1927,38 @@ class HostedRunner:
     ) -> None:
         terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
         current = self._repository_current_trigger_paths(self.repo, common)
-        configured_prs: tuple[int, ...] = ()
-        open_prs = set(current)
-        if self.state_store is not None:
+        try:
+            open_pull_requests = github.fetch_api_endpoint(f"repos/{self.repo}/pulls?state=open&per_page=100")
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            raise ControllerError("open repository pull requests cannot be checked before posting") from exc
+        open_prs: set[int] = set()
+        for pull_request in open_pull_requests:
+            number = pull_request.get("number")
+            state = pull_request.get("state")
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or number <= 0
+                or not isinstance(state, str)
+                or state.casefold() != "open"
+                or number in open_prs
+            ):
+                raise ControllerError("open repository pull-request listing is malformed or ambiguous")
+            open_prs.add(number)
+        open_prs.discard(pr)
+
+        comments_by_pr: dict[int, dict[str, Any]] = {}
+        for other_pr in sorted(open_prs):
             try:
-                configured_prs = self.state_store.load().ordered_prs
-                numbers = tuple(sorted((set(current) | set(configured_prs)) - {pr}))
-                identities = github.fetch_pr_identity_batch(self.repo, numbers)
-            except (OSError, RuntimeError, ValueError, StateError) as exc:
-                raise ControllerError("configured Hosted queue cannot be checked before posting") from exc
-            if any(not isinstance(identities.get(number), Mapping) for number in numbers):
-                raise ControllerError("configured Hosted queue has an unverifiable PR identity")
-            open_prs = {
-                number
-                for number in numbers
-                if identities[number].get("state") == "OPEN" and identities[number].get("mergedAt") is None
-            }
+                comments = github.fetch_api_endpoint(
+                    f"repos/{self.repo}/issues/{other_pr}/comments?per_page=100"
+                )
+                comments_by_pr[other_pr] = self._normalize_rest_issue_comments(other_pr, comments)
+            except ControllerError:
+                raise
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                raise ControllerError(f"issue-comment history for PR #{other_pr} cannot be verified") from exc
+
         payloads: dict[int, dict[str, Any]] = {}
         for other_pr, paths in current.items():
             if other_pr == pr or other_pr not in open_prs:
@@ -1967,17 +2012,27 @@ class HostedRunner:
                     raise ControllerError(
                         f"another Hosted request is unresolved for PR #{other_pr}: {state.state}"
                     )
-        for other_pr in configured_prs:
-            if other_pr == pr or other_pr not in open_prs:
-                continue
+
+        for other_pr, comments_payload in comments_by_pr.items():
             try:
+                command = self._latest_untracked_manual_trigger(other_pr, comments_payload)
+                if command is None:
+                    continue
                 payload = payloads.get(other_pr)
                 if payload is None:
                     payload = github.fetch_pull_request(self.repo, other_pr)
                 command = self._latest_untracked_manual_trigger(other_pr, payload)
                 if command is None:
-                    continue
+                    raise ControllerError("manual command history changed during the pre-POST check")
                 pull = payload["data"]["repository"]["pullRequest"]
+                trigger_id = github.immutable_database_id(dict(command))
+                if trigger_id is None:
+                    raise ControllerError("manual full-review command has incomplete immutable identity")
+                if hosted.unresolved_preceding_full_trigger(payload, trigger_id):
+                    raise ControllerError(
+                        f"another manual Hosted request is unresolved for PR #{other_pr}: "
+                        "an earlier full-review command has no terminal response"
+                    )
                 author = command.get("author")
                 record = {
                     "status": "posted",
@@ -1994,7 +2049,15 @@ class HostedRunner:
                 state = hosted.trigger_state(self.repo, other_pr, payload, record)
             except ControllerError:
                 raise
-            except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            except (
+                OSError,
+                RuntimeError,
+                ValueError,
+                KeyError,
+                TypeError,
+                AttributeError,
+                json.JSONDecodeError,
+            ) as exc:
                 raise ControllerError(f"manual Hosted request on PR #{other_pr} cannot be verified") from exc
             if state.terminal is not True or state.response_id is None:
                 raise ControllerError(f"another manual Hosted request is unresolved for PR #{other_pr}")

@@ -85,6 +85,7 @@ class ChannelDecision:
     reason: str
     provisional: bool = False
     taper_complete: bool = False
+    deferred_terminal: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -677,6 +678,7 @@ def select_review_target(
             deferred_hosted_pr,
             ReviewStatus.HELD,
             f"{deferred_hosted_pr} has a terminal non-counting Hosted result and no later safe target",
+            deferred_terminal=True,
         )
     if encountered_human_stop:
         return ChannelDecision(

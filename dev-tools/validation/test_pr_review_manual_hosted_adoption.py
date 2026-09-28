@@ -92,6 +92,27 @@ def payload_fetcher(payload):
 
 
 class ManualHostedAdoptionTest(unittest.TestCase):
+    def test_later_manual_request_cannot_claim_first_requests_late_reply(self):
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull["comments"]["nodes"].insert(
+            1,
+            {
+                "databaseId": 20,
+                "author": {"login": "maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-28T10:10:00Z",
+                "url": "https://example.test/comments/20",
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = hosted.default_trigger_record_path(REPO, 42, Path(directory))
+            with self.assertRaisesRegex(ValueError, "earlier full-review command is unresolved"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 20, HEAD, ANCHOR, payload_fetcher(payload), path=path
+                )
+            self.assertFalse(path.exists())
+
     def test_cli_exposes_exact_manual_identity(self):
         args = cli._parser().parse_args(
             ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]

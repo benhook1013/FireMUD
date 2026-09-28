@@ -3860,6 +3860,38 @@ class ControllerTests(unittest.TestCase):
         })
         self.assertEqual(len(evidence.history_reads), 16)
 
+    def test_status_overview_expands_past_terminal_hosted_ambiguity(self):
+        values, heads = _stacked_prs(5)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        evidence[(1, "hosted")] = [
+            {
+                "pr": 1,
+                "head": values[1].head,
+                "checkpoint": "trigger:10",
+                "held": True,
+                "unstable": True,
+                "terminal_ambiguous": True,
+                "terminal": True,
+                "attributable": False,
+                "state": "ambiguous",
+                "trigger_id": 10,
+                "response_id": 11,
+                "fingerprint": "a" * 64,
+            }
+        ]
+        for pr_number in range(2, 5):
+            evidence[(pr_number, "hosted")] = [
+                self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            ]
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 5)
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "MISSING_EVIDENCE")
+
     def test_status_overview_grows_long_tail_target_window_in_batches(self):
         values, heads = _stacked_prs(80)
         evidence = CountingEvidence()
