@@ -790,9 +790,47 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void listBootstrapWorldsRejectsWorldWithUnknownStateScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("UNKNOWN")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
   }
 
   @Test
@@ -2282,9 +2320,50 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void listBootstrapRealmsRejectsRealmWithUnknownStateScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("UNKNOWN")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
   }
 
   @Test

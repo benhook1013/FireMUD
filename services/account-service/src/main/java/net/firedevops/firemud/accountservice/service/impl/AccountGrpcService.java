@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -163,7 +164,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       RequestEmailLoginOtpRequest request,
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
-      accountService.requestEmailLoginOtp(request.getEmail());
+      accountService.requestEmailLoginOtp(requireEmail(request.getEmail()));
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -731,6 +732,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private long requirePositiveRequestId(String value, String fieldName) {
     try {
       return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(ex.getMessage(), ex);
+    }
+  }
+
+  private String requireEmail(String value) {
+    try {
+      return EmailCanonicalization.normalize(value);
     } catch (IllegalArgumentException ex) {
       throw new InvalidRequestException(ex.getMessage(), ex);
     }
