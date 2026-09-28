@@ -735,6 +735,53 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void unknownNamedWorldFailsClosedAsAdmissionPointerUnavailable() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of());
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "unknown-world");
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertEquals(0, response.getRealmsCount());
+  }
+
+  @Test
+  void malformedWorldSelectorRemainsInvalidArgument() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "not a world");
+
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals(0, response.getRealmsCount());
+  }
+
+  @Test
   void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
     GameplayAdmissionPointerRepository pointerRepository =
         Mockito.mock(GameplayAdmissionPointerRepository.class);
