@@ -1010,6 +1010,30 @@ class HostedEvidenceTests(unittest.TestCase):
                 )
             )
 
+    def test_retired_inflight_predecessor_cannot_supply_successor_zero_reply(self):
+        old_trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        new_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        late_finish = comment(13, "coderabbitai", "Full review finished.", "2026-09-23T00:04:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            current = hosted.default_trigger_record_path(REPO, PR, common)
+            current.parent.mkdir(parents=True, exist_ok=True)
+            old_record = trigger_record("d" * 40)
+            old_record["status"] = "retired"
+            old_record["retirement"] = {"observed_live_state": "awaiting_response"}
+            (current.parent / "trigger-10.json").write_text(json.dumps(old_record), encoding="utf-8")
+            new_record = trigger_record()
+            new_record["trigger"].update(
+                {"id": 12, "created_at": "2026-09-23T00:03:00Z", "url": new_trigger["url"]}
+            )
+            current.write_text(json.dumps(new_record), encoding="utf-8")
+            payload = review_payload([old_trigger, new_trigger, late_finish])
+            state = hosted.trigger_state(REPO, PR, payload, new_record, current)
+            self.assertEqual(state.state, "ambiguous")
+            self.assertFalse(state.terminal)
+            self.assertEqual(state.response_id, 13)
+            self.assertTrue(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
+
     def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
         trigger_at = "2026-09-23T00:01:00Z"
         summary_at = "2026-09-23T00:03:20Z"
@@ -1800,6 +1824,11 @@ class HostedEvidenceTests(unittest.TestCase):
             "commit": {"oid": "d" * 40},
         }
         record = trigger_record()
+        observed = hosted.trigger_state(
+            REPO, PR, review_payload([trigger], [mismatched_review], head=current_head), record
+        )
+        self.assertEqual(observed.state, "ambiguous")
+        self.assertFalse(observed.terminal)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
             path.write_text(json.dumps(record), encoding="utf-8")

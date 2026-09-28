@@ -2048,7 +2048,13 @@ class HostedRunner:
                         "command": hosted.FULL_COMMAND,
                     },
                 }
-                state = hosted.trigger_state(self.repo, other_pr, payload, record)
+                state = hosted.trigger_state(
+                    self.repo,
+                    other_pr,
+                    payload,
+                    record,
+                    hosted.default_trigger_record_path(self.repo, other_pr, common),
+                )
             except ControllerError:
                 raise
             except (

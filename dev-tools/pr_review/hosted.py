@@ -503,6 +503,11 @@ def unresolved_preceding_full_trigger(
             return True
         record, path = recorded
         if record.get("status") == "retired":
+            retirement = record.get("retirement")
+            if not isinstance(retirement, dict) or retirement.get("observed_live_state") not in {
+                "completed", "rate_limited", "noop", "failed"
+            }:
+                return True
             continue
         state = trigger_state(repo, pr_number, payload, record, path)
         response_at = parse_timestamp(state.response_created_at)
@@ -524,6 +529,32 @@ def unresolved_preceding_full_trigger(
                 else None
             )
         if state.terminal is not True or response_at is None or terminal_at is None or terminal_at >= end:
+            return True
+    return False
+
+
+def _unresolved_retired_predecessor(
+    repo: str, pr_number: int, trigger_at: datetime, current_record_path: str | Path | None
+) -> bool:
+    """A retired in-flight request can still emit a late headless reply."""
+
+    if current_record_path is None:
+        return False
+    current = Path(current_record_path)
+    common = _trigger_record_common_for_path(current, repo, pr_number)
+    if common is None:
+        return False
+    for path in trigger_record_paths(repo, pr_number, common):
+        if path == current:
+            continue
+        record = load_trigger_record(path, repo, pr_number)
+        previous_at = parse_timestamp((record.get("trigger") or {}).get("created_at"))
+        if record.get("status") != "retired" or previous_at is None or previous_at >= trigger_at:
+            continue
+        retirement = record.get("retirement")
+        if not isinstance(retirement, dict) or retirement.get("observed_live_state") not in {
+            "completed", "rate_limited", "noop", "failed"
+        }:
             return True
     return False
 
@@ -631,7 +662,7 @@ def adopt_manual_completed_trigger(
                 "response_id": None,
             },
         }
-        state = trigger_state(repo, pr_number, payload, record)
+        state = trigger_state(repo, pr_number, payload, record, record_path)
         if state.state != "completed" or state.attributed is not True or state.response_id is None:
             raise ValueError(f"manual request lacks a unique completed review: {state.state}")
         trigger_at = parse_timestamp(created)
@@ -1721,7 +1752,11 @@ def trigger_state(
                 immutable_database_id(item),
                 next_dt,
             ):
-                state = "completed"
+                state = (
+                    "ambiguous_retired_predecessor"
+                    if _unresolved_retired_predecessor(repo, pr_number, trigger_dt, current_record_path)
+                    else "completed"
+                )
             else:
                 state = "ambiguous"
             terminal = parse_timestamp(item.get("updatedAt"))
@@ -1841,10 +1876,13 @@ def trigger_state(
             cooldown_until=None,
             reason="CodeRabbit acknowledged that the full review is active",
         )
-    if state == "ambiguous":
+    if state in {"ambiguous", "ambiguous_retired_predecessor"}:
+        # A review on another commit may be an unrelated automatic or older
+        # result. It does not prove this captured request has stopped.
+        unproved_terminal = response in reviews or state == "ambiguous_retired_predecessor"
         return TriggerState(
             "ambiguous",
-            True,
+            not unproved_terminal,
             False,
             **base,
             response_id=response_id,
@@ -1854,6 +1892,10 @@ def trigger_state(
             reason=(
                 "CodeRabbit reported review finished without a head-attributed result or zero-finding summary"
                 if FINISHED_REVIEW_PATTERN.search(_unquoted(response.get("body") or ""))
+                else "a retired in-flight predecessor may own this headless reply"
+                if state == "ambiguous_retired_predecessor"
+                else "a different-head review does not prove the captured request finished"
+                if response in reviews
                 else "response does not identify the captured head"
             ),
         )
