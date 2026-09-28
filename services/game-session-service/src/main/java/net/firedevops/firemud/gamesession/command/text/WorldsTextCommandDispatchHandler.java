@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -28,12 +29,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
     TextCommandInterpretationResult result =
         switch (request.command().type()) {
-          case WORLDS ->
-              new TextCommandInterpretationResult(
-                  net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-                  List.of(
-                      net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                          worldsHandler.browseView())));
+          case WORLDS -> handleWorlds(request);
           case REALMS -> handleRealms(request);
           case JOIN -> handleJoin(request);
           case CHARS -> handleChars(request);
@@ -53,6 +49,22 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     return result;
   }
 
+  private TextCommandInterpretationResult handleWorlds(TextCommandDispatchRequest request) {
+    try {
+      return new TextCommandInterpretationResult(
+          net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+          List.of(
+              net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                  worldsHandler.browseView(request.sessionId(), request.sessionContext()))));
+    } catch (IllegalArgumentException ex) {
+      return errorResult(
+          "INVALID_ARGUMENT", "Transport session is unavailable. Reconnect and try again.");
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
+    }
+  }
+
   private TextCommandInterpretationResult handleRealms(TextCommandDispatchRequest request) {
     if (request.command().realmBrowsePayload().isEmpty() || request.sessionContext().isEmpty()) {
       return errorResult("INVALID_ARGUMENT", "REALMS requires a world selector after LOGIN.");
@@ -60,7 +72,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     TextCommandPayload.RealmBrowseRequest payload =
         request.command().realmBrowsePayload().orElseThrow();
     return switch (worldsHandler.browseRealms(
-        request.sessionContext().orElseThrow(), payload.worldSelector())) {
+        request.sessionId(), request.sessionContext().orElseThrow(), payload.worldSelector())) {
       case WorldsCommandHandler.RealmBrowseResult.Success success ->
           new TextCommandInterpretationResult(
               net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
@@ -81,7 +93,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     }
     TextCommandPayload.JoinRequest payload = request.command().joinRequestPayload().orElseThrow();
     return switch (worldsHandler.joinPublicProductionMembership(
-        request.sessionContext().orElseThrow(), payload.worldSelector())) {
+        request.sessionId(), request.sessionContext().orElseThrow(), payload.worldSelector())) {
       case WorldsCommandHandler.JoinMembershipResult.Failure failure ->
           errorResult(failure.code(), joinFailureMessage(failure.code()));
       case WorldsCommandHandler.JoinMembershipResult.Response response ->
@@ -142,7 +154,10 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     TextCommandPayload.CharacterBrowseRequest payload =
         request.command().characterBrowsePayload().orElseThrow();
     return switch (worldsHandler.browseCharacters(
-        request.sessionContext().orElseThrow(), payload.worldSelector(), payload.realmSelector())) {
+        request.sessionId(),
+        request.sessionContext().orElseThrow(),
+        payload.worldSelector(),
+        payload.realmSelector())) {
       case WorldsCommandHandler.CharacterBrowseResult.Success success ->
           new TextCommandInterpretationResult(
               net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
@@ -180,8 +195,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
           "Existing membership is required before browsing characters in that realm.";
       case "PUBLIC_PRODUCTION_ADMISSION_DENIED" ->
           "Public joining is not available for this world.";
-      case "TENANT_BILLING_BLOCKED" ->
-          "That world is temporarily unavailable for gameplay.";
+      case "TENANT_BILLING_BLOCKED" -> "That world is temporarily unavailable for gameplay.";
       case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
           "Character authority unavailable. Retry CHARS shortly.";
       case "ENTITLEMENT_UNAVAILABLE" ->

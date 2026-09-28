@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -63,11 +64,33 @@ public class WorldsCommandHandler {
     this.entityManagementClient =
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.accountClient = null;
-    this.connectScopeSessionStore = new DirectTextConnectScopeSessionStore();
+    this.connectScopeSessionStore = null;
   }
 
   public WorldsViewOutput browseView() {
     return worldCatalog.browseView();
+  }
+
+  public WorldsViewOutput browseView(
+      String transportSessionId, Optional<SessionContext> maybeCaller) {
+    long sessionId = requireTransportSessionId(transportSessionId);
+    Objects.requireNonNull(maybeCaller, "maybeCaller must not be null");
+    if (maybeCaller.isPresent() && maybeCaller.orElseThrow().sessionId() != sessionId) {
+      throw new DirectTextConnectScopeSessionStore.ConflictingIdentityException(
+          "transport session did not match authenticated session");
+    }
+    if (connectScopeSessionStore == null) {
+      throw new DirectTextConnectScopeSessionStore.StoreUnavailableException(
+          "lobby snapshot storage is unavailable");
+    }
+    GameplayWorldCatalog.DiscoverySnapshot snapshot = worldCatalog.readDiscoverySnapshot();
+    connectScopeSessionStore.replaceWorldSnapshot(
+        sessionId,
+        maybeCaller.map(SessionContext::accountId).orElse(0L),
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        Instant.now());
+    return snapshot.output();
   }
 
   public java.util.Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
@@ -76,19 +99,43 @@ public class WorldsCommandHandler {
 
   public RealmBrowseResult browseRealms(SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    return browseRealms(Long.toString(sessionContext.sessionId()), sessionContext, worldSelector);
+  }
+
+  public RealmBrowseResult browseRealms(
+      String transportSessionId, SessionContext sessionContext, String worldSelector) {
+    Objects.requireNonNull(sessionContext, "sessionContext must not be null");
+    OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
+    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
       return RealmBrowseResult.failure("LOGIN_REQUIRED");
     }
-    if (connectScopeSessionStore != null) {
-      connectScopeSessionStore.clearWorldScopes(sessionContext, worldSelector);
+    if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
+      return RealmBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    Optional<GameplayWorldCatalog.WorldView> maybeWorld = worldCatalog.resolveWorld(worldSelector);
-    if (maybeWorld.isEmpty()) {
+    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    WorldSelectorResolution selection =
+        resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
+    if (selection instanceof WorldSelectorResolution.Invalid) {
       return RealmBrowseResult.invalidSelector();
     }
+    if (selection instanceof WorldSelectorResolution.Stale) {
+      return RealmBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    if (selection instanceof WorldSelectorResolution.Unavailable) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
 
-    GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
-    if (!worldCatalog.hasValidPublicProductionRealm(world)) {
+    GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
+    if (connectScopeSessionStore == null) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
+    try {
+      connectScopeSessionStore.clearWorldScopes(sessionContext, worldSelector);
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (!worldCatalog.hasValidPublicProductionRealm(catalogSnapshot, world)) {
       return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     List<RealmBrowseViewOutput.RealmEntry> visibleEntries = new ArrayList<>();
@@ -109,7 +156,7 @@ public class WorldsCommandHandler {
         }
       }
       if (realm.publicProductionRealm()) {
-        if (accountClient == null || connectScopeSessionStore == null) {
+        if (accountClient == null) {
           return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
         }
         DirectTextConnectScopeTarget target = connectScopeTarget(world, realm);
@@ -145,9 +192,96 @@ public class WorldsCommandHandler {
       visibleEntries.add(realmEntry(visibleEntries.size() + 1, realm));
     }
 
-    connectScopeSessionStore.replaceWorldScopes(
-        sessionContext, worldSelector, world.slug(), issuedScopes);
+    try {
+      connectScopeSessionStore.replaceWorldScopes(
+          sessionContext, worldSelector, world.slug(), issuedScopes);
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
     return RealmBrowseResult.success(new RealmBrowseViewOutput(world.slug(), visibleEntries));
+  }
+
+  private WorldSelectorResolution resolveLobbyWorld(
+      SessionContext caller,
+      String selector,
+      GameplayWorldCatalog.DiscoverySnapshot currentCatalog) {
+    if (selector == null || selector.isBlank()) {
+      return new WorldSelectorResolution.Invalid();
+    }
+    if (!GameplayWorldCatalog.isOrdinalSelector(selector)) {
+      return worldCatalog
+          .resolveStableWorld(currentCatalog, selector)
+          .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
+          .orElseGet(WorldSelectorResolution.Invalid::new);
+    }
+    if (connectScopeSessionStore == null) {
+      return new WorldSelectorResolution.Unavailable();
+    }
+    Optional<DirectTextConnectScopeSessionStore.WorldsSnapshot> maybeSnapshot;
+    try {
+      maybeSnapshot = connectScopeSessionStore.worldsSnapshot(caller, Instant.now());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return new WorldSelectorResolution.Unavailable();
+    }
+    if (maybeSnapshot.isEmpty()) {
+      return new WorldSelectorResolution.Stale();
+    }
+    DirectTextConnectScopeSessionStore.WorldsSnapshot worldsSnapshot = maybeSnapshot.orElseThrow();
+    if (!worldsSnapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
+      return new WorldSelectorResolution.Stale();
+    }
+    int ordinal;
+    try {
+      ordinal = Integer.parseInt(selector.trim());
+    } catch (NumberFormatException ex) {
+      return new WorldSelectorResolution.Stale();
+    }
+    Optional<DirectTextConnectScopeSessionStore.WorldOrdinalTarget> maybeTarget =
+        worldsSnapshot.ordinalTargets().stream()
+            .filter(target -> target.ordinal() == ordinal)
+            .findFirst();
+    if (maybeTarget.isEmpty()) {
+      return new WorldSelectorResolution.Stale();
+    }
+    return worldCatalog
+        .resolveSnapshotOrdinal(currentCatalog, maybeTarget.orElseThrow())
+        .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
+        .orElseGet(WorldSelectorResolution.Stale::new);
+  }
+
+  private static OptionalLong parseTransportSessionId(String sessionId) {
+    if (sessionId == null || sessionId.isBlank()) {
+      return OptionalLong.empty();
+    }
+    String trimmed = sessionId.trim();
+    if (!trimmed.chars().allMatch(Character::isDigit)) {
+      return OptionalLong.empty();
+    }
+    try {
+      long parsed = Long.parseLong(trimmed);
+      return parsed > 0L ? OptionalLong.of(parsed) : OptionalLong.empty();
+    } catch (NumberFormatException ex) {
+      return OptionalLong.empty();
+    }
+  }
+
+  private static long requireTransportSessionId(String sessionId) {
+    return parseTransportSessionId(sessionId)
+        .orElseThrow(
+            () ->
+                new IllegalArgumentException("positive numeric transport session ID is required"));
+  }
+
+  private sealed interface WorldSelectorResolution {
+    record Selected(GameplayWorldCatalog.WorldView world) implements WorldSelectorResolution {}
+
+    record Invalid() implements WorldSelectorResolution {}
+
+    record Stale() implements WorldSelectorResolution {}
+
+    record Unavailable() implements WorldSelectorResolution {}
   }
 
   private NonPublicRealmAuthorization authorizeNonPublicRealm(
@@ -207,8 +341,7 @@ public class WorldsCommandHandler {
     }
 
     GetTenantEntitlementsForRuntimeResponse entitlementResponse =
-        accountClient.getTenantEntitlementsForRuntime(
-            Long.toString(realm.tenantId()), requestId);
+        accountClient.getTenantEntitlementsForRuntime(Long.toString(realm.tenantId()), requestId);
     if (entitlementResponse == null) {
       return NonPublicRealmAuthorization.AUTHORITY_UNAVAILABLE;
     }
@@ -233,8 +366,7 @@ public class WorldsCommandHandler {
   }
 
   private boolean isValidEntitlement(
-      GetTenantEntitlementsForRuntimeResponse response,
-      GameplayWorldCatalog.RealmView realm) {
+      GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
@@ -331,15 +463,32 @@ public class WorldsCommandHandler {
   public JoinMembershipResult joinPublicProductionMembership(
       SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
+    return joinPublicProductionMembership(
+        Long.toString(sessionContext.sessionId()), sessionContext, worldSelector);
+  }
+
+  public JoinMembershipResult joinPublicProductionMembership(
+      String transportSessionId, SessionContext sessionContext, String worldSelector) {
+    Objects.requireNonNull(sessionContext, "sessionContext must not be null");
+    OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
+    if (parsedSessionId.isEmpty() || parsedSessionId.getAsLong() != sessionContext.sessionId()) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
     if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
       return JoinMembershipResult.failure("LOGIN_REQUIRED");
     }
     if (accountClient == null || connectScopeSessionStore == null) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
-    Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope =
-        connectScopeSessionStore.publicProductionScopeForJoin(
-            sessionContext, worldSelector, Instant.now());
+    Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope;
+    try {
+      maybeJoinScope =
+          connectScopeSessionStore.publicProductionScopeForJoin(
+              sessionContext, worldSelector, Instant.now());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
     if (maybeJoinScope.isEmpty()) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
@@ -457,15 +606,36 @@ public class WorldsCommandHandler {
   public CharacterBrowseResult browseCharacters(
       SessionContext sessionContext, String worldSelector, String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    return browseCharacters(
+        Long.toString(sessionContext.sessionId()), sessionContext, worldSelector, realmSelector);
+  }
+
+  public CharacterBrowseResult browseCharacters(
+      String transportSessionId,
+      SessionContext sessionContext,
+      String worldSelector,
+      String realmSelector) {
+    Objects.requireNonNull(sessionContext, "sessionContext must not be null");
+    OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
+    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
       return CharacterBrowseResult.failure("LOGIN_REQUIRED");
     }
-    java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        worldCatalog.resolveWorld(worldSelector);
-    if (maybeWorld.isEmpty()) {
+    if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
+      return CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    WorldSelectorResolution selection =
+        resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
+    if (selection instanceof WorldSelectorResolution.Invalid) {
       return CharacterBrowseResult.invalidWorld();
     }
-    GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
+    if (selection instanceof WorldSelectorResolution.Stale) {
+      return CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    if (selection instanceof WorldSelectorResolution.Unavailable) {
+      return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
+    GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
     java.util.Optional<GameplayWorldCatalog.RealmView> maybeRealm =
         StringUtils.hasText(realmSelector)
             ? worldCatalog.resolveRealm(world, realmSelector)
@@ -480,7 +650,7 @@ public class WorldsCommandHandler {
     }
 
     GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
-    if (!worldCatalog.hasValidPublicProductionRealm(realm.tenantId())
+    if (!worldCatalog.hasValidPublicProductionRealm(catalogSnapshot, world)
         || !hasCompleteSelectedRealmPointerEvidence(realm)) {
       return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
@@ -531,9 +701,7 @@ public class WorldsCommandHandler {
   }
 
   private CharacterBrowseAuthorization authorizePublicCharacterBrowse(
-      SessionContext sessionContext,
-      GameplayWorldCatalog.RealmView realm,
-      String requestId) {
+      SessionContext sessionContext, GameplayWorldCatalog.RealmView realm, String requestId) {
     if (accountClient == null) {
       return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
     }
@@ -654,8 +822,7 @@ public class WorldsCommandHandler {
         && !response.getGameplayAdmissionAllowed();
   }
 
-  private boolean hasCompleteSelectedRealmPointerEvidence(
-      GameplayWorldCatalog.RealmView realm) {
+  private boolean hasCompleteSelectedRealmPointerEvidence(GameplayWorldCatalog.RealmView realm) {
     return realm.visible()
         && realm.tenantId() > 0L
         && realm.gameInstanceId() > 0L

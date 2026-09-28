@@ -88,9 +88,10 @@ class GatewayGameplayBridgeIntegrationTest {
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
       assertThat(probe.responses()).contains(LookCommandConstants.LOOK_RESPONSE);
     }
-    assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
-    assertThat(UPSTREAM.seenTransportSessionIds().get(0))
-        .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
+    assertThat(UPSTREAM.seenIdentities())
+        .containsExactly(
+            new UpstreamIdentity("trusted_tcp_proxy", "bridge-test-conn", null),
+            new UpstreamIdentity("trusted_tcp_proxy", "bridge-test-conn", null));
   }
 
   @Test
@@ -120,9 +121,10 @@ class GatewayGameplayBridgeIntegrationTest {
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(30));
     }
 
-    assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
-    assertThat(UPSTREAM.seenTransportSessionIds().get(0))
-        .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
+    assertThat(UPSTREAM.seenIdentities())
+        .containsExactly(
+            new UpstreamIdentity("trusted_tcp_proxy", "bridge-test-conn", null),
+            new UpstreamIdentity("trusted_tcp_proxy", "bridge-test-conn", null));
   }
 
   private static synchronized void ensureStarted() {
@@ -202,8 +204,8 @@ class GatewayGameplayBridgeIntegrationTest {
       return "ws://localhost:" + port + "/ws/game";
     }
 
-    List<String> seenTransportSessionIds() {
-      return TEST_UPSTREAM_STATE.get().seenTransportSessionIds();
+    List<UpstreamIdentity> seenIdentities() {
+      return TEST_UPSTREAM_STATE.get().seenIdentities();
     }
 
     void restart() {
@@ -284,15 +286,16 @@ class GatewayGameplayBridgeIntegrationTest {
 
     @Override
     public Mono<Void> handle(org.springframework.web.reactive.socket.WebSocketSession session) {
-      String transportSessionId =
-          session.getHandshakeInfo().getHeaders().getFirst("X-Firemud-Transport-Session-Id");
-      if (transportSessionId != null) {
-        state.recordTransportSessionId(transportSessionId);
-      }
+      UpstreamIdentity identity =
+          new UpstreamIdentity(
+              session.getHandshakeInfo().getHeaders().getFirst("X-Firemud-Connection-Mode"),
+              session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"),
+              session.getHandshakeInfo().getHeaders().getFirst("X-Firemud-Transport-Session-Id"));
+      state.recordIdentity(identity);
       state.incrementConnectionCount();
 
       return session
-          .send(Mono.just(session.textMessage("UPSTREAM_READY " + transportSessionId)))
+          .send(Mono.just(session.textMessage("UPSTREAM_READY " + identity.proxyConnectionId())))
           .then(
               session
                   .receive()
@@ -313,13 +316,16 @@ class GatewayGameplayBridgeIntegrationTest {
     }
   }
 
+  private record UpstreamIdentity(
+      String connectionMode, String proxyConnectionId, String transportSessionId) {}
+
   private static final class UpstreamRuntimeState {
-    private final List<String> seenTransportSessionIds = new CopyOnWriteArrayList<>();
+    private final List<UpstreamIdentity> seenIdentities = new CopyOnWriteArrayList<>();
     private final AtomicBoolean firstConnectionDropped = new AtomicBoolean(false);
     private final AtomicInteger connectionCount = new AtomicInteger();
 
-    void recordTransportSessionId(String transportSessionId) {
-      seenTransportSessionIds.add(transportSessionId);
+    void recordIdentity(UpstreamIdentity identity) {
+      seenIdentities.add(identity);
     }
 
     void incrementConnectionCount() {
@@ -330,8 +336,8 @@ class GatewayGameplayBridgeIntegrationTest {
       return connectionCount.get();
     }
 
-    List<String> seenTransportSessionIds() {
-      return seenTransportSessionIds;
+    List<UpstreamIdentity> seenIdentities() {
+      return seenIdentities;
     }
 
     boolean markFirstConnectionDropped() {

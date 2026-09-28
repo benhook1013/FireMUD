@@ -12,8 +12,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.time.Instant;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -365,7 +365,8 @@ class TextCommandInterpreterTest {
             gameplayPresenceLifecycleService);
     GameplayWorldCatalog worldCatalog =
         GameplayWorldCatalog.forWorldViews(
-            List.of(worldView("demo", "Demo World", 22L, 1L, false),
+            List.of(
+                worldView("demo", "Demo World", 22L, 1L, false),
                 worldView("sandbox", "Builder Sandbox", 23L, 2L, true)));
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
@@ -432,7 +433,7 @@ class TextCommandInterpreterTest {
             worldCatalog,
             entityManagementClient,
             accountClient,
-            new DirectTextConnectScopeSessionStore());
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -490,7 +491,8 @@ class TextCommandInterpreterTest {
                 pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
-                scriptEventPublisher),
+                scriptEventPublisher,
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
             playHandler,
             moveHandler,
             afkHandler,
@@ -1072,8 +1074,7 @@ class TextCommandInterpreterTest {
                 "ALLOW_NEW",
                 1L,
                 UUID.nameUUIDFromBytes((slug + ":realm").getBytes(StandardCharsets.UTF_8)),
-                UUID.nameUUIDFromBytes(
-                    (slug + ":namespace").getBytes(StandardCharsets.UTF_8)))));
+                UUID.nameUUIDFromBytes((slug + ":namespace").getBytes(StandardCharsets.UTF_8)))));
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -43,7 +44,8 @@ class LogoutCommandHandlerTest {
           gameplayAdmissionPointerAuthorityService,
           gameplayPresenceLifecycleService,
           firstPartyConnectContextRegistry,
-          scriptEventPublisher);
+          scriptEventPublisher,
+          DirectTextConnectScopeSessionStore.inMemoryForTest());
 
   @Test
   void logoutPreservesDurableReplayContextWithoutStoppingSharedRuntime() {

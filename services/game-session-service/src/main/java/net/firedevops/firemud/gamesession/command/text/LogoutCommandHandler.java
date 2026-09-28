@@ -68,25 +68,6 @@ public final class LogoutCommandHandler {
             "directTextConnectScopeSessionStore must not be null");
   }
 
-  public LogoutCommandHandler(
-      SessionAuthenticationService sessionAuthenticationService,
-      SessionContextService sessionContextService,
-      GameInstanceService gameInstanceService,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
-      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      ScriptEventPublisher scriptEventPublisher) {
-    this(
-        sessionAuthenticationService,
-        sessionContextService,
-        gameInstanceService,
-        gameplayAdmissionPointerAuthorityService,
-        gameplayPresenceLifecycleService,
-        firstPartyConnectContextRegistry,
-        scriptEventPublisher,
-        new DirectTextConnectScopeSessionStore());
-  }
-
   public LogoutCommandHandlingResult handle(String sessionId, TextCommand command) {
     Objects.requireNonNull(command, "command must not be null");
     Optional<SessionContext> maybePersistedContext = resolvePersistedSessionContext(sessionId);

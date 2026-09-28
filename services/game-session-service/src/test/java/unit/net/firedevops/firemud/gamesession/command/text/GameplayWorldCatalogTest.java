@@ -36,7 +36,8 @@ class GameplayWorldCatalogTest {
                 pointer("other", "Other World", "production", "Other Live", 2L, 22L, 9L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
-    assertThat(catalog.visibleWorlds()).extracting(GameplayWorldCatalog.WorldView::slug)
+    assertThat(catalog.visibleWorlds())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
         .containsExactly("other");
     assertThat(catalog.resolveWorld("demo")).isEmpty();
   }
@@ -51,7 +52,8 @@ class GameplayWorldCatalogTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
-    assertThat(world.realms()).extracting(GameplayWorldCatalog.RealmView::slug)
+    assertThat(world.realms())
+        .extracting(GameplayWorldCatalog.RealmView::slug)
         .containsExactly("production", "event");
   }
 
@@ -206,8 +208,7 @@ class GameplayWorldCatalogTest {
 
     assertThat(catalog.publicProductionRealmCardinality(7L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
-    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
-        .isPresent();
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow())).isPresent();
   }
 
   @Test
@@ -232,8 +233,7 @@ class GameplayWorldCatalogTest {
 
     assertThat(catalog.publicProductionRealmCardinality(7L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
-    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
-        .isEmpty();
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow())).isEmpty();
   }
 
   @Test
@@ -259,8 +259,7 @@ class GameplayWorldCatalogTest {
 
     assertThat(catalog.publicProductionRealmCardinality(7L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
-    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()))
-        .isPresent();
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow())).isPresent();
   }
 
   @Test
@@ -281,8 +280,7 @@ class GameplayWorldCatalogTest {
 
   @Test
   void authoritativePointerIdentityAndCatalogRevisionReachRealmView() {
-    java.util.UUID realmId =
-        java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31");
+    java.util.UUID realmId = java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31");
     java.util.UUID playableStateNamespaceId =
         java.util.UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412");
     when(authorityService.listPointers())
@@ -307,7 +305,9 @@ class GameplayWorldCatalogTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     GameplayWorldCatalog.RealmView realm =
-        catalog.resolveRealm(catalog.resolveWorld("demo").orElseThrow(), "production").orElseThrow();
+        catalog
+            .resolveRealm(catalog.resolveWorld("demo").orElseThrow(), "production")
+            .orElseThrow();
 
     assertThat(realm.catalogRevision()).isEqualTo(29L);
     assertThat(realm.realmId()).isEqualTo(realmId);

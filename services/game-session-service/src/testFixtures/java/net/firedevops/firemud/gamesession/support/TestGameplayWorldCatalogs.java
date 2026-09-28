@@ -1,10 +1,10 @@
 package net.firedevops.firemud.gamesession.support;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 

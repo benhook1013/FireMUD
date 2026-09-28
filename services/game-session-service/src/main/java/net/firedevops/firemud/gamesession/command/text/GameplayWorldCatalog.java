@@ -1,5 +1,9 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -13,6 +17,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore.WorldOrdinalTarget;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
@@ -46,7 +51,89 @@ public final class GameplayWorldCatalog {
   }
 
   public WorldsViewOutput browseView() {
-    return new WorldsViewOutput(worldEntries());
+    return readDiscoverySnapshot().output();
+  }
+
+  /** Reads the catalog once and builds the exact public WORLDS projection and ordinal authority. */
+  public DiscoverySnapshot readDiscoverySnapshot() {
+    List<WorldView> catalogWorlds = normalizeWorlds(worldSupplier.get());
+    List<WorldView> visibleWorlds =
+        catalogWorlds.stream().filter(this::hasVisibleRealmEntries).toList();
+    List<WorldView> discoverableWorlds =
+        visibleWorlds.stream()
+            .filter(world -> resolveDefaultRealm(world, catalogWorlds).isPresent())
+            .toList();
+    ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(discoverableWorlds.size());
+    ArrayList<WorldOrdinalTarget> targets = new ArrayList<>(discoverableWorlds.size());
+    for (WorldView world : discoverableWorlds) {
+      RealmView defaultRealm = resolveDefaultRealm(world, catalogWorlds).orElseThrow();
+      int ordinal = entries.size() + 1;
+      entries.add(
+          new WorldsViewOutput.WorldEntry(
+              ordinal,
+              world.slug(),
+              world.displayName(),
+              defaultRealm.gameInstanceId(),
+              defaultRealm.requiresCharacterSelection()));
+      targets.add(
+          new WorldOrdinalTarget(
+              ordinal,
+              world.slug(),
+              defaultRealm.tenantId(),
+              defaultRealm.catalogRevision(),
+              worldTargetFingerprint(world, defaultRealm)));
+    }
+    List<WorldOrdinalTarget> exactTargets = List.copyOf(targets);
+    return new DiscoverySnapshot(
+        new WorldsViewOutput(entries),
+        fingerprint(
+            exactTargets.stream().map(GameplayWorldCatalog::targetFingerprintInput).toList()),
+        exactTargets,
+        visibleWorlds);
+  }
+
+  public Optional<WorldView> resolveStableWorld(DiscoverySnapshot snapshot, String selector) {
+    Objects.requireNonNull(snapshot, "snapshot must not be null");
+    if (selector == null || selector.isBlank() || isOrdinalSelector(selector)) {
+      return Optional.empty();
+    }
+    String normalized = selector.trim().toLowerCase(Locale.ROOT);
+    return snapshot.visibleWorlds().stream()
+        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
+        .findFirst();
+  }
+
+  public Optional<WorldView> resolveSnapshotOrdinal(
+      DiscoverySnapshot current, WorldOrdinalTarget originatingTarget) {
+    Objects.requireNonNull(current, "current must not be null");
+    Objects.requireNonNull(originatingTarget, "originatingTarget must not be null");
+    List<WorldOrdinalTarget> matches =
+        current.ordinalTargets().stream()
+            .filter(target -> target.ordinal() == originatingTarget.ordinal())
+            .filter(originatingTarget::equals)
+            .toList();
+    if (matches.size() != 1) {
+      return Optional.empty();
+    }
+    return current.visibleWorlds().stream()
+        .filter(world -> world.slug().equalsIgnoreCase(originatingTarget.worldSlug()))
+        .filter(
+            world ->
+                world.realms().stream()
+                    .filter(RealmView::visible)
+                    .anyMatch(realm -> realm.tenantId() == originatingTarget.tenantId()))
+        .findFirst();
+  }
+
+  public static boolean isOrdinalSelector(String selector) {
+    if (selector == null || selector.isBlank()) {
+      return false;
+    }
+    String trimmed = selector.trim();
+    if (!trimmed.chars().allMatch(Character::isDigit)) {
+      return false;
+    }
+    return true;
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
@@ -109,6 +196,17 @@ public final class GameplayWorldCatalog {
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
+    return resolveDefaultRealm(world, normalizeWorlds(worldSupplier.get()));
+  }
+
+  private Optional<RealmView> resolveDefaultRealm(WorldView world, List<WorldView> catalogWorlds) {
+    if (world == null) {
+      return Optional.empty();
+    }
+    List<RealmView> visibleRealms = visibleRealms(world);
+    if (visibleRealms.isEmpty()) {
+      return Optional.empty();
+    }
     List<RealmView> publicProductionRealms =
         visibleRealms.stream().filter(RealmView::publicProductionRealm).toList();
     if (publicProductionRealms.size() > 1) {
@@ -116,23 +214,95 @@ public final class GameplayWorldCatalog {
     }
     if (publicProductionRealms.size() == 1) {
       RealmView publicRealm = publicProductionRealms.getFirst();
-      return hasValidPublicProductionRealm(publicRealm.tenantId())
+      return hasValidPublicProductionRealm(catalogWorlds, publicRealm.tenantId())
           ? Optional.of(publicRealm)
           : Optional.empty();
     }
-    // Preserve explicit non-public presentation when the selected tenant has a valid public
-    // production realm elsewhere in the catalogue. A tenant with zero public realms is invalid
-    // authority, so it must not become a default by falling back to the first visible row.
     return visibleRealms.stream()
-            .allMatch(realm -> hasValidPublicProductionRealm(realm.tenantId()))
+            .allMatch(realm -> hasValidPublicProductionRealm(catalogWorlds, realm.tenantId()))
         ? Optional.of(visibleRealms.getFirst())
         : Optional.empty();
   }
 
+  private boolean hasValidPublicProductionRealm(List<WorldView> catalogWorlds, long tenantId) {
+    long count =
+        catalogWorlds.stream()
+            .flatMap(world -> world.realms().stream())
+            .filter(realm -> realm.tenantId() == tenantId)
+            .filter(this::isPlayerAddressable)
+            .filter(RealmView::publicProductionRealm)
+            .count();
+    return count == 1L;
+  }
+
+  private static String worldTargetFingerprint(WorldView world, RealmView defaultRealm) {
+    return fingerprint(
+        List.of(
+            world.slug(),
+            world.displayName(),
+            Long.toString(defaultRealm.tenantId()),
+            defaultRealm.slug(),
+            Long.toString(defaultRealm.catalogRevision()),
+            Long.toString(defaultRealm.pointerVersion()),
+            defaultRealm.realmId() == null ? "" : defaultRealm.realmId().toString(),
+            defaultRealm.playableStateNamespaceId() == null
+                ? ""
+                : defaultRealm.playableStateNamespaceId().toString(),
+            Long.toString(defaultRealm.gameInstanceId()),
+            Boolean.toString(defaultRealm.requiresCharacterSelection()),
+            defaultRealm.stateScope() == null ? "" : defaultRealm.stateScope(),
+            defaultRealm.characterCreationPolicy() == null
+                ? ""
+                : defaultRealm.characterCreationPolicy()));
+  }
+
+  private static String targetFingerprintInput(WorldOrdinalTarget target) {
+    return target.ordinal()
+        + "|"
+        + target.worldSlug()
+        + "|"
+        + target.tenantId()
+        + "|"
+        + target.catalogRevision()
+        + "|"
+        + target.targetFingerprint();
+  }
+
+  private static String fingerprint(List<String> values) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (String value : values) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
+        digest.update(bytes);
+      }
+      return java.util.HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is unavailable", ex);
+    }
+  }
+
+  public record DiscoverySnapshot(
+      WorldsViewOutput output,
+      String catalogFingerprint,
+      List<WorldOrdinalTarget> ordinalTargets,
+      List<WorldView> visibleWorlds) {
+    public DiscoverySnapshot {
+      Objects.requireNonNull(output, "output must not be null");
+      if (catalogFingerprint == null || catalogFingerprint.isBlank()) {
+        throw new IllegalArgumentException("catalogFingerprint must not be blank");
+      }
+      ordinalTargets =
+          List.copyOf(Objects.requireNonNull(ordinalTargets, "ordinalTargets must not be null"));
+      visibleWorlds =
+          List.copyOf(Objects.requireNonNull(visibleWorlds, "visibleWorlds must not be null"));
+    }
+  }
+
   /**
    * Returns the tenant-wide cardinality of visible, player-addressable public-production realms.
-   * The scan intentionally spans every authored world because a tenant may have candidates in
-   * more than one world selector.
+   * The scan intentionally spans every authored world because a tenant may have candidates in more
+   * than one world selector.
    */
   public PublicProductionRealmCardinality publicProductionRealmCardinality(long tenantId) {
     if (tenantId <= 0L) {
@@ -165,6 +335,17 @@ public final class GameplayWorldCatalog {
             .map(RealmView::tenantId)
             .distinct()
             .allMatch(this::hasValidPublicProductionRealm);
+  }
+
+  public boolean hasValidPublicProductionRealm(DiscoverySnapshot snapshot, WorldView world) {
+    Objects.requireNonNull(snapshot, "snapshot must not be null");
+    List<RealmView> visibleRealms = visibleRealms(world);
+    return !visibleRealms.isEmpty()
+        && visibleRealms.stream()
+            .map(RealmView::tenantId)
+            .distinct()
+            .allMatch(
+                tenantId -> hasValidPublicProductionRealm(snapshot.visibleWorlds(), tenantId));
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {

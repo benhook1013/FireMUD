@@ -294,7 +294,7 @@ class SessionResumptionFlowTest {
             worldCatalog,
             entityManagementClient,
             accountClient,
-            new DirectTextConnectScopeSessionStore());
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -309,7 +309,8 @@ class SessionResumptionFlowTest {
                 pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
-                scriptEventPublisher),
+                scriptEventPublisher,
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
             playHandler,
             moveHandler,
             afkHandler,
