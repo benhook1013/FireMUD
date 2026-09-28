@@ -2671,60 +2671,9 @@ class ReviewController:
 
         if allocation.stop_basis is None:
             return invalid("the allocation has no canonical stop decision")
-        if current is None or reconciliation in {
-            stack.ReconciliationStatus.PARENT_MOVED,
-            stack.ReconciliationStatus.UNRECONCILED,
-        }:
-            return invalid("the stopped stack identity is no longer coherent")
-        equivalent_retain = self._has_stop_retain_judgment(
-            state,
-            allocation.pr,
-            allocation.channel,
-            allocation.stop_checkpoint,
-            allocation.stop_reviewed_head,
-            current.patch_id,
-            reconciliation,
-        )
-        if current.patch_id != allocation.stop_patch_id or (
-            current.child_head != allocation.stop_head and not equivalent_retain
-        ):
-            return invalid("the stopped head or owned patch changed after the decision")
-        topology_matches = (
-            current.parent_identity == allocation.stop_parent_identity
-            and current.parent_head == allocation.stop_parent_head
-            and current.merge_base == allocation.stop_merge_base
-        )
-        if not topology_matches and not equivalent_retain:
-            return invalid("parent reconciliation needs an explicit unchanged-patch retain judgment")
-        if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
-            return invalid("new summary-finding decisions require a fresh review-stop judgment")
-        if reconciliation_result is None:
-            return invalid("the complete reconciled stack identity is unavailable")
-        try:
-            latest, _, _ = self._check_stop_evidence(
-                state,
-                allocation.pr,
-                policy.Channel(allocation.channel),
-                current,
-                reconciliation_result,
-                checkpoint_pin=allocation.stop_checkpoint,
-                allow_historical_unmatched=allocation.stop_basis == "direct_human",
-                allow_historical_terminal_ambiguity=allocation.stop_basis == "direct_human",
-                retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
-                ambiguity_reason=allocation.retained_ambiguous_reason,
-                acknowledge_over_ceiling=self._stop_reason_acknowledges_over_ceiling(
-                    allocation.stop_reason
-                ),
-                stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
-            )
-        except ControllerError as exc:
-            return invalid(str(exc))
-        if (
-            _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
-            or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
-        ):
-            return invalid("the recorded review checkpoint identity changed")
+        # decide_stop audits the evidence and exact live identity before it
+        # persists this decision. Re-reading live topology or review evidence
+        # here would make an audited human stop expire as heads move.
         return {
             "status": "STOPPED",
             "reason": "review discovery explicitly stopped; merge readiness remains separate",
@@ -3439,7 +3388,7 @@ class ReviewController:
                 "controlling_reason": reason,
             }
 
-        if allocation.stop_basis == "direct_human":
+        if allocation.stop_basis is not None:
             if state is None:
                 return result("INVALID", "the persisted review-stop state is unavailable")
             return self._stop_progress(
@@ -3563,48 +3512,6 @@ class ReviewController:
             for item in history
         ):
             return result("EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted)
-        if allocation.stop_basis == "allocated":
-            if state is None or reconciliation_result is None:
-                return result("INVALID", "the persisted review-stop state is unavailable", checkpoint, accepted)
-            if allocation.stop_checkpoint != checkpoint:
-                return result("INVALID", "the consumed checkpoint no longer matches the recorded stop", checkpoint, accepted)
-            if (
-                current.child_head != allocation.stop_head
-                or current.patch_id != allocation.stop_patch_id
-                or current.parent_identity != allocation.stop_parent_identity
-                or current.parent_head != allocation.stop_parent_head
-                or current.merge_base != allocation.stop_merge_base
-            ):
-                return result("INVALID", "the stopped head or stack identity changed", checkpoint, accepted)
-            if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
-                return result("INVALID", "new summary-finding decisions require a fresh stop judgment", checkpoint, accepted)
-            try:
-                latest, _, _ = self._check_stop_evidence(
-                    state,
-                    allocation.pr,
-                    policy.Channel(allocation.channel),
-                    current,
-                    reconciliation_result,
-                    checkpoint_pin=allocation.stop_checkpoint,
-                    retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
-                    ambiguity_reason=allocation.retained_ambiguous_reason,
-                    stop_audit_cache=stop_audit_cache,
-                    history_cache=history_cache,
-                )
-            except ControllerError as error:
-                return result("INVALID", str(error), checkpoint, accepted)
-            if (
-                _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
-                or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
-            ):
-                return result("INVALID", "the stopped review checkpoint identity changed", checkpoint, accepted)
-            return {
-                **result("STOPPED", "review discovery explicitly stopped; merge readiness remains separate", checkpoint, accepted),
-                "stop_reviewed_head": allocation.stop_reviewed_head,
-                "stop_head": allocation.stop_head,
-                "stop_reason": allocation.stop_reason,
-                "retained_ambiguous_fingerprints": list(allocation.retained_ambiguous_fingerprints),
-            }
         if allocation.handoff_checkpoint is None:
             return result("EXHAUSTED_PENDING", "review allocation exhausted; an explicit stop decision is required", checkpoint, accepted)
         if allocation.handoff_checkpoint != checkpoint or allocation.handoff_head != current.child_head:
@@ -3732,6 +3639,16 @@ class ReviewController:
                     other_heads[pr] = value
         channel_allocations = allocations
         taper_history_by_pr: dict[int, Sequence[policy.Evidence]] = {}
+        active_review_prs = {
+            pr
+            for pr in candidate_prs
+            if any(
+                _field(value, "active_review") is True
+                or _field(value, "active_reservation") is True
+                for selected_channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+                for value in histories[selected_channel].get(pr, ())
+            )
+        }
         for pr, view in channel_allocations.items():
             allocation = state.allocations.get(f"{pr}:{channel.value}")
             if allocation is None:
@@ -3820,6 +3737,7 @@ class ReviewController:
                 )
             },
             taper_history_by_pr=taper_history_by_pr,
+            active_review_prs=active_review_prs,
         )
         if (
             channel == policy.Channel.CLI
@@ -3851,10 +3769,7 @@ class ReviewController:
 
         if (
             channel != policy.Channel.HOSTED
-            or decision.status not in {
-                policy.ReviewStatus.READY,
-                policy.ReviewStatus.JUDGMENT_REQUIRED,
-            }
+            or decision.status != policy.ReviewStatus.JUDGMENT_REQUIRED
             or decision.target is None
         ):
             return decision

@@ -1219,7 +1219,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             root = Path(directory)
             common_dir = root / ".git"
             common_dir.mkdir()
-            write_hosted_trigger(common_dir, head_sha=CANDIDATE, anchor=cli_anchor())
+            write_hosted_trigger(common_dir, head_sha=ADVANCED, anchor=cli_anchor())
             commands = FakeCommands(root, candidate=CANDIDATE)
             with (
                 patch(
@@ -1229,7 +1229,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertRaisesRegex(
                     ReviewRunnerError,
                     rf"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state=active_unverified; reservation_count=1; "
-                    rf"candidate_sha={CANDIDATE}; reservation_sha={CANDIDATE}",
+                    rf"candidate_sha={CANDIDATE}; reservation_sha={ADVANCED}",
                 ),
             ):
                 run_cli_review(
