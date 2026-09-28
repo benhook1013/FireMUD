@@ -86,6 +86,11 @@ final class GameSessionAdmissionPointerControlPlaneService {
           "admission-pointer updates are temporarily disabled until catalog revision "
               + "preconditions are supported");
     }
+    if (currentPointer == null) {
+      throw new AdmissionPointerVersionMismatchException(
+          "admission-pointer creation is temporarily disabled until catalog revision and "
+              + "stable realm/namespace identity preconditions are supported");
+    }
     if (!request.hasExpectedPointerVersion() || request.getExpectedPointerVersion() != 0L) {
       throw new AdmissionPointerVersionMismatchException(
           "new admission-pointer creation requires an explicit expected_pointer_version of 0");

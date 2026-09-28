@@ -8,14 +8,12 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutati
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Bootstraps the persisted gameplay admission-pointer authority from configuration only when the
  * authority store is empty.
  */
-@Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(
     prefix = "firemud.database",

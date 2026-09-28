@@ -1162,42 +1162,12 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void setAdmissionPointerAllowsExplicitZeroCreationForAdminCaller() {
+  void setAdmissionPointerRejectsInitialCreationUntilCatalogIdentityIsSupported() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = runningGameInstance();
-    targetInstance.setId(7L);
-    targetInstance.setTenantId(1L);
-    targetInstance.setVersionId(9L);
-    targetInstance.setLaunchDescriptorId("ld-9");
-    targetInstance.setRemapSetId("remap-1");
-    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.findPointer(1L, "demo", "production"))
         .thenReturn(Optional.empty());
-    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerAuditEntry(
-                    "demo",
-                    "production",
-                    "Demo World",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    1L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW",
-                    "tester",
-                    "initial create",
-                    "req-1",
-                    null,
-                    Instant.parse("2026-04-15T00:00:00Z"))));
-    VersionUpgradePreparationService versionUpgradePreparationService =
-        Mockito.mock(VersionUpgradePreparationService.class);
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1206,7 +1176,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
-            versionUpgradePreparationService,
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -1235,14 +1205,9 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("demo", responseRef.get().getPointer().getWorldSlug());
-    assertEquals(1L, responseRef.get().getPointer().getPointerVersion());
-    Mockito.verify(authorityService)
-        .upsertPointer(
-            Mockito.argThat(
-                mutation ->
-                    Objects.equals(mutation.expectedPointerVersion(), 0L)
-                        && mutation.preparedVersionUpgradeId().isBlank()));
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
+    Mockito.verifyNoInteractions(gameInstanceRepository);
   }
 
   @Test

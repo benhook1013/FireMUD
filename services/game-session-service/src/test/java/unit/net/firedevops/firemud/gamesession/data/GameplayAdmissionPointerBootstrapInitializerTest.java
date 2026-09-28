@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -18,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.stereotype.Component;
 
 @ExtendWith(MockitoExtension.class)
 class GameplayAdmissionPointerBootstrapInitializerTest {
@@ -109,6 +111,12 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     verify(authorityService).upsertPointer(mutationCaptor.capture());
     assertEquals("SHARED", mutationCaptor.getValue().stateScope());
     assertEquals("ALLOW_NEW", mutationCaptor.getValue().characterCreationPolicy());
+  }
+
+  @Test
+  void initializerIsNotRegisteredAsSpringComponent() {
+    assertFalse(
+        GameplayAdmissionPointerBootstrapInitializer.class.isAnnotationPresent(Component.class));
   }
 
   private static GameplayAdmissionPointerBootstrapProperties.PointerSeed pointerSeed(
