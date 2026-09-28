@@ -756,8 +756,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (!blankToEmpty(command.gameInstanceId()).isBlank()
         || !blankToEmpty(command.regionId()).isBlank()
         || !blankToEmpty(command.scriptPatchVersion()).isBlank()
-        || command.createdAfterMs() > 0
-        || command.createdBeforeMs() > 0
+        || command.createdAfterMs() != 0
+        || command.createdBeforeMs() != 0
         || command.limit() != 0) {
       throw new IllegalArgumentException("replay_filters_require_preview");
     }

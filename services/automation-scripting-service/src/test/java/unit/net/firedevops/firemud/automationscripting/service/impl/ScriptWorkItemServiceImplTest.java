@@ -3133,6 +3133,35 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void replayRejectsNegativePreviewTimestampsBeforeRepositoryRead() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    for (ScriptWorkItemService.ReplayDeadLettersCommand command :
+        List.of(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("101"), "", -1L, 0L, 0, "req-after", "admin", "retry"),
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("101"), "", 0L, -1L, 0, "req-before", "admin", "retry"))) {
+      assertThatThrownBy(() -> service.replayDeadLetters(command))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("replay_filters_require_preview");
+    }
+    Mockito.verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
   void replayRejectsDistinctTextualIdsThatParseToTheSameWorkItem() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItemService service =
