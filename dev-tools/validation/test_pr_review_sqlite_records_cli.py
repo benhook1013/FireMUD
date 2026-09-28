@@ -38,6 +38,28 @@ class ReviewRecordsCliTest(unittest.TestCase):
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
+    def test_history_exposes_failed_cli_attempt_without_counting_success_or_raw_output(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        root = self.database.parent / "pr-review" / "runs"
+        failed = root / ("run." + "a" * 32)
+        successful = root / ("run." + "b" * 32)
+        for directory in (failed, successful):
+            directory.mkdir(parents=True)
+            (directory / "metadata.json").write_text(json.dumps({"pull_request": 2879}))
+        (failed / "exit-status").write_text("1\n")
+        (failed / "stderr").write_text("Error: Rate limit exceeded; private provider details")
+        (successful / "exit-status").write_text("0\n")
+
+        code, response = self.invoke("history", "--pr", "2879", "--database", str(self.database))
+
+        self.assertEqual(code, 0)
+        attempts = response["result"]["cli_attempts"]
+        self.assertTrue(attempts["available"])
+        self.assertEqual(1, len(attempts["attempts"]))
+        self.assertEqual("rate_limited", attempts["attempts"][0]["outcome"])
+        self.assertEqual(failed.name, attempts["attempts"][0]["run_id"])
+        self.assertNotIn("private provider details", str(response))
+
     def test_default_records_require_cutover_and_status_ignores_orphan_sibling_database(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "controller.json"
         StateStore(legacy_path).save(ReviewState())

@@ -109,3 +109,8 @@ Entry format:
   - Context: a human-posted full-review command on #2879 produced a completed CodeRabbit review and a public checkpoint, but the controller had no private trigger record and omitted the round from counted history.
   - Observation: the public command and review IDs uniquely identified the completed round; a checkpoint alone did not establish the controller's request-time attribution.
   - Expected pattern: when an external full-review command has already completed, verify and adopt its public trigger/result through the guarded controller command before relying on its checkpoint. Never post a duplicate request or infer a trigger from the checkpoint alone.
+
+- `2026-09-29`: A failed CLI attempt is not a missing completed review
+  - Context: #2879 had a long interval between CLI checkpoints while its private captures included a nine-second rate-limited attempt.
+  - Observation: seven successful captures matched seven public CLI checkpoints; the failed attempt had an exit status and a provider limit but no review result. Completed-result pills alone did not explain the gap.
+  - Expected pattern: keep failed attempts separate from review and taper counts, expose only coarse non-counting status from private captures, and compare successful captures with public checkpoints before claiming a result was lost.

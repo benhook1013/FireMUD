@@ -40,6 +40,8 @@ For an independent manual or subagent review, create a curated version-1 JSON ba
 
 These history and route queries, `state status`, and controller `status` are read-only. `records history` and `records routes` read structured review records and read through migrated legacy controller routes from the same SQLite snapshot. Returned routes label their origin as `review_records` or `legacy_controller`, keeping the two sources distinct:
 
+`records history` also summarizes up to five failed CLI attempts from the existing private captures. Those failures are not completed reviews and never enter taper counts. The summary contains only a coarse outcome and completion time; raw provider output remains private. Successful captures await adjudication and a public checkpoint before appearing in completed review history.
+
 ```sh
 dev-tools/pr-review records history --pr <number>
 dev-tools/pr-review records routes --target-pr <number>

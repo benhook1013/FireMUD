@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, github, hosted, sqlite_provider_imports
+from . import acceptance, cli_attempts, github, hosted, sqlite_provider_imports
 from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
@@ -612,7 +612,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         store.bootstrap()
         return {"api_version": 1, "result": {"status": "bootstrapped"}}, 0
     if args.records_command == "history":
-        return {"api_version": 1, "result": store.history(args.pr, include_legacy_routes=True)}, 0
+        history = store.history(args.pr, include_legacy_routes=True)
+        history["cli_attempts"] = cli_attempts.failed_attempts(_records_database_path(args), args.pr)
+        return {"api_version": 1, "result": history}, 0
     if args.records_command == "routes":
         routes = store.open_routes(
             target_pr=args.target_pr if args.target_pr is not None else None,
