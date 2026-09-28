@@ -52,7 +52,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  return toEntry(audit.getFirst());
+                  return toEntry(audit.getFirst(), pointer.catalogRevision());
                 })
             .toList();
     return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
@@ -94,6 +94,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
             request.getReason(),
             request.getControlPlaneRequestId(),
             request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
+            request.hasExpectedCatalogRevision() ? request.getExpectedCatalogRevision() : null,
             normalizeBlank(request.getPreparedVersionUpgradeId())));
     return SetAdmissionPointerResponse.newBuilder()
         .setPointer(latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug()))
@@ -150,6 +151,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
             request.getReason(),
             request.getControlPlaneRequestId(),
             request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
+            request.hasExpectedCatalogRevision() ? request.getExpectedCatalogRevision() : null,
             request.getPreparedVersionUpgradeId()));
     AdmissionPointerControlPlaneEntry entry =
         latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug());
@@ -191,10 +193,18 @@ final class GameSessionAdmissionPointerControlPlaneService {
             .setReason(entry.reason())
             .setControlPlaneRequestId(entry.controlPlaneRequestId())
             .setOccurredAtMs(entry.occurredAt().toEpochMilli());
+    if (entry.catalogRevision() != null && entry.catalogRevision() > 0L) {
+      builder.setCatalogRevision(entry.catalogRevision());
+    }
     if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
       builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
     }
     return builder.build();
+  }
+
+  private AdmissionPointerControlPlaneEntry toEntry(
+      GameplayAdmissionPointerAuditEntry entry, long currentCatalogRevision) {
+    return toEntry(entry).toBuilder().setCatalogRevision(currentCatalogRevision).build();
   }
 
   private void validatePreparedUpgradeForPointerChange(

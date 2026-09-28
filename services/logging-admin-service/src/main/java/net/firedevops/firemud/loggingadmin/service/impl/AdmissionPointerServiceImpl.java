@@ -99,6 +99,9 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     if (request.expectedPointerVersion() != null) {
       builder.setExpectedPointerVersion(request.expectedPointerVersion());
     }
+    if (request.expectedCatalogRevision() != null) {
+      builder.setExpectedCatalogRevision(request.expectedCatalogRevision());
+    }
     if (request.preparedVersionUpgradeId() != null
         && !request.preparedVersionUpgradeId().isBlank()) {
       builder.setPreparedVersionUpgradeId(request.preparedVersionUpgradeId());
@@ -136,6 +139,9 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
             .setControlPlaneRequestId(controlPlaneRequestId);
     if (request.expectedPointerVersion() != null) {
       builder.setExpectedPointerVersion(request.expectedPointerVersion());
+    }
+    if (request.expectedCatalogRevision() != null) {
+      builder.setExpectedCatalogRevision(request.expectedCatalogRevision());
     }
     ExecutePreparedVersionCutoverResponse response =
         gameSessionControlPlaneClient.executePreparedVersionCutover(builder.build());
@@ -245,6 +251,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         parseLong(entry.getTenantId(), "tenant_id"),
         parseLong(entry.getGameInstanceId(), "game_instance_id"),
         entry.getPointerVersion(),
+        entry.hasCatalogRevision() ? entry.getCatalogRevision() : null,
         entry.getVisible(),
         entry.getPublicProductionRealm(),
         entry.getRequiresCharacterSelection(),

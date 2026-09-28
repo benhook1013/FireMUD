@@ -10,6 +10,7 @@ public record AdmissionPointerDto(
     Long tenantId,
     Long gameInstanceId,
     long pointerVersion,
+    Long catalogRevision,
     boolean visible,
     boolean publicProductionRealm,
     boolean requiresCharacterSelection,

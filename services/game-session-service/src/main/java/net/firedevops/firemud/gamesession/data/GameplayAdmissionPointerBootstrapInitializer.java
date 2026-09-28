@@ -68,7 +68,8 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
                   + pointer.getWorldSlug()
                   + ":"
                   + pointer.getRealmSlug(),
-              null,
+              0L,
+              0L,
               null));
     }
   }

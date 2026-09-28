@@ -83,7 +83,8 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       throw new IllegalArgumentException(
           "state_scope changes require a new playable-state lifecycle");
     }
-    enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
+    enforceExpectedVersions(
+        pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
     if (pointer.getId() != null
         && runtimeTargetMatches(pointer, mutation)
         && catalogPolicyMatches(pointer, mutation)) {
@@ -125,6 +126,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     event.setTenantId(saved.getTenantId());
     event.setGameInstanceId(saved.getGameInstanceId());
     event.setPointerVersion(saved.getPointerVersion());
+    event.setCatalogRevision(saved.getCatalogRevision());
     event.setVisible(saved.isVisible());
     event.setPublicProductionRealm(saved.isPublicProductionRealm());
     event.setRequiresCharacterSelection(saved.isRequiresCharacterSelection());
@@ -157,6 +159,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                     event.getTenantId(),
                     event.getGameInstanceId(),
                     event.getPointerVersion(),
+                    event.getCatalogRevision(),
                     event.isVisible(),
                     event.isPublicProductionRealm(),
                     event.isRequiresCharacterSelection(),
@@ -248,15 +251,24 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     }
   }
 
-  private void enforceExpectedPointerVersion(
-      GameplayAdmissionPointer pointer, Long expectedPointerVersion) {
-    if (expectedPointerVersion == null) {
-      return;
-    }
-    long currentPointerVersion = pointer.getId() == null ? 0L : pointer.getPointerVersion();
-    if (currentPointerVersion != expectedPointerVersion) {
+  private void enforceExpectedVersions(
+      GameplayAdmissionPointer pointer, Long expectedPointerVersion, Long expectedCatalogRevision) {
+    if (expectedPointerVersion == null || expectedCatalogRevision == null) {
       throw new AdmissionPointerVersionMismatchException(
-          "expected_pointer_version does not match current pointer version");
+          "expected_pointer_version and expected_catalog_revision are required");
+    }
+    long currentPointerVersion =
+        pointer.getId() == null
+            ? 0L
+            : pointer.getPointerVersion() == null ? -1L : pointer.getPointerVersion();
+    long currentCatalogRevision =
+        pointer.getId() == null
+            ? 0L
+            : pointer.getCatalogRevision() == null ? -1L : pointer.getCatalogRevision();
+    if (currentPointerVersion != expectedPointerVersion
+        || currentCatalogRevision != expectedCatalogRevision) {
+      throw new AdmissionPointerVersionMismatchException(
+          "expected admission-pointer version pair does not match current pointer state");
     }
   }
 }

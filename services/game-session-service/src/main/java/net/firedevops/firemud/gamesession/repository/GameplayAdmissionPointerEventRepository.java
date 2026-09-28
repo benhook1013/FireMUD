@@ -69,6 +69,7 @@ public class GameplayAdmissionPointerEventRepository {
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID, entity.getTenantId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION, entity.getPointerVersion())
+            .set(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION, entity.getCatalogRevision())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE, entity.isVisible())
             .set(
                 GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM,
@@ -120,6 +121,7 @@ public class GameplayAdmissionPointerEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setPointerVersion(entity.getPointerVersion());
+    record.setCatalogRevision(entity.getCatalogRevision());
     record.setVisible(entity.isVisible());
     record.setPublicProductionRealm(entity.isPublicProductionRealm());
     record.setRequiresCharacterSelection(entity.isRequiresCharacterSelection());
@@ -142,6 +144,7 @@ public class GameplayAdmissionPointerEventRepository {
     entity.setTenantId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID));
     entity.setGameInstanceId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID));
     entity.setPointerVersion(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION));
+    entity.setCatalogRevision(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION));
     entity.setVisible(Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE)));
     entity.setPublicProductionRealm(
         Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM)));

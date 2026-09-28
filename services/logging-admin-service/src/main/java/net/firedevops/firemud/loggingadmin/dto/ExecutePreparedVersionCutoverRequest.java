@@ -13,4 +13,5 @@ public record ExecutePreparedVersionCutoverRequest(
     @NotBlank @Size(max = 64) String preparedVersionUpgradeId,
     @Size(max = 255) String reason,
     @Size(max = 128) String controlPlaneRequestId,
-    Long expectedPointerVersion) {}
+    @NotNull @Positive Long expectedPointerVersion,
+    @NotNull @Positive Long expectedCatalogRevision) {}

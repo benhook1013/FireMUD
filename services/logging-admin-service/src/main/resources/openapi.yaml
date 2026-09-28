@@ -1242,6 +1242,9 @@ components:
           type: integer
         pointerVersion:
           type: integer
+        catalogRevision:
+          type: integer
+          nullable: true
         visible:
           type: boolean
         publicProductionRealm:

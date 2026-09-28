@@ -369,20 +369,24 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private AdmissionPointerControlPlaneEntry toControlPlaneEntry(
       GameplayAdmissionPointerSnapshot pointer) {
-    return AdmissionPointerControlPlaneEntry.newBuilder()
-        .setWorldSlug(normalizeBlank(pointer.worldSlug()))
-        .setWorldDisplayName(normalizeBlank(pointer.worldDisplayName()))
-        .setRealmSlug(normalizeBlank(pointer.realmSlug()))
-        .setRealmDisplayName(normalizeBlank(pointer.realmDisplayName()))
-        .setTenantId(Long.toString(pointer.tenantId()))
-        .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
-        .setPointerVersion(pointer.pointerVersion())
-        .setVisible(pointer.visible())
-        .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
-        .setStateScope(normalizeBlank(pointer.stateScope()))
-        .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
-        .setPublicProductionRealm(pointer.publicProductionRealm())
-        .build();
+    AdmissionPointerControlPlaneEntry.Builder builder =
+        AdmissionPointerControlPlaneEntry.newBuilder()
+            .setWorldSlug(normalizeBlank(pointer.worldSlug()))
+            .setWorldDisplayName(normalizeBlank(pointer.worldDisplayName()))
+            .setRealmSlug(normalizeBlank(pointer.realmSlug()))
+            .setRealmDisplayName(normalizeBlank(pointer.realmDisplayName()))
+            .setTenantId(Long.toString(pointer.tenantId()))
+            .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
+            .setPointerVersion(pointer.pointerVersion())
+            .setVisible(pointer.visible())
+            .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
+            .setStateScope(normalizeBlank(pointer.stateScope()))
+            .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
+            .setPublicProductionRealm(pointer.publicProductionRealm());
+    if (pointer.catalogRevision() > 0L) {
+      builder.setCatalogRevision(pointer.catalogRevision());
+    }
+    return builder.build();
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(

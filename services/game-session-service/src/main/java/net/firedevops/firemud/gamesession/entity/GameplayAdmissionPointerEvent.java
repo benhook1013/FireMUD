@@ -13,6 +13,7 @@ public class GameplayAdmissionPointerEvent {
   private Long tenantId;
   private Long gameInstanceId;
   private Long pointerVersion;
+  private Long catalogRevision;
   private boolean visible;
   private boolean publicProductionRealm;
   private boolean requiresCharacterSelection;

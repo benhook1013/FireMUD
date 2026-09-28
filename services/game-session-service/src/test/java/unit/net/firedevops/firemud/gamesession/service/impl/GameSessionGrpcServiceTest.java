@@ -759,11 +759,11 @@ class GameSessionGrpcServiceTest {
         new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);
 
     GameplayAdmissionPointerSnapshot created =
-        authorityService.upsertPointer(pointerMutation(44L, true, 0L));
+        authorityService.upsertPointer(pointerMutation(44L, true, 0L, 0L));
     GameplayAdmissionPointerSnapshot policyChanged =
-        authorityService.upsertPointer(pointerMutation(44L, false, 1L));
+        authorityService.upsertPointer(pointerMutation(44L, false, 1L, 1L));
     GameplayAdmissionPointerSnapshot routeChanged =
-        authorityService.upsertPointer(pointerMutation(45L, false, 1L));
+        authorityService.upsertPointer(pointerMutation(45L, false, 1L, 2L));
 
     assertEquals(1L, created.catalogRevision());
     assertEquals(1L, created.pointerVersion());
@@ -774,7 +774,10 @@ class GameSessionGrpcServiceTest {
   }
 
   private static GameplayAdmissionPointerMutation pointerMutation(
-      long gameInstanceId, boolean publicProductionRealm, Long expectedPointerVersion) {
+      long gameInstanceId,
+      boolean publicProductionRealm,
+      Long expectedPointerVersion,
+      Long expectedCatalogRevision) {
     return new GameplayAdmissionPointerMutation(
         "demo",
         "Demo World",
@@ -791,6 +794,7 @@ class GameSessionGrpcServiceTest {
         "catalog revision test",
         "catalog-revision-test-" + expectedPointerVersion,
         expectedPointerVersion,
+        expectedCatalogRevision,
         null);
   }
 
