@@ -1,7 +1,5 @@
 # PR Review SQLite Store and Backup
 
-A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current stack anchor before writing a private attribution record. It does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
-
 ## Controller state and review records
 
 Use these operations only after the controller change has merged and its version-matched tooling has been installed wherever the shared controller runs. Select `dev-tools/pr-review` from that trusted post-merge checkout, not from an older stacked worktree, and inspect its promoted version before any shared write:
@@ -11,6 +9,10 @@ dev-tools/pr-review --version
 ```
 
 The output identifies the SQLite schema and writer build. The live shared cutover waits until this merged, version-matched entrypoint is installed and selected. This guide describes the explicit operation; it does not assert that JSON-to-SQLite cutover or migration proof has already happened.
+
+### Manual Hosted adoption
+
+A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current stack anchor before writing a private attribution record. It does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
 
 The controller continues using its selected JSON state until cutover is explicitly requested. Inspect the current format, then migrate the existing controller state with the matching entrypoint:
 

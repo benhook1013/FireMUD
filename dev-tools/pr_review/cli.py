@@ -900,6 +900,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             "trigger-recover-prepost",
             "trigger-retire",
             "trigger-retire-stuck",
+            "trigger-adopt-manual",
             "summary-disposition",
         }:
             raise CliError("live-state decisions are unavailable in acceptance fixture mode")
@@ -1047,8 +1048,6 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 lambda: github.fetch_pull_request(controller.repository, args.pr),
             ), 0
         if args.decide_command == "trigger-adopt-manual":
-            if fixture is not None:
-                raise CliError("manual Hosted adoption requires live GitHub and Git evidence")
             state = controller.store.load()
             if args.pr not in state.ordered_prs:
                 raise CliError(f"PR #{args.pr} is not in the configured review queue")

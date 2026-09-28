@@ -1763,6 +1763,19 @@ class RuntimeTest(unittest.TestCase):
             history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
             self.assertEqual(HEAD, history[0]["head"])
 
+    def test_history_fallback_normalizes_live_snapshot_head(self):
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"]["changedFiles"] = "unknown"
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD.upper(), "feature", 1)
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+        self.assertEqual(HEAD, history[0]["head"])
+
     def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
         valid = {
             "databaseId": 90,

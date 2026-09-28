@@ -121,6 +121,19 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             (args.decide_command, args.pr, args.trigger_id, args.head), ("trigger-adopt-manual", 42, 10, HEAD)
         )
 
+    def test_cli_rejects_manual_adoption_in_acceptance_fixture_mode(self):
+        args = cli._parser().parse_args(
+            [
+                "--acceptance-fixture", "fixture.json", "--state-path", "fixture-state.json",
+                "decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD,
+            ]
+        )
+        with (
+            patch.object(cli, "_controller", return_value=(object(), object())),
+            self.assertRaisesRegex(cli.CliError, "live-state decisions are unavailable in acceptance fixture mode"),
+        ):
+            cli._dispatch(args)
+
     def test_completed_public_request_counts_after_audited_adoption(self):
         payload = public_payload()
         with tempfile.TemporaryDirectory() as directory:

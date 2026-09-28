@@ -1480,7 +1480,7 @@ class LiveEvidence:
             changed_files = payload_files
         else:
             live = self.live.pull_request(pr)
-            head = live.head_sha
+            head = live.head_sha.lower()
             changed_files = live.changed_files
         comments = self._comments(payload)
         checkpoints, _ = evidence.parse_checkpoint_comments(comments)
