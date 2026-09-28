@@ -1131,6 +1131,18 @@ class RuntimeTest(unittest.TestCase):
         ):
             return list(LiveEvidence("owner/repo", live).history(42, channel))
 
+    def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", side_effect=AssertionError("redundant metadata read")),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+            self.assertEqual(HEAD, history[0]["head"])
+
     def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
         valid = {
             "databaseId": 90,

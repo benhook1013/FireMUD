@@ -384,7 +384,7 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
         fixture = acceptance.load(fixture_path, isolated_state)
         return fixture.controller(), fixture
     if args.command == "stack" and args.stack_command == "show":
-        return ReviewController(), None
+        return ReviewController(store=ControllerStateStore()), None
     return default_controller(), None
 
 

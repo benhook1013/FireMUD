@@ -1484,8 +1484,21 @@ class LiveEvidence:
         if key in self._histories:
             return self._histories[key]
         payload = self._payload(pr)
-        live = self.live.pull_request(pr)
-        head = live.head_sha
+        pull = payload.get("data", {}).get("repository", {}).get("pullRequest")
+        payload_head = pull.get("headRefOid") if isinstance(pull, Mapping) else None
+        payload_files = pull.get("changedFiles") if isinstance(pull, Mapping) else None
+        # The complete paginated review snapshot already carries its head. Use
+        # that same snapshot for historical attribution instead of fetching a
+        # second PR/CI metadata response for every history read. Request-time
+        # selection still obtains its own fresh identity separately.
+        if (isinstance(payload_head, str) and evidence.EXACT_SHA.fullmatch(payload_head)
+                and type(payload_files) is int and payload_files >= 0):
+            head = payload_head.lower()
+            changed_files = payload_files
+        else:
+            live = self.live.pull_request(pr)
+            head = live.head_sha
+            changed_files = live.changed_files
         comments = self._comments(payload)
         checkpoints, _ = evidence.parse_checkpoint_comments(comments)
         scope_changes = evidence.parse_scope_changes(comments)
@@ -1738,7 +1751,7 @@ class LiveEvidence:
             head,
             payload,
             include_hosted_findings=channel == "hosted",
-            changed_file_count=live.changed_files,
+            changed_file_count=changed_files,
         )
         values.append(
             {
