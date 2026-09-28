@@ -157,6 +157,25 @@ class ScriptDefinitionRepositoryIntegrationTest {
   }
 
   @Test
+  void retainedNullBaseVersionCannotBeAdoptedByAnExactBaseWrite() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    assertThatThrownBy(() -> repository.save(script("{\"value\":2}")))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
+
+    assertThat(repository.findById(retained.getId()))
+        .get()
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+    assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+  }
+
+  @Test
   void changedContentReplacesSameRowAndIncrementsRowVersionExactlyOnce() {
     ScriptDefinition initial = repository.save(script("{\"value\":1}"));
 
@@ -245,6 +264,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
     script.setTenantId(1L);
     script.setName("stable-script");
     script.setScriptVersion("v1");
+    script.setBaseVersionId(7L);
     script.setDefinition(definition);
     return script;
   }
