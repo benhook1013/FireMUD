@@ -228,14 +228,19 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual(4, result.count('class="run-card"'))
         self.assertIn('<ol class="history-list finding-list"><li class="finding-card">', result)
         self.assertIn('class="linked-record route-card"', result)
+        self.assertIn('<ol class="history-list route-list"><li class="route-card"><strong>Route 1</strong>', result)
+        self.assertIn('<span class="route-status route-status-open">Open</span>', result)
         self.assertIn('class="decision-card"', result)
+        self.assertIn('<p class="history-empty">No unlinked findings.</p>', result)
+        self.assertNotIn('<li>No unlinked findings.</li>', result)
+        self.assertIn('<div class="route-summary"><span class="route-status route-status-open">1 open</span>', result)
         self.assertNotIn('accepted <span class="record-source">(CLI Review)</span>', result)
         self.assertIn('<strong>CLI issue</strong></div>', result)
         self.assertIn('<li class="decision-card">accepted<p>Fixed in this PR</p></li>', result)
         self.assertIn("found: 3", result)
         self.assertIn("accepted: 2", result)
         self.assertIn("3/2/1", result)
-        self.assertIn("PR #51 · open", result)
+        self.assertIn('PR #51 <span class="route-status route-status-open">Open</span>', result)
         self.assertIn("accepted", result)
         self.assertIn("&lt;script&gt;alert(&quot;finding&quot;)&lt;/script&gt;", result)
         self.assertIn("A &lt;private&gt; issue &amp; context", result)
@@ -249,7 +254,7 @@ class StatusPageTest(unittest.TestCase):
         hosted_run = result.split('<strong>Hosted Review</strong>', 1)[1].split('<strong>CLI Review', 1)[0]
         self.assertIn("A &lt;private&gt; issue &amp; context", hosted_run)
         self.assertIn("Need &lt;proof&gt; &amp; response", hosted_run)
-        self.assertIn("PR #51 · open", hosted_run)
+        self.assertIn('PR #51 <span class="route-status route-status-open">Open</span>', hosted_run)
         self.assertIn("Route &lt;decision&gt; &amp; proof", hosted_run)
         self.assertIn(page.SHARED_CSS, result)
 
@@ -265,6 +270,19 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("No detailed finding records have been imported", unavailable)
         self.assertIn("No detailed finding records have been imported", empty)
         self.assertNotIn("Finding and decision history is unavailable", empty)
+        self.assertIn('<p class="history-empty">No routes recorded.</p>', page.render_record_sections({
+            "runs": [], "findings": [], "routes": [], "decisions": [],
+        }))
+
+    def test_route_status_summary_counts_all_routes(self):
+        summary = page._route_status_summary([
+            {"status": "open"}, {"status": "accepted_fixed"}, {"status": "accepted_fixed"},
+            {"status": "rejected"}, {"status": "deferred"},
+        ])
+        self.assertIn('<span class="route-status route-status-open">1 open</span>', summary)
+        self.assertIn('<span class="route-status route-status-accepted">2 accepted/fixed</span>', summary)
+        self.assertIn('<span class="route-status route-status-rejected">1 rejected</span>', summary)
+        self.assertIn('<span class="route-status route-status-other">1 other</span>', summary)
 
     def test_detail_reports_missing_imports_without_hiding_review_rounds(self):
         review = {

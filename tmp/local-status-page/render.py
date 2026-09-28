@@ -13,9 +13,10 @@ import os
 import subprocess
 import sys
 import tempfile
-from functools import lru_cache
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from itertools import groupby
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -963,13 +964,29 @@ def _render_finding(record: dict, index: int, decisions: list[dict], route: dict
     return f'<li class="finding-card">{content}</li>'
 
 
-def _render_route(route: dict) -> str:
+def _route_status(route: dict) -> tuple[str, str]:
+    status = str(route.get("status", "")).strip().casefold().replace("_", " ").replace("-", " ")
+    if status == "open":
+        return "open", "Open"
+    if status in {"accepted", "accepted fixed"}:
+        return "accepted", "Accepted/fixed"
+    if status == "rejected":
+        return "rejected", "Rejected"
+    return "other", _bounded_category(route.get("status"))
+
+
+def _route_status_chip(kind: str, label: str) -> str:
+    return f'<span class="route-status route-status-{kind}">{label}</span>'
+
+
+def _render_route(route: dict, number: int | None = None) -> str:
     source_pr = route.get("source_pr")
     target_pr = route.get("target_pr")
     source = f'PR #{source_pr}' if type(source_pr) is int and source_pr > 0 else "Unknown source"
     target = f'PR #{target_pr}' if type(target_pr) is int and target_pr > 0 else "Unassigned target"
-    status = _bounded_category(route.get("status"))
-    parts = [f'<strong>Route</strong> · {source} → {target} · {status}']
+    kind, status = _route_status(route)
+    label = f"Route {number}" if number is not None else "Route"
+    parts = [f'<strong>{label}</strong> · {source} → {target} {_route_status_chip(kind, status)}']
     target_history = route.get("target_history", [])
     if not isinstance(target_history, list):
         target_history = []
@@ -997,6 +1014,16 @@ def _render_route(route: dict) -> str:
     if isinstance(nested_decisions, list) and nested_decisions:
         parts.append(f'<ul class="linked-record decision-list">{_decision_rows(nested_decisions)}</ul>')
     return " ".join(parts)
+
+
+def _route_status_summary(routes: list[dict]) -> str:
+    counts = Counter(_route_status(route)[0] for route in routes)
+    summary = [_route_status_chip(kind, f"{counts[kind]} {label}")
+               for kind, label in (("open", "open"), ("accepted", "accepted/fixed"),
+                                   ("rejected", "rejected"))]
+    if counts["other"]:
+        summary.append(_route_status_chip("other", f'{counts["other"]} other'))
+    return f'<div class="route-summary">{"".join(summary)}</div>'
 
 
 def render_record_sections(history: dict) -> str:
@@ -1066,20 +1093,28 @@ def render_record_sections(history: dict) -> str:
         _render_finding(finding, index, [], routes_by_id.get(finding.get("route_id")), unlinked=True)
         for index, finding in enumerate(unlinked_findings[:MAX_RECORDS_PER_KIND], 1)
     )
-    rendered_routes = "".join(f'<li class="route-card">{_render_route(route)}</li>'
-                              for route in expanded_routes[:MAX_RECORDS_PER_KIND])
+    rendered_routes = "".join(f'<li class="route-card">{_render_route(route, index)}</li>'
+                              for index, route in enumerate(expanded_routes[:MAX_RECORDS_PER_KIND], 1))
     unlinked_decisions = [decision for decision in decisions
                           if decision.get("decision_id", id(decision)) not in attached_decisions]
     rendered_decisions = _decision_rows(unlinked_decisions)
+    reviews_html = (f'<ol class="history-list run-list">{"".join(run_sections)}</ol>'
+                    if run_sections else '<p class="history-empty">No runs recorded.</p>')
+    unlinked_html = (f'<ol class="history-list">{unlinked_findings_html}</ol>'
+                     if unlinked_findings_html else '<p class="history-empty">No unlinked findings.</p>')
+    routes_html = (f'<ol class="history-list route-list">{rendered_routes}</ol>'
+                   if rendered_routes else '<p class="history-empty">No routes recorded.</p>')
+    decisions_html = (f'<ol class="history-list">{rendered_decisions}</ol>'
+                      if rendered_decisions else '<p class="history-empty">No unlinked decisions.</p>')
     return (
         '<section class="history-group"><h2>Reviews and findings</h2>'
-        f'<ol class="history-list run-list">{"".join(run_sections) or "<li>No runs recorded.</li>"}</ol></section>'
+        f'{reviews_html}</section>'
         '<section class="history-group"><h2>Unlinked findings</h2>'
-        f'<ol class="history-list">{unlinked_findings_html or "<li>No unlinked findings.</li>"}</ol></section>'
+        f'{unlinked_html}</section>'
         '<section class="history-group"><h2>Routes</h2>'
-        f'<ol class="history-list">{rendered_routes or "<li>No routes recorded.</li>"}</ol></section>'
+        f'{_route_status_summary(expanded_routes)}{routes_html}</section>'
         '<section class="history-group"><h2>Other decisions</h2>'
-        f'<ol class="history-list">{rendered_decisions or "<li>No unlinked decisions.</li>"}</ol></section>'
+        f'{decisions_html}</section>'
     )
 
 
@@ -1141,8 +1176,16 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .history-card > h2 {{ margin: 0 0 .75rem; }}
 .history-group {{ margin-top: 1.4rem; }} .history-group:first-child {{ margin-top: 0; }}
 .history-group h2 {{ font-size: 1.2rem; }} .history-list {{ margin: 0; padding-left: 1.3rem; }}
+.history-empty {{ margin: .3rem 0 .65rem; color: var(--muted); font-size: .85rem; }}
+.route-summary {{ display: flex; flex-wrap: wrap; gap: .35rem; margin: .3rem 0 .65rem; }}
+.route-status {{ display: inline-flex; align-items: center; margin-left: .2rem; padding: .1rem .5rem; border: 1px solid; border-radius: 999px; font-size: .73rem; font-weight: 700; white-space: nowrap; }}
+.route-status-open {{ background: #fff1d6; border-color: #d7aa61; color: #755018; }}
+.route-status-accepted {{ background: #e4f4e8; border-color: #88c89a; color: #236239; }}
+.route-status-rejected {{ background: #f3e5e7; border-color: #d9a6ae; color: #82293b; }}
+.route-status-other {{ background: #edf0f4; border-color: #c7cdd5; color: #43505d; }}
 .history-list p {{ margin: .3rem 0 0; overflow-wrap: anywhere; }}
-.run-list, .finding-list, .decision-list {{ list-style: none; padding: 0; }}
+.run-list, .finding-list, .decision-list, .route-list {{ list-style: none; padding: 0; }}
+.route-list {{ display: grid; gap: .5rem; }}
 .run-list {{ display: grid; gap: 1rem; }}
 .run-card {{ overflow: hidden; border: 1px solid #c7cdd5; border-radius: 13px; background: #f0f2f5; box-shadow: 0 2px 9px #18222e0d; }}
 .run-header {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem 1rem; border-bottom: 1px solid #c7cdd5; background: #e7eaee; }}
