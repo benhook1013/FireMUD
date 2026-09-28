@@ -743,8 +743,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(AutomationAdmissionStateService.class);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
-    ScriptHandoffEvent acceptedEvent = new ScriptHandoffEvent();
-    acceptedEvent.setHandoffOutcome(persistedOutcome);
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent acceptedEvent = acceptedHandoffEvent(item, command, persistedOutcome);
     acceptedEvent.setGameSessionCommandId("command-accepted");
     acceptedEvent.setRemoteCoordinatorId("coordinator-accepted");
     acceptedEvent.setRemoteFollowupId("followup-accepted");
@@ -763,9 +765,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionService,
             rolloutProjectionService);
 
-    ScriptGameplayCommandHandoffService.HandoffResult result =
-        service.handoff(
-            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
 
     assertThat(result.accepted()).isTrue();
     assertThat(result.outcome()).isEqualTo(expectedOutcome);
@@ -805,8 +805,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptHandoffEventRepository handoffEventRepository =
         Mockito.mock(ScriptHandoffEventRepository.class);
-    ScriptHandoffEvent acceptedEvent = new ScriptHandoffEvent();
-    acceptedEvent.setHandoffOutcome("enqueued");
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent acceptedEvent = acceptedHandoffEvent(item, command, "enqueued");
     acceptedEvent.setGameSessionCommandId("command-accepted");
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenReturn(Optional.of(acceptedEvent));
@@ -821,9 +823,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             rolloutProjectionService);
 
-    ScriptGameplayCommandHandoffService.HandoffResult result =
-        service.handoff(
-            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
 
     assertThat(result.accepted()).isTrue();
     assertThat(result.outcome()).isEqualTo("ENQUEUED");
@@ -831,6 +831,52 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(handoffEventRepository, never()).save(Mockito.any());
     verify(workItemRepository, never()).save(Mockito.any());
     verifyNoInteractions(auditRepository, rolloutProjectionService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"command", "target", "pin"})
+  void acceptedReplayRejectsChangedIdentityWithoutMutation(String changedIdentity) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AutomationAdmissionStateService admissionService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent acceptedEvent = acceptedHandoffEvent(item, command, "enqueued");
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(acceptedEvent));
+    if ("command".equals(changedIdentity)) {
+      command = emittedCommand("say goodbye", "entity-1", "7", "region-1", 12L, 34L, 0);
+    } else if ("target".equals(changedIdentity)) {
+      command = emittedCommand("say hello", "entity-2", "7", "region-1", 12L, 34L, 0);
+    } else {
+      item.setScriptPinControlPlaneRequestId("pin-request-2");
+    }
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionService,
+            rolloutProjectionService);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_IDEMPOTENCY_CONFLICT);
+    verifyNoInteractions(
+        gameSessionClient, admissionService, auditRepository, rolloutProjectionService);
+    verify(handoffEventRepository, never()).save(Mockito.any());
+    verify(workItemRepository, never()).save(Mockito.any());
   }
 
   @Test
@@ -2689,6 +2735,44 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     event.setRowVersion(rowVersion);
     event.setHandoffOutcome(outcome);
     event.setGameSessionCommandId(commandId);
+    return event;
+  }
+
+  private static ScriptHandoffEvent acceptedHandoffEvent(
+      ScriptWorkItem item,
+      ScriptGameplayCommandHandoffService.EmittedCommand command,
+      String outcome) {
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setEventId("she-work-item-" + item.getId() + "-command-" + command.ordinal());
+    event.setTenantId(item.getTenantId());
+    event.setGameInstanceId(item.getGameInstanceId());
+    event.setScriptPatchVersion(item.getScriptPatchVersion());
+    event.setScriptPinEpoch(item.getScriptPinEpoch());
+    event.setScriptPinControlPlaneRequestId(item.getScriptPinControlPlaneRequestId());
+    event.setScriptId(item.getScriptId());
+    event.setBindingId(item.getBindingId());
+    event.setPluginId(item.getPluginId());
+    event.setPluginVersionId(item.getPluginVersionId());
+    event.setPluginActivationEpoch(item.getPluginActivationEpoch());
+    event.setLifecycleRevision(item.getLifecycleRevision());
+    event.setWorkItemId(item.getId());
+    event.setCommandOrdinal(command.ordinal());
+    event.setAutomationDispatchId("workItem:" + item.getId() + "#" + command.ordinal());
+    event.setTargetGameInstanceId(command.targetGameInstanceId());
+    event.setTargetRegionId(command.targetRegionId());
+    event.setTargetRegionEpoch(command.targetRegionEpoch());
+    event.setTargetEntityId(command.targetEntityId());
+    event.setPlayableStateScope(item.getPlayableStateScope());
+    event.setWorldSlug(item.getWorldSlug());
+    event.setRealmSlug(item.getRealmSlug());
+    event.setPointerVersion(item.getPointerVersion());
+    event.setSourceKind(item.getSourceKind());
+    event.setSourceState(item.getSourceState());
+    event.setSourceOrdinal(item.getSourceOrdinal());
+    event.setSourceDueTickId(item.getSourceDueTickId());
+    event.setSourceDueAtMs(item.getSourceDueAtMs());
+    event.setEmittedCommandText(command.commandText());
+    event.setHandoffOutcome(outcome);
     return event;
   }
 

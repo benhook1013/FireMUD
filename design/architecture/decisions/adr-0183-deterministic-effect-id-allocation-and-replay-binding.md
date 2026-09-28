@@ -6,7 +6,7 @@ Proposed - Pending Human Review
 
 ## Implementation Status
 
-This proposal is not current target state and is not an accepted implementation requirement. The current services, wire contracts, and focused proof remain implementation gaps as recorded by the linked canonical documents. No implementation may treat this proposal as approved before human review.
+The additional requirements in this proposal are not current target state or accepted implementation requirements. The command-root owner, key, frozen binding, and ordered manifest digest remain accepted target state under ADR 0069. The current services, wire contracts, and focused proof remain implementation gaps as recorded by the linked canonical documents. No implementation may treat this proposal's refinements as approved before human review.
 
 The move from the conflicting draft number ADR 0182 to ADR 0183 is mechanical preservation only. It neither accepts this allocator decision nor authorizes proposal-dependent implementation; independently authoritative effect and replay obligations continue to apply on their own authority.
 
@@ -25,11 +25,11 @@ The move from the conflicting draft number ADR 0182 to ADR 0183 is mechanical pr
 
 ## Context
 
-[ADR 0069](./adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) accepts at-least-once execution and one logical terminal outcome, but its accepted decision does not select the allocator contract for generated children or a precise scalar format. The current implementation also derives effect IDs from batch or effect-key material and exposes narrower service-local replay tables. Those paths are documented implementation gaps and cannot be made canonical by inference.
+[ADR 0069](./adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) already accepts the command-root foundation: Game Session owns the opaque root allocation row, unique on `(tenantId, gameInstanceId, commandId, planOrdinal)`, and binds it to the frozen command/runtime evidence and ordered command-plan manifest digest. It also accepts semantic plan order and reuse only for the same binding. This proposal does not reopen or replace that contract. ADR 0069 leaves the exact scalar format and generated-child allocation contract unresolved; it also does not select the additional versioned canonical serialization and atomic manifest/allocation details proposed here. The current implementation derives effect IDs from batch or effect-key material and exposes narrower service-local replay tables. Those paths are documented implementation gaps and cannot be made canonical by inference.
 
-Generated chains and global fan-out need an identity that survives retries, crashes, replay, runtime replacement, and reconciliation without turning semantic fields into an ID. Command roots additionally need a durable plan/ordinal binding so a changed plan cannot silently reuse an old root. Candidate suppression must remain auditable without inventing an ID for work that never entered execution.
+Generated chains and global fan-out need an identity that survives retries, crashes, replay, runtime replacement, and reconciliation without turning semantic fields into an ID. ADR 0069 already requires command roots to use a durable plan/ordinal binding so a changed plan cannot silently reuse an old root; this proposal adds exact scalar and canonical serialization refinements to that foundation. Candidate suppression must remain auditable without inventing an ID for work that never entered execution.
 
-This proposal supplies one owner-bound allocation contract for those gaps. It is deliberately pending: its exact format and cross-service persistence boundary require human approval before any accepted ADR or implementation depends on them.
+This proposal supplies refinements for those gaps while preserving ADR 0069's accepted command-root owner, key, frozen binding, and manifest-digest contract. Its exact UUIDv7 scalar, versioned canonical serialization, generated-child/fan-out manifest, and atomic allocation details remain deliberately pending human approval before any accepted ADR or implementation depends on them.
 
 ## Decision
 
@@ -41,11 +41,11 @@ Game Session owns command-root allocation. The owner of a generated child, non-c
 
 Retries, replay, failover, and reconciliation read and reuse the persisted mapping and exact scalar. Participants receive the persisted mutation identity and use it in their guard, ledger, response, and terminal outcome. The enclosing root remains lineage and reconciliation context for a child; it does not replace the child's identity or collapse siblings. A post-abandon re-drive receives a new explicitly linked identity under its own admission contract.
 
-### Command roots and versioned plan manifests
+### Proposed command-root serialization refinements
 
-Before staging a non-empty admitted command, Game Session freezes the typed command/action or `ResolvedEffectPlan` semantic order and persists a versioned root-plan manifest. The manifest records its schema version, registered canonical serialization identifier, canonical bytes/digest, ordered logical operations, and the frozen request/runtime/namespace binding. A root receives one `planOrdinal` in that order and one allocated opaque `EffectId`; zero-effect plans allocate neither.
+ADR 0069 already requires Game Session to persist the ordered plan manifest and its digest before tick staging, assigns each logical root its stable `planOrdinal` in the supplied semantic order, and binds the opaque root allocation row to the frozen command/runtime evidence. The following are additional proposed refinements, not prerequisites that redefine that accepted foundation: the manifest has an explicit schema version, registered canonical serialization identifier, and canonical bytes; and its serialized content includes ordered logical operations and frozen request/runtime/namespace binding. A root still receives the accepted `planOrdinal` and opaque `EffectId`; zero-effect plans allocate neither.
 
-The durable allocation row is unique on `(tenantId, gameInstanceId, commandId, planOrdinal)` and binds the manifest schema version, serializer, digest, exact root scalar claim, and frozen command binding. Replay and reuse require every one of those values to match. Unknown, duplicate, ambiguous, noncanonical, or changed order/manifest evidence fails before staging or side effects. Automation handoff identity maps exactly to one durable target command before this command-root allocation is attempted; trigger and correlation identities are not allocation inputs.
+The accepted durable allocation row remains unique on `(tenantId, gameInstanceId, commandId, planOrdinal)` and binds the frozen command binding and ordered plan-manifest digest. This proposal additionally binds the manifest schema version, serializer, canonical bytes, and exact root scalar claim, requiring exact matches on replay. Unknown, duplicate, ambiguous, noncanonical, or changed order/manifest evidence fails before staging or side effects under the accepted ordering and digest contract, with the additional serialization checks pending. Automation handoff identity maps exactly to one durable target command before this command-root allocation is attempted; trigger and correlation identities are not allocation inputs.
 
 ### Generated-child candidates and suppression
 
@@ -63,7 +63,7 @@ The child scalar and all binding fields are persisted before wake delivery. Retr
 
 ## Rationale
 
-An exact scalar format makes wire and storage compatibility testable while keeping identity opaque. Durable allocation separates identity from semantic derivation and allows a participant or coordinator to prove that a replay is the same logical mutation. Versioned canonical manifests make plan and fan-out interpretation stable across deployments, while ID-free suppression evidence prevents rejected work from appearing to have executed. A serializable allocation/budget boundary preserves chain accounting under concurrency and a frozen fan-out set prevents topology changes from creating new work during recovery.
+The proposed exact scalar format makes wire and storage compatibility testable while keeping identity opaque. Durable allocation separates identity from semantic derivation and allows a participant or coordinator to prove that a replay is the same logical mutation. The proposed versioned canonical manifests make plan and fan-out interpretation stable across deployments, while ID-free suppression evidence prevents rejected work from appearing to have executed. The proposed serializable allocation/budget boundary preserves chain accounting under concurrency, and a frozen fan-out set prevents topology changes from creating new work during recovery.
 
 ## Alternatives Considered
 
@@ -85,16 +85,17 @@ Rejected because notifications can be lost or duplicated and cannot own durable 
 
 ## Consequences
 
-- Game Session and each generated-effect or fan-out owner need durable allocation rows with uniqueness, immutable binding fields, and conflict-safe replay behavior.
-- Root and child manifests require registered schema versions and canonical serializers whose bytes and digests are stable across supported readers.
-- Chain admission must use a serializable or explicitly equivalent atomic boundary and retain ID-free suppression evidence.
-- Existing string protobuf and database fields remain wire/storage-compatible with a 36-character scalar, but current derivation, optional fields, and narrower replay guards remain gaps until separately implemented and proved.
+- The accepted ADR 0069 Game Session command-root allocation owner, key, frozen binding, and ordered manifest digest remain the foundation; the exact UUIDv7 scalar and the additional versioned serialization fields proposed here remain pending.
+- Each generated-effect or fan-out owner would need the proposed durable allocation rows, manifest bindings, and conflict-safe atomic replay behavior if this proposal is accepted.
+- If accepted, this proposal would require root and child manifests to use registered schema versions and canonical serializers whose bytes and digests are stable across supported readers.
+- If accepted, chain admission would use a serializable or explicitly equivalent atomic boundary and retain ID-free suppression evidence.
+- The proposed 36-character scalar fits existing string protobuf and database fields; current derivation, optional fields, and narrower replay guards remain gaps until independently converged on an accepted contract and proved.
 - Participants, ledgers, coordinators, and operational reconciliation must carry both mutation identity and enclosing-root lineage where applicable.
 - Adoption is a breaking target convergence for identity allocation; compatibility shims must not preserve semantic derivation or silently accept conflicting formats.
 
 ## Reversibility and Revisit Triggers
 
-Before acceptance, human review may change the scalar format, allocator ownership, or manifest boundary without a migration obligation. After acceptance and persisted use, changing the scalar or canonical serialization requires a versioned migration and explicit old/new binding and replay policy; it must not reinterpret existing IDs. Revisit UUIDv7 only if a reviewed cross-service identity standard provides equal exact textual compatibility, opaque semantics, collision handling, and operational proof.
+Before acceptance, human review may change the proposed scalar format, generated-child/fan-out ownership, or added serialization boundary without a migration obligation; ADR 0069's accepted command-root owner, key, and digest binding remain in force. After acceptance and persisted use, changing the scalar or canonical serialization requires a versioned migration and explicit old/new binding and replay policy; it must not reinterpret existing IDs. Revisit UUIDv7 only if a reviewed cross-service identity standard provides equal exact textual compatibility, opaque semantics, collision handling, and operational proof.
 
 ## Security and Privacy
 
@@ -108,9 +109,9 @@ Game Session or the owning allocation boundary exposes durable allocation, colli
 
 Implementation and focused proof must cover:
 
-- lowercase, hyphenated, exactly 36-character UUIDv7 scalar validation and opaque treatment at every supported wire/storage boundary;
-- one-time allocation, insert-if-absent uniqueness, collision/conflict failure, crash recovery, concurrent allocation races, and exact replay/reconciliation reuse;
-- zero-, one-, and multi-root plans; frozen semantic order; root manifest schema version, serializer, canonical bytes/digest, ordinal, command binding, and mismatch rejection;
+- if accepted, lowercase, hyphenated, exactly 36-character UUIDv7 scalar validation and opaque treatment at every supported wire/storage boundary;
+- the accepted ADR 0069 command-root allocation binding plus, if this proposal is accepted, one-time scalar claims, insert-if-absent uniqueness, collision/conflict failure, crash recovery, concurrent allocation races, and exact replay/reconciliation reuse for the additional allocation boundaries;
+- zero-, one-, and multi-root plans; frozen semantic order; the accepted ADR 0069 root key, command binding, ordered manifest digest, and mismatch rejection; if this proposal is accepted, also prove the proposed root manifest schema version, serializer, canonical bytes, exact scalar claim, and their mismatch rejection;
 - child-candidate schema version/serializer/digest, candidate ordering, depth and budget revisions, serializable sibling admission, no double charge, and no partial commit;
 - ID-free suppression evidence proving no enqueue/apply and preserving committed parent/earlier-child outcomes;
 - fan-out frozen region/topology set, exact child ordinal and target binding, child-manifest schema/serializer/digest, request digest, pre-wake durability, duplicate wake, late result, and topology-conflict handling;

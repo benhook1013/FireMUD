@@ -254,11 +254,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
     requireCommand(command);
     // An accepted child is immutable retry evidence; replay it before consulting today's
     // admission or runtime owner, which may have advanced after the original dispatch.
-    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    String dispatchId = dispatchId(workItem, command.ordinal());
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command, dispatchId);
     if (acceptedResult != null) {
       return acceptedResult;
     }
-    String dispatchId = dispatchId(workItem, command.ordinal());
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
     HandoffPreparation preparation;
@@ -381,7 +381,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     // the local fence in that transaction even when aggregate fanout retained a remote runtime
     // snapshot; the aggregate snapshot is not local admission authority.
     lockAdmissionScope(workItem);
-    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command, dispatchId);
     if (acceptedResult != null) {
       return new HandoffPreparation(acceptedResult, false);
     }
@@ -580,7 +580,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private record HandoffRowFence(Long id, int rowVersion) {}
 
-  private HandoffResult acceptedHandoffResult(ScriptWorkItem workItem, EmittedCommand command) {
+  private HandoffResult acceptedHandoffResult(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
     ScriptHandoffEvent existing =
         handoffEventRepository
             .findByTenantIdAndWorkItemIdAndCommandOrdinal(
@@ -588,6 +589,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
             .orElse(null);
     if (existing == null) {
       return null;
+    }
+    if (isAcceptedHandoff(existing)
+        && !handoffIdentityMatches(existing, workItem, command, dispatchId)) {
+      return new HandoffResult(
+          false,
+          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+          "",
+          "",
+          "",
+          ScriptHandoffOutcomeSupport.REASON_IDEMPOTENCY_CONFLICT,
+          "existing handoff child identity does not match request");
     }
     return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
       case "enqueued" ->
