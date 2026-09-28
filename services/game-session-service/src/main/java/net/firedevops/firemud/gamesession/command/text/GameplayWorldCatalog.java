@@ -62,7 +62,7 @@ public final class GameplayWorldCatalog {
         catalogWorlds.stream().filter(this::hasVisibleRealmEntries).toList();
     List<WorldView> discoverableWorlds =
         visibleWorlds.stream()
-            .filter(world -> resolveDefaultRealm(world, catalogWorlds).isPresent())
+            .filter(world -> hasPublicDiscoveryRealm(world, catalogWorlds))
             .toList();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(discoverableWorlds.size());
     ArrayList<WorldOrdinalTarget> targets = new ArrayList<>(discoverableWorlds.size());
@@ -553,9 +553,19 @@ public final class GameplayWorldCatalog {
   }
 
   private List<WorldView> discoverableWorlds() {
-    return visibleWorlds().stream()
-        .filter(world -> resolveDefaultRealm(world).isPresent())
+    List<WorldView> catalogWorlds = normalizeWorlds(worldSupplier.get());
+    return catalogWorlds.stream()
+        .filter(this::hasVisibleRealmEntries)
+        .filter(world -> hasPublicDiscoveryRealm(world, catalogWorlds))
         .toList();
+  }
+
+  private boolean hasPublicDiscoveryRealm(WorldView world, List<WorldView> catalogWorlds) {
+    List<RealmView> publicProductionRealms =
+        visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
+    return publicProductionRealms.size() == 1
+        && hasValidPublicProductionRealm(
+            catalogWorlds, publicProductionRealms.getFirst().tenantId());
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {

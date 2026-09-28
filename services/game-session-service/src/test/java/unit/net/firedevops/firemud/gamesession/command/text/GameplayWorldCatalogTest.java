@@ -238,6 +238,24 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void publicWorldsExcludePrivateOnlyWorldsFromSameTenant() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("public-world", "production", 7L, true),
+                worldWithRealm("private-world", "private", 7L, false)));
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("public-world");
+    assertThat(catalog.resolveWorld("1"))
+        .hasValueSatisfying(world -> assertThat(world.slug()).isEqualTo("public-world"));
+    assertThat(catalog.resolveWorld("2")).isEmpty();
+    assertThat(catalog.resolveWorld("private-world")).isPresent();
+  }
+
+  @Test
   void closedVisiblePublicRealmStillCountsAsTheTenantPublicRealm() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
