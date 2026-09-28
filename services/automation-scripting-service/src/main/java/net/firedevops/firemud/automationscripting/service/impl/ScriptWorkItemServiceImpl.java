@@ -639,6 +639,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.pluginVersionId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
+        summary.scriptPatchBaseVersionId(),
         summary.scriptPinEpoch(),
         summary.scriptPinControlPlaneRequestId(),
         summary.scriptEventId(),
@@ -646,7 +647,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.reason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationMetadataCache.get(tenantId, summary.scriptPatchVersion()).publication(),
+        publicationMetadataCache
+            .get(tenantId, summary.scriptPatchBaseVersionId(), summary.scriptPatchVersion())
+            .publication(),
         pluginPublication);
   }
 
@@ -875,6 +878,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(item.getPluginVersionId()),
         item.getEventType(),
         item.getScriptPatchVersion(),
+        item.getScriptPatchBaseVersionId() == null ? 0L : item.getScriptPatchBaseVersionId(),
         item.getScriptPinEpoch(),
         blankToEmpty(item.getScriptPinControlPlaneRequestId()),
         item.getScriptEventId(),
