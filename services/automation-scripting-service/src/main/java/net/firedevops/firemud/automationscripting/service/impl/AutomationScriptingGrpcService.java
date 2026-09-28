@@ -422,7 +422,7 @@ public class AutomationScriptingGrpcService
                       meterRegistry,
                       logger,
                       "GetDraftDesignDigest",
-                      "INVALID_ARGUMENT",
+                      draftDesignDigestArgumentErrorCode(ex),
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
@@ -462,6 +462,18 @@ public class AutomationScriptingGrpcService
               request.getPublishRequestId());
       case SCOPE_NOT_SET -> throw new IllegalArgumentException("publication scope is required");
     };
+  }
+
+  private static String draftDesignDigestArgumentErrorCode(IllegalArgumentException exception) {
+    String message = exception.getMessage();
+    if ("script_patch_base_version_unavailable".equals(message)
+        || "script_patch_base_version_unavailable:script".equals(message)
+        || "script_patch_base_version_unavailable:binding".equals(message)
+        || "script_patch_base_version_mismatch:script".equals(message)
+        || "script_patch_base_version_mismatch:binding".equals(message)) {
+      return "FAILED_PRECONDITION";
+    }
+    return "INVALID_ARGUMENT";
   }
 
   private void requirePublicationRead() {

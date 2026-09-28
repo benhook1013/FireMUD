@@ -289,6 +289,37 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestMapsOwnerBaseFailuresToFailedPrecondition() {
+    Map<String, String> expectedCodes =
+        Map.of(
+            "script_patch_base_version_unavailable", "FAILED_PRECONDITION",
+            "script_patch_base_version_unavailable:script", "FAILED_PRECONDITION",
+            "script_patch_base_version_unavailable:binding", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch:script", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch:binding", "FAILED_PRECONDITION",
+            "script_patch_base_version_mismatch", "INVALID_ARGUMENT",
+            "unrelated_argument_error", "INVALID_ARGUMENT");
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    expectedCodes.forEach(
+        (message, expectedCode) -> {
+          ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+          Mockito.doThrow(new IllegalArgumentException(message))
+              .when(digestService)
+              .getDraftDesignDigestForScriptPatch("1", 7L, "patch-1");
+          AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+
+          AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+          runAsGameDesign(
+              () -> response.set(invokeDigest(service, patchDigestRequest("1", "7", "patch-1"))));
+
+          assertEquals(expectedCode, response.get().getError().getCode(), message);
+          assertEquals(message, response.get().getError().getMessage());
+        });
+  }
+
+  @Test
   void getDraftDesignDigestRejectsInactiveBaseVersionForFullScope() {
     ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
     AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
