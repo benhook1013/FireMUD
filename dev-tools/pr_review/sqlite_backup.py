@@ -74,7 +74,7 @@ _EXPECTED_COLUMNS = {
     ),
     "route_target_history": ("sequence", "route_id", "target_pr", "changed_at", "actor", "reason"),
     "decisions": (
-        "decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision_pr",
+        "decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision_pr", "target_pr",
         "decision", "actor", "reason", "decided_at",
     ),
     "resolutions": (
@@ -263,7 +263,11 @@ def backup_database(
                 raise BackupError("could not verify uploaded SFTP bytes") from exc
             raise
 
-        _verify_remote_file(remote, sftp_binary, final_remote_path)
+        try:
+            _verify_remote_file(remote, sftp_binary, final_remote_path)
+        except BackupError:
+            _remove_remote_partial(remote, sftp_binary, final_remote_path)
+            raise
         _prune_remote_backups(remote, sftp_binary, retention_count, keep=filename)
         return BackupReceipt(
             filename=filename,

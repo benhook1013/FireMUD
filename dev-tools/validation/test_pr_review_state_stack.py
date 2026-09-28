@@ -1112,6 +1112,41 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(ReviewState(ordered_prs=(1,)), Channel.CLI, history), ReviewStatus.READY)
 
+    def test_unanchored_or_uncorrected_accepted_result_resets_taper_streak(self):
+        dry_before = tuple(
+            Evidence(1, "h", f"before-{index}", completed=True, attributable=True, anchored=True, corrected_state=True)
+            for index in range(2)
+        )
+        dry_after = Evidence(1, "h", "after", completed=True, attributable=True, anchored=True, corrected_state=True)
+        accepted_variants = (
+            Evidence(
+                1,
+                "h",
+                "accepted-unanchored",
+                completed=True,
+                attributable=True,
+                anchored=False,
+                corrected_state=True,
+                accepted=1,
+            ),
+            Evidence(
+                1,
+                "h",
+                "accepted-uncorrected",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=False,
+                accepted=1,
+            ),
+        )
+
+        self.assertTrue(taper_satisfied(Channel.CLI, (*dry_before, dry_after), 3))
+        for accepted in accepted_variants:
+            with self.subTest(checkpoint=accepted.checkpoint):
+                history = (*dry_before, accepted, dry_after)
+                self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+
     def test_completed_taper_survives_later_fixes_and_review_identity_changes(self):
         state = ReviewState(ordered_prs=(1,))
         dry_rounds = tuple(

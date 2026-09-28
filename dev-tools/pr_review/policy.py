@@ -210,10 +210,13 @@ def taper_satisfied(
     streak = 0
     reached = required == 0
     for item in values:
-        if not _valid_complete(item, channel, require_corrected_state=require_corrected_state):
-            continue
+        # Accepted attributable results reopen useful work even when an
+        # incomplete anchor or corrected-state marker keeps that row from
+        # counting as a taper round.
         if item.accepted != 0:
             streak = 0
+            continue
+        if not _valid_complete(item, channel, require_corrected_state=require_corrected_state):
             continue
         if (
             allow_uncorrected_state
