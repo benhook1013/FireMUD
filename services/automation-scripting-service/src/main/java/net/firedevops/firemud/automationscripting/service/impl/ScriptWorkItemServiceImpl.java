@@ -1219,10 +1219,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (runtimeFailure != null) {
       return runtimeFailure;
     }
-    String baseVersionFailure = validateExactPatchBase(item, runtime);
-    if (baseVersionFailure != null) {
-      return baseVersionFailure;
-    }
     String capturedPluginFailure =
         ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(item);
     if (capturedPluginFailure != null) {
@@ -1243,20 +1239,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginState).orElse(null),
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginActivationEpoch).orElse(0L),
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::lifecycleRevision).orElse(0L));
-  }
-
-  private static String validateExactPatchBase(
-      ScriptWorkItem item, GetGameInstanceRuntimeStateResponse runtime) {
-    if (item.getScriptPatchBaseVersionId() == null
-        || item.getScriptPatchBaseVersionId() <= 0L
-        || runtime.getRuntimeState().getPinnedScriptPatchBaseVersionId() <= 0L) {
-      return "script_patch_base_version_unavailable";
-    }
-    if (item.getScriptPatchBaseVersionId()
-        != runtime.getRuntimeState().getPinnedScriptPatchBaseVersionId()) {
-      return "script_patch_base_version_mismatch";
-    }
-    return null;
   }
 
   private void persistReplayResult(
