@@ -60,6 +60,10 @@ public class TestDataSeeder implements ApplicationRunner {
       membership.setAccount(account);
       membership.setTenantId(DEMO_TENANT_ID);
       membership.setGameplayAdmissionAllowed(true);
+      membership.setLifecycleState("ACTIVE");
+      membership.setMembershipVersion(1);
+      membership.setMembershipAuthorityGeneration(1);
+      membership.setAuthorityProvenance("SEEDED_DEMO");
       accountTenantMembershipRepository.save(membership);
     }
 

@@ -96,6 +96,8 @@ firemud:
         - account.v1.AccountService/Ping
         - account.v1.AccountService/GetTenantMembershipForRuntime
         - account.v1.AccountService/GetTenantEntitlementsForRuntime
+        - account.v1.AccountService/IssueDirectTextConnectScope
+        - account.v1.AccountService/JoinPublicProductionMembership
 
 management:
   endpoints:

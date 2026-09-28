@@ -16,6 +16,10 @@ public class AccountTenantMembership {
 
   private Long tenantId;
   private boolean gameplayAdmissionAllowed = true;
+  private String lifecycleState;
+  private long membershipVersion;
+  private long membershipAuthorityGeneration;
+  private String authorityProvenance;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",

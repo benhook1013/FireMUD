@@ -65,6 +65,12 @@ public class AccountTenantMembershipRepository {
               .set(
                   ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED,
                   entity.isGameplayAdmissionAllowed())
+              .set(ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE, entity.getLifecycleState())
+              .set(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION, entity.getMembershipVersion())
+              .set(
+                  ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION,
+                  entity.getMembershipAuthorityGeneration())
+              .set(ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE, entity.getAuthorityProvenance())
               .returningResult(ACCOUNT_TENANT_MEMBERSHIP.ID)
               .fetchOne(ACCOUNT_TENANT_MEMBERSHIP.ID);
       entity.setId(id);
@@ -77,6 +83,12 @@ public class AccountTenantMembershipRepository {
             .set(
                 ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED,
                 entity.isGameplayAdmissionAllowed())
+            .set(ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE, entity.getLifecycleState())
+            .set(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION, entity.getMembershipVersion())
+            .set(
+                ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION,
+                entity.getMembershipAuthorityGeneration())
+            .set(ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE, entity.getAuthorityProvenance())
             .where(ACCOUNT_TENANT_MEMBERSHIP.ID.eq(entity.getId()))
             .execute();
     if (updated != 1) {
@@ -119,6 +131,10 @@ public class AccountTenantMembershipRepository {
             ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID,
             ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID,
             ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED,
+            ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE,
+            ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION,
+            ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION,
+            ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE,
             ACCOUNTS.ID,
             ACCOUNTS.USERNAME,
             ACCOUNTS.EMAIL,
@@ -146,6 +162,11 @@ public class AccountTenantMembershipRepository {
     membership.setTenantId(record.get(ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID));
     membership.setGameplayAdmissionAllowed(
         Boolean.TRUE.equals(record.get(ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED)));
+    membership.setLifecycleState(record.get(ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE));
+    membership.setMembershipVersion(record.get(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION));
+    membership.setMembershipAuthorityGeneration(
+        record.get(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION));
+    membership.setAuthorityProvenance(record.get(ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE));
     return membership;
   }
 }

@@ -3,6 +3,7 @@ syntax = "proto3";
 package account.v1;
 
 import "shared/v1/errors.proto";
+import "shared/v1/player_execution_context.proto";
 
 option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
@@ -16,6 +17,8 @@ service AccountService {
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
+  rpc IssueDirectTextConnectScope(IssueDirectTextConnectScopeRequest) returns (IssueDirectTextConnectScopeResponse);
+  rpc JoinPublicProductionMembership(JoinPublicProductionMembershipRequest) returns (JoinPublicProductionMembershipResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc ListPresenceVisibilityPolicies(ListPresenceVisibilityPoliciesRequest)
       returns (ListPresenceVisibilityPoliciesResponse);
@@ -28,6 +31,45 @@ service AccountService {
   rpc LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse);
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
   rpc VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse);
+}
+
+// Game Session supplies its authenticated, transport-local player context and
+// exact catalog/pointer evidence. Account re-resolves the target before issuance.
+message IssueDirectTextConnectScopeRequest {
+  shared.v1.PlayerExecutionContext player_context = 1;
+  string tenant_id = 2;
+  string world_slug = 3;
+  string realm_slug = 4;
+  string realm_id = 5;
+  string playable_state_namespace_id = 6;
+  string playable_state_scope = 7;
+  string game_instance_id = 8;
+  int64 catalog_revision = 9;
+  int64 pointer_version = 10;
+}
+
+message IssueDirectTextConnectScopeResponse {
+  string connect_scope_id = 1;
+  string connect_scope_expires_at = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message JoinPublicProductionMembershipRequest {
+  shared.v1.PlayerExecutionContext player_context = 1;
+  string connect_scope_id = 2;
+  string request_id = 3;
+}
+
+message JoinPublicProductionMembershipResponse {
+  bool success = 1;
+  string outcome_code = 2;
+  string account_id = 3;
+  string tenant_id = 4;
+  string membership_id = 5;
+  int64 membership_version = 6;
+  int64 membership_authority_generation = 7;
+  bool replayed = 8;
+  shared.v1.ErrorDetail error = 9;
 }
 
 // Empty request used to verify that the service is reachable.
@@ -43,8 +85,8 @@ message PingResponse {
 
 // Parameters required to register a new account.
 message CreateAccountRequest {
-  // Tenant that owns the new account.
-  string tenant_id = 1;
+  reserved 1;
+  reserved "tenant_id";
   // Desired username for login and display.
   string username = 2;
   // Email address used for notifications and password recovery.
@@ -108,6 +150,8 @@ message GetTenantMembershipForRuntimeResponse {
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
   bool membership_exists = 7;
+  string membership_lifecycle_state = 8;
+  uint64 membership_authority_generation = 9;
 }
 
 message GetRealmAccessGrantForRuntimeRequest {

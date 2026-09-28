@@ -4,6 +4,7 @@ package net.firedevops.firemud.accountservice.dto;
 public record BootstrapRealmDto(
     String worldSlug,
     String realmSlug,
+    String realmId,
     String displayName,
     long tenantId,
     long gameInstanceId,
