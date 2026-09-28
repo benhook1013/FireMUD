@@ -1652,7 +1652,7 @@ class RuntimeTest(unittest.TestCase):
         second_review = {
             "databaseId": 5332195978,
             "author": {"login": "coderabbitai[bot]"},
-            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "body": f"<!-- walkthrough_start -->\nReviewed {second_head}",
             "state": "COMMENTED",
             "submittedAt": "2026-09-27T21:39:18Z",
             "commit": {"oid": second_head},
