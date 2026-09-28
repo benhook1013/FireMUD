@@ -60,6 +60,10 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
   .activity-grid { grid-template-columns: 1fr; }
   .round-pills { gap: .35rem; }
 }
+@media (min-width: 360px) and (max-width: 760px) {
+  .stack .round-pills { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .stack .round-pill { width: 100%; min-width: 0; padding-inline: .2rem; }
+}
 """
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
@@ -981,7 +985,8 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 {SHARED_CSS}
 </style></head><body>{mast}<main>
 <section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
-<section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>{activity_section}</section>
+<section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>
+<p class="activity-caption activity-explanation">Recent results are ordered oldest to newest; three-number pills mean found / accepted here / routed.</p>{activity_section}</section>
 <section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
 <footer>History comes from the controller's read-only records view.</footer>
 </main></body></html>'''
@@ -1036,21 +1041,6 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                     f'<span>{safe(result["raw"])}/{safe(result["accepted"])}'
                     f'{"/" + safe(routed) if routed is not None else ""}</span>{age_html}</span>'
                 )
-            older_count = sum(not result["current_head"] for result in recent if isinstance(result, dict))
-            unlinked_count = sum(not result["attributable"] for result in recent if isinstance(result, dict))
-            non_counting_count = sum(result["non_counting"] for result in recent if isinstance(result, dict))
-            notes = []
-            if older_count:
-                notes.append(f"{older_count} from older heads")
-            if unlinked_count:
-                notes.append(f"{unlinked_count} unlinked to a verified review")
-            if non_counting_count:
-                notes.append(f"{non_counting_count} excluded from taper")
-            caption = "Recent, oldest to newest"
-            if any(isinstance(result, dict) and result.get("routed") is not None for result in recent):
-                caption += " · 3 numbers: found / accepted here / routed"
-            if notes:
-                caption += " · " + " · ".join(notes)
             channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
             total = activity.get("total", 0)
             if type(total) is not int or total < 0:
@@ -1058,7 +1048,6 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
             activity_cards.append(
                 f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
                 f'<span>{safe(total)} completed</span></div>'
-                f'<span class="activity-caption">{safe(caption)}</span>'
                 f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
             )
     return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
@@ -1371,7 +1360,10 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .queue-guide {{ margin: -.5rem 0 .65rem; padding: .45rem .65rem; border-left: 3px solid var(--fire); background: var(--paper); color: var(--muted); font-size: .72rem; line-height: 1.35; }}
 .queue-guide h3 {{ margin: 0 0 .3rem; color: var(--ink); font-size: .67rem; letter-spacing: .06em; text-transform: uppercase; }}
 .queue-guide dl {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: .2rem .65rem; margin: 0; }}
-.queue-guide dl > div {{ display: flex; gap: .25rem; min-width: 0; }} .queue-guide dt {{ flex: 0 0 auto; color: var(--ink); font-weight: 800; }} .queue-guide dd {{ margin: 0; }}
+.queue-guide dl > div {{ display: block; min-width: 0; }}
+.queue-guide dt, .queue-guide dd {{ display: inline; flex: initial; }}
+.queue-guide dt {{ color: var(--ink); font-weight: 800; }} .queue-guide dd {{ margin: 0 0 0 .25rem; }}
+.queue-guide-reading {{ margin-top: .4rem; padding-top: .35rem; border-top: 1px solid #d5d9df; }}
 .queue-guide p {{ margin: .3rem 0 0; font-size: .68rem; }}
 .review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
 .queue-stage {{ display: grid; grid-template-columns: minmax(150px,.4fr) minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem; border-top: 1px solid var(--line); }}
@@ -1414,7 +1406,8 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
 <div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
 <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
-</dl><p>Request states are not merge readiness. Result pills show raw/useful counts and age; dashed borders mark older PR heads.</p></div>
+</dl><p>Request states are not merge readiness.</p>
+<div class="queue-guide-reading"><h3>Reading results</h3><p>Recent results are ordered oldest to newest. Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed; dashed borders mark older PR heads.</p></div></div>
 <div class="review-train">{"".join(train)}</div></section>
 <footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. The queue links to public review details; raw captures and credentials are not intentionally embedded.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 

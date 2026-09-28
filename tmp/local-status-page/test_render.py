@@ -79,7 +79,18 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("PR identities refreshed", result)
         self.assertNotIn("Review overview partial", result)
         self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
-        self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2></div>', result)
+        self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
+        self.assertIn('<div class="queue-guide-reading"><h3>Reading results</h3><p>Recent results are ordered oldest to newest. '
+                      'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed; '
+                      'dashed borders mark older PR heads.</p></div>', result)
+        self.assertIn('Request states are not merge readiness.', result)
+        self.assertNotIn('Result pills show raw/useful counts and age', result)
+        self.assertIn('<dt>Ready</dt><dd>selected channel may request</dd>', result)
+        self.assertIn(".queue-guide-reading { margin-top: .4rem; padding-top: .35rem; border-top: 1px solid #d5d9df; }",
+                      result)
+        self.assertIn(".queue-guide dl > div { display: block; min-width: 0; }", result)
+        self.assertIn(".queue-guide dt, .queue-guide dd { display: inline; flex: initial; }", result)
+        self.assertIn(".queue-guide dd { margin: 0 0 0 .25rem; }", result)
         self.assertIn('id="review-front"', result)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", result)
         self.assertIn("Next &amp; then", result)
@@ -248,6 +259,14 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn(".round-age { display: block;", page.ACTIVITY_CSS)
         self.assertIn("@media (max-width: 760px)", page.ACTIVITY_CSS)
         self.assertIn(".activity-grid { grid-template-columns: 1fr; }", page.ACTIVITY_CSS)
+        self.assertIn("@media (min-width: 360px) and (max-width: 760px)", page.ACTIVITY_CSS)
+        self.assertIn(".stack .round-pills { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }",
+                      page.ACTIVITY_CSS)
+        self.assertIn(".stack .round-pill { width: 100%; min-width: 0; padding-inline: .2rem; }", page.ACTIVITY_CSS)
+        self.assertNotIn(".front-evidence .round-pills { display: grid", page.ACTIVITY_CSS)
+        self.assertNotIn("@media (max-width: 359px)", page.ACTIVITY_CSS)
+        self.assertNotIn('class="activity-caption">', rendered)
+        self.assertIn("three-number pills mean found / accepted here / routed.", rendered)
         self.assertIn(".history-card > h2 { margin: 0 0 .75rem; }", rendered)
 
     def test_detail_text_and_record_counts_are_bounded(self):
@@ -308,7 +327,11 @@ class StatusPageTest(unittest.TestCase):
                                                       "routes": [], "decisions": []}})
             self.assertTrue((Path(directory) / "review" / "pr-42.html").is_file())
             self.assertTrue((Path(directory) / "review" / "pr-43.html").is_file())
-            self.assertIn("No recorded history", (Path(directory) / "review" / "pr-42.html").read_text())
+            detail = (Path(directory) / "review" / "pr-42.html").read_text()
+            self.assertIn("No recorded history", detail)
+            self.assertIn("Review rounds</h2>", detail)
+            self.assertIn('class="activity-caption activity-explanation">Recent results are ordered oldest to newest; '
+                          'three-number pills mean found / accepted here / routed.</p>', detail)
 
     def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
         data = self.fixture()
@@ -876,9 +899,9 @@ vm.runInNewContext(process.argv[1], {
                       'title="Completed 24 Sep 2026 23:46 NZST"><span>4/3</span>'
                       '<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time></span>', result)
         self.assertIn('<strong>CLI CodeRabbit</strong><span>1 completed</span>', result)
-        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads</span>', result)
-        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
-                      '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
+        self.assertNotIn('class="activity-caption">', result)
+        self.assertNotIn('from older heads', result)
+        self.assertIn('aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST"', result)
         self.assertNotIn('class="activity-note"', result)
         age_markup = ('PR data refreshed <time class="relative-age" datetime="2026-09-24T12:00:00+00:00" '
                       'title="25 Sep 00:00 NZST">just now</time>')
@@ -1007,14 +1030,13 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
         self.assertIn('.front-evidence .round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
         self.assertNotIn('.round-pill.unlinked.zero-accepted', result)
-        self.assertIn('<span class="activity-caption">Recent, oldest to newest · 1 from older heads '
-                      '· 1 unlinked to a verified review · 1 excluded from taper</span>', result)
+        self.assertNotIn('class="activity-caption">', result)
+        self.assertNotIn('from older heads', result)
         self.assertLess(result.index('aria-label="0/0,'), result.index('aria-label="3/1,'))
         self.assertLess(result.index('aria-label="3/1,'), result.index('aria-label="2/0 (older head'))
         review["queue"][42]["review_activity"]["hosted"]["recent"] = []
         without_notes = page.render(self.fixture(), review, NOW)
-        self.assertIn('<span class="activity-caption">Recent, oldest to newest</span>', without_notes)
-        self.assertNotIn('Recent, oldest to newest ·</span>', without_notes)
+        self.assertNotIn('class="activity-caption">', without_notes)
 
     def test_routed_review_count_uses_three_numbers_without_changing_legacy_pills(self):
         review = page.review_snapshot(None, 42, HEAD, NOW)
@@ -1029,7 +1051,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('aria-label="3/0/2 (found / accepted here / routed), Completion time unavailable"', result)
         self.assertIn('<span>3/0/2</span>', result)
         self.assertIn('<span>1/1</span>', result)
-        self.assertIn('3 numbers: found / accepted here / routed', result)
+        self.assertIn('Three-number pills mean found (raw) / accepted here (useful) / routed; dashed borders mark older PR heads.', result)
         review["queue"][42]["review_activity"]["hosted"]["recent"][0]["routed"] = 4
         with self.assertRaisesRegex(ValueError, "review routed count is invalid"):
             page.render(self.fixture(), review, NOW)
