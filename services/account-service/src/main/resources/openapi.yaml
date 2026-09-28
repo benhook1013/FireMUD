@@ -20,6 +20,20 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  responses:
+    RetryableAuthenticationUnavailable:
+      description: Retryable authority outage; error code is AUTH_UNAVAILABLE or ENTITLEMENT_UNAVAILABLE
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, error]
+            properties:
+              status:
+                type: string
+                enum: [ERROR]
+              error:
+                $ref: '#/components/schemas/ErrorDetail'
   schemas:
     CreateAccountRequest:
       type: object
@@ -349,6 +363,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms:
     get:
       summary: List caller-visible realms for a selected world
@@ -379,6 +395,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters:
     get:
       summary: List caller-visible characters for a selected world and realm
@@ -421,6 +439,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
     post:
       summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token
@@ -449,6 +469,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/request-password-reset:
     post:
       summary: Request password reset
