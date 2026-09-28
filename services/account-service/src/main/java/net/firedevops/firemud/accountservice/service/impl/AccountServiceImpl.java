@@ -492,6 +492,12 @@ public class AccountServiceImpl implements AccountService {
         || current.pointerVersion() != target.pointerVersion()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(current.tenantId(), caller.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     String scopeId =

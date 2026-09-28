@@ -27,6 +27,9 @@ import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
@@ -2208,6 +2211,57 @@ class AccountServiceImplTest {
             () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void issueDirectTextConnectScopeRejectsUnavailableEntitlementWithoutRetainingScope() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  @Test
+  void issueDirectTextConnectScopeRejectsBillingBlockedEntitlementWithoutRetainingScope() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription canceled = new Subscription();
+    canceled.setId(31L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(canceled));
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()));
+
+    assertEquals("TENANT_BILLING_BLOCKED", exception.getCode());
+    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  @Test
+  void issueDirectTextConnectScopeRetainsScopeForActiveEntitlement() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+
+    DirectTextJoinScope result =
+        service.issueDirectTextConnectScope(directTextCaller(), directTextTarget());
+
+    assertNotNull(result.connectScopeId());
+    assertNotNull(result.connectScopeExpiresAt());
+    org.mockito.Mockito.verify(accountConnectScopeRepository)
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
   }
 
   @Test
@@ -4560,6 +4614,38 @@ class AccountServiceImplTest {
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
         exception.getReason());
     org.mockito.Mockito.verifyNoInteractions(accountRepository);
+  }
+
+  private static Account directTextAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    return account;
+  }
+
+  private static DirectTextCallerContext directTextCaller() {
+    return new DirectTextCallerContext(
+        11L,
+        7L,
+        UUID.fromString(REALM_ID),
+        "production-namespace-7",
+        "SHARED",
+        44L,
+        "session-1",
+        "direct-text-request-1");
+  }
+
+  private static DirectTextJoinTarget directTextTarget() {
+    return new DirectTextJoinTarget(
+        7L,
+        UUID.fromString(REALM_ID),
+        "demo",
+        "production",
+        "production-namespace-7",
+        "SHARED",
+        44L,
+        23L,
+        17L);
   }
 
   private static String hash(String password) {
