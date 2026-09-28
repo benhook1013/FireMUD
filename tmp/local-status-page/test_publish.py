@@ -14,24 +14,28 @@ SPEC.loader.exec_module(publisher)
 
 
 class PublishedPageTest(unittest.TestCase):
-    def test_only_index_linked_review_pages_are_published_at_nested_paths(self):
+    def test_only_queue_and_history_linked_review_pages_are_published_at_nested_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             review_dir = Path(temporary)
             (review_dir / "pr-41.html").write_text("public detail 41", encoding="utf-8")
-            (review_dir / "pr-42.html").write_text("stale detail 42", encoding="utf-8")
+            (review_dir / "pr-42.html").write_text("public detail 42", encoding="utf-8")
+            (review_dir / "pr-43.html").write_text("stale detail 43", encoding="utf-8")
             index = '<a href="review/pr-41.html">PR 41</a>'
+            history = '<a href="review/pr-42.html">PR 42</a>'
 
-            review_pages = publisher.review_documents(index, review_dir)
+            review_pages = publisher.review_documents(index + history, review_dir)
             _, objects = publisher.resources(index, review_pages=review_pages)
             config_map = objects["items"][0]
             mounts = objects["items"][1]["spec"]["template"]["spec"]["volumes"][0]["configMap"]["items"]
 
-        self.assertEqual(review_pages, {"review-pr-41.html": "public detail 41"})
+        self.assertEqual(review_pages, {"review-pr-41.html": "public detail 41",
+                                        "review-pr-42.html": "public detail 42"})
         self.assertEqual(sum(item["kind"] == "ConfigMap" for item in objects["items"]), 1)
         self.assertEqual(config_map["data"]["review-pr-41.html"], "public detail 41")
-        self.assertNotIn("review-pr-42.html", config_map["data"])
+        self.assertNotIn("review-pr-43.html", config_map["data"])
         self.assertIn({"key": "review-pr-41.html", "path": "review/pr-41.html"}, mounts)
-        self.assertNotIn({"key": "review-pr-42.html", "path": "review/pr-42.html"}, mounts)
+        self.assertIn({"key": "review-pr-42.html", "path": "review/pr-42.html"}, mounts)
+        self.assertNotIn({"key": "review-pr-43.html", "path": "review/pr-43.html"}, mounts)
         self.assertTrue(all("/" not in key for key in config_map["data"]))
 
     def test_apply_uses_server_side_field_ownership_for_large_snapshots(self):
@@ -220,10 +224,18 @@ class PublishedPageTest(unittest.TestCase):
             f'<script id="age-pending-bootstrap">{age_bootstrap_script}</script>'
             f'<script id="relative-age-updates">{age_script}</script>'
             f'<script id="snapshot-updates">{snapshot_script}</script>'
-            '<h2>Worker lanes</h2><h2>Configured review queue</h2>'
+            '<h2>Worker lanes</h2><h2>Configured review queue</h2><a href="/queue-history.html">Queue history</a>'
             '<footer>Local refresh instructions</footer>'
         )
         result = publisher.public_html(source, "http://192.168.50.100:8877/")
+        history_source = source.replace('<h2>Worker lanes</h2><h2>Configured review queue</h2>'
+                                        '<a href="/queue-history.html">Queue history</a>',
+                                        '<h2>Queue history</h2><a href="/">Delivery</a>')
+        history = publisher.public_html(history_source, "http://192.168.50.100:8877/", history=True)
+        self.assertIn('<h2>Queue history</h2>', history)
+        self.assertNotIn('action="/refresh"', history)
+        _, objects = publisher.resources(result, history_document=history)
+        self.assertEqual(objects["items"][0]["data"]["queue-history.html"], history)
         age_bootstrap_hash = base64.b64encode(hashlib.sha256(age_bootstrap_script.encode()).digest()).decode()
         age_hash = base64.b64encode(hashlib.sha256(age_script.encode()).digest()).decode()
         snapshot_hash = base64.b64encode(hashlib.sha256(snapshot_script.encode()).digest()).decode()

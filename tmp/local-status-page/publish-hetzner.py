@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "output" / "index.html"
 PUBLIC_COPY = ROOT / "output" / "public-index.html"
 PROGRESS_SOURCE = ROOT / "output" / "progress.html"
+HISTORY_SOURCE = ROOT / "output" / "queue-history.html"
 REVIEW_SOURCE = ROOT / "output" / "review"
 ASSET_FILES = (
     "icon-options.html", "flame-ember.svg", "flame-monogram.svg", "flame-crest.svg", "flame-pixel.svg",
@@ -41,7 +42,7 @@ def local_wifi_url() -> str:
     return LOCAL_STATUS_URL
 
 
-def public_html(source: str, local_url: str) -> str:
+def public_html(source: str, local_url: str, *, history: bool = False) -> str:
     result = BRIEF_LINK.sub(r"\1 (local brief)", source)
     if REFRESH_TIME.search(result) is None:
         raise ValueError("the published page needs its read-only refresh timestamp")
@@ -81,7 +82,11 @@ def public_html(source: str, local_url: str) -> str:
             or 'action="/refresh"' in result or 'id="local-refresh-progress"' in result
             or f'href="{local_url}"' not in result):
         raise ValueError("the published page still contains a private local path")
-    if "<h2>Worker lanes</h2>" not in result or "<h2>Configured review queue</h2>" not in result:
+    required = (
+        ('<h2>Queue history</h2>', 'href="/"') if history else
+        ('<h2>Worker lanes</h2>', '<h2>Configured review queue</h2>', 'href="/queue-history.html"')
+    )
+    if any(marker not in result for marker in required):
         raise ValueError("the rendered status page is incomplete")
     return result
 
@@ -94,10 +99,10 @@ def progress_public_html(source: str) -> str:
     return source
 
 
-def review_documents(index_document: str, directory: Path | None = None) -> dict[str, str]:
-    """Read only detail pages linked by the current queue index."""
+def review_documents(linked_documents: str, directory: Path | None = None) -> dict[str, str]:
+    """Read only detail pages linked by the current queue or its history page."""
     review_dir = REVIEW_SOURCE if directory is None else directory
-    pr_numbers = sorted({int(match) for match in REVIEW_LINK.findall(index_document)})
+    pr_numbers = sorted({int(match) for match in REVIEW_LINK.findall(linked_documents)})
     if not pr_numbers:
         return {}
     if review_dir.is_symlink() or not review_dir.is_dir():
@@ -118,10 +123,13 @@ def resources(
     document: str,
     progress_document: str | None = None,
     review_pages: dict[str, str] | None = None,
+    history_document: str | None = None,
 ) -> tuple[dict, dict]:
     pages = {"index.html": document}
     if progress_document is not None:
         pages["progress.html"] = progress_document
+    if history_document is not None:
+        pages["queue-history.html"] = history_document
     if review_pages is not None:
         for key, content in review_pages.items():
             if not re.fullmatch(r"review-pr-[1-9]\d*\.html", key):
@@ -339,8 +347,9 @@ def main() -> None:
     args = parser.parse_args()
     document = public_html(SOURCE.read_text(encoding="utf-8"), local_wifi_url())
     progress_document = progress_public_html(PROGRESS_SOURCE.read_text(encoding="utf-8"))
-    detail_pages = review_documents(document)
-    namespace, objects = resources(document, progress_document, detail_pages)
+    history_document = public_html(HISTORY_SOURCE.read_text(encoding="utf-8"), local_wifi_url(), history=True)
+    detail_pages = review_documents(document + history_document)
+    namespace, objects = resources(document, progress_document, detail_pages, history_document)
     print(f"Prepared {len(document.encode()):,} bytes for https://{HOST}/")
     publish_snapshot(document, namespace, objects, args.dry_run)
 

@@ -56,7 +56,6 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
 .round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
-.round-pill.older { border-style: dashed; background: #f1f2f4; color: #626b77; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: #ad3b55; color: #fff; }
 @media (max-width: 760px) {
@@ -626,6 +625,87 @@ def enrich_public_routed_counts(tool: Path | None, review: dict) -> None:
                                 status["_routed_lookup_unavailable"] = True
 
 
+def enrich_merged_review_history(tool: Path | None, review: dict, github: dict) -> None:
+    """Restore display-only merged history omitted by the windowed status view.
+
+    Public checkpoints remain historical display evidence here. They never
+    change controller status, eligibility, or taper decisions.
+    """
+
+    if tool is None or not review.get("available") or not github.get("available"):
+        return
+    queue = review.get("queue")
+    if not isinstance(queue, dict):
+        return
+    prs = [
+        number for number, item in queue.items()
+        if github.get("lifecycle", {}).get(number) == "MERGED"
+        and isinstance(item, dict)
+        and isinstance(item.get("review_activity"), dict)
+        and (item.get("detail_level") == "identity_only" or any(
+            isinstance(item["review_activity"].get(channel), dict)
+            and item["review_activity"][channel].get("total") == 0
+            for channel in ("hosted", "cli")
+        ))
+    ]
+    if not prs:
+        return
+    try:
+        reader = _public_evidence_reader(str(tool.resolve()))
+    except Exception as error:
+        raise RuntimeError("merged review checkpoint parser is unavailable") from error
+
+    def fetch(number: int) -> tuple[int, dict]:
+        document = reader(number, repo=REPO)
+        if (not isinstance(document, dict) or not isinstance(document.get("checkpoints"), list)
+                or document.get("unparsed_candidates") != 0):
+            raise RuntimeError(f"merged PR #{number} has incomplete public review checkpoints")
+        return number, document
+
+    with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
+        for future in as_completed([pool.submit(fetch, number) for number in prs]):
+            number, document = future.result()
+            item = queue[number]
+            activity = item["review_activity"]
+            current_head = item.get("head", "")
+            for channel, checkpoint_type, marker in (
+                ("hosted", "Hosted", "hosted_review_id"),
+                ("cli", "CLI", "run_id"),
+            ):
+                status = activity.get(channel)
+                if not isinstance(status, dict) or status.get("total") != 0:
+                    continue
+                checkpoints = []
+                for checkpoint in document["checkpoints"]:
+                    if (not isinstance(checkpoint, dict) or checkpoint.get("type") != checkpoint_type
+                            or checkpoint.get("correction") is not False
+                            or type(checkpoint.get("comment_id")) is not int
+                            or type(checkpoint.get("raw_found")) is not int
+                            or type(checkpoint.get("accepted")) is not int
+                            or not isinstance(checkpoint.get(marker), (str, int))
+                            or not isinstance(checkpoint.get("created_at"), str)):
+                        continue
+                    raw, accepted = checkpoint["raw_found"], checkpoint["accepted"]
+                    routed = checkpoint.get("routed")
+                    reviewed_sha = checkpoint.get("reviewed_sha")
+                    if (raw < 0 or not 0 <= accepted <= raw
+                            or (routed is not None and
+                                (type(routed) is not int or routed < 0 or accepted + routed > raw))
+                            or not isinstance(reviewed_sha, str) or not 7 <= len(reviewed_sha) <= 40
+                            or any(char not in "0123456789abcdefABCDEF" for char in reviewed_sha)
+                            or _timestamp_key(checkpoint["created_at"]) is None):
+                        continue
+                    checkpoints.append({
+                        "raw": raw, "accepted": accepted, "routed": routed,
+                        "completed_at": checkpoint["created_at"], "attributable": True,
+                        "current_head": isinstance(current_head, str) and current_head.casefold().startswith(reviewed_sha.casefold()),
+                        "non_counting": False,
+                    })
+                if checkpoints:
+                    status["total"] = len(checkpoints)
+                    status["recent"] = checkpoints[-5:]
+
+
 def github_stages(now: datetime) -> dict:
     """Fetch live GitHub PR stage and diff size once for the open queue."""
     try:
@@ -1047,7 +1127,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 </style></head><body>{mast}<main>
 <section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
 <section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>
-<p class="activity-caption activity-explanation">Recent results are ordered oldest to newest; three-number pills mean found / accepted here / routed.</p>{activity_section}</section>
+<p class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
 <section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
 <footer>History comes from the controller's read-only records view.</footer>
 </main></body></html>'''
@@ -1085,7 +1165,7 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                     pill_label += f"/{routed} (found / accepted here / routed)"
                 if description:
                     pill_label += f" ({description})"
-                pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" older" if older else "") + (" unlinked" if unlinked else "")
+                pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" unlinked" if unlinked else "")
                 completed = round_completion(result.get("completed_at"), now)
                 if completed is None:
                     completion_label = "Completion time unavailable"
@@ -1145,7 +1225,8 @@ def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: d
             temporary_path.unlink(missing_ok=True)
 
 
-def render(data: dict, review: dict, now: datetime, github: dict | None = None) -> str:
+def render(data: dict, review: dict, now: datetime, github: dict | None = None, *,
+           history_only: bool = False) -> str:
     stack = data["stack"]
     lanes = data["lanes"]
     if not stack or [lane["name"] for lane in lanes] != ["Gameplay", "Document", "General"]:
@@ -1207,6 +1288,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         else:
             controller_text = "Review state unavailable"
         controller_status_html = f'<span class="sub">{safe(controller_text)}</span>'
+        merged_time = None
         if lifecycle == "MERGED":
             merged_at = github.get("merged_at", {}).get(number)
             merged_time = utc(merged_at) if merged_at else None
@@ -1273,7 +1355,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         if number == next_pr:
             row_classes.append("next")
         row_class = f' class="{" ".join(row_classes)}"' if row_classes else ""
-        rows.append((item["stage"], position,
+        rows.append((item["stage"], position, lifecycle == "MERGED", merged_time,
             f'<li id="pr-{number}"{row_class}><span class="order" aria-label="Queue position {position}">{position:02d}</span><div class="pr-main">'
             f'<div class="pr-title-line"><a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a></div>'
             f'<span class="sub">{size_html}</span>'
@@ -1281,17 +1363,33 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'{activity_grid}'
             f'<a class="review-detail-link" href="review/pr-{number}.html">Review details ↗</a>'
             f'</div></li>'))
-    train = []
-    for stage_position, (stage, grouped_rows) in enumerate(groupby(rows, key=lambda row: row[0]), 1):
-        grouped_rows = list(grouped_rows)
-        first_position = grouped_rows[0][1]
-        train.append(
-            f'<section class="queue-stage" aria-labelledby="queue-stage-{stage_position}">'
-            f'<h3 id="queue-stage-{stage_position}">{safe(stage)}</h3>'
-            f'<ol class="stack" start="{first_position}">{"".join(row[2] for row in grouped_rows)}</ol></section>'
-        )
+    def stage_sections(selected_rows: list[tuple], prefix: str) -> str:
+        sections = []
+        for stage_position, (stage, grouped_rows) in enumerate(groupby(selected_rows, key=lambda row: row[0]), 1):
+            grouped_rows = list(grouped_rows)
+            first_position = grouped_rows[0][1]
+            stage_id = f"{prefix}-{stage_position}"
+            sections.append(
+                f'<section class="queue-stage" aria-labelledby="{stage_id}">'
+                f'<h3 id="{stage_id}">{safe(stage)}</h3>'
+                f'<ol class="stack" start="{first_position}">{"".join(row[4] for row in grouped_rows)}</ol></section>'
+            )
+        return "".join(sections)
+
+    merged_rows = [row for row in rows if row[2]]
+    newest_merged_positions = {
+        row[1] for row in sorted(
+            (row for row in merged_rows if row[3] is not None), key=lambda row: row[3], reverse=True
+        )[:2]
+    }
+    visible_rows = [
+        row for row in rows
+        if not row[2] or row[3] is None or row[3] >= now - timedelta(days=2)
+        or row[1] in newest_merged_positions
+    ]
+    train = stage_sections(merged_rows if history_only else visible_rows, "queue-stage")
     front_html = ""
-    if front_item:
+    if front_item and not history_only:
         front_html = (
             f'<section class="front-board" id="review-front" aria-labelledby="front-title">'
             f'<div class="front-copy">'
@@ -1340,15 +1438,56 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
         if review["available"] and github["available"]
         else 'Review or PR details unavailable'
     )
-    mast_html = render_mast(
-        "FireMUD Delivery Status",
+    title = "FireMUD Queue History" if history_only else "FireMUD Delivery Status"
+    mast_middle = (
+        f'<span class="refresh-time">{header_time}</span>' if history_only else
         '<form class="refresh-form" action="/refresh" method="post">'
         '<span class="refresh-slot"><button type="submit">Refresh</button></span>'
         '<span class="refresh-progress" role="status" aria-live="polite"></span>'
-        f'</form><span class="refresh-time">{header_time}</span>',
-        "refresh-space",
+        f'</form><span class="refresh-time">{header_time}</span>'
+    )
+    mast_links = (
+        (("/", "Delivery Status ↗", "Delivery ↗"), ("/progress.html", "Project Map ↗", "Map ↗"))
+        if history_only else
         (("/progress.html", "Project Map ↗", "Map ↗"),
-         (REPO_HOME, "FireMUD on GitHub ↗", "GitHub ↗")),
+         (REPO_HOME, "FireMUD on GitHub ↗", "GitHub ↗"))
+    )
+    mast_html = render_mast(title, mast_middle, "refresh-space", mast_links)
+    workers_html = (
+        "" if history_only else
+        '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
+        '<p>Current focus across active workstreams.</p></div>'
+        f'<div class="cards">{"".join(cards)}</div></section>'
+    )
+    queue_heading = "Queue history" if history_only else "Configured review queue"
+    queue_link = (
+        '<a class="queue-history-link" href="/">Back to Delivery ↗</a>' if history_only else
+        '<a class="queue-history-link" href="/queue-history.html">Queue history ↗</a>'
+    )
+    request_guide = (
+        "" if history_only else
+        '''<h3>Review request states</h3><dl>
+<div><dt>Ready</dt><dd>selected channel may request</dd></div>
+<div><dt>Waiting turn</dt><dd>another PR is ahead</dd></div>
+<div><dt>Reviewing</dt><dd>request is active</dd></div>
+<div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
+<div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
+<div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
+<div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
+</dl><p>Request states are not merge readiness.</p>'''
+    )
+    guide_class = "queue-guide-reading" if not history_only else "queue-guide-reading history-reading"
+    queue_guide = (
+        f'<div class="queue-guide">{request_guide}'
+        f'<div class="{guide_class}"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
+        'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div></div>'
+    )
+    footer_text = (
+        "Merged PRs remain in the configured controller queue; this page shows their review history."
+        if history_only else
+        "Queue order follows the review controller; programme labels and lane notes are maintained in status.json. "
+        "The Refresh button updates PR details and publishes the site pages. The queue links to public review details; "
+        "raw captures and credentials are not intentionally embedded."
     )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     age_bootstrap_hash = base64.b64encode(hashlib.sha256(AGE_BOOTSTRAP_SCRIPT.encode()).digest()).decode()
@@ -1359,7 +1498,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
 <meta name="status-snapshot" content="{safe(now.isoformat())}">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{refresh_hash}' 'sha256-{age_bootstrap_hash}' 'sha256-{age_hash}' 'sha256-{snapshot_hash}'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'">
 <link rel="icon" type="image/svg+xml" href="/flame-ember.svg">
-<title>FireMUD Delivery Status</title>
+<title>{title}</title>
 <script id="age-pending-bootstrap">{AGE_BOOTSTRAP_SCRIPT}</script>
 <style>
 :root.age-pending .relative-age, :root.age-pending .round-age[datetime] {{ visibility: hidden; }}
@@ -1432,6 +1571,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
 .section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}
+.queue-history-link {{ align-self: center; border: 1px solid var(--line); background: var(--paper); padding: .35rem .55rem; font-size: .73rem; font-weight: 750; white-space: nowrap; }}
 .queue-guide {{ margin: -.5rem 0 .65rem; padding: .45rem .65rem; border-left: 3px solid var(--fire); background: var(--paper); color: var(--muted); font-size: .72rem; line-height: 1.35; }}
 .queue-guide h3 {{ margin: 0 0 .3rem; color: var(--ink); font-size: .67rem; letter-spacing: .06em; text-transform: uppercase; }}
 .queue-guide dl {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: .2rem .65rem; margin: 0; }}
@@ -1441,6 +1581,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .queue-guide-reading {{ margin-top: .4rem; padding-top: .35rem; border-top: 1px solid #d5d9df; }}
 .queue-guide p {{ margin: .3rem 0 0; font-size: .68rem; }}
 .review-train {{ background: var(--paper); border-top: 3px solid var(--smoke); border-bottom: 2px solid var(--smoke); }}
+.history-reading {{ margin-top: 0; padding-top: 0; border-top: 0; }}
 .queue-stage {{ display: grid; grid-template-columns: minmax(150px,.4fr) minmax(0,1.6fr); gap: 1rem; margin-top: 0; padding: .55rem 1rem; border-top: 1px solid var(--line); }}
 .queue-stage:first-child {{ border-top: 0; }} .queue-stage > h3 {{ margin: .3rem 1rem 0 0; color: #37414a; font-size: 1.05rem; font-weight: 850; line-height: 1.2; }}
 .queue-stage > .stack {{ border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }}
@@ -1471,20 +1612,11 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .refresh-space {{ flex-wrap: wrap; gap: .35rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
 </style></head><body>
 {mast_html}
-<main>{front_html}<section id="workers"><div class="section-head"><h2>Worker lanes</h2><p>Current focus across active workstreams.</p></div><div class="cards">{"".join(cards)}</div></section>
-<section id="train"><div class="section-head"><h2>Configured review queue</h2></div>
-<div class="queue-guide"><h3>Review request states</h3><dl>
-<div><dt>Ready</dt><dd>selected channel may request</dd></div>
-<div><dt>Waiting turn</dt><dd>another PR is ahead</dd></div>
-<div><dt>Reviewing</dt><dd>request is active</dd></div>
-<div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
-<div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
-<div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
-<div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
-</dl><p>Request states are not merge readiness.</p>
-<div class="queue-guide-reading"><h3>Reading results</h3><p>Recent results are ordered oldest to newest. Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed; dashed borders mark older PR heads.</p></div></div>
-<div class="review-train">{"".join(train)}</div></section>
-<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. The queue links to public review details; raw captures and credentials are not intentionally embedded.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
+<main>{front_html}{workers_html}
+<section id="train"><div class="section-head"><h2>{queue_heading}</h2>{queue_link}</div>
+{queue_guide}
+<div class="review-train">{train or '<p class="queue-empty">No PRs in this view.</p>'}</div></section>
+<footer>{footer_text}</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:
@@ -1507,12 +1639,14 @@ def main() -> None:
     github = github_stages(now)
     if not github["available"] and args.output.exists():
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
+    enrich_merged_review_history(review_tool, review, github)
     now = datetime.now(timezone.utc)
     data = controller_stack(data, review, github, now)
     history_prs = [item["number"] for item in data["stack"]]
     histories = records_history_snapshots(review_tool, history_prs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
+    history_rendered = render(data, review, now, github, history_only=True)
     progress_rendered = render_project_map(now)
     write_review_detail_pages(args.output.parent, data, review, now, histories)
     for name in ASSET_FILES:
@@ -1539,6 +1673,14 @@ def main() -> None:
         os.replace(progress_temporary, progress_output)
     finally:
         progress_temporary.unlink(missing_ok=True)
+    history_output = args.output.parent / "queue-history.html"
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".queue-history-", delete=False) as temporary:
+        temporary.write(history_rendered)
+        history_temporary = Path(temporary.name)
+    try:
+        os.replace(history_temporary, history_output)
+    finally:
+        history_temporary.unlink(missing_ok=True)
     print(args.output.resolve())
 
 

@@ -80,9 +80,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Review overview partial", result)
         self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
         self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
-        self.assertIn('<div class="queue-guide-reading"><h3>Reading results</h3><p>Recent results are ordered oldest to newest. '
-                      'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed; '
-                      'dashed borders mark older PR heads.</p></div>', result)
+        self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
+                      'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div>', result)
         self.assertIn('Request states are not merge readiness.', result)
         self.assertNotIn('Result pills show raw/useful counts and age', result)
         self.assertIn('<dt>Ready</dt><dd>selected channel may request</dd>', result)
@@ -266,7 +265,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn(".front-evidence .round-pills { display: grid", page.ACTIVITY_CSS)
         self.assertNotIn("@media (max-width: 359px)", page.ACTIVITY_CSS)
         self.assertNotIn('class="activity-caption">', rendered)
-        self.assertIn("three-number pills mean found / accepted here / routed.", rendered)
+        self.assertIn("Three-number pills mean found (raw) / accepted here (useful) / routed.", rendered)
         self.assertIn(".history-card > h2 { margin: 0 0 .75rem; }", rendered)
 
     def test_activity_cards_show_only_nonzero_exception_counts(self):
@@ -346,8 +345,8 @@ class StatusPageTest(unittest.TestCase):
             detail = (Path(directory) / "review" / "pr-42.html").read_text()
             self.assertIn("No recorded history", detail)
             self.assertIn("Review rounds</h2>", detail)
-            self.assertIn('class="activity-caption activity-explanation">Recent results are ordered oldest to newest; '
-                          'three-number pills mean found / accepted here / routed.</p>', detail)
+            self.assertIn('class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. '
+                          'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', detail)
 
     def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
         data = self.fixture()
@@ -478,6 +477,71 @@ class StatusPageTest(unittest.TestCase):
         github["available"] = False
         unavailable = page.render(data, review, NOW, github)
         self.assertNotIn('class="queue-status queue-status-merged">MERGED', unavailable)
+
+    def test_old_merged_rows_move_to_history_after_two_days_but_two_newest_remain_visible(self):
+        data = self.fixture()
+        data["stack"].extend({**data["stack"][0], "number": number} for number in (43, 44, 45, 46))
+        github = {"available": True, "states": {},
+                  "lifecycle": {number: "MERGED" for number in (42, 43, 44, 45, 46)},
+                  "merged_at": {
+                      42: (NOW - timedelta(days=5)).isoformat(),
+                      43: (NOW - timedelta(days=4)).isoformat(),
+                      44: (NOW - timedelta(days=3)).isoformat(),
+                      45: (NOW - timedelta(days=2, hours=1)).isoformat(),
+                      46: (NOW - timedelta(days=1)).isoformat(),
+                  }, "stats": {}}
+        result = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github)
+        history = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github,
+                              history_only=True)
+        self.assertIn('<li id="pr-45" class="merged">', result)
+        self.assertIn('<li id="pr-46" class="merged">', result)
+        self.assertNotIn('<li id="pr-44"', result)
+        self.assertIn('href="/queue-history.html">Queue history ↗</a>', result)
+        self.assertIn('<li id="pr-42" class="merged front">', history)
+        self.assertIn('href="review/pr-42.html">Review details ↗</a>', history)
+        self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42"', history)
+        self.assertNotIn('<h2>Worker lanes</h2>', history)
+        self.assertNotIn('id="review-front"', history)
+
+        github["merged_at"][44] = (NOW - timedelta(days=1, hours=12)).isoformat()
+        updated = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github)
+        self.assertIn('<li id="pr-44" class="merged">', updated)
+        self.assertNotIn('<li id="pr-42"', updated)
+
+    @patch.object(page, "_public_evidence_reader")
+    def test_merged_identity_only_row_retains_public_checkpoint_review_history(self, evidence_reader):
+        review = {"available": True, "queue": {42: {
+            "head": HEAD, "detail_level": "identity_only",
+            "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
+            "review_activity": {
+                "hosted": {"total": 0, "recent": []},
+                "cli": {"total": 1, "recent": [{"raw": 1, "accepted": 1, "routed": 0,
+                                              "completed_at": "2026-09-24T11:00:00Z",
+                                              "attributable": True, "current_head": True,
+                                              "non_counting": False}]},
+            },
+        }}}
+        checkpoints = [
+            {"type": "Hosted", "correction": False, "comment_id": 10 + index,
+             "hosted_review_id": 20 + index, "raw_found": index + 1, "accepted": index,
+             "routed": 1, "reviewed_sha": HEAD[:9],
+             "created_at": f"2026-09-24T10:0{index}:00Z"}
+            for index in range(2)
+        ]
+        evidence_reader.return_value = lambda number, repo: {
+            "checkpoints": checkpoints, "unparsed_candidates": 0,
+        }
+        github = {"available": True, "lifecycle": {42: "MERGED"}}
+        page.enrich_merged_review_history(Path("/tmp/pr-review"), review, github)
+        activity = review["queue"][42]["review_activity"]
+        self.assertEqual(2, activity["hosted"]["total"])
+        self.assertEqual([(1, 0, 1), (2, 1, 1)], [
+            (row["raw"], row["accepted"], row["routed"]) for row in activity["hosted"]["recent"]
+        ])
+        self.assertEqual(1, activity["cli"]["total"])
+        self.assertEqual({"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"}, review["queue"][42]["channels"])
+        self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>',
+                      page.render_activity_cards(review["queue"][42], NOW))
 
     def test_queue_status_badges_require_explicit_controller_evidence(self):
         data = self.fixture()
@@ -911,7 +975,7 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<time class="round-age" datetime="2026-09-24T10:00:00+00:00">2h 0m</time>', merged_row)
         self.assertIn('5 files · <span class="additions">+10</span> / <span class="deletions">−3</span> lines', result)
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>', result)
-        self.assertIn('<span class="round-pill older" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '
+        self.assertIn('<span class="round-pill" aria-label="4/3 (older head), Completed 24 Sep 2026 23:46 NZST" '
                       'title="Completed 24 Sep 2026 23:46 NZST"><span>4/3</span>'
                       '<time class="round-age" datetime="2026-09-24T11:46:00+00:00">14m</time></span>', result)
         self.assertIn('<strong>CLI CodeRabbit</strong><span>1 completed</span>', result)
@@ -1039,7 +1103,7 @@ vm.runInNewContext(process.argv[1], {
                       'title="Completion time unavailable"><span>0/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('<span class="round-pill" aria-label="3/1, Completion time unavailable" '
                       'title="Completion time unavailable"><span>3/1</span><span class="round-age">age n/a</span></span>', result)
-        self.assertIn('<span class="round-pill zero-accepted older unlinked" '
+        self.assertIn('<span class="round-pill zero-accepted unlinked" '
                       'aria-label="2/0 (older head, unlinked, non-counting), Completion time unavailable" '
                       'title="Completion time unavailable"><span>2/0</span><span class="round-age">age n/a</span></span>', result)
         self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
@@ -1066,7 +1130,8 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('aria-label="3/0/2 (found / accepted here / routed), Completion time unavailable"', result)
         self.assertIn('<span>3/0/2</span>', result)
         self.assertIn('<span>1/1</span>', result)
-        self.assertIn('Three-number pills mean found (raw) / accepted here (useful) / routed; dashed borders mark older PR heads.', result)
+        self.assertIn('Three-number pills mean found (raw) / accepted here (useful) / routed.', result)
+        self.assertNotIn('.round-pill.older', result)
         review["queue"][42]["review_activity"]["hosted"]["recent"][0]["routed"] = 4
         with self.assertRaisesRegex(ValueError, "review routed count is invalid"):
             page.render(self.fixture(), review, NOW)
@@ -1177,7 +1242,7 @@ vm.runInNewContext(process.argv[1], {
         result = page.render(self.fixture(), review, NOW)
         self.assertIn('class="round-pill zero-accepted"', result)
         self.assertIn('<time class="round-age" datetime="2026-09-24T11:59:30+00:00">&lt;1m</time>', result)
-        self.assertIn('class="round-pill older" aria-label="2/1 (older head), Completion time unavailable"', result)
+        self.assertIn('class="round-pill" aria-label="2/1 (older head), Completion time unavailable"', result)
         self.assertNotIn('onclick="alert(1)', result)
 
     @patch.object(page.subprocess, "run")
