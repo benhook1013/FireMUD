@@ -1364,6 +1364,32 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
   }
 
+  @ParameterizedTest
+  @CsvSource({"0", "-1"})
+  void nonPositiveWorkItemBaseVersionFailsClosedBeforeRuntimeOwnerLookup(
+      long scriptPatchBaseVersionId) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem workItem = workItem();
+    workItem.setScriptPatchBaseVersionId(scriptPatchBaseVersionId);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    verifyNoInteractions(gameSessionClient);
+  }
+
   @Test
   void missingWorkItemBaseVersionFailsClosedBeforeRemoteSchedule() {
     GameSessionControlPlaneClient gameSessionClient =

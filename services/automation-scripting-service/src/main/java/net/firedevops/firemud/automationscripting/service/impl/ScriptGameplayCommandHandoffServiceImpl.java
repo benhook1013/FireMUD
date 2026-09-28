@@ -223,7 +223,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
       return new HandoffResult(
           false, ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED, "", "", "", "");
     }
-    if (workItem.getScriptPatchBaseVersionId() == null) {
+    if (workItem.getScriptPatchBaseVersionId() == null
+        || workItem.getScriptPatchBaseVersionId() <= 0) {
       Instant now = Instant.now();
       HandoffResult result =
           new HandoffResult(

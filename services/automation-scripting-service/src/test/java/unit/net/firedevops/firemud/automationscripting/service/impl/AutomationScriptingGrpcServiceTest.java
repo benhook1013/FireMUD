@@ -260,6 +260,35 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestRejectsInvalidScriptPatchBaseBeforeOwnerRead() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+
+    for (String baseVersionId : new String[] {"0", "9223372036854775808"}) {
+      GetDraftDesignDigestRequest request =
+          GetDraftDesignDigestRequest.newBuilder()
+              .setTenantId("1")
+              .setBaseVersionId(baseVersionId)
+              .setScriptPatchVersion("patch:1")
+              .setPublishRequestId("request-7")
+              .build();
+
+      AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
+      runAsGameDesign(() -> response.set(invokeDigest(service, request)));
+
+      assertEquals("INVALID_ARGUMENT", response.get().getError().getCode());
+      assertEquals(
+          baseVersionId.equals("0")
+              ? "baseVersionId must be a canonical positive decimal"
+              : "baseVersionId exceeds signed positive long range",
+          response.get().getError().getMessage());
+    }
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
   void getDraftDesignDigestRejectsInactiveBaseVersionForFullScope() {
     ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
     AutomationScriptingGrpcService service = configuredService(TEST_NAMESPACE, digestService);

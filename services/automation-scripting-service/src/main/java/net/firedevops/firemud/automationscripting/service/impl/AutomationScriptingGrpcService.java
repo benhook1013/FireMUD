@@ -382,18 +382,20 @@ public class AutomationScriptingGrpcService
       requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
+      long baseVersionId = 0L;
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH) {
+        baseVersionId =
+            RequestIdValidation.requirePositiveLong(binding.baseVersionId(), "baseVersionId");
+      }
       var digest =
           binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
                   binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(),
-                  Long.parseLong(binding.baseVersionId()),
-                  binding.scriptPatchVersion());
+                  binding.tenantId(), baseVersionId, binding.scriptPatchVersion());
       binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
       if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
-          && (digest.baseVersionId() <= 0L
-              || Long.parseLong(binding.baseVersionId()) != digest.baseVersionId())) {
+          && (digest.baseVersionId() <= 0L || baseVersionId != digest.baseVersionId())) {
         throw new IllegalArgumentException(
             "owner digest base_version_id does not match publication binding");
       }
