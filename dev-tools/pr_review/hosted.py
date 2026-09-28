@@ -459,22 +459,20 @@ def adopt_manual_completed_trigger(
     trigger_id: int,
     head_sha: str,
     anchor: dict[str, Any],
-    payload: dict[str, Any],
+    fetch_payload: Callable[[], dict[str, Any]],
     *,
     path: str | Path | None = None,
     common: Path | None = None,
 ) -> dict[str, Any]:
     """Audit a public manual request after its unique review has completed.
 
-    This never posts to GitHub. The current-head requirement makes the supplied
-    parent/patch anchor a truthful observation of the reviewed candidate.
+    The live PR is fetched under the per-PR Hosted request lock so the same
+    payload verifies the anchor, public result, and durable attribution. This
+    never posts to GitHub.
     """
 
     if type(trigger_id) is not int or trigger_id <= 0 or not EXACT_SHA.fullmatch(head_sha):
         raise ValueError("manual adoption requires an exact trigger ID and reviewed head")
-    pr = payload["data"]["repository"]["pullRequest"]
-    if pr.get("headRefOid", "").casefold() != head_sha.casefold():
-        raise ValueError("manual adoption requires the reviewed head to remain current")
     if (
         not isinstance(anchor, dict)
         or anchor.get("child_head", "").casefold() != head_sha.casefold()
@@ -482,86 +480,114 @@ def adopt_manual_completed_trigger(
             isinstance(anchor.get(key), str) and anchor[key]
             for key in ("parent_identity", "parent_head", "merge_base", "patch_id")
         )
+        or not EXACT_SHA.fullmatch(anchor.get("parent_head", ""))
     ):
         raise ValueError("manual adoption requires a verified current candidate anchor")
-    comments = (pr.get("comments") or {}).get("nodes")
-    if not isinstance(comments, list):
-        raise TypeError("manual adoption requires complete public comments")
-    matches = [item for item in comments if immutable_database_id(item) == trigger_id]
-    if len(matches) != 1:
-        raise ValueError("manual trigger identity is missing or duplicated")
-    comment = matches[0]
-    author = _comment_author_login(comment)
-    created = comment.get("createdAt")
-    url = comment.get("url")
-    if (
-        not isinstance(author, str)
-        or not author.strip()
-        or is_coderabbit_login(author)
-        or normalize_command(comment.get("body") or "") != FULL_COMMAND
-        or parse_timestamp(created) is None
-        or not isinstance(url, str)
-        or not url
-    ):
-        raise ValueError("manual trigger is not an immutable human full-review command")
-    record = {
-        "schema_version": 2,
-        "status": "posted",
-        "repository": repo,
-        "pr_number": pr_number,
-        "head_sha": head_sha,
-        "anchor": dict(anchor),
-        "trigger": {
-            "id": trigger_id,
-            "created_at": created,
-            "url": url,
-            "author_login": author,
-            "type": "full",
-            "command": FULL_COMMAND,
-        },
-        "adoption": {
-            "source": "public_manual_request",
-            "at": utc_now(),
-            "response_id": None,
-        },
-    }
-    state = trigger_state(repo, pr_number, payload, record)
-    if state.state != "completed" or state.attributed is not True or state.response_id is None:
-        raise ValueError(f"manual request lacks a unique completed review: {state.state}")
-    trigger_at = parse_timestamp(created)
-    later_commands = [
-        timestamp
-        for item in comments
-        if immutable_database_id(item) != trigger_id
-        and not is_coderabbit_login(_comment_author_login(item))
-        and normalize_command(item.get("body") or "") == FULL_COMMAND
-        and (timestamp := parse_timestamp(item.get("createdAt"))) is not None
-        and timestamp > trigger_at
-    ]
-    next_trigger = min(later_commands, default=None)
-    if next_trigger is not None:
-        raise ValueError("manual adoption requires the latest public full-review command")
-    reviews = (pr.get("reviews") or {}).get("nodes")
-    if not isinstance(reviews, list):
-        raise TypeError("manual adoption requires complete public review history")
-    in_window = []
-    for review in reviews:
-        if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
-            continue
-        submitted = parse_timestamp(review.get("submittedAt"))
-        if submitted is None:
-            raise ValueError("manual adoption found a CodeRabbit review without submission time")
-        if submitted > trigger_at and (next_trigger is None or submitted < next_trigger):
-            in_window.append(immutable_database_id(review))
-    if len(in_window) > 1 or (in_window and in_window[0] != state.response_id):
-        raise ValueError("manual request has ambiguous CodeRabbit review responses")
-    record["adoption"]["response_id"] = state.response_id
+    if not callable(fetch_payload):
+        raise TypeError("manual adoption requires a live pull-request fetch callback")
     record_path = Path(path) if path is not None else default_trigger_record_path(repo, pr_number, common)
     record_common = common
     if record_common is None and path is not None:
         record_common = _trigger_record_common_for_path(record_path, repo, pr_number)
     descriptor = _with_lock(record_path)
     try:
+        payload = fetch_payload()
+        if not isinstance(payload, dict):
+            raise TypeError("live pull-request response is not an object")
+        try:
+            pr = payload["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as error:
+            raise TypeError("live pull-request data is unavailable for manual adoption") from error
+        if not isinstance(pr, dict):
+            raise TypeError("live pull-request data is unavailable for manual adoption")
+        live_head = pr.get("headRefOid")
+        if not isinstance(live_head, str) or not EXACT_SHA.fullmatch(live_head):
+            raise ValueError("manual adoption requires an exact live PR head")
+        if live_head.casefold() != head_sha.casefold():
+            raise ValueError("manual adoption requires the reviewed head to remain current")
+        live_base_name = pr.get("baseRefName")
+        live_base_oid = pr.get("baseRefOid")
+        if (
+            live_base_name != anchor["parent_identity"]
+            or not isinstance(live_base_oid, str)
+            or not EXACT_SHA.fullmatch(live_base_oid)
+            or live_base_oid.casefold() != anchor["parent_head"].casefold()
+        ):
+            raise ValueError("manual Hosted adoption requires the live PR base to match its verified parent")
+
+        comments = (pr.get("comments") or {}).get("nodes")
+        if not isinstance(comments, list):
+            raise TypeError("manual adoption requires complete public comments")
+        matches = [item for item in comments if immutable_database_id(item) == trigger_id]
+        if len(matches) != 1:
+            raise ValueError("manual trigger identity is missing or duplicated")
+        comment = matches[0]
+        author = _comment_author_login(comment)
+        created = comment.get("createdAt")
+        url = comment.get("url")
+        if (
+            not isinstance(author, str)
+            or not author.strip()
+            or is_coderabbit_login(author)
+            or normalize_command(comment.get("body") or "") != FULL_COMMAND
+            or parse_timestamp(created) is None
+            or not isinstance(url, str)
+            or not url
+        ):
+            raise ValueError("manual trigger is not an immutable human full-review command")
+        record = {
+            "schema_version": 2,
+            "status": "posted",
+            "repository": repo,
+            "pr_number": pr_number,
+            "head_sha": head_sha,
+            "anchor": dict(anchor),
+            "trigger": {
+                "id": trigger_id,
+                "created_at": created,
+                "url": url,
+                "author_login": author,
+                "type": "full",
+                "command": FULL_COMMAND,
+            },
+            "adoption": {
+                "source": "public_manual_request",
+                "at": utc_now(),
+                "response_id": None,
+            },
+        }
+        state = trigger_state(repo, pr_number, payload, record)
+        if state.state != "completed" or state.attributed is not True or state.response_id is None:
+            raise ValueError(f"manual request lacks a unique completed review: {state.state}")
+        trigger_at = parse_timestamp(created)
+        later_commands = [
+            timestamp
+            for item in comments
+            if immutable_database_id(item) != trigger_id
+            and not is_coderabbit_login(_comment_author_login(item))
+            and normalize_command(item.get("body") or "") == FULL_COMMAND
+            and (timestamp := parse_timestamp(item.get("createdAt"))) is not None
+            and timestamp > trigger_at
+        ]
+        next_trigger = min(later_commands, default=None)
+        if next_trigger is not None:
+            raise ValueError("manual adoption requires the latest public full-review command")
+        reviews = (pr.get("reviews") or {}).get("nodes")
+        if not isinstance(reviews, list):
+            raise TypeError("manual adoption requires complete public review history")
+        in_window = []
+        for review in reviews:
+            if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
+                continue
+            submitted = parse_timestamp(review.get("submittedAt"))
+            if submitted is None:
+                raise ValueError("manual adoption found a CodeRabbit review without submission time")
+            if submitted > trigger_at and (next_trigger is None or submitted < next_trigger):
+                in_window.append(immutable_database_id(review))
+        if len(in_window) > 1 or (in_window and in_window[0] != state.response_id):
+            raise ValueError("manual request has ambiguous CodeRabbit review responses")
+        record["adoption"]["response_id"] = state.response_id
+
         for candidate in trigger_record_paths(repo, pr_number, record_common):
             try:
                 loaded = load_trigger_record(candidate, repo, pr_number)
