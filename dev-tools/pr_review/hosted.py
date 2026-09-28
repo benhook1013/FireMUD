@@ -1278,6 +1278,7 @@ def trigger_state(
             terminal = parse_timestamp(item.get("updatedAt"))
             if terminal is not None and terminal > created:
                 if next_dt is not None and terminal >= next_dt:
+                    candidates.append((terminal, "ambiguous", item, None))
                     continue
                 candidates.append((terminal, state, item, None))
             else:

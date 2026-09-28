@@ -38,7 +38,9 @@ from pr_review.git_merge import test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import (
     Channel,
+    ChannelDecision,
     Evidence,
+    ReviewStatus,
     completion_status,
     fresh_taper_history,
     required_taper,
@@ -831,6 +833,95 @@ class ControllerTests(unittest.TestCase):
 
         self.assertNotIn("1:hosted", controller._state().allocations)
 
+    def test_cross_channel_reopen_uses_reconciled_anchor_and_existing_caches(self):
+        controller, _ = self.hosted_judgment_allocation_fixture()
+        self.grant_judgment_hosted_review(controller)
+        report = controller.status()
+        state = controller._state()
+        live, reconciliation = controller._reconciliation(state)
+        history_cache = {}
+        histories = {
+            channel: {
+                1: controller._policy_history(
+                    state,
+                    1,
+                    channel,
+                    reconciliation,
+                    history_cache=history_cache,
+                )
+            }
+            for channel in (Channel.HOSTED, Channel.CLI)
+        }
+        decision = ChannelDecision(
+            Channel.HOSTED,
+            1,
+            ReviewStatus.JUDGMENT_REQUIRED,
+            "cross-channel mismatch",
+        )
+        allocations = {1: report["prs"][0]["allocations"]["hosted"]}
+        stop_audit_cache = {}
+
+        with (
+            patch.object(controller, "_anchor", side_effect=AssertionError("should use reconciled anchor")),
+            patch.object(controller, "_check_stop_evidence", return_value=(None, None, {})) as stop_evidence,
+        ):
+            reopened = controller._reopen_hosted_cross_channel_judgment(
+                state,
+                Channel.HOSTED,
+                decision,
+                live,
+                reconciliation,
+                histories,
+                allocations,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
+            )
+
+        self.assertEqual(reopened.status, ReviewStatus.READY)
+        self.assertEqual(
+            stop_evidence.call_args.args[3],
+            controller._reconciled_anchor(1, live[1], reconciliation),
+        )
+        self.assertIs(stop_evidence.call_args.kwargs["stop_audit_cache"], stop_audit_cache)
+        self.assertIs(stop_evidence.call_args.kwargs["history_cache"], history_cache)
+
+    def test_cross_channel_reopen_fails_closed_when_evidence_audit_errors(self):
+        controller, _ = self.hosted_judgment_allocation_fixture()
+        self.grant_judgment_hosted_review(controller)
+        report = controller.status()
+        state = controller._state()
+        live, reconciliation = controller._reconciliation(state)
+        histories = {
+            channel: {
+                1: controller._policy_history(state, 1, channel, reconciliation)
+            }
+            for channel in (Channel.HOSTED, Channel.CLI)
+        }
+        decision = ChannelDecision(
+            Channel.HOSTED,
+            1,
+            ReviewStatus.JUDGMENT_REQUIRED,
+            "cross-channel mismatch",
+        )
+
+        with patch.object(
+            controller,
+            "_check_stop_evidence",
+            side_effect=OSError("evidence snapshot unavailable"),
+        ):
+            held = controller._reopen_hosted_cross_channel_judgment(
+                state,
+                Channel.HOSTED,
+                decision,
+                live,
+                reconciliation,
+                histories,
+                {1: report["prs"][0]["allocations"]["hosted"]},
+            )
+
+        self.assertEqual(held.status, ReviewStatus.HELD)
+        self.assertIn("evidence snapshot unavailable", held.reason)
+
     def test_allocation_is_promised_before_review_and_does_not_make_pr_complete(self):
         controller = self.grant_allocation()
         result = controller.status()["prs"][0]
@@ -1219,7 +1310,11 @@ class ControllerTests(unittest.TestCase):
             )
         )
         snapshot = controller._bounded_allocation_evidence(allocation, evidence[(1, "hosted")])
-        taper_baseline = controller._bounded_allocation_taper_baseline(allocation, snapshot)
+        taper_baseline = controller._bounded_allocation_taper_baseline(
+            allocation,
+            snapshot,
+            evidence[(1, "hosted")],
+        )
         active_history = fresh_taper_history(
             controller._state(),
             Channel.HOSTED,
@@ -1243,6 +1338,68 @@ class ControllerTests(unittest.TestCase):
             ],
             ["hosted-before-allocation", "hosted-accepted-after-allocation"],
         )
+
+    def test_bounded_taper_cuts_duplicate_zero_rows_at_accepted_history_position(self):
+        evidence = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="hosted-before-allocation", channel="hosted")
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            checkpoint="hosted-before-allocation",
+            cap=3,
+            minimum=1,
+            evidence=evidence,
+        )
+        duplicate_before = self.allocation_evidence(
+            checkpoint="duplicated-zero-result",
+            channel="hosted",
+            duplicate=True,
+        )
+        evidence[(1, "hosted")].extend(
+            (
+                duplicate_before,
+                self.allocation_evidence(
+                    checkpoint="hosted-accepted-result",
+                    channel="hosted",
+                    raw=1,
+                    accepted=1,
+                ),
+                {
+                    **duplicate_before,
+                    "duplicate": True,
+                },
+            )
+        )
+
+        allocation = controller._state().allocations["1:hosted"]
+        history = evidence[(1, "hosted")]
+        snapshot = controller._bounded_allocation_evidence(allocation, history)
+        taper_values = fresh_taper_history(
+            controller._state(),
+            Channel.HOSTED,
+            history,
+            baseline_checkpoints=controller._bounded_allocation_taper_baseline(
+                allocation,
+                snapshot,
+                history,
+            ),
+        )
+
+        self.assertEqual(snapshot["results"][0]["history_index"], 3)
+        self.assertEqual(taper_values, [])
+        self.assertFalse(taper_satisfied(Channel.HOSTED, taper_values, 1))
+
+    def test_bounded_evidence_snapshot_is_reused_for_allocation_and_target_taper(self):
+        controller = self.grant_bounded_allocation()
+        with patch.object(
+            controller,
+            "_bounded_allocation_evidence",
+            wraps=controller._bounded_allocation_evidence,
+        ) as bounded_evidence:
+            controller.status()
+
+        self.assertEqual(bounded_evidence.call_count, 1)
 
     def test_minimum_and_maximum_after_taper_count_only_the_fresh_streak(self):
         dry_history = [

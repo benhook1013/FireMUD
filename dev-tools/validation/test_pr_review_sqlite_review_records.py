@@ -95,6 +95,29 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
             FindingObservation("safe-key", "title", detail="token=ghp_" + "A" * 30)
 
+    def test_bounded_free_text_accepts_only_exact_full_commit_shas_among_long_tokens(self) -> None:
+        sha1 = "a" * 40
+        sha256 = "b" * 64
+        observation = FindingObservation(
+            "sha-context",
+            f"fixed in commit {sha1}",
+            detail=f"verified against {sha256}.",
+        )
+        self.assertEqual(observation.title, f"fixed in commit {sha1}")
+        self.assertEqual(observation.detail, f"verified against {sha256}.")
+
+        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
+            FindingObservation("token-context", "Z" * 40)
+        for key, value in (
+            ("prefixed-sha", f"prefix_{sha1}"),
+            ("suffixed-sha", f"{sha256}_suffix"),
+            ("provider-token", f"ghp_{sha1}"),
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ReviewRecordsError, "credential or raw secret"
+            ):
+                FindingObservation(key, value)
+
     def test_routed_source_finding_cannot_be_changed_into_an_orphan_route(self) -> None:
         self.bootstrap()
         self.records.record_run(

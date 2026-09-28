@@ -138,6 +138,8 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(len(history["runs"]), 1)
+        self.assertEqual(history["runs"][0]["started_at"], "2026-09-27T11:59:00Z")
+        self.assertEqual(history["runs"][0]["finished_at"], "2026-09-27T11:59:00Z")
         self.assertEqual(len(history["findings"]), 1)
         self.assertEqual(history["findings"][0]["title"], "Use the checked value before dereferencing it.")
         self.assertEqual(len(history["decisions"]), 1)
@@ -172,6 +174,8 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(history["runs"][0]["channel"], "cli")
+        self.assertEqual(history["runs"][0]["started_at"], checkpoint.created_at)
+        self.assertEqual(history["runs"][0]["finished_at"], checkpoint.created_at)
         self.assertEqual(history["findings"][0]["title"], "Validate the route before using it.")
         self.assertNotIn("Then replace the surrounding control flow", history["findings"][0]["title"])
         self.assertEqual(history["findings"][0]["disposition"], "routed")
@@ -363,11 +367,27 @@ class SqliteProviderImportsTest(unittest.TestCase):
         )
         ControllerStateStore(state_path(self.common)).update(replace_legacy_route)
         pr_review.sqlite_store.SqliteStateStore(self.database).update(replace_legacy_route)
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+            summary_dispositions=dispositions,
+        )
+        self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(
             [route["route_id"] for route in self.records.open_routes(target_pr=2999, include_legacy_routes=True)],
             [legacy_route.route_id],
         )
         self.assertEqual(self.records.open_routes(target_pr=2879, include_legacy_routes=True), [])
+        self.assertEqual(self.records.history(2879, include_legacy_routes=True)["routes"], [])
+        new_target_history = self.records.history(2999, include_legacy_routes=True)["routes"]
+        self.assertEqual(len(new_target_history), 1)
+        self.assertEqual(new_target_history[0]["route_id"], legacy_route.route_id)
+        self.assertEqual(new_target_history[0]["target_pr"], 2999)
 
     def test_hosted_import_refuses_summary_bucket_without_exact_disposition(self) -> None:
         self.hosted_capture(review_body="### Outside diff range comments (1)")

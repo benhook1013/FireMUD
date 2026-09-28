@@ -102,7 +102,9 @@ def import_hosted_checkpoint(
         reviewer=capture.review["user"]["login"],
         scope=scope,
         coverage_limits=coverage_limits,
-        started_at=None,
+        # The captured review submission is the provider's exact time anchor.
+        # Do not let the records API substitute import time for this run.
+        started_at=capture.review["submitted_at"],
         finished_at=capture.review["submitted_at"],
         observations=observations,
         decisions=decisions,
@@ -159,8 +161,10 @@ def import_cli_checkpoint(
         reviewer="CodeRabbit CLI",
         scope=scope,
         coverage_limits=coverage_limits,
-        started_at=None,
-        finished_at=None,
+        # CLI captures do not contain a separate run timestamp; the parsed
+        # completion checkpoint is the exact available event time.
+        started_at=checkpoint.created_at,
+        finished_at=checkpoint.created_at,
         observations=observations,
         decisions=decisions,
         actor=actor,
