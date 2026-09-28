@@ -19,6 +19,14 @@ import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerRepositoryTest {
   @Test
+  void bootstrapAdvisoryLockIsSkippedForH2() {
+    GameplayAdmissionPointerRepository repository =
+        new GameplayAdmissionPointerRepository(DSL.using(SQLDialect.H2));
+
+    repository.lockForBootstrap();
+  }
+
+  @Test
   void stableRealmAndNamespaceIdentitySurviveRuntimeReplacement() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
