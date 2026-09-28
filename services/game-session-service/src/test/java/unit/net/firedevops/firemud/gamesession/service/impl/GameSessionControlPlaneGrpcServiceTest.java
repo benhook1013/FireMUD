@@ -1728,7 +1728,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void listAdmissionPointersUsesCurrentCatalogRevisionWhenLegacyAuditHasNone() {
+  void listAdmissionPointersFailsClosedWhenLatestAuditHasNoCatalogRevision() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.listPointers())
@@ -1747,7 +1747,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW",
-                    6L)));
+                    6L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
     Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
@@ -1760,8 +1762,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     null,
-                    null,
-                    null,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -1794,8 +1796,81 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertTrue(responseRef.get().getPointers(0).hasCatalogRevision());
-    assertEquals(6L, responseRef.get().getPointers(0).getCatalogRevision());
+    assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
+    assertEquals(0, responseRef.get().getPointersCount());
+  }
+
+  @Test
+  void listAdmissionPointersFailsClosedWhenLatestAuditDoesNotMatchCurrentPointer() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    6L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    6L,
+                    2L,
+                    5L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "historical event",
+                    "req-0",
+                    null,
+                    Instant.parse("2026-04-14T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
+    assertEquals(0, responseRef.get().getPointersCount());
   }
 
   @Test
@@ -1872,6 +1947,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "22222222-2222-2222-2222-222222222222",
         responseRef.get().getPointers(0).getPlayableStateNamespaceId());
+    assertEquals(6L, responseRef.get().getPointers(0).getCatalogRevision());
   }
 
   @Test

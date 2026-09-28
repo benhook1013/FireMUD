@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.Objects;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -53,7 +54,17 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  return toEntry(audit.getFirst(), pointer.catalogRevision());
+                  GameplayAdmissionPointerAuditEntry latestAudit = audit.getFirst();
+                  if (!matchesCurrentPointer(pointer, latestAudit)) {
+                    throw new AdmissionPointerAuditUnavailableException(
+                        "Admission pointer audit does not match current pointer "
+                            + pointer.tenantId()
+                            + ":"
+                            + pointer.worldSlug()
+                            + "/"
+                            + pointer.realmSlug());
+                  }
+                  return toEntry(latestAudit);
                 })
             .toList();
     return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
@@ -211,9 +222,29 @@ final class GameSessionAdmissionPointerControlPlaneService {
     return builder.build();
   }
 
-  private AdmissionPointerControlPlaneEntry toEntry(
-      GameplayAdmissionPointerAuditEntry entry, long currentCatalogRevision) {
-    return toEntry(entry).toBuilder().setCatalogRevision(currentCatalogRevision).build();
+  private static boolean matchesCurrentPointer(
+      GameplayAdmissionPointerSnapshot pointer, GameplayAdmissionPointerAuditEntry audit) {
+    return audit != null
+        && Objects.equals(pointer.worldSlug(), audit.worldSlug())
+        && Objects.equals(pointer.worldDisplayName(), audit.worldDisplayName())
+        && Objects.equals(pointer.realmSlug(), audit.realmSlug())
+        && Objects.equals(pointer.realmDisplayName(), audit.realmDisplayName())
+        && pointer.tenantId() == audit.tenantId()
+        && pointer.gameInstanceId() == audit.gameInstanceId()
+        && pointer.pointerVersion() == audit.pointerVersion()
+        && pointer.catalogRevision() > 0L
+        && audit.catalogRevision() != null
+        && audit.catalogRevision() > 0L
+        && pointer.catalogRevision() == audit.catalogRevision()
+        && pointer.realmId() != null
+        && pointer.realmId().equals(audit.realmId())
+        && pointer.playableStateNamespaceId() != null
+        && pointer.playableStateNamespaceId().equals(audit.playableStateNamespaceId())
+        && pointer.visible() == audit.visible()
+        && pointer.publicProductionRealm() == audit.publicProductionRealm()
+        && pointer.requiresCharacterSelection() == audit.requiresCharacterSelection()
+        && Objects.equals(pointer.stateScope(), audit.stateScope())
+        && Objects.equals(pointer.characterCreationPolicy(), audit.characterCreationPolicy());
   }
 
   private void validatePreparedUpgradeForPointerChange(
