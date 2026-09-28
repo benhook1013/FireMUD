@@ -196,6 +196,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
     if (entry.catalogRevision() != null && entry.catalogRevision() > 0L) {
       builder.setCatalogRevision(entry.catalogRevision());
     }
+    if (entry.realmId() != null) {
+      builder.setRealmId(entry.realmId().toString());
+    }
+    if (entry.playableStateNamespaceId() != null) {
+      builder.setPlayableStateNamespaceId(entry.playableStateNamespaceId().toString());
+    }
     if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
       builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
     }

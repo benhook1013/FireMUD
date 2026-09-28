@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
@@ -1206,6 +1207,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     1L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -1546,6 +1549,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     1L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -1658,6 +1663,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     1L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -1843,6 +1850,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     null,
+                    null,
+                    null,
                     true,
                     true,
                     false,
@@ -1877,6 +1886,82 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertTrue(responseRef.get().getPointers(0).hasCatalogRevision());
     assertEquals(6L, responseRef.get().getPointers(0).getCatalogRevision());
+  }
+
+  @Test
+  void listAdmissionPointersExposesDurableIdentityFromAuditEntry() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    6L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    6L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    null,
+                    Instant.parse("2026-04-15T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(
+        "11111111-1111-1111-1111-111111111111", responseRef.get().getPointers(0).getRealmId());
+    assertEquals(
+        "22222222-2222-2222-2222-222222222222",
+        responseRef.get().getPointers(0).getPlayableStateNamespaceId());
   }
 
   @Test
@@ -1944,6 +2029,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     7L,
                     3L,
                     2L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -1962,6 +2049,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     1L,
                     6L,
                     2L,
+                    null,
+                    null,
                     null,
                     true,
                     true,
@@ -2004,7 +2093,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
     assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
     assertEquals(2L, responseRef.get().getAudit(0).getCatalogRevision());
+    assertEquals(
+        "11111111-1111-1111-1111-111111111111", responseRef.get().getAudit(0).getRealmId());
+    assertEquals(
+        "22222222-2222-2222-2222-222222222222",
+        responseRef.get().getAudit(0).getPlayableStateNamespaceId());
     assertFalse(responseRef.get().getAudit(1).hasCatalogRevision());
+    assertTrue(responseRef.get().getAudit(1).getRealmId().isEmpty());
+    assertTrue(responseRef.get().getAudit(1).getPlayableStateNamespaceId().isEmpty());
     Mockito.verify(authorityService).listPointerAudit(1L, "demo", "production");
     Mockito.verify(authorityService, Mockito.never()).listPointers();
   }

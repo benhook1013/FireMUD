@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.dto;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record AdmissionPointerDto(
     String worldSlug,
@@ -11,6 +12,8 @@ public record AdmissionPointerDto(
     Long gameInstanceId,
     long pointerVersion,
     Long catalogRevision,
+    UUID realmId,
+    UUID playableStateNamespaceId,
     boolean visible,
     boolean publicProductionRealm,
     boolean requiresCharacterSelection,

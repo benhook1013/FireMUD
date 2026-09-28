@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record GameplayAdmissionPointerAuditEntry(
     String worldSlug,
@@ -11,6 +12,8 @@ public record GameplayAdmissionPointerAuditEntry(
     long gameInstanceId,
     long pointerVersion,
     Long catalogRevision,
+    UUID realmId,
+    UUID playableStateNamespaceId,
     boolean visible,
     boolean publicProductionRealm,
     boolean requiresCharacterSelection,

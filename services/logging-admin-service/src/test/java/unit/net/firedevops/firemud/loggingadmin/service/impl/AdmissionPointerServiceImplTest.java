@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -96,6 +97,34 @@ class AdmissionPointerServiceImplTest {
 
     assertEquals(1, result.size());
     assertEquals(2L, result.get(0).tenantId());
+    assertEquals(
+        java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), result.get(0).realmId());
+    assertEquals(
+        java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"),
+        result.get(0).playableStateNamespaceId());
+  }
+
+  @Test
+  void listPointerAuditLeavesHistoricalIdentityAbsent() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.listAdmissionPointerAudit(2L, "sandbox", "preview"))
+        .thenReturn(
+            ListAdmissionPointerAuditResponse.newBuilder()
+                .addAudit(
+                    AdmissionPointerControlPlaneEntry.newBuilder()
+                        .setWorldSlug("sandbox")
+                        .setRealmSlug("preview")
+                        .setTenantId("2")
+                        .setGameInstanceId("11")
+                        .setPointerVersion(4L)
+                        .setCatalogRevision(4L)
+                        .build())
+                .build());
+
+    AdmissionPointerDto result = service.listPointerAudit(2L, "sandbox", "preview").getFirst();
+
+    assertNull(result.realmId());
+    assertNull(result.playableStateNamespaceId());
   }
 
   @Test
@@ -418,6 +447,8 @@ class AdmissionPointerServiceImplTest {
         .setGameInstanceId(Long.toString(gameInstanceId))
         .setPointerVersion(pointerVersion)
         .setCatalogRevision(pointerVersion)
+        .setRealmId("11111111-1111-1111-1111-111111111111")
+        .setPlayableStateNamespaceId("22222222-2222-2222-2222-222222222222")
         .setVisible(true)
         .setRequiresCharacterSelection(false)
         .setStateScope("SHARED")
