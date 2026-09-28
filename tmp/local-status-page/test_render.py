@@ -1071,7 +1071,7 @@ vm.runInNewContext(process.argv[1], {
         with self.assertRaisesRegex(ValueError, "review routed count is invalid"):
             page.render(self.fixture(), review, NOW)
 
-    def test_public_routed_counts_require_exact_history_checkpoint_association(self):
+    def test_public_routed_counts_require_unique_exact_checkpoint_association(self):
         current_head = "c" * 40
         cases = [
             ("hosted", "Hosted", 5855889239, "2026-09-27T12:39:09Z", 3, 3, 0,
@@ -1089,7 +1089,6 @@ vm.runInNewContext(process.argv[1], {
         ]
         review_activity = {"hosted": {"recent": []}, "cli": {"recent": []}}
         public_checkpoints = []
-        policy_history = {"hosted": [], "cli": []}
         for channel, checkpoint_type, checkpoint, observed_at, raw, accepted, routed, head in cases:
             review_activity[channel]["recent"].append({
                 "raw": raw, "accepted": accepted, "routed": None,
@@ -1103,19 +1102,11 @@ vm.runInNewContext(process.argv[1], {
             if routed is not None:
                 public_checkpoint["routed"] = routed
             public_checkpoints.append(public_checkpoint)
-            policy_history[channel].append({
-                "checkpoint": str(checkpoint), "observed_at": observed_at, "raw": raw,
-                "accepted": accepted, "head": head, "completed": True,
-                "attributable": True, "non_counting": False,
-            })
         queue_item = {
             "head": current_head,
             "review_activity": review_activity,
         }
-        evidence = {
-            "checkpoints": {"checkpoints": public_checkpoints},
-            "policy": policy_history,
-        }
+        evidence = {"checkpoints": public_checkpoints}
 
         page._apply_public_routed_counts(queue_item, evidence)
 
@@ -1127,6 +1118,52 @@ vm.runInNewContext(process.argv[1], {
             [result.get("routed") for result in review_activity["cli"]["recent"]],
             [1],
         )
+
+    def test_ambiguous_explicit_public_route_is_visible_and_legacy_checkpoint_stays_two_count(self):
+        current_head = "c" * 40
+        observed_at = "2026-09-28T00:06:55Z"
+        result = {"raw": 5, "accepted": 4, "routed": None, "completed_at": observed_at,
+                  "current_head": True, "attributable": True, "non_counting": False}
+        legacy = {"raw": 6, "accepted": 6, "routed": None, "completed_at": "2026-09-27T05:30:38Z",
+                  "current_head": False, "attributable": True, "non_counting": False}
+        queue_item = {"head": current_head, "review_activity": {
+            "hosted": {"recent": [result, legacy]},
+        }}
+        checkpoint = {"type": "Hosted", "created_at": observed_at, "raw_found": 5,
+                      "accepted": 4, "routed": 1, "reviewed_sha": current_head[:9]}
+        legacy_checkpoint = {"type": "Hosted", "created_at": legacy["completed_at"], "raw_found": 6,
+                             "accepted": 6, "routed": None, "reviewed_sha": "b" * 40}
+        page._apply_public_routed_counts(queue_item, {
+            "checkpoints": [checkpoint, dict(checkpoint), legacy_checkpoint],
+        })
+
+        self.assertIsNone(result["routed"])
+        self.assertTrue(result["_routed_count_unavailable"])
+        self.assertNotIn("_routed_count_unavailable", legacy)
+        cards = page.render_activity_cards(queue_item, NOW)
+        self.assertIn("routed counts unavailable for some recent results", cards)
+        self.assertIn("6/6</span>", cards)
+        self.assertNotIn("6/6/", cards)
+
+    def test_configured_checkpoint_reader_loads_only_from_configured_tool_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            configured_tool = Path(temporary) / "dev-tools" / "pr-review"
+            package = configured_tool.parent / "pr_review"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "evidence.py").write_text(
+                "def evidence(pr, *, repo=None, comments=None):\n"
+                "    return {'pr': pr, 'repo': repo, 'checkpoints': []}\n",
+                encoding="utf-8",
+            )
+            reader = page._public_evidence_reader(str(configured_tool.resolve()))
+            evidence = reader(2828, repo=page.REPO, comments=[])
+            self.assertEqual(evidence["checkpoints"], [])
+            module = sys.modules[reader.__module__]
+            self.assertEqual(
+                Path(module.__file__).resolve(),
+                package / "evidence.py",
+            )
 
     def test_badge_timestamp_is_escaped_and_invalid_values_stay_unknown(self):
         review = page.review_snapshot(None, 42, HEAD, NOW)

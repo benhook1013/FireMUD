@@ -7,11 +7,13 @@ import argparse
 import base64
 import hashlib
 import html
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from itertools import groupby
@@ -432,86 +434,117 @@ def _timestamp_key(value: object) -> str | None:
         return None
 
 
+@lru_cache(maxsize=8)
+def _public_evidence_reader(tool_path: str):
+    """Load the read-only checkpoint parser from the configured tool's source tree."""
+    tool = Path(tool_path).resolve()
+    package_dir = tool.parent / "pr_review"
+    package_init = package_dir / "__init__.py"
+    evidence_path = package_dir / "evidence.py"
+    if not package_init.is_file() or not evidence_path.is_file():
+        raise ImportError("configured review tool has no checkpoint parser")
+    module_key = "_status_page_pr_review_" + hashlib.sha256(str(package_dir).encode()).hexdigest()[:16]
+    package_spec = importlib.util.spec_from_file_location(
+        module_key, package_init, submodule_search_locations=[str(package_dir)]
+    )
+    if package_spec is None or package_spec.loader is None:
+        raise ImportError("configured review tool package cannot be loaded")
+    package = importlib.util.module_from_spec(package_spec)
+    sys.modules[module_key] = package
+    package_spec.loader.exec_module(package)
+    evidence_spec = importlib.util.spec_from_file_location(module_key + ".evidence", evidence_path)
+    if evidence_spec is None or evidence_spec.loader is None:
+        raise ImportError("configured review tool checkpoint parser cannot be loaded")
+    evidence_module = importlib.util.module_from_spec(evidence_spec)
+    sys.modules[evidence_spec.name] = evidence_module
+    evidence_spec.loader.exec_module(evidence_module)
+    if Path(evidence_module.__file__).resolve() != evidence_path.resolve():
+        raise ImportError("configured review tool checkpoint parser source mismatch")
+    reader = getattr(evidence_module, "evidence", None)
+    if not callable(reader):
+        raise ImportError("configured review tool checkpoint parser is unavailable")
+    return reader
+
+
 def _apply_public_routed_counts(queue_item: dict, evidence: dict) -> None:
     """Restore explicit public route counts only through exact checkpoint joins."""
     activity = queue_item.get("review_activity", {})
     current_head = queue_item.get("head")
-    if (not isinstance(activity, dict) or not isinstance(current_head, str)
-            or not isinstance(evidence.get("checkpoints"), dict)
-            or not isinstance(evidence.get("policy"), dict)):
+    if not isinstance(activity, dict):
         return
-
-    raw_checkpoints = evidence["checkpoints"].get("checkpoints")
-    if not isinstance(raw_checkpoints, list):
+    if (not isinstance(current_head, str) or len(current_head) != 40
+            or any(ch not in "0123456789abcdefABCDEF" for ch in current_head)
+            or not isinstance(evidence.get("checkpoints"), list)):
+        for channel in ("hosted", "cli"):
+            status = activity.get(channel)
+            recent = status.get("recent") if isinstance(status, dict) else None
+            if isinstance(recent, list) and any(
+                isinstance(result, dict) and result.get("routed") is None for result in recent
+            ):
+                status["_routed_lookup_unavailable"] = True
         return
 
     for channel, checkpoint_type in (("hosted", "Hosted"), ("cli", "CLI")):
         status = activity.get(channel)
         recent = status.get("recent") if isinstance(status, dict) else None
-        history = evidence["policy"].get(channel)
-        if not isinstance(recent, list) or not isinstance(history, list):
+        if not isinstance(recent, list):
             continue
-
-        history_by_id: dict[str, list[dict]] = {}
-        for record in history:
-            if isinstance(record, dict) and isinstance(record.get("checkpoint"), str):
-                history_by_id.setdefault(record["checkpoint"], []).append(record)
-
-        routes_by_result: dict[tuple, list[int]] = {}
-        for checkpoint in raw_checkpoints:
-            if (not isinstance(checkpoint, dict) or checkpoint.get("type") != checkpoint_type
-                    or type(checkpoint.get("comment_id")) is not int
-                    or type(checkpoint.get("routed")) is not int or checkpoint["routed"] < 0):
-                continue
-            checkpoint_id = str(checkpoint["comment_id"])
-            policy_records = history_by_id.get(checkpoint_id, [])
-            if len(policy_records) != 1:
-                continue
-            policy_record = policy_records[0]
-            raw = checkpoint.get("raw_found")
-            accepted = checkpoint.get("accepted")
-            observed = _timestamp_key(checkpoint.get("created_at"))
-            policy_head = policy_record.get("head", policy_record.get("reviewed_head"))
-            reviewed_sha = checkpoint.get("reviewed_sha")
-            policy_raw = policy_record.get("raw", policy_record.get("raw_found"))
-            policy_accepted = policy_record.get("accepted")
-            attributable = policy_record.get("attributable")
-            if (type(raw) is not int or type(accepted) is not int or observed is None
-                    or policy_record.get("completed") is not True
-                    or type(attributable) is not bool
-                    or type(policy_raw) is not int or policy_raw != raw
-                    or type(policy_accepted) is not int or policy_accepted != accepted
-                    or _timestamp_key(policy_record.get("observed_at")) != observed
-                    or not isinstance(policy_head, str) or not isinstance(reviewed_sha, str)
-                    or len(reviewed_sha) < 7 or not policy_head.startswith(reviewed_sha)):
-                continue
-            result_key = (
-                observed,
-                raw,
-                accepted,
-                policy_head == current_head,
-                attributable,
-                policy_record.get("non_counting") is True,
-            )
-            routes_by_result.setdefault(result_key, []).append(checkpoint["routed"])
-
         for result in recent:
             if not isinstance(result, dict) or result.get("routed") is not None:
                 continue
             observed = _timestamp_key(result.get("completed_at"))
-            if observed is None:
+            raw = result.get("raw")
+            accepted = result.get("accepted")
+            if (observed is None or type(raw) is not int or type(accepted) is not int
+                    or type(result.get("current_head")) is not bool
+                    or type(result.get("attributable")) is not bool
+                    or type(result.get("non_counting")) is not bool):
                 continue
-            result_key = (
-                observed,
-                result.get("raw"),
-                result.get("accepted"),
-                result.get("current_head"),
-                result.get("attributable"),
-                result.get("non_counting") is True,
-            )
-            matches = routes_by_result.get(result_key, [])
-            if len(matches) == 1:
-                result["routed"] = matches[0]
+            same_status_rows = [other for other in recent if isinstance(other, dict)
+                                and _timestamp_key(other.get("completed_at")) == observed
+                                and other.get("raw") == raw and type(other.get("raw")) is int
+                                and other.get("accepted") == accepted and type(other.get("accepted")) is int
+                                and other.get("current_head") == result["current_head"]
+                                and other.get("attributable") == result["attributable"]
+                                and other.get("non_counting") == result["non_counting"]]
+            if len(same_status_rows) != 1:
+                result["_routed_count_unavailable"] = True
+                continue
+            exact = []
+            for checkpoint in evidence["checkpoints"]:
+                if (not isinstance(checkpoint, dict) or checkpoint.get("type") != checkpoint_type
+                        or checkpoint.get("raw_found") != raw or type(checkpoint.get("raw_found")) is not int
+                        or checkpoint.get("accepted") != accepted or type(checkpoint.get("accepted")) is not int
+                        or _timestamp_key(checkpoint.get("created_at")) != observed):
+                    continue
+                reviewed_sha = checkpoint.get("reviewed_sha")
+                if (not isinstance(reviewed_sha, str) or not 7 <= len(reviewed_sha) <= 40
+                        or any(ch not in "0123456789abcdefABCDEF" for ch in reviewed_sha)
+                        ):
+                    continue
+                if result["current_head"] != current_head.casefold().startswith(reviewed_sha.casefold()):
+                    continue
+                if type(checkpoint.get("comment_id")) is not int or checkpoint["comment_id"] <= 0:
+                    continue
+                exact.append(checkpoint)
+            if len(exact) != 1:
+                if len(exact) > 1 or any(
+                    isinstance(checkpoint, dict)
+                    and checkpoint.get("type") == checkpoint_type
+                    and _timestamp_key(checkpoint.get("created_at")) == observed
+                    and type(checkpoint.get("routed")) is int
+                    for checkpoint in evidence["checkpoints"]
+                ):
+                    result["_routed_count_unavailable"] = True
+                continue
+            routed = exact[0].get("routed")
+            if routed is None:
+                continue
+            if type(routed) is not int or routed < 0 or accepted + routed > raw:
+                result["_routed_count_unavailable"] = True
+                continue
+            result["routed"] = routed
+            result.pop("_routed_count_unavailable", None)
 
 
 def enrich_public_routed_counts(tool: Path | None, review: dict) -> None:
@@ -539,31 +572,58 @@ def enrich_public_routed_counts(tool: Path | None, review: dict) -> None:
     if not prs:
         return
 
+    try:
+        reader = _public_evidence_reader(str(tool.resolve()))
+    except Exception:
+        reader = None
+
+    if reader is None:
+        for number in prs:
+            activity = queue[number].get("review_activity", {})
+            if isinstance(activity, dict):
+                for channel in ("hosted", "cli"):
+                    status = activity.get(channel)
+                    recent = status.get("recent") if isinstance(status, dict) else None
+                    if isinstance(recent, list) and any(
+                        isinstance(result, dict) and result.get("routed") is None for result in recent
+                    ):
+                        status["_routed_lookup_unavailable"] = True
+        return
+
     def fetch(pr: int) -> tuple[int, dict | None]:
         try:
-            result = subprocess.run(
-                [sys.executable, str(tool), "evidence", str(pr), "--json"],
-                cwd=tool.parent.parent,
-                capture_output=True,
-                text=True,
-                timeout=RECORDS_PREFLIGHT_TIMEOUT_SECONDS + RECORDS_HISTORY_TIMEOUT_SECONDS + 7,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
+            document = reader(pr, repo=REPO)
+        except Exception:
             return pr, None
-        if result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+        if not isinstance(document, dict) or not isinstance(document.get("checkpoints"), list):
             return pr, None
-        try:
-            document = json.loads(result.stdout)
-        except (ValueError, TypeError):
-            return pr, None
-        return (pr, document) if isinstance(document, dict) and document.get("pr") == pr else (pr, None)
+        return pr, document
 
     with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
         for future in as_completed([pool.submit(fetch, pr) for pr in prs]):
             pr, evidence = future.result()
             if evidence is not None:
                 _apply_public_routed_counts(queue[pr], evidence)
+                if type(evidence.get("unparsed_candidates")) is int and evidence["unparsed_candidates"] > 0:
+                    activity = queue[pr].get("review_activity", {})
+                    if isinstance(activity, dict):
+                        for channel in ("hosted", "cli"):
+                            status = activity.get(channel)
+                            recent = status.get("recent") if isinstance(status, dict) else None
+                            if isinstance(recent, list) and any(
+                                isinstance(result, dict) and result.get("routed") is None for result in recent
+                            ):
+                                status["_routed_lookup_unavailable"] = True
+            else:
+                activity = queue[pr].get("review_activity", {})
+                if isinstance(activity, dict):
+                    for channel in ("hosted", "cli"):
+                        status = activity.get(channel)
+                        recent = status.get("recent") if isinstance(status, dict) else None
+                        if isinstance(recent, list):
+                            if any(isinstance(result, dict) and result.get("routed") is None
+                                   for result in recent):
+                                status["_routed_lookup_unavailable"] = True
 
 
 def github_stages(now: datetime) -> dict:
@@ -1050,6 +1110,10 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                 notes.append(f"{unlinked_count} unlinked to a verified review")
             if non_counting_count:
                 notes.append(f"{non_counting_count} excluded from taper")
+            if (activity.get("_routed_lookup_unavailable") is True
+                    or any(isinstance(result, dict) and result.get("_routed_count_unavailable") is True
+                           for result in recent)):
+                notes.append("routed counts unavailable for some recent results")
             activity_note = (
                 f'<p class="activity-note">{safe(" · ".join(notes))}</p>' if notes else ""
             )
