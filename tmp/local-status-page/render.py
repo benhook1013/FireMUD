@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from itertools import groupby
 from pathlib import Path
@@ -36,6 +37,15 @@ EXPLICIT_HUMAN_STOP_STATES = frozenset({
     "HUMAN_STOP", "HUMAN_STOPPED", "MANUALLY_STOPPED", "OVERRIDE", "STOPPED_BY_HUMAN",
 })
 REVIEW_FINISHED_STATES = EXPLICIT_HUMAN_STOP_STATES | {"COMPLETE"}
+RECORDS_PREFLIGHT_TIMEOUT_SECONDS = 8
+RECORDS_HISTORY_TIMEOUT_SECONDS = 5
+MAX_RECORD_HISTORY_BYTES = 512_000
+MAX_RECORDS_PER_KIND = 40
+MAX_HISTORY_RECORDS = 1000
+MAX_RECORD_VALUE_LENGTH = 80
+MAX_RECORD_TEXT_LENGTH = 500
+MAX_REVIEW_ROUNDS = 100
+MAX_REVIEW_DETAIL_RECORD_HTML_CHARS = 250_000
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -485,6 +495,428 @@ def selected_review_front(data: dict, review: dict, github: dict) -> int | None:
     return next((number for number in ordered if unfinished(number)), None)
 
 
+def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, dict]:
+    """Fetch records only after one read-only SQLite compatibility preflight."""
+    unavailable = {number: {"state": "unavailable", "reason": "Records history is unavailable"}
+                   for number in prs}
+    if tool is None or not prs:
+        return unavailable
+    try:
+        preflight = subprocess.run(
+            [sys.executable, str(tool), "state", "status", "--json"],
+            cwd=tool.parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=RECORDS_PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return unavailable
+    if preflight.returncode != 0 or len(preflight.stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+        return unavailable
+    try:
+        state = json.loads(preflight.stdout)
+    except (ValueError, TypeError):
+        return unavailable
+    if not (isinstance(state, dict) and state.get("format") == "sqlite"
+            and state.get("compatible") is True and state.get("read_only") is True
+            and state.get("bootstrapped", True) is True):
+        return unavailable
+
+    def fetch(number: int) -> tuple[int, dict]:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(tool), "records", "history", "--pr", str(number)],
+                cwd=tool.parent.parent,
+                capture_output=True,
+                text=True,
+                timeout=RECORDS_HISTORY_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return number, {"state": "unavailable", "reason": "History read failed"}
+        if result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+            return number, {"state": "unavailable", "reason": "History read failed"}
+        try:
+            document = json.loads(result.stdout)
+            payload = document["result"]
+            if (document.get("api_version") != 1 or not isinstance(payload, dict)
+                    or payload.get("pr") != number):
+                raise ValueError("history envelope mismatch")
+            records = {key: payload[key] for key in ("runs", "findings", "routes", "decisions")}
+            if any(not isinstance(value, list) or len(value) > MAX_HISTORY_RECORDS
+                   or any(not isinstance(record, dict) for record in value)
+                   for value in records.values()):
+                raise ValueError("history records malformed or oversized")
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return number, {"state": "unavailable", "reason": "History response is malformed"}
+        state_name = "empty" if not any(records.values()) else "available"
+        return number, {"state": state_name, **records}
+
+    snapshots: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
+        futures = [pool.submit(fetch, number) for number in prs]
+        for future in as_completed(futures):
+            number, snapshot = future.result()
+            snapshots[number] = snapshot
+    return snapshots
+
+
+def _bounded_category(value: object, fallback: str = "Unspecified") -> str:
+    if not isinstance(value, str):
+        return fallback
+    category = value.strip()
+    if not category or len(category) > MAX_RECORD_VALUE_LENGTH:
+        return fallback
+    if any(not (character.isalnum() or character in " _.-") for character in category):
+        return fallback
+    return safe(category.replace("_", " "))
+
+
+def _record_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if len(text) > MAX_RECORD_TEXT_LENGTH:
+        text = text[:MAX_RECORD_TEXT_LENGTH].rstrip() + "…"
+    return safe(text)
+
+
+def _run_source(run: dict) -> str:
+    source = run.get("source", run.get("channel", run.get("source_channel", "")))
+    if not isinstance(source, str):
+        source = ""
+    normalized = source.casefold().replace("_", "-").replace(" ", "-")
+    if "subagent" in normalized or "sub-agent" in normalized:
+        return "Subagent pre-review"
+    if "manual" in normalized:
+        return "Manual pre-review"
+    if "hosted" in normalized:
+        return "Hosted review"
+    if normalized == "cli" or normalized.startswith("cli-"):
+        return "CLI review"
+    return "Other review source"
+
+
+def _run_counts(run: dict) -> str:
+    counts = run.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    labels = (("found", "found"), ("raw", "found"), ("accepted", "accepted"),
+              ("useful", "accepted"), ("routed", "routed"))
+    shown = []
+    used = set()
+    for key, label in labels:
+        value = counts.get(key, run.get(key))
+        if type(value) is int and value >= 0 and label not in used:
+            shown.append(f'<span>{label}: {value}</span>')
+            used.add(label)
+    return " ".join(shown) or "Counts unavailable"
+
+
+def _decision_rows(records: list[dict]) -> str:
+    rows = []
+    for index, record in enumerate(records[:MAX_RECORDS_PER_KIND], 1):
+        decision = _bounded_category(record.get("decision", record.get("disposition")))
+        reason = _record_text(record.get("reason"))
+        response = _record_text(record.get("response", record.get("response_text", record.get("proof_or_reason"))))
+        content = f'<li>{decision}{_history_source_label(record)}'
+        if reason:
+            content += f'<p>{reason}</p>'
+        if response:
+            content += f'<p>{response}</p>'
+        rows.append(content + "</li>")
+    if len(records) > MAX_RECORDS_PER_KIND:
+        rows.append("<li>Additional records omitted from this bounded page.</li>")
+    return "".join(rows)
+
+
+def _history_source_label(record: dict) -> str:
+    if "source" not in record and "channel" not in record:
+        if "source_channel" not in record:
+            return ""
+    return f' <span class="record-source">({_run_source(record)})</span>'
+
+
+def _render_finding(record: dict, index: int, decisions: list[dict], route: dict | None) -> str:
+    disposition = _bounded_category(record.get("disposition"))
+    title = _record_text(record.get("title"))
+    detail = _record_text(record.get("detail"))
+    content = f'<strong>{title}</strong>' if title else f'Finding {index}'
+    if detail:
+        content += f'<p>{detail}</p>'
+    content += f' · {disposition}{_history_source_label(record)}'
+    if route is not None:
+        content += f'<div class="linked-record">{_render_route(route)}</div>'
+    if decisions:
+        content += f'<ul class="linked-record">{_decision_rows(decisions)}</ul>'
+    return f'<li>{content}</li>'
+
+
+def _render_route(route: dict) -> str:
+    source_pr = route.get("source_pr")
+    target_pr = route.get("target_pr")
+    source = f'PR #{source_pr}' if type(source_pr) is int and source_pr > 0 else "Unknown source"
+    target = f'PR #{target_pr}' if type(target_pr) is int and target_pr > 0 else "Unassigned target"
+    status = _bounded_category(route.get("status"))
+    parts = [f'<strong>Route</strong> · {source} → {target} · {status}']
+    target_history = route.get("target_history", [])
+    if not isinstance(target_history, list):
+        target_history = []
+    for target_change in target_history[:MAX_RECORDS_PER_KIND]:
+        if not isinstance(target_change, dict):
+            continue
+        previous_target = target_change.get("target_pr")
+        previous = (f'PR #{previous_target}'
+                    if type(previous_target) is int and previous_target > 0 else "Unassigned")
+        reason = _record_text(target_change.get("reason"))
+        parts.append(f'<span class="record-counts">Target history: {previous}{": " + reason if reason else ""}</span>')
+    if route.get("disposition"):
+        parts.append(f'<span class="record-counts">Disposition: {_record_text(route.get("disposition"))}</span>')
+    if route.get("proof"):
+        parts.append(f'<span class="record-counts">Proof: {_record_text(route.get("proof"))}</span>')
+    resolutions = route.get("resolutions", [])
+    if not isinstance(resolutions, list):
+        resolutions = []
+    for resolution in resolutions[:MAX_RECORDS_PER_KIND]:
+        if isinstance(resolution, dict):
+            outcome = _bounded_category(resolution.get("outcome"))
+            proof = _record_text(resolution.get("proof_or_reason"))
+            parts.append(f'<span class="record-counts">Resolution: {outcome}{": " + proof if proof else ""}</span>')
+    nested_decisions = route.get("decisions", [])
+    if isinstance(nested_decisions, list) and nested_decisions:
+        parts.append(f'<ul class="linked-record">{_decision_rows(nested_decisions)}</ul>')
+    return " ".join(parts)
+
+
+def render_record_sections(history: dict) -> str:
+    runs = history.get("runs", [])
+    findings = history.get("findings", [])
+    routes = history.get("routes", [])
+    decisions = history.get("decisions", [])
+    decisions_by_route: dict[object, list[dict]] = {}
+    for decision in decisions:
+        route_id = decision.get("route_id")
+        if route_id:
+            decisions_by_route.setdefault(route_id, []).append(decision)
+    expanded_routes = []
+    for route in routes:
+        expanded = dict(route)
+        nested_value = expanded.get("decisions", [])
+        nested = list(nested_value) if isinstance(nested_value, list) else []
+        existing_ids = {decision.get("decision_id") for decision in nested}
+        nested.extend(decision for decision in decisions_by_route.get(route.get("route_id"), [])
+                      if decision.get("decision_id") not in existing_ids)
+        expanded["decisions"] = nested
+        expanded_routes.append(expanded)
+    routes_by_id = {route.get("route_id"): route for route in expanded_routes if route.get("route_id")}
+    run_sections = []
+    attached_decisions = set()
+    attached_findings = set()
+    for run in runs[:MAX_RECORDS_PER_KIND]:
+        run_id = run.get("run_id")
+        run_findings = [(index, finding) for index, finding in enumerate(findings, 1)
+                        if finding.get("run_id") == run_id]
+        finding_ids = {finding.get("finding_id") for _, finding in run_findings}
+        run_decisions = [decision for decision in decisions
+                         if decision.get("run_id") == run_id and decision.get("finding_id") not in finding_ids]
+        rendered_findings = []
+        for index, finding in run_findings[:MAX_RECORDS_PER_KIND]:
+            finding_id = finding.get("finding_id")
+            attached_findings.add(finding_id)
+            finding_decisions = [decision for decision in decisions
+                                 if decision.get("run_id") == run_id and decision.get("finding_id") == finding_id]
+            attached_decisions.update(decision.get("decision_id", id(decision)) for decision in finding_decisions)
+            route = routes_by_id.get(finding.get("route_id"))
+            rendered_findings.append(_render_finding(finding, index, finding_decisions, route))
+        attached_decisions.update(decision.get("decision_id", id(decision)) for decision in run_decisions)
+        outcome = _bounded_category(run.get("outcome"))
+        run_header = (
+            f'<strong>{_run_source(run)}</strong> · {outcome}'
+            f'<span class="record-counts">{_run_counts(run)}</span>'
+        )
+        findings_list = "".join(rendered_findings) or "<li>No findings recorded for this run.</li>"
+        decision_list = _decision_rows(run_decisions)
+        if decision_list:
+            findings_list += decision_list
+        run_sections.append(
+            f'<li>{run_header}<ol class="history-list">{findings_list}</ol></li>'
+        )
+    if len(runs) > MAX_RECORDS_PER_KIND:
+        run_sections.append("<li>Additional runs omitted from this bounded page.</li>")
+    for route in expanded_routes:
+        nested = route.get("decisions", [])
+        if isinstance(nested, list):
+            attached_decisions.update(decision.get("decision_id", id(decision)) for decision in nested
+                                      if isinstance(decision, dict))
+
+    unlinked_findings = [finding for finding in findings if finding.get("finding_id") not in attached_findings]
+    unlinked_findings_html = "".join(
+        _render_finding(finding, index, [], routes_by_id.get(finding.get("route_id")))
+        for index, finding in enumerate(unlinked_findings[:MAX_RECORDS_PER_KIND], 1)
+    )
+    rendered_routes = "".join(f'<li>{_render_route(route)}</li>' for route in expanded_routes[:MAX_RECORDS_PER_KIND])
+    unlinked_decisions = [decision for decision in decisions
+                          if decision.get("decision_id", id(decision)) not in attached_decisions]
+    rendered_decisions = _decision_rows(unlinked_decisions)
+    return (
+        '<section class="history-group"><h2>Runs and findings</h2>'
+        f'<ol class="history-list">{"".join(run_sections) or "<li>No runs recorded.</li>"}</ol></section>'
+        '<section class="history-group"><h2>Unlinked findings</h2>'
+        f'<ol class="history-list">{unlinked_findings_html or "<li>No unlinked findings.</li>"}</ol></section>'
+        '<section class="history-group"><h2>Routes</h2>'
+        f'<ol class="history-list">{rendered_routes or "<li>No routes recorded.</li>"}</ol></section>'
+        '<section class="history-group"><h2>Other decisions</h2>'
+        f'<ol class="history-list">{rendered_decisions or "<li>No unlinked decisions.</li>"}</ol></section>'
+    )
+
+
+def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
+                         history: dict | None = None) -> str:
+    """Render a bounded static PR history page from structured records."""
+    item = next((entry for entry in data["stack"] if entry["number"] == pr), None)
+    if item is None:
+        raise ValueError("review details require a configured queue PR")
+    queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
+    activity_html = render_activity_cards(queue_item, now)
+    history = history or {"state": "unavailable"}
+    state = history.get("state")
+    if state == "unavailable":
+        records_html = '<p class="history-note">Recorded history unavailable.</p>'
+    elif state == "empty":
+        records_html = '<p class="history-note">No recorded history for this PR.</p>'
+    else:
+        records_html = render_record_sections(history)
+        if len(records_html) > MAX_REVIEW_DETAIL_RECORD_HTML_CHARS:
+            records_html = ('<p class="history-note">Recorded history exceeds this page’s display limit; '
+                            'the source data is unchanged.</p>')
+    timestamp = safe(now.isoformat())
+    mast = render_mast(
+        f'PR #{pr} Review History',
+        f'<span class="mast-meta">Snapshot <time datetime="{timestamp}">{safe(local_time(now))}</time></span>',
+        "mast-meta",
+        (("/", "Delivery Status", "Status"), (f"{REPO_URL}{pr}", "Open PR on GitHub ↗", "GitHub ↗")),
+    )
+    activity_section = activity_html or '<p class="history-note">Review-round summaries unavailable.</p>'
+    return f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none">
+<link rel="icon" type="image/svg+xml" href="/flame-ember.svg"><title>FireMUD PR #{pr} Review History</title>
+<style>
+main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem) 4rem; }}
+.detail-title {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .7rem; }}
+.detail-title h2 {{ margin: 0; }} .detail-title .queue-status {{ margin-left: auto; }}
+.history-card {{ margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }}
+.history-group {{ margin-top: 1.4rem; }} .history-group:first-child {{ margin-top: 0; }}
+.history-group h2 {{ font-size: 1.2rem; }} .history-list {{ margin: 0; padding-left: 1.3rem; }}
+.history-list li + li {{ margin-top: .35rem; }} .history-list p {{ margin: .25rem 0; overflow-wrap: anywhere; }}
+.record-counts {{ display: flex; flex-wrap: wrap; gap: .35rem .7rem; color: var(--muted); font-size: .8rem; }}
+.record-source {{ color: var(--muted); font-size: .8rem; }}
+.linked-record {{ margin: .35rem 0 .2rem; padding-left: 1.2rem; }}
+.history-note {{ color: var(--muted); }} footer {{ margin-top: 2rem; color: var(--muted); font-size: .8rem; }}
+{SHARED_CSS}
+</style></head><body>{mast}<main>
+<section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
+<section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>{activity_section}</section>
+<section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
+<footer>History comes from the controller's read-only records view.</footer>
+</main></body></html>'''
+
+
+def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
+    """Render the current compact Hosted/CLI round summaries for reuse on detail pages."""
+    activity_cards = []
+    if queue_item and isinstance(queue_item.get("review_activity"), dict):
+        for channel in ("hosted", "cli"):
+            activity = queue_item["review_activity"].get(channel)
+            if not isinstance(activity, dict):
+                continue
+            recent = activity.get("recent", [])
+            if not isinstance(recent, list):
+                continue
+            pills = []
+            for result in recent[:MAX_REVIEW_ROUNDS]:
+                if not isinstance(result, dict):
+                    continue
+                routed = result.get("routed")
+                if routed is not None and (
+                    type(routed) is not int or routed < 0 or routed + result["accepted"] > result["raw"]
+                ):
+                    raise ValueError("review routed count is invalid")
+                older = not result["current_head"]
+                unlinked = not result["attributable"]
+                non_counting = result["non_counting"]
+                description = ", ".join(
+                    part for part, selected in
+                    (("older head", older), ("unlinked", unlinked), ("non-counting", non_counting)) if selected
+                )
+                pill_label = f'{result["raw"]}/{result["accepted"]}'
+                if routed is not None:
+                    pill_label += f"/{routed} (found / accepted here / routed)"
+                if description:
+                    pill_label += f" ({description})"
+                pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" older" if older else "") + (" unlinked" if unlinked else "")
+                completed = round_completion(result.get("completed_at"), now)
+                if completed is None:
+                    completion_label = "Completion time unavailable"
+                    age_html = '<span class="round-age">age n/a</span>'
+                else:
+                    completion_label = f"Completed {completed.astimezone(LOCAL_TIMEZONE).strftime('%d %b %Y %H:%M %Z')}"
+                    age_html = (
+                        f'<time class="round-age" datetime="{safe(completed.isoformat())}">'
+                        f'{safe(round_age(completed, now))}</time>'
+                    )
+                pills.append(
+                    f'<span class="{pill_class}" aria-label="{safe(pill_label + ", " + completion_label)}" '
+                    f'title="{safe(completion_label)}">'
+                    f'<span>{safe(result["raw"])}/{safe(result["accepted"])}'
+                    f'{"/" + safe(routed) if routed is not None else ""}</span>{age_html}</span>'
+                )
+            older_count = sum(not result["current_head"] for result in recent if isinstance(result, dict))
+            unlinked_count = sum(not result["attributable"] for result in recent if isinstance(result, dict))
+            non_counting_count = sum(result["non_counting"] for result in recent if isinstance(result, dict))
+            notes = []
+            if older_count:
+                notes.append(f"{older_count} from older heads")
+            if unlinked_count:
+                notes.append(f"{unlinked_count} unlinked to a verified review")
+            if non_counting_count:
+                notes.append(f"{non_counting_count} excluded from taper")
+            caption = "Recent, oldest to newest"
+            if any(isinstance(result, dict) and result.get("routed") is not None for result in recent):
+                caption += " · 3 numbers: found / accepted here / routed"
+            if notes:
+                caption += " · " + " · ".join(notes)
+            channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
+            total = activity.get("total", 0)
+            if type(total) is not int or total < 0:
+                total = 0
+            activity_cards.append(
+                f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
+                f'<span>{safe(total)} completed</span></div>'
+                f'<span class="activity-caption">{safe(caption)}</span>'
+                f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
+            )
+    return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
+
+
+def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: datetime,
+                              histories: dict[int, dict]) -> None:
+    detail_dir = output_dir / "review"
+    detail_dir.mkdir(parents=True, exist_ok=True)
+    for item in data["stack"]:
+        number = item["number"]
+        document = render_review_detail(data, review, now, number, histories.get(number))
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=detail_dir,
+                                         prefix=f".pr-{number}-", delete=False) as temporary:
+            temporary.write(document)
+            temporary_path = Path(temporary.name)
+        try:
+            os.replace(temporary_path, detail_dir / f"pr-{number}.html")
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+
 def render(data: dict, review: dict, now: datetime, github: dict | None = None) -> str:
     stack = data["stack"]
     lanes = data["lanes"]
@@ -597,72 +1029,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             status_html += f'<span class="sub">{label} · identity only</span>'
         elif queue_item and queue_item.get("detail_level") == "unknown":
             status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
-        activity_cards = []
-        if queue_item and isinstance(queue_item.get("review_activity"), dict):
-            for channel in ("hosted", "cli"):
-                activity = queue_item["review_activity"].get(channel)
-                if not isinstance(activity, dict):
-                    continue
-                recent = activity.get("recent", [])
-                pills = []
-                for result in recent:
-                    routed = result.get("routed")
-                    if routed is not None and (
-                        type(routed) is not int or routed < 0 or routed + result["accepted"] > result["raw"]
-                    ):
-                        raise ValueError("review routed count is invalid")
-                    older = not result["current_head"]
-                    unlinked = not result["attributable"]
-                    non_counting = result["non_counting"]
-                    description = ", ".join(
-                        part for part, selected in
-                        (("older head", older), ("unlinked", unlinked), ("non-counting", non_counting)) if selected
-                    )
-                    pill_label = f'{result["raw"]}/{result["accepted"]}'
-                    if routed is not None:
-                        pill_label += f"/{routed} (found / accepted here / routed)"
-                    if description:
-                        pill_label += f" ({description})"
-                    pill_class = "round-pill" + (" zero-accepted" if result["accepted"] == 0 else "") + (" older" if older else "") + (" unlinked" if unlinked else "")
-                    completed = round_completion(result.get("completed_at"), now)
-                    if completed is None:
-                        completion_label = "Completion time unavailable"
-                        age_html = '<span class="round-age">age n/a</span>'
-                    else:
-                        completion_label = f"Completed {completed.astimezone(LOCAL_TIMEZONE).strftime('%d %b %Y %H:%M %Z')}"
-                        age_html = (
-                            f'<time class="round-age" datetime="{safe(completed.isoformat())}">'
-                            f'{safe(round_age(completed, now))}</time>'
-                        )
-                    pills.append(
-                        f'<span class="{pill_class}" aria-label="{safe(pill_label + ", " + completion_label)}" '
-                        f'title="{safe(completion_label)}">'
-                        f'<span>{safe(result["raw"])}/{safe(result["accepted"])}'
-                        f'{"/" + safe(routed) if routed is not None else ""}</span>{age_html}</span>'
-                    )
-                older_count = sum(not result["current_head"] for result in recent)
-                unlinked_count = sum(not result["attributable"] for result in recent)
-                non_counting_count = sum(result["non_counting"] for result in recent)
-                notes = []
-                if older_count:
-                    notes.append(f"{older_count} from older heads")
-                if unlinked_count:
-                    notes.append(f"{unlinked_count} unlinked to a verified review")
-                if non_counting_count:
-                    notes.append(f"{non_counting_count} excluded from taper")
-                caption = "Recent, oldest to newest"
-                if any(result.get("routed") is not None for result in recent):
-                    caption += " · 3 numbers: found / accepted here / routed"
-                if notes:
-                    caption += " · " + " · ".join(notes)
-                channel_name = "CLI CodeRabbit" if channel == "cli" else "Hosted CodeRabbit"
-                activity_cards.append(
-                    f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
-                    f'<span>{safe(activity["total"])} completed</span></div>'
-                    f'<span class="activity-caption">{safe(caption)}</span>'
-                    f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div></div>'
-                )
-        activity_grid = f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
+        activity_grid = render_activity_cards(queue_item, now)
         if number == front_number:
             front_size_html = size_html
             if has_controller_states:
@@ -684,6 +1051,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None) 
             f'<span class="sub">{size_html}</span>'
             f'<div class="pr-status-line">{queue_badge_html}{status_html}</div>'
             f'{activity_grid}'
+            f'<a class="review-detail-link" href="review/pr-{number}.html">Review details ↗</a>'
             f'</div></li>'))
     train = []
     for stage_position, (stage, grouped_rows) in enumerate(groupby(rows, key=lambda row: row[0]), 1):
@@ -861,6 +1229,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .pr-title-line {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .55rem; }}
 .pr-status-line {{ display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; margin-top: .25rem; }}
 .pr-status-line .sub {{ display: inline; margin-top: 0; }}
+.review-detail-link {{ display: inline-block; margin-top: .4rem; font-size: .78rem; font-weight: 700; }}
 .queue-status {{ display: inline-flex; align-items: center; padding: .16rem .38rem; border: 1px solid transparent; font-size: .59rem; font-weight: 900; letter-spacing: .045em; line-height: 1.2; white-space: nowrap; }}
 .queue-status-front {{ background: var(--fire); color: #fff; }}
 .queue-status-merged {{ background: var(--plum); color: #fff; }}
@@ -889,7 +1258,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
 </dl><p>Request states are not merge readiness. Result pills show raw/useful counts and age; dashed borders mark older PR heads.</p></div>
 <div class="review-train">{"".join(train)}</div></section>
-<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. No credentials or private review records are embedded in this page.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
+<footer>Queue order follows the review controller; programme labels and lane notes are maintained in status.json. The Refresh button updates PR details and publishes both pages. The queue links to public review details; raw captures and credentials are not intentionally embedded.</footer></main><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script><script id="snapshot-updates">{SNAPSHOT_SCRIPT}</script></body></html>"""
 
 
 def main() -> None:
@@ -913,9 +1282,12 @@ def main() -> None:
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
     now = datetime.now(timezone.utc)
     data = controller_stack(data, review, github, now)
+    history_prs = [item["number"] for item in data["stack"]]
+    histories = records_history_snapshots(review_tool, history_prs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = render(data, review, now, github)
     progress_rendered = render_project_map(now)
+    write_review_detail_pages(args.output.parent, data, review, now, histories)
     for name in ASSET_FILES:
         source = ROOT / "assets" / name
         with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=".asset-", delete=False) as asset_temp:

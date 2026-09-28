@@ -7,14 +7,17 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "output" / "index.html"
 PUBLIC_COPY = ROOT / "output" / "public-index.html"
 PROGRESS_SOURCE = ROOT / "output" / "progress.html"
+REVIEW_SOURCE = ROOT / "output" / "review"
 ASSET_FILES = (
     "icon-options.html", "flame-ember.svg", "flame-monogram.svg", "flame-crest.svg", "flame-pixel.svg",
 )
@@ -30,6 +33,7 @@ REFRESH_TIME = re.compile(r'<span class="refresh-time">.*?</span>', re.DOTALL)
 REFRESH_SCRIPT = re.compile(r'<script id="local-refresh-progress">.*?</script>', re.DOTALL)
 AGE_SCRIPT = re.compile(r'<script id="relative-age-updates">(.*?)</script>', re.DOTALL)
 SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re.DOTALL)
+REVIEW_LINK = re.compile(r'href="review/pr-(\d+)\.html"')
 
 
 def local_wifi_url() -> str:
@@ -80,12 +84,45 @@ def progress_public_html(source: str) -> str:
     return source
 
 
-def resources(document: str, progress_document: str | None = None) -> tuple[dict, dict]:
+def review_documents(index_document: str, directory: Path | None = None) -> dict[str, str]:
+    """Read only detail pages linked by the current queue index."""
+    review_dir = REVIEW_SOURCE if directory is None else directory
+    pr_numbers = sorted({int(match) for match in REVIEW_LINK.findall(index_document)})
+    if not pr_numbers:
+        return {}
+    if review_dir.is_symlink() or not review_dir.is_dir():
+        raise ValueError("the rendered review detail directory is unavailable")
+    review_root = review_dir.resolve(strict=True)
+    pages: dict[str, str] = {}
+    for pr_number in pr_numbers:
+        source = review_dir / f"pr-{pr_number}.html"
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"the rendered review detail page for PR {pr_number} is unavailable")
+        if source.resolve(strict=True).parent != review_root:
+            raise ValueError(f"the rendered review detail page for PR {pr_number} is outside its directory")
+        pages[f"review-pr-{pr_number}.html"] = source.read_text(encoding="utf-8")
+    return pages
+
+
+def resources(
+    document: str,
+    progress_document: str | None = None,
+    review_pages: dict[str, str] | None = None,
+) -> tuple[dict, dict]:
     pages = {"index.html": document}
     if progress_document is not None:
         pages["progress.html"] = progress_document
+    if review_pages is not None:
+        for key, content in review_pages.items():
+            if not re.fullmatch(r"review-pr-[1-9]\d*\.html", key):
+                raise ValueError("review page has an invalid ConfigMap key")
+            pages[key] = content
     pages.update({name: (ROOT / "assets" / name).read_text(encoding="utf-8") for name in ASSET_FILES})
     digest = hashlib.sha256(json.dumps(pages, sort_keys=True).encode()).hexdigest()
+    mounted_paths = {
+        key: (f"review/{key.removeprefix('review-')}" if key.startswith("review-pr-") else key)
+        for key in pages
+    }
     labels = {"app": "firemud-status-page"}
     namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}
     objects = {
@@ -125,7 +162,13 @@ def resources(document: str, progress_document: str | None = None) -> tuple[dict
                                     ],
                                 }
                             ],
-                            "volumes": [{"name": "html", "configMap": {"name": "status-page-html"}}],
+                            "volumes": [{
+                                "name": "html",
+                                "configMap": {
+                                    "name": "status-page-html",
+                                    "items": [{"key": key, "path": path} for key, path in mounted_paths.items()],
+                                },
+                            }],
                         },
                     },
                 },
@@ -168,12 +211,34 @@ def resources(document: str, progress_document: str | None = None) -> tuple[dict
     return namespace, objects
 
 
-def apply(document: dict) -> None:
+def write_public_copy(document: str) -> None:
+    """Replace the local published snapshot in one filesystem operation."""
+    PUBLIC_COPY.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=PUBLIC_COPY.parent,
+            prefix=f".{PUBLIC_COPY.name}.", suffix=".tmp", delete=False,
+        ) as temporary:
+            temporary.write(document)
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, PUBLIC_COPY)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _apply(document: dict, force_conflicts: bool = False) -> None:
+    command = [
+        "ssh", "-i", str(SSH_KEY), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        "-o", "ConnectTimeout=7", SSH_TARGET, "kubectl", "apply", "--server-side",
+        "--field-manager=kubectl-client-side-apply",
+    ]
+    if force_conflicts:
+        command.append("--force-conflicts")
+    command.extend(["-f", "-"])
     completed = subprocess.run(
-        [
-            "ssh", "-i", str(SSH_KEY), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-            "-o", "ConnectTimeout=7", SSH_TARGET, "kubectl", "apply", "-f", "-",
-        ],
+        command,
         input=json.dumps(document),
         text=True,
         capture_output=True,
@@ -185,19 +250,62 @@ def apply(document: dict) -> None:
     print(completed.stdout.strip())
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="prepare the public copy without remote changes")
-    args = parser.parse_args()
-    document = public_html(SOURCE.read_text(encoding="utf-8"), local_wifi_url())
-    progress_document = progress_public_html(PROGRESS_SOURCE.read_text(encoding="utf-8"))
-    PUBLIC_COPY.write_text(document, encoding="utf-8")
-    namespace, objects = resources(document, progress_document)
-    print(f"Prepared {len(document.encode()):,} bytes for https://{HOST}/")
-    if args.dry_run:
+def apply(document: dict) -> None:
+    _apply(document)
+
+
+def apply_status_config_map(document: dict) -> None:
+    metadata = document.get("metadata", {})
+    if (document.get("kind") != "ConfigMap" or metadata.get("name") != "status-page-html"
+            or metadata.get("namespace") != NAMESPACE):
+        raise ValueError("force-conflicts is limited to the status-page-html ConfigMap")
+    _apply(document, force_conflicts=True)
+
+
+def verify_status_config_map(document: dict) -> None:
+    command = [
+        "ssh", "-i", str(SSH_KEY), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        "-o", "ConnectTimeout=7", SSH_TARGET, "kubectl", "-n", NAMESPACE,
+        "get", "configmap", "status-page-html", "-o", "json",
+    ]
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("status-page ConfigMap readback failed") from error
+    if completed.returncode:
+        raise RuntimeError("status-page ConfigMap readback failed")
+    try:
+        actual = json.loads(completed.stdout).get("data")
+    except (AttributeError, json.JSONDecodeError):
+        raise RuntimeError("status-page ConfigMap readback was invalid") from None
+    if actual != document.get("data"):
+        raise RuntimeError("status-page ConfigMap readback did not match the submitted snapshot")
+
+
+def separate_status_config_map(objects: dict) -> tuple[dict, dict]:
+    items = objects.get("items", [])
+    config_maps = [
+        item for item in items
+        if (item.get("kind") == "ConfigMap" and item.get("metadata", {}).get("name") == "status-page-html"
+            and item.get("metadata", {}).get("namespace") == NAMESPACE)
+    ]
+    if len(config_maps) != 1:
+        raise ValueError("the snapshot must contain exactly one status-page-html ConfigMap")
+    remaining = [item for item in items if item is not config_maps[0]]
+    return config_maps[0], {**objects, "items": remaining}
+
+
+def publish_snapshot(document: str, namespace: dict, objects: dict, dry_run: bool = False) -> None:
+    if dry_run:
+        write_public_copy(document)
         return
+    config_map, remaining = separate_status_config_map(objects)
     apply(namespace)
-    apply(objects)
+    apply_status_config_map(config_map)
+    verify_status_config_map(config_map)
+    apply(remaining)
     rollout = subprocess.run(
         [
             "ssh", "-i", str(SSH_KEY), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
@@ -212,6 +320,19 @@ def main() -> None:
     if rollout.returncode:
         raise RuntimeError(f"status-page rollout failed: {rollout.stderr.strip()}")
     print(rollout.stdout.strip())
+    write_public_copy(document)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="prepare the public copy without remote changes")
+    args = parser.parse_args()
+    document = public_html(SOURCE.read_text(encoding="utf-8"), local_wifi_url())
+    progress_document = progress_public_html(PROGRESS_SOURCE.read_text(encoding="utf-8"))
+    detail_pages = review_documents(document)
+    namespace, objects = resources(document, progress_document, detail_pages)
+    print(f"Prepared {len(document.encode()):,} bytes for https://{HOST}/")
+    publish_snapshot(document, namespace, objects, args.dry_run)
 
 
 if __name__ == "__main__":

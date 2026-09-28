@@ -134,6 +134,150 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<h4>Queued next</h4>', result)
         self.assertIn('<h4>Blocker</h4>', result)
 
+    def test_queue_links_to_static_detail_pages_and_preserves_github_links(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 43, "title": "child"})
+        result = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW)
+        self.assertIn('href="review/pr-42.html">Review details ↗</a>', result)
+        self.assertIn('href="review/pr-43.html">Review details ↗</a>', result)
+        self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42">#42', result)
+
+    def test_detail_distinguishes_sources_routes_decisions_and_escapes_public_text(self):
+        data = self.fixture()
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        review.update({"available": True, "queue": {42: {"review_activity": {
+            "hosted": {"total": 1, "recent": [{
+                "raw": 3, "accepted": 2, "routed": 1, "current_head": True,
+                "attributable": True, "non_counting": False,
+                "completed_at": (NOW - timedelta(minutes=2)).isoformat(),
+            }]},
+        }}}})
+        history = {
+            "state": "available",
+            "runs": [
+                {"run_id": "hosted-1", "channel": "hosted", "outcome": "completed",
+                 "counts": {"found": 3, "accepted": 2}},
+                {"run_id": "cli-1", "channel": "cli", "outcome": "completed",
+                 "counts": {"found": 2, "routed": 1}},
+                {"run_id": "manual-1", "channel": "manual", "outcome": "completed"},
+                {"run_id": "subagent-1", "channel": "subagent", "outcome": "completed"},
+            ],
+            "findings": [{
+                "run_id": "hosted-1", "finding_id": "finding-1", "source_channel": "hosted",
+                "route_id": "route-1",
+                "title": '<script>alert("finding")</script>',
+                "detail": 'A <private> issue & context',
+                "disposition": "accepted",
+            }],
+            "routes": [{"route_id": "route-1", "finding_id": "finding-1", "source_pr": 42,
+                        "target_pr": 51, "status": "open",
+                        "target_history": [{"target_pr": 51, "reason": "Moved for <owner>"}],
+                        "decisions": [{"decision_id": "route-decision", "decision": "accepted_fixed",
+                                       "reason": 'Route <decision> & proof'}],
+                        "resolutions": [{"outcome": "accepted_fixed", "proof_or_reason": 'Fixed <proof> & checked'}]}],
+            "decisions": [{"decision_id": "decision-1", "scope": "source", "run_id": "hosted-1",
+                           "finding_id": "finding-1", "decision": "retain", "reason": 'Need <proof> & response'}],
+        }
+        result = page.render_review_detail(data, review, NOW, 42, history)
+        self.assertIn("Hosted review", result)
+        self.assertIn("CLI review", result)
+        self.assertIn("Manual pre-review", result)
+        self.assertIn("Subagent pre-review", result)
+        self.assertIn("Hosted review</strong> · completed", result)
+        self.assertIn("CLI review</strong> · completed", result)
+        self.assertIn("found: 3", result)
+        self.assertIn("accepted: 2", result)
+        self.assertIn("3/2/1", result)
+        self.assertIn("PR #51 · open", result)
+        self.assertIn("accepted", result)
+        self.assertIn("&lt;script&gt;alert(&quot;finding&quot;)&lt;/script&gt;", result)
+        self.assertIn("A &lt;private&gt; issue &amp; context", result)
+        self.assertIn("Need &lt;proof&gt; &amp; response", result)
+        self.assertIn("Moved for &lt;owner&gt;", result)
+        self.assertIn("Route &lt;decision&gt; &amp; proof", result)
+        self.assertIn("Fixed &lt;proof&gt; &amp; checked", result)
+        self.assertNotIn('<script>alert(', result)
+        self.assertNotIn("raw cli capture", result)
+        self.assertNotIn("Unspecified", result)
+        hosted_run = result.split('<strong>Hosted review</strong>', 1)[1].split('<strong>CLI review', 1)[0]
+        self.assertIn("A &lt;private&gt; issue &amp; context", hosted_run)
+        self.assertIn("Need &lt;proof&gt; &amp; response", hosted_run)
+        self.assertIn("PR #51 · open", hosted_run)
+        self.assertIn("Route &lt;decision&gt; &amp; proof", hosted_run)
+        self.assertIn(page.SHARED_CSS, result)
+
+    def test_detail_distinguishes_unavailable_and_empty_records(self):
+        data = self.fixture()
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        unavailable = page.render_review_detail(data, review, NOW, 42, {"state": "unavailable"})
+        empty = page.render_review_detail(data, review, NOW, 42, {
+            "state": "empty", "runs": [], "findings": [], "routes": [], "decisions": [],
+        })
+        self.assertIn("Recorded history unavailable", unavailable)
+        self.assertNotIn("No recorded history for this PR", unavailable)
+        self.assertIn("No recorded history for this PR", empty)
+        self.assertNotIn("Recorded history unavailable", empty)
+
+    def test_detail_text_and_record_counts_are_bounded(self):
+        history = {
+            "state": "available",
+            "runs": [{"channel": "manual", "outcome": "complete"}] * 60,
+            "findings": [{"title": "T" * 1000, "detail": "D" * 1000,
+                          "disposition": "accepted_fixed"}] * 60,
+            "routes": [],
+            "decisions": [],
+        }
+        result = page.render_review_detail(self.fixture(), page.review_snapshot(None, 42, HEAD, NOW), NOW,
+                                           42, history)
+        self.assertLess(len(result), 120_000)
+        self.assertIn("exceeds this page’s display limit", result)
+        self.assertNotIn("T" * 501, result)
+        self.assertNotIn("D" * 501, result)
+
+    @patch.object(page.subprocess, "run")
+    def test_records_gate_runs_once_and_skips_history_for_json_state(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, json.dumps({
+            "format": "json", "compatible": True, "read_only": True,
+        }), "")
+        snapshots = page.records_history_snapshots(Path("/tmp/pr-review"), [42, 43])
+        self.assertEqual(1, run.call_count)
+        self.assertEqual([sys.executable, "/tmp/pr-review", "state", "status", "--json"],
+                         run.call_args.args[0])
+        self.assertEqual({42, 43}, set(snapshots))
+        self.assertTrue(all(snapshot["state"] == "unavailable" for snapshot in snapshots.values()))
+
+    @patch.object(page.subprocess, "run")
+    def test_records_gate_reads_json_history_only_after_sqlite_compatibility(self, run):
+        payload = {
+            "api_version": 1,
+            "result": {"pr": 42, "runs": [], "findings": [], "routes": [], "decisions": []},
+        }
+
+        def fake_run(command, **_kwargs):
+            if command[2:5] == ["state", "status", "--json"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "format": "sqlite", "compatible": True, "read_only": True,
+                }), "")
+            self.assertEqual([sys.executable, "/tmp/pr-review", "records", "history", "--pr", "42"], command)
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        run.side_effect = fake_run
+        snapshots = page.records_history_snapshots(Path("/tmp/pr-review"), [42])
+        self.assertEqual(2, run.call_count)
+        self.assertEqual("empty", snapshots[42]["state"])
+        self.assertEqual([], snapshots[42]["runs"])
+
+    def test_detail_pages_are_generated_under_review_directory(self):
+        data = self.fixture()
+        data["stack"].append({**data["stack"][0], "number": 43, "title": "child"})
+        with tempfile.TemporaryDirectory() as directory:
+            page.write_review_detail_pages(Path(directory), data, page.review_snapshot(None, 42, HEAD, NOW),
+                                           NOW, {42: {"state": "empty", "runs": [], "findings": [],
+                                                      "routes": [], "decisions": []}})
+            self.assertTrue((Path(directory) / "review" / "pr-42.html").is_file())
+            self.assertTrue((Path(directory) / "review" / "pr-43.html").is_file())
+            self.assertIn("No recorded history", (Path(directory) / "review" / "pr-42.html").read_text())
+
     def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
         data = self.fixture()
         gameplay, document, general = data["lanes"]
