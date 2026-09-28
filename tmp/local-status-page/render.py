@@ -927,12 +927,12 @@ def _decision_rows(records: list[dict]) -> str:
         decision = _bounded_category(record.get("decision", record.get("disposition")))
         reason = _record_text(record.get("reason"))
         response = _record_text(record.get("response", record.get("response_text", record.get("proof_or_reason"))))
-        content = f'<li>{decision}{_history_source_label(record)}'
+        content = f'{decision}{_history_source_label(record)}'
         if reason:
             content += f'<p>{reason}</p>'
         if response:
             content += f'<p>{response}</p>'
-        rows.append(content + "</li>")
+        rows.append(f'<li class="decision-card">{content}</li>')
     if len(records) > MAX_RECORDS_PER_KIND:
         rows.append("<li>Additional records omitted from this bounded page.</li>")
     return "".join(rows)
@@ -945,19 +945,22 @@ def _history_source_label(record: dict) -> str:
     return f' <span class="record-source">({_run_source(record)})</span>'
 
 
-def _render_finding(record: dict, index: int, decisions: list[dict], route: dict | None) -> str:
+def _render_finding(record: dict, index: int, decisions: list[dict], route: dict | None,
+                    *, unlinked: bool = False) -> str:
     disposition = _bounded_category(record.get("disposition"))
     title = _record_text(record.get("title"))
     detail = _record_text(record.get("detail"))
-    content = f'<strong>{title}</strong>' if title else f'Finding {index}'
+    heading = f'<strong>{title}</strong>' if title else f'<strong>Finding {index}</strong>'
+    context = (f'<span class="finding-state">{disposition}</span>{_history_source_label(record)}'
+               if unlinked else "")
+    content = f'<div class="finding-heading">{heading}{context}</div>'
     if detail:
         content += f'<p>{detail}</p>'
-    content += f' · {disposition}{_history_source_label(record)}'
     if route is not None:
-        content += f'<div class="linked-record">{_render_route(route)}</div>'
+        content += f'<div class="linked-record route-card">{_render_route(route)}</div>'
     if decisions:
-        content += f'<ul class="linked-record">{_decision_rows(decisions)}</ul>'
-    return f'<li>{content}</li>'
+        content += f'<ul class="linked-record decision-list">{_decision_rows(decisions)}</ul>'
+    return f'<li class="finding-card">{content}</li>'
 
 
 def _render_route(route: dict) -> str:
@@ -992,7 +995,7 @@ def _render_route(route: dict) -> str:
             parts.append(f'<span class="record-counts">Resolution: {outcome}{": " + proof if proof else ""}</span>')
     nested_decisions = route.get("decisions", [])
     if isinstance(nested_decisions, list) and nested_decisions:
-        parts.append(f'<ul class="linked-record">{_decision_rows(nested_decisions)}</ul>')
+        parts.append(f'<ul class="linked-record decision-list">{_decision_rows(nested_decisions)}</ul>')
     return " ".join(parts)
 
 
@@ -1039,15 +1042,16 @@ def render_record_sections(history: dict) -> str:
         attached_decisions.update(decision.get("decision_id", id(decision)) for decision in run_decisions)
         outcome = _bounded_category(run.get("outcome"))
         run_header = (
-            f'<strong>{_run_source(run)}</strong> · {outcome}'
+            f'<div class="run-header"><div><strong>{_run_source(run)}</strong> · {outcome}</div>'
             f'<span class="record-counts">{_run_counts(run)}</span>'
+            f'</div>'
         )
-        findings_list = "".join(rendered_findings) or "<li>No findings recorded for this run.</li>"
+        findings_list = "".join(rendered_findings) or '<li class="finding-card">No findings recorded for this run.</li>'
         decision_list = _decision_rows(run_decisions)
         if decision_list:
             findings_list += decision_list
         run_sections.append(
-            f'<li>{run_header}<ol class="history-list">{findings_list}</ol></li>'
+            f'<li class="run-card">{run_header}<ol class="history-list finding-list">{findings_list}</ol></li>'
         )
     if len(runs) > MAX_RECORDS_PER_KIND:
         run_sections.append("<li>Additional runs omitted from this bounded page.</li>")
@@ -1059,16 +1063,17 @@ def render_record_sections(history: dict) -> str:
 
     unlinked_findings = [finding for finding in findings if finding.get("finding_id") not in attached_findings]
     unlinked_findings_html = "".join(
-        _render_finding(finding, index, [], routes_by_id.get(finding.get("route_id")))
+        _render_finding(finding, index, [], routes_by_id.get(finding.get("route_id")), unlinked=True)
         for index, finding in enumerate(unlinked_findings[:MAX_RECORDS_PER_KIND], 1)
     )
-    rendered_routes = "".join(f'<li>{_render_route(route)}</li>' for route in expanded_routes[:MAX_RECORDS_PER_KIND])
+    rendered_routes = "".join(f'<li class="route-card">{_render_route(route)}</li>'
+                              for route in expanded_routes[:MAX_RECORDS_PER_KIND])
     unlinked_decisions = [decision for decision in decisions
                           if decision.get("decision_id", id(decision)) not in attached_decisions]
     rendered_decisions = _decision_rows(unlinked_decisions)
     return (
-        '<section class="history-group"><h2>Runs and findings</h2>'
-        f'<ol class="history-list">{"".join(run_sections) or "<li>No runs recorded.</li>"}</ol></section>'
+        '<section class="history-group"><h2>Reviews and findings</h2>'
+        f'<ol class="history-list run-list">{"".join(run_sections) or "<li>No runs recorded.</li>"}</ol></section>'
         '<section class="history-group"><h2>Unlinked findings</h2>'
         f'<ol class="history-list">{unlinked_findings_html or "<li>No unlinked findings.</li>"}</ol></section>'
         '<section class="history-group"><h2>Routes</h2>'
@@ -1110,11 +1115,12 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
                 total = channel_activity.get("total") if isinstance(channel_activity, dict) else None
                 if type(total) is int and total > 0:
                     recorded = sum(isinstance(run, dict) and run.get("channel") == channel for run in runs)
-                    coverage.append(f"{name} {recorded}/{total}")
+                    coverage.append(f"{recorded} of {total} {name} reviews")
                     partial = partial or recorded < total
             if coverage and partial:
-                records_html = (f'<p class="history-note">Detailed records: {safe(" · ".join(coverage))} '
-                                'completed rounds. The round counts above remain complete.</p>' + records_html)
+                records_html = (f'<p class="history-note">Finding-by-finding records are stored for '
+                                f'{safe(" and ".join(coverage))}. The round cards above still show every '
+                                'completed review.</p>' + records_html)
     timestamp = safe(now.isoformat())
     mast = render_mast(
         f'PR #{pr} Review History',
@@ -1135,7 +1141,22 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .history-card > h2 {{ margin: 0 0 .75rem; }}
 .history-group {{ margin-top: 1.4rem; }} .history-group:first-child {{ margin-top: 0; }}
 .history-group h2 {{ font-size: 1.2rem; }} .history-list {{ margin: 0; padding-left: 1.3rem; }}
-.history-list li + li {{ margin-top: .35rem; }} .history-list p {{ margin: .25rem 0; overflow-wrap: anywhere; }}
+.history-list p {{ margin: .3rem 0 0; overflow-wrap: anywhere; }}
+.run-list, .finding-list, .decision-list {{ list-style: none; padding: 0; }}
+.run-list {{ display: grid; gap: 1rem; }}
+.run-card {{ overflow: hidden; border: 1px solid #c7cdd5; border-radius: 13px; background: #f0f2f5; box-shadow: 0 2px 9px #18222e0d; }}
+.run-header {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem 1rem; border-bottom: 1px solid #c7cdd5; background: #e7eaee; }}
+.run-header strong {{ color: #333d48; }}
+.run-header .record-counts {{ margin-left: auto; }}
+.run-header .record-counts span {{ padding: .14rem .55rem; border: 1px solid #c7cdd5; border-radius: 999px; background: #fff; color: #3c4650; font-weight: 650; }}
+.finding-list {{ display: grid; gap: .65rem; padding: .8rem; }}
+.finding-card {{ min-width: 0; padding: .7rem .8rem; border: 1px solid #d2d7dd; border-radius: 9px; background: #fff; overflow-wrap: anywhere; }}
+.finding-heading {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .55rem; }}
+.finding-heading strong {{ flex: 1 1 17rem; }}
+.finding-state {{ padding: .1rem .45rem; border-radius: 999px; background: #edf0f4; color: #43505d; font-size: .73rem; font-weight: 700; }}
+.linked-record.route-card, .history-group > .history-list > .route-card {{ padding: .5rem .65rem; border: 1px solid #d8dce2; border-radius: 7px; background: #f5f6f8; }}
+.decision-list {{ display: grid; gap: .35rem; padding-left: 0; }}
+.decision-card {{ padding: .4rem .6rem; border-left: 3px solid var(--fire); border-radius: 4px; background: #f5f6f8; overflow-wrap: anywhere; }}
 .record-counts {{ display: flex; flex-wrap: wrap; gap: .35rem .7rem; color: var(--muted); font-size: .8rem; }}
 .record-source {{ color: var(--muted); font-size: .8rem; }}
 .linked-record {{ margin: .35rem 0 .2rem; padding-left: 1.2rem; }}
@@ -1550,7 +1571,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
     )
     guide_class = "queue-guide-reading" if not history_only else "queue-guide-reading history-reading"
     review_order_guide = (
-        'Merged PRs appear in reverse queue order. Within each PR, recent reviews are ordered oldest to newest.'
+        'Within each PR, recent reviews are ordered oldest to newest.'
         if history_only else 'Recent reviews are ordered oldest to newest.'
     )
     queue_guide = (

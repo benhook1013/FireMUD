@@ -203,6 +203,9 @@ class StatusPageTest(unittest.TestCase):
                 "title": '<script>alert("finding")</script>',
                 "detail": 'A <private> issue & context',
                 "disposition": "accepted",
+            }, {
+                "run_id": "cli-1", "finding_id": "finding-2", "source_channel": "cli",
+                "title": "CLI issue", "disposition": "accepted",
             }],
             "routes": [{"route_id": "route-1", "finding_id": "finding-1", "source_pr": 42,
                         "target_pr": 51, "status": "open",
@@ -211,7 +214,9 @@ class StatusPageTest(unittest.TestCase):
                                        "reason": 'Route <decision> & proof'}],
                         "resolutions": [{"outcome": "accepted_fixed", "proof_or_reason": 'Fixed <proof> & checked'}]}],
             "decisions": [{"decision_id": "decision-1", "scope": "source", "run_id": "hosted-1",
-                           "finding_id": "finding-1", "decision": "retain", "reason": 'Need <proof> & response'}],
+                           "finding_id": "finding-1", "decision": "retain", "reason": 'Need <proof> & response'},
+                          {"decision_id": "decision-2", "run_id": "cli-1", "finding_id": "finding-2",
+                           "decision": "accepted", "reason": "Fixed in this PR"}],
         }
         result = page.render_review_detail(data, review, NOW, 42, history)
         self.assertIn("Hosted review", result)
@@ -220,6 +225,13 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("Subagent pre-review", result)
         self.assertIn("Hosted review</strong> · completed", result)
         self.assertIn("CLI review</strong> · completed", result)
+        self.assertEqual(4, result.count('class="run-card"'))
+        self.assertIn('<ol class="history-list finding-list"><li class="finding-card">', result)
+        self.assertIn('class="linked-record route-card"', result)
+        self.assertIn('class="decision-card"', result)
+        self.assertNotIn('accepted <span class="record-source">(CLI review)</span>', result)
+        self.assertIn('<strong>CLI issue</strong></div>', result)
+        self.assertIn('<li class="decision-card">accepted<p>Fixed in this PR</p></li>', result)
         self.assertIn("found: 3", result)
         self.assertIn("accepted: 2", result)
         self.assertIn("3/2/1", result)
@@ -265,8 +277,8 @@ class StatusPageTest(unittest.TestCase):
         rendered = page.render_review_detail(self.fixture(), review, NOW, 42, {
             "state": "empty", "runs": [], "findings": [], "routes": [], "decisions": [],
         })
-        self.assertIn("Detailed records: Hosted 0/4 · CLI 0/9 completed rounds.", rendered)
-        self.assertIn("The round counts above remain complete.", rendered)
+        self.assertIn("Finding-by-finding records are stored for 0 of 4 Hosted reviews and 0 of 9 CLI reviews.", rendered)
+        self.assertIn("The round cards above still show every completed review.", rendered)
         self.assertIn("No detailed finding records have been imported", rendered)
 
     def test_record_history_keeps_later_runs_visible(self):
@@ -587,7 +599,8 @@ class StatusPageTest(unittest.TestCase):
         self.assertLess(history.index('id="pr-46"'), history.index('id="pr-43"'))
         self.assertLess(history.index('id="pr-43"'), history.index('id="pr-42"'))
         self.assertNotIn('id="pr-44"', history)
-        self.assertIn('Merged PRs appear in reverse queue order. Within each PR, recent reviews are ordered oldest to newest.', history)
+        self.assertIn('Within each PR, recent reviews are ordered oldest to newest.', history)
+        self.assertNotIn('Merged PRs appear in reverse queue order.', history)
         self.assertIn('Current focus across active workstreams</p>', main)
 
     @patch.object(page, "_public_evidence_reader")
