@@ -2066,22 +2066,28 @@ tcp_proxy_rules = [
 ]
 assert len(tcp_proxy_rules) == 1
 assert tcp_proxy_rules[0]["ports"] == [{"protocol": "TCP", "port": 2323}]
-grpc_targets = [
-    target
+grpc_rules = [
+    rule
     for rule in policy["spec"]["egress"]
     if any(port.get("port") == 6565 for port in rule.get("ports", []))
-    for target in rule.get("to", [])
 ]
-assert grpc_targets, "controller gRPC egress rule is missing"
-for target in grpc_targets:
-    assert target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/preview"
-    ) == "true" or target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/dev-demo"
-    ) == "true", target
-    assert target.get("podSelector", {}).get("matchLabels") == {
-        "app": "account-service"
-    }, target
+assert len(grpc_rules) == 1, grpc_rules
+assert grpc_rules[0]["ports"] == [{"protocol": "TCP", "port": 6565}]
+grpc_targets = grpc_rules[0]["to"]
+assert {
+    (
+        tuple(sorted(target["namespaceSelector"]["matchLabels"].items())),
+        tuple(sorted(target["podSelector"]["matchLabels"].items())),
+    )
+    for target in grpc_targets
+} == {
+    (namespace, (("app", workload),))
+    for namespace in (
+        (("firemud.dev/preview", "true"),),
+        (("firemud.dev/dev-demo", "true"),),
+    )
+    for workload in ("account-service", "game-session-service")
+}, grpc_targets
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \

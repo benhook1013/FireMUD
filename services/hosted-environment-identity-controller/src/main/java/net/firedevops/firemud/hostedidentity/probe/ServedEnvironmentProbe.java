@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -79,6 +80,7 @@ public class ServedEnvironmentProbe {
   private static final String BRIDGE_PROBE_CLIENT_IP = "127.0.0.1";
   private static final SecureRandom WEBSOCKET_NONCE_SOURCE = new SecureRandom();
   private static final String GRPC_PROBE_SERVICE = "account-service";
+  private static final String GRPC_GAME_SESSION_PROBE_SERVICE = "game-session-service";
   private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
   private static final ThreadLocal<ProbeAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
   private final HostedIdentityProperties properties;
@@ -98,7 +100,8 @@ public class ServedEnvironmentProbe {
       Secret tcpProxyBridgeMaterial,
       String expectedGatewayInternalWsLeafSha256,
       Secret grpcMaterial,
-      String expectedGrpcLeafSha256) {
+      String expectedGrpcLeafSha256,
+      String expectedGrpcGameSessionLeafSha256) {
     return probe(
         plan,
         HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
@@ -108,7 +111,8 @@ public class ServedEnvironmentProbe {
         tcpProxyBridgeMaterial,
         expectedGatewayInternalWsLeafSha256,
         grpcMaterial,
-        expectedGrpcLeafSha256);
+        expectedGrpcLeafSha256,
+        expectedGrpcGameSessionLeafSha256);
   }
 
   public ProbeResult probe(
@@ -120,7 +124,8 @@ public class ServedEnvironmentProbe {
       Secret tcpProxyBridgeMaterial,
       String expectedGatewayInternalWsLeafSha256,
       Secret grpcMaterial,
-      String expectedGrpcLeafSha256) {
+      String expectedGrpcLeafSha256,
+      String expectedGrpcGameSessionLeafSha256) {
     return probe(
         plan,
         exposureMode,
@@ -130,6 +135,7 @@ public class ServedEnvironmentProbe {
         (hostname, port) ->
             bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
         (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256),
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcGameSessionLeafSha256),
         TOTAL_PROBE_TIMEOUT);
   }
 
@@ -147,6 +153,7 @@ public class ServedEnvironmentProbe {
         httpsProbe,
         telnetProbe,
         bridgeProbe,
+        grpcProbe,
         grpcProbe,
         TOTAL_PROBE_TIMEOUT);
   }
@@ -167,6 +174,7 @@ public class ServedEnvironmentProbe {
         telnetProbe,
         bridgeProbe,
         grpcProbe,
+        grpcProbe,
         timeout);
   }
 
@@ -186,6 +194,7 @@ public class ServedEnvironmentProbe {
         telnetProbe,
         bridgeProbe,
         grpcProbe,
+        grpcProbe,
         TOTAL_PROBE_TIMEOUT);
   }
 
@@ -197,6 +206,49 @@ public class ServedEnvironmentProbe {
       EndpointProbe telnetProbe,
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
+      Duration timeout) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        grpcProbe,
+        timeout);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      EndpointProbe grpcGameSessionProbe) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        grpcGameSessionProbe,
+        TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      EndpointProbe grpcGameSessionProbe,
       Duration timeout) {
     if (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
         && !HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
@@ -221,10 +273,25 @@ public class ServedEnvironmentProbe {
             ProbeName.GRPC,
             () -> {
               try {
-                return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+                return grpcProbe.check(grpcHostname(plan, GRPC_PROBE_SERVICE), GRPC_PORT);
               } catch (IllegalArgumentException exception) {
                 LOGGER.debug(
                     "gRPC probe rejected material or configuration for runtime Namespace {}",
+                    plan.runtimeNamespace(),
+                    exception);
+                return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+              }
+            }));
+    probes.add(
+        startProbe(
+            ProbeName.GRPC_GAME_SESSION,
+            () -> {
+              try {
+                return grpcGameSessionProbe.check(
+                    grpcHostname(plan, GRPC_GAME_SESSION_PROBE_SERVICE), GRPC_PORT);
+              } catch (IllegalArgumentException exception) {
+                LOGGER.debug(
+                    "Game Session gRPC probe rejected material or configuration for runtime Namespace {}",
                     plan.runtimeNamespace(),
                     exception);
                 return new ProbeResult(false, "grpc-material-or-configuration-invalid");
@@ -400,11 +467,12 @@ public class ServedEnvironmentProbe {
     SSLSocket open() throws Exception;
   }
 
-  private static String grpcHostname(EnvironmentIdentityPlan plan) {
-    if (!plan.grpcConsumers().contains(GRPC_PROBE_SERVICE)) {
+  private static String grpcHostname(EnvironmentIdentityPlan plan, String service) {
+    if (!Set.of(GRPC_PROBE_SERVICE, GRPC_GAME_SESSION_PROBE_SERVICE).contains(service)
+        || !plan.grpcConsumers().contains(service)) {
       throw new IllegalArgumentException("fixed gRPC probe service is not a rollout consumer");
     }
-    return GRPC_PROBE_SERVICE + "." + plan.runtimeNamespace() + ".svc.cluster.local";
+    return service + "." + plan.runtimeNamespace() + ".svc.cluster.local";
   }
 
   static SSLSocket openGrpcTlsSocket(
@@ -890,7 +958,8 @@ public class ServedEnvironmentProbe {
     HTTPS("https"),
     TELNET("telnet"),
     BRIDGE("bridge"),
-    GRPC("grpc");
+    GRPC("grpc"),
+    GRPC_GAME_SESSION("grpc-game-session");
 
     private final String label;
 
