@@ -398,7 +398,9 @@ class AccountServiceImplTest {
 
     assertEquals(expectedCode, exception.getCode());
     verifyNoInteractions(
-        accountJoinOperationRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
+        accountJoinOperationRepository,
+        accountTenantMembershipRepository,
+        accountAuditOutboxRepository);
   }
 
   @Test

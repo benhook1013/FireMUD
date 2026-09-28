@@ -1357,9 +1357,7 @@ public class AccountServiceImpl implements AccountService {
               .flatMap(Optional::stream)
               .toList();
       validatePublicRealmCardinality(targets);
-      return targets.stream()
-          .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
-          .toList();
+      return targets.stream().filter(realm -> isRealmAdmissible(bootstrapContext, realm)).toList();
     } catch (AuthenticationException ex) {
       throw ex;
     } catch (RuntimeException ex) {
