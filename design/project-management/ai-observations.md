@@ -118,3 +118,8 @@ Entry format:
 - `2026-09-26`: Standalone Flyway migration fixtures must reproduce JDBC and placeholder configuration
   - Context: #2873's Account tenant-association PostgreSQL test passed local compilation but skipped without Docker. Its first hosted run could not find an inserted table because a new `?currentSchema=` was appended to a Testcontainers JDBC URL that already carried a query string. After preserving the existing separator, the next run reached the later saga migration and failed because the standalone Flyway invocation omitted `${serviceSchema}`.
   - Expected pattern: preserve existing JDBC URL parameters when adding a schema selector, and supply the same Flyway placeholders for both target-version setup and subsequent full migration. Treat each hosted failure as fixture evidence until the exact database case executes and passes; local compilation is not that proof.
+
+- `2026-09-26`: Necessary procedural migration preflights may use jOOQ ignore markers
+  - Context: Account V25's duplicate-detection preflight requires a PostgreSQL `DO` block and wraps it in `-- [jooq ignore start]` and `-- [jooq ignore stop]` markers.
+  - Observation: this qualifies the 2026-09-20 expected pattern: declarative constraints remain preferred when sufficient, but a necessary procedural preflight can be excluded from jOOQ parsing while retaining separate PostgreSQL migration proof.
+  - Expected pattern: prefer declarative constraints when sufficient; when procedural preflight is necessary, wrap it in the jOOQ ignore markers, run `generateJooq`, and run separate PostgreSQL migration proof.

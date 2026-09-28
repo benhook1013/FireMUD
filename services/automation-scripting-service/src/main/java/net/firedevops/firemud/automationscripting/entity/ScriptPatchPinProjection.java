@@ -17,6 +17,9 @@ public class ScriptPatchPinProjection {
   /** Null is the canonical absent/unpinned projection value; zero is legacy-only. */
   private Long scriptPinEpoch;
 
+  /** Exact Game Session-owned base retained with this observed pin tuple, if known. */
+  private Long pinnedScriptPatchBaseVersionId;
+
   private String runtimeRegionId = "";
   private long runtimeRegionEpoch;
   private String lastObservedControlPlaneRequestId = "";

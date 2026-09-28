@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -21,13 +20,11 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
-import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -41,6 +38,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
@@ -52,7 +50,6 @@ class LoginCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final CommandService commandService = Mockito.mock(CommandService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
@@ -71,8 +68,6 @@ class LoginCommandHandlerTest {
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
-        .thenReturn(CommandEnqueueResult.success());
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
     sessionRoutingNormalizationService =
@@ -90,7 +85,6 @@ class LoginCommandHandlerTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService,
             gameplayAdmissionPointerAuthorityService,
@@ -99,7 +93,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void parameterizedLoginEnqueuesCommand() {
+  void parameterizedLoginPersistsAccountContextWithoutEnqueueingGameplayCommand() {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -116,7 +110,6 @@ class LoginCommandHandlerTest {
         List.of(PlayerOutputKind.MESSAGE),
         result.outputs().stream().map(output -> output.kind()).toList());
     verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
-    verify(commandService).enqueue("1", command.rawLine(), false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     assertEquals("demo@example.com", captor.getValue().loginName());
@@ -138,7 +131,6 @@ class LoginCommandHandlerTest {
         "ERROR LOGIN_ARGUMENTS_INVALID Use LOGIN <email> [secret].",
         joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
     verify(firstPartyConnectContextRegistry, never()).find(anyLong());
   }
 
@@ -159,7 +151,6 @@ class LoginCommandHandlerTest {
         LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, joinedOutputText(result.outputs()));
     verify(accountClient).requestEmailLoginOtp("demo@example.com");
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -184,7 +175,6 @@ class LoginCommandHandlerTest {
     assertEquals("UNAVAILABLE", result.commandResult().errorCode());
     assertEquals(
         "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -202,7 +192,6 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -220,7 +209,6 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -238,7 +226,6 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -251,7 +238,6 @@ class LoginCommandHandlerTest {
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
     assertEquals(
         "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -277,7 +263,6 @@ class LoginCommandHandlerTest {
             + " "
             + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
         joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -303,7 +288,6 @@ class LoginCommandHandlerTest {
             + " "
             + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
         joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -332,7 +316,6 @@ class LoginCommandHandlerTest {
             + " "
             + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
         joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -349,7 +332,6 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
     assertEquals("ERROR SESSION_NOT_FOUND Session not found", joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -379,7 +361,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginAcceptsVerifiedFirstPartyAccountDifferentFromGameOwner() {
+  void bareLoginPersistsVerifiedFirstPartyAccountWithoutEnqueueingGameplayCommand() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     stubSessionContext(
@@ -422,7 +404,6 @@ class LoginCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as first-party account 99", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    verify(commandService).enqueue("1", "LOGIN", false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     SessionContext saved = captor.getValue();
@@ -521,7 +502,6 @@ class LoginCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
-    verify(commandService).enqueue("1", "LOGIN", false);
   }
 
   @Test
@@ -557,7 +537,6 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR CONNECT_CONTEXT_INVALID Connect context invalid",
         joinedOutputText(result.outputs()));
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -592,7 +571,6 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals(
         LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.commandResult().errorCode());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -713,7 +691,6 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     assertClearedSessionContext(captor.getValue(), 1L);
@@ -766,7 +743,6 @@ class LoginCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     verify(gameInstanceRepository).findById(99L);
     verify(gameInstanceRepository, never()).findById(12345L);
-    verify(commandService).enqueue("12345", command.rawLine(), false);
   }
 
   @Test
@@ -786,7 +762,6 @@ class LoginCommandHandlerTest {
     assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
     assertEquals("ERROR SESSION_NOT_FOUND Session not found", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(12345L);
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -854,6 +829,7 @@ class LoginCommandHandlerTest {
     assertEquals(1L, context.gameInstanceId());
     assertEquals("R-2045", context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
   }
 
   @Test
@@ -893,7 +869,11 @@ class LoginCommandHandlerTest {
     handler.handle("1", command, false);
 
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    inOrder.verify(sessionContextService).save(captor.capture());
     SessionContext context = captor.getValue();
     assertEquals(99L, context.accountId());
     assertEquals("other@example.com", context.loginName());
@@ -909,6 +889,91 @@ class LoginCommandHandlerTest {
     assertNull(context.playableStateScope());
     assertNull(context.connectScopeId());
     assertNull(context.connectRequestId());
+  }
+
+  @Test
+  void verifiedConnectForDifferentTenantClearsPriorGameplayBindingBeforeSaving() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext prior =
+        new SessionContext(
+            1L,
+            33L,
+            77L,
+            "old@example.com",
+            88L,
+            "Sora",
+            2L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            2L,
+            "old-world",
+            "old-realm",
+            1L,
+            "SHARED",
+            "old-scope",
+            "old-request");
+    stubSessionContext(prior);
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
+        .thenReturn(List.of(pointer("old-world", "old-realm", 33L, 2L, 1L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    99L,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "new-scope",
+                    "jti-1",
+                    "new-request",
+                    "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 99L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    ArgumentCaptor<SessionContext> saved = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(prior, "LOGIN_ACCOUNT_CHANGED");
+    inOrder.verify(sessionContextService).save(saved.capture());
+    assertEquals(22L, saved.getValue().tenantId());
+    assertEquals(99L, saved.getValue().accountId());
+    assertEquals(0L, saved.getValue().characterId());
+    assertEquals(0L, saved.getValue().gameInstanceId());
+    assertEquals("demo", saved.getValue().worldSlug());
+    assertEquals("production", saved.getValue().realmSlug());
+    assertEquals("new-scope", saved.getValue().connectScopeId());
+  }
+
+  @Test
+  void reloginAsDifferentAccountDoesNotReplaceContextWhenPresenceClearFails() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+    SessionContext existing = staleGameplayContext(1L);
+    stubSessionContext(existing);
+    Mockito.doThrow(new IllegalStateException("presence clear unavailable"))
+        .when(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> handler.handle("1", command, false));
+
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    verify(sessionContextService, never()).save(any(SessionContext.class));
   }
 
   @Test
@@ -1047,7 +1112,6 @@ class LoginCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
-    verify(commandService).enqueue("1", command.rawLine(), false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     assertEquals(99L, captor.getValue().accountId());

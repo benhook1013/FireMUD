@@ -468,7 +468,7 @@ public class EntityDigestBaselineMigrationService {
         && Objects.equals(actual.actorIdentity(), expected.actorIdentity())
         && Objects.equals(actual.workloadIdentity(), expected.workloadIdentity())
         && Objects.equals(actual.outcome(), expected.outcome())
-        && Objects.equals(actual.committedAt(), expected.committedAt());
+        && actual.committedAt() != null;
   }
 
   private BaselineSummary toV1Summary(RecordedParticipantDigest row) {

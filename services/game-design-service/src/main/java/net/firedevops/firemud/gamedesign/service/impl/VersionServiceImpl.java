@@ -174,8 +174,8 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
-      scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of());
-
+      scriptingClient.notifyScriptVersionUpdate(
+          tenantId, baseVersionId, scriptPatchVersion, List.of());
       finalizationStarted = true;
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
@@ -189,17 +189,21 @@ public class VersionServiceImpl implements VersionService {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
     } catch (RuntimeException ex) {
-      if (finalizationStarted
-          && !(ex instanceof PublishAttemptService.ScriptPatchTransactionException)) {
-        // A transaction-manager failure after the callback returned is ambiguous. Leave the
-        // durable PENDING reservation for reconciliation instead of guessing whether cleanup is
-        // safe.
-        throw ex;
-      }
       RuntimeException operationFailure =
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
+      if (finalizationStarted) {
+        // Automation has accepted the notification. Neither an in-transaction rollback nor an
+        // ambiguous transaction-manager failure can undo that external effect, so retain the
+        // durable PENDING reservation for exact-request reconciliation.
+        if (ex instanceof PublishAttemptService.ScriptPatchTransactionException) {
+          throw new IllegalStateException(
+              "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: finalization failed after Automation accepted the notification; retry exact publish request",
+              operationFailure);
+        }
+        throw ex;
+      }
       if (!finalizationStarted
           && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
               operationFailure)) {
@@ -249,7 +253,9 @@ public class VersionServiceImpl implements VersionService {
           existingAttempt, patchBinding, tenantId, baseVersionId, scriptPatchVersion);
       if (existingAttempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
         Version publishedVersion = requireAttemptVersion(existingAttempt, patchBinding);
-        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED) {
+        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED
+            && publishedVersion.getVersionState() != VersionLifecycleState.ACTIVE
+            && publishedVersion.getVersionState() != VersionLifecycleState.RETIRED) {
           throw new IllegalStateException(
               "PUBLISH_ATTEMPT_INCONSISTENT: succeeded attempt does not reference a published version");
         }
@@ -575,7 +581,7 @@ public class VersionServiceImpl implements VersionService {
     if (entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
         || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN) {
       throw new IllegalArgumentException(
-          "CONFLICT: terminal plugin version cannot be republished; create a new plugin version");
+          "PLUGIN_VERSION_IMMUTABLE: terminal plugin version cannot be republished; create a new plugin version");
     }
 
     requireRequestedUploadMatchesStoredBundle(
@@ -647,7 +653,11 @@ public class VersionServiceImpl implements VersionService {
     requireText(pluginVersionId, "pluginVersionId");
     return publishedPluginVersionRepository
         .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
-        .filter(entity -> entity.getPublicationState() == VersionLifecycleState.PUBLISHED)
+        .filter(
+            entity ->
+                entity.getPublicationState() == VersionLifecycleState.PUBLISHED
+                    || entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
+                    || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN)
         .map(this::toPublishedPluginVersionDto)
         .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
   }
@@ -753,7 +763,7 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   public DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion, Long baseVersionId) {
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
     if (baseVersionId == null || baseVersionId <= 0L) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }

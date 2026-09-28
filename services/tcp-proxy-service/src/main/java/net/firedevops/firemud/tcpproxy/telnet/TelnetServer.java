@@ -589,6 +589,15 @@ public final class TelnetServer {
     return running.get() && serverChannel != null;
   }
 
+  /** Returns true when the listener is serving the latest valid watched TLS material. */
+  public boolean isTlsMaterialHealthy() {
+    if (!tlsEnabled) {
+      return true;
+    }
+    TlsCertificateWatcher watcher = tlsCertificateWatcher;
+    return watcher != null && watcher.isHealthy();
+  }
+
   /** Current active connection count for metrics testing. */
   int getActiveConnectionCount() {
     return activeConnections.get();

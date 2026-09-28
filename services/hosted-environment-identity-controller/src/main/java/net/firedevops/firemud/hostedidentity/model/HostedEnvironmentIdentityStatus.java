@@ -14,6 +14,8 @@ public class HostedEnvironmentIdentityStatus {
   private RoleStatus gatewayInternalWs;
   private RoleStatus tcpProxyBridge;
   private RoleStatus grpc;
+  private RoleStatus grpcAccountService;
+  private RoleStatus grpcGameSessionService;
   private Map<String, RoleStatus> grpcPublication;
   private RuntimeProfile profile;
 
@@ -84,6 +86,22 @@ public class HostedEnvironmentIdentityStatus {
 
   public void setGrpc(RoleStatus grpc) {
     this.grpc = copyRole(grpc);
+  }
+
+  public RoleStatus getGrpcAccountService() {
+    return copyRole(grpcAccountService);
+  }
+
+  public void setGrpcAccountService(RoleStatus grpcAccountService) {
+    this.grpcAccountService = copyRole(grpcAccountService);
+  }
+
+  public RoleStatus getGrpcGameSessionService() {
+    return copyRole(grpcGameSessionService);
+  }
+
+  public void setGrpcGameSessionService(RoleStatus grpcGameSessionService) {
+    this.grpcGameSessionService = copyRole(grpcGameSessionService);
   }
 
   public Map<String, RoleStatus> getGrpcPublication() {

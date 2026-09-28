@@ -228,7 +228,6 @@ class SessionResumptionFlowTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService(),
             pointerAuthorityService,

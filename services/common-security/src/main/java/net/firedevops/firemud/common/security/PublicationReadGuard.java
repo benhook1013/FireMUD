@@ -6,6 +6,8 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Authorization guard for the four owner-to-owner publication digest reads.
@@ -15,6 +17,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
  * peer certificate is the workload authority for these workload-only reads.
  */
 public final class PublicationReadGuard {
+  private static final Logger logger = LoggerFactory.getLogger(PublicationReadGuard.class);
+
   public static final String WORLD_MANAGEMENT_DIGEST_METHOD =
       WorldManagementServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName();
   public static final String ENTITY_MANAGEMENT_DIGEST_METHOD =
@@ -40,6 +44,27 @@ public final class PublicationReadGuard {
       throw new IllegalArgumentException("A valid trusted workload namespace is required");
     }
     this.trustedNamespace = trustedNamespace;
+  }
+
+  /**
+   * Creates a configured guard, or {@code null} when publication reads must be denied. Invalid or
+   * missing deployment configuration must not leave a handler with an unauthenticated read path.
+   */
+  public static PublicationReadGuard configured(String trustedNamespace) {
+    if (trustedNamespace == null || trustedNamespace.isBlank()) {
+      logger.warn(
+          "firemud.grpc.workload-namespace is unset or blank; publication digest reads will be "
+              + "denied");
+      return null;
+    }
+    try {
+      return new PublicationReadGuard(trustedNamespace);
+    } catch (IllegalArgumentException ex) {
+      logger.warn(
+          "firemud.grpc.workload-namespace is invalid; publication digest reads will be denied: {}",
+          ex.getMessage());
+      return null;
+    }
   }
 
   /** Returns the namespace against which peer identities are compared. */

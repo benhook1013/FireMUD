@@ -30,6 +30,8 @@ class TenantIdentityGrpcServiceTest {
   private static final String ACCOUNT_PEER = "spiffe://firemud/ns/test/sa/account-service";
   private static final String ACCOUNT_MIGRATOR_PEER =
       "spiffe://firemud/ns/test/sa/account-tenant-migrator";
+  private static final String WRONG_NAMESPACE_MIGRATOR_PEER =
+      "spiffe://firemud/ns/other/sa/account-tenant-migrator";
   private static final String WRONG_PEER = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("87426bb3-a733-43f0-9c8e-2e379cbdf7ec");
@@ -69,6 +71,9 @@ class TenantIdentityGrpcServiceTest {
         Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, WRONG_PEER)));
     assertEquals(
         Status.Code.PERMISSION_DENIED, associationStatus(associationCall(41L, ACCOUNT_PEER)));
+    assertEquals(
+        Status.Code.PERMISSION_DENIED,
+        associationStatus(associationCall(41L, WRONG_NAMESPACE_MIGRATOR_PEER)));
     assertEquals(
         Status.Code.INVALID_ARGUMENT,
         associationStatus(associationCall(0L, ACCOUNT_MIGRATOR_PEER)));

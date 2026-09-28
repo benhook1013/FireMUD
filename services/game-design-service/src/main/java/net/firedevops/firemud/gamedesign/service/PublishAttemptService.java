@@ -6,11 +6,18 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
-import net.firedevops.firemud.gamedesign.model.PublishType;
 
 public interface PublishAttemptService {
+  /**
+   * Runs the script-patch operation with Spring {@code REQUIRES_NEW} semantics, committing its
+   * transaction independently of any caller transaction.
+   */
   <T> T executeScriptPatchTransaction(Supplier<T> operation);
 
+  /**
+   * Runs the full-version operation with Spring {@code REQUIRES_NEW} semantics, committing its
+   * transaction independently of any caller transaction.
+   */
   <T> T executeFullVersionTransaction(Supplier<T> operation);
 
   final class ScriptPatchTransactionException extends RuntimeException {
@@ -33,8 +40,6 @@ public interface PublishAttemptService {
     }
   }
 
-  void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId);
-
   void createFullVersionAttempt(VersionDto version, String publishWorkflowId, String requestDigest);
 
   void createScriptPatchAttempt(
@@ -49,17 +54,10 @@ public interface PublishAttemptService {
 
   Optional<PublishAttempt> findByPublishWorkflowId(String publishWorkflowId);
 
-  void recordParticipantDigests(
-      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests);
-
   void recordFullVersionParticipantDigests(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests);
 
-  void markSucceeded(String publishWorkflowId);
-
   void markFullVersionSucceeded(String publishWorkflowId);
-
-  void markFailed(String publishWorkflowId, String failureCode, String failureMessage);
 
   void markFullVersionFailed(String publishWorkflowId, String failureCode, String failureMessage);
 }

@@ -268,7 +268,6 @@ class WebSocketOutputProjectorTest {
                     1L,
                     "ACTIVE",
                     null,
-                    "FRIEND",
                     "SHARED")));
     when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("OK FRIENDS\nFriend: Sora\n\n");
@@ -436,7 +435,6 @@ class WebSocketOutputProjectorTest {
                                     17L,
                                     "AUTO_AFK",
                                     null,
-                                    null,
                                     null)))))),
             List.of(
                 PlayerOutput.view(
@@ -461,7 +459,6 @@ class WebSocketOutputProjectorTest {
                                 "SHARED",
                                 17L,
                                 "AUTO_AFK",
-                                null,
                                 null,
                                 null))))),
             "en-NZ",
@@ -530,6 +527,71 @@ class WebSocketOutputProjectorTest {
   }
 
   @Test
+  void firstPartyWebOmitsDisconnectDispositionForPublicAndFriendsOnlyPresence() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(
+                new FriendPresenceViewOutput(
+                    "ALL",
+                    2,
+                    2,
+                    List.of(
+                        new FriendPresenceViewOutput.Entry(
+                            1,
+                            11L,
+                            3L,
+                            "active",
+                            null,
+                            "Public Friend",
+                            false,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            1_744_336_000_000L,
+                            "PUBLIC"),
+                        new FriendPresenceViewOutput.Entry(
+                            2,
+                            12L,
+                            4L,
+                            "active",
+                            null,
+                            "Friends-only Friend",
+                            false,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            1_744_336_000_000L,
+                            "FRIENDS_ONLY")))),
+            "en-NZ",
+            presentation);
+
+    JsonNode friends =
+        objectMapper.readTree(payload).path("outputs").get(0).path("payload").path("friends");
+    assertThat(friends).hasSize(2);
+    assertThat(friends.get(0).path("visibilityPolicy").asText()).isEqualTo("PUBLIC");
+    assertThat(friends.get(1).path("visibilityPolicy").asText()).isEqualTo("FRIENDS_ONLY");
+    assertThat(friends.get(0).has("recentDisposition")).isFalse();
+    assertThat(friends.get(1).has("recentDisposition")).isFalse();
+  }
+
+  @Test
   void firstPartyWebProjectsFriendDetailViewPayloads() throws Exception {
     WebSocketSession session = mock(WebSocketSession.class);
     when(session.getAttributes())
@@ -563,7 +625,6 @@ class WebSocketOutputProjectorTest {
                                 17L,
                                 "AUTO_AFK",
                                 null,
-                                null,
                                 null))))),
             List.of(
                 PlayerOutput.view(
@@ -584,7 +645,6 @@ class WebSocketOutputProjectorTest {
                             "SHARED",
                             17L,
                             "AUTO_AFK",
-                            null,
                             null,
                             null)))),
             "en-NZ",
@@ -636,7 +696,6 @@ class WebSocketOutputProjectorTest {
             "active",
             1_744_336_000_000L,
             "Friend #77",
-            null,
             null,
             null,
             null,

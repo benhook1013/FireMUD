@@ -57,10 +57,17 @@ class VersionAssetArtifactRepositoryIntegrationTest {
     artifact.setLastWorkflowId("demo-seed");
     artifact.setExportedManifestAssetKeysJson("[]");
 
-    repository.save(artifact);
+    VersionAssetArtifact inserted = repository.save(artifact);
+
+    assertThat(inserted.getId()).isNotNull();
+    assertThat(inserted.getTenantId()).isEqualTo("1");
+    assertThat(inserted.getVersionId()).isEqualTo(7L);
+    assertThat(inserted.getExportedVersionNumber()).isEqualTo(1);
+    assertThat(inserted.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
 
     VersionAssetArtifact reloaded = repository.findByTenantIdAndVersionId("1", 7L).orElseThrow();
 
+    assertThat(reloaded.getId()).isEqualTo(inserted.getId());
     assertThat(reloaded.getUpdatedAt()).isNotNull();
     assertThat(reloaded.getManifestHash()).isEqualTo("demo-manifest-hash");
     assertThat(reloaded.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
