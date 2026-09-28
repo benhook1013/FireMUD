@@ -369,6 +369,13 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private AdmissionPointerControlPlaneEntry toControlPlaneEntry(
       GameplayAdmissionPointerSnapshot pointer) {
+    if (pointer.catalogRevision() <= 0L
+        || pointer.realmId() == null
+        || pointer.playableStateNamespaceId() == null) {
+      throw new RuntimeStateException(
+          "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE",
+          "current admission pointer durable identity or catalog revision is unavailable");
+    }
     AdmissionPointerControlPlaneEntry.Builder builder =
         AdmissionPointerControlPlaneEntry.newBuilder()
             .setWorldSlug(normalizeBlank(pointer.worldSlug()))
@@ -382,10 +389,10 @@ final class GameSessionRuntimeControlPlaneReadService {
             .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
             .setStateScope(normalizeBlank(pointer.stateScope()))
             .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
-            .setPublicProductionRealm(pointer.publicProductionRealm());
-    if (pointer.catalogRevision() > 0L) {
-      builder.setCatalogRevision(pointer.catalogRevision());
-    }
+            .setPublicProductionRealm(pointer.publicProductionRealm())
+            .setRealmId(pointer.realmId().toString())
+            .setPlayableStateNamespaceId(pointer.playableStateNamespaceId().toString())
+            .setCatalogRevision(pointer.catalogRevision());
     return builder.build();
   }
 

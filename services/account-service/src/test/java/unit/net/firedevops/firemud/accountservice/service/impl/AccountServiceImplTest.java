@@ -3451,6 +3451,9 @@ class AccountServiceImplTest {
             .getPayload()
             .get("realmId"));
     assertEquals("SHARED", realms.getFirst().stateScope());
+    assertEquals(23L, realms.getFirst().catalogRevision());
+    assertEquals("production-namespace-7", realms.getFirst().playableStateNamespaceId());
+    assertEquals("PLAYABLE_STATE_SCOPE_SHARED", realms.getFirst().playableStateScope());
     assertEquals("ALLOW_NEW", realms.getFirst().characterCreationPolicy());
   }
 

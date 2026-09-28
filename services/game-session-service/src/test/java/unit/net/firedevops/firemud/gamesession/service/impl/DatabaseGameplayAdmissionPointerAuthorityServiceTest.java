@@ -44,7 +44,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     existing.setId(11L);
     existing.setPointerVersion(3L);
     existing.setStateScope("SHARED");
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     assertThrows(
@@ -99,7 +100,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
 
   @Test
   void upsertPointerAllowsCreateWhenExpectedVersionPairIsZero() {
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.empty());
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
         .thenAnswer(
@@ -151,7 +153,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   @Test
   void upsertPointerAdvancesCatalogRevisionWithoutAdvancingPointerVersion() {
     GameplayAdmissionPointer existing = existingPointer();
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -189,7 +192,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   @Test
   void upsertPointerExactNoOpDoesNotAdvanceOrPersistVersions() {
     GameplayAdmissionPointer existing = existingPointer();
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     GameplayAdmissionPointerSnapshot snapshot =
@@ -215,6 +219,46 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
 
     assertEquals(1L, snapshot.pointerVersion());
     assertEquals(1L, snapshot.catalogRevision());
+    verify(pointerRepository)
+        .findByTenantIdAndWorldSlugAndRealmSlugForUpdate(1L, "demo", "production");
+    verify(pointerRepository, never()).save(any(GameplayAdmissionPointer.class));
+    verifyNoInteractions(eventRepository);
+  }
+
+  @Test
+  void upsertPointerRejectsStaleExpectedVersionsForExactNoOp() {
+    GameplayAdmissionPointer current = existingPointer();
+    current.setPointerVersion(2L);
+    current.setCatalogRevision(2L);
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
+        .thenReturn(Optional.of(current));
+
+    assertThrows(
+        AdmissionPointerVersionMismatchException.class,
+        () ->
+            service.upsertPointer(
+                new GameplayAdmissionPointerMutation(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "stale retry",
+                    "req-stale-no-op",
+                    1L,
+                    1L,
+                    null)));
+
+    verify(pointerRepository)
+        .findByTenantIdAndWorldSlugAndRealmSlugForUpdate(1L, "demo", "production");
     verify(pointerRepository, never()).save(any(GameplayAdmissionPointer.class));
     verifyNoInteractions(eventRepository);
   }
@@ -223,7 +267,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   void upsertPointerRejectsStaleCatalogRevisionEvenWhenPointerVersionMatches() {
     GameplayAdmissionPointer existing = existingPointer();
     existing.setCatalogRevision(2L);
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     assertThrows(
@@ -256,7 +301,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   @Test
   void upsertPointerRejectsExistingMutationWithoutExpectedPair() {
     GameplayAdmissionPointer existing = existingPointer();
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     assertThrows(
@@ -302,7 +348,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     event.setStateScope("SHARED");
     event.setCharacterCreationPolicy("ALLOW_NEW");
     event.setOccurredAt(java.time.Instant.parse("2026-09-29T00:00:00Z"));
-    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
             1L, "demo", "production"))
         .thenReturn(List.of(event));
 
@@ -321,7 +367,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     historicalEvent.setGameInstanceId(7L);
     historicalEvent.setPointerVersion(1L);
     historicalEvent.setCatalogRevision(1L);
-    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
             1L, "demo", "production"))
         .thenReturn(List.of(historicalEvent));
 

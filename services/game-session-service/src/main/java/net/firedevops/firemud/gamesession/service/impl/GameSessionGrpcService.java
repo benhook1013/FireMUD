@@ -519,20 +519,31 @@ public final class GameSessionGrpcService
   public void listGameplayWorlds(
       ListGameplayWorldsRequest request,
       StreamObserver<ListGameplayWorldsResponse> responseObserver) {
-    ListGameplayWorldsResponse response =
-        ListGameplayWorldsResponse.newBuilder()
-            .addAllWorlds(
-                gameplayWorldCatalog.visibleWorlds().stream()
-                    .map(
-                        world ->
-                            net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
-                                .setWorldSlug(world.slug())
-                                .setDisplayName(world.displayName())
-                                .build())
-                    .toList())
-            .build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .addAllWorlds(
+                  gameplayWorldCatalog.visibleWorldsFromAuthoritySnapshot().stream()
+                      .map(
+                          world ->
+                              net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                                  .setWorldSlug(world.slug())
+                                  .setDisplayName(world.displayName())
+                                  .build())
+                      .toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -544,15 +555,11 @@ public final class GameSessionGrpcService
       String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorld(worldSelector)
+              .resolveWorldFromAuthoritySnapshot(worldSelector)
               .orElseThrow(
                   () ->
                       new CatalogRevisionUnavailableException(
                           "Authoritative gameplay world selection is unavailable"));
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(world)) {
-        throw new CatalogRevisionUnavailableException(
-            "Authoritative public-production realm cardinality is invalid");
-      }
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
               .map(realm -> toGameplayRealm(world.slug(), realm))
@@ -562,6 +569,15 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (CatalogRevisionUnavailableException ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(

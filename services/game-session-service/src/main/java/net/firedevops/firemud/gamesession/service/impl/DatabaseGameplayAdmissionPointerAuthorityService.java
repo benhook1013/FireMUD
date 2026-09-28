@@ -70,7 +70,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     Instant now = Instant.now();
     GameplayAdmissionPointer pointer =
         pointerRepository
-            .findByTenantIdAndWorldSlugAndRealmSlug(
+            .findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
                 mutation.tenantId(), mutation.worldSlug(), mutation.realmSlug())
             .orElseGet(GameplayAdmissionPointer::new);
     if (pointer.getId() != null
@@ -149,7 +149,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   public List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
       long tenantId, String worldSlug, String realmSlug) {
     return eventRepository
-        .findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(tenantId, worldSlug, realmSlug)
+        .findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(tenantId, worldSlug, realmSlug)
         .stream()
         .map(
             event ->
