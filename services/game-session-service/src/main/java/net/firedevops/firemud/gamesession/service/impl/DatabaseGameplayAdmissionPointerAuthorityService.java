@@ -84,8 +84,17 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
           "state_scope changes require a new playable-state lifecycle");
     }
     enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
+    if (pointer.getId() != null
+        && runtimeTargetMatches(pointer, mutation)
+        && catalogPolicyMatches(pointer, mutation)) {
+      return toSnapshot(pointer);
+    }
+    boolean runtimeTargetChanged =
+        pointer.getId() == null || !runtimeTargetMatches(pointer, mutation);
     long nextPointerVersion =
-        pointer.getId() == null ? 1L : Math.max(pointer.getPointerVersion() + 1L, 1L);
+        pointer.getId() == null || runtimeTargetChanged
+            ? pointer.getId() == null ? 1L : Math.addExact(pointer.getPointerVersion(), 1L)
+            : pointer.getPointerVersion();
     long nextCatalogRevision = nextCatalogRevision(pointer, mutation);
     pointer.setWorldSlug(mutation.worldSlug());
     pointer.setWorldDisplayName(mutation.worldDisplayName());
@@ -206,6 +215,11 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         && pointer.isRequiresCharacterSelection() == mutation.requiresCharacterSelection()
         && Objects.equals(pointer.getStateScope(), mutation.stateScope())
         && Objects.equals(pointer.getCharacterCreationPolicy(), mutation.characterCreationPolicy());
+  }
+
+  private boolean runtimeTargetMatches(
+      GameplayAdmissionPointer pointer, GameplayAdmissionPointerMutation mutation) {
+    return Objects.equals(pointer.getGameInstanceId(), mutation.gameInstanceId());
   }
 
   private void validateMutation(GameplayAdmissionPointerMutation mutation) {

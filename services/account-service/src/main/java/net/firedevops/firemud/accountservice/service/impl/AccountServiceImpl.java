@@ -469,6 +469,7 @@ public class AccountServiceImpl implements AccountService {
     if (caller == null
         || target == null
         || caller.accountId() <= 0L
+        || !StringUtils.hasText(caller.requestId())
         || caller.tenantId() != target.tenantId()
         || !caller.realmId().equals(target.realmId())
         || caller.gameInstanceId() != target.gameInstanceId()

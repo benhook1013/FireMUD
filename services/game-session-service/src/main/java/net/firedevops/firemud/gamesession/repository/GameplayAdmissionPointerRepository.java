@@ -99,8 +99,8 @@ public class GameplayAdmissionPointerRepository {
       }
       return findById(record.getId()).orElseThrow();
     }
-    if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 1L) {
-      throw new IllegalArgumentException("Existing admission pointer must advance its version");
+    if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 0L) {
+      throw new IllegalArgumentException("Existing admission pointer must have a positive version");
     }
     GameplayAdmissionPointer current =
         findByIdForUpdate(entity.getId())
@@ -115,16 +115,36 @@ public class GameplayAdmissionPointerRepository {
                 () ->
                     new AdmissionPointerVersionMismatchException(
                         "Admission pointer no longer exists: id=" + entity.getId()));
-    if (!Long.valueOf(entity.getPointerVersion() - 1L).equals(current.getPointerVersion())) {
-      throw new AdmissionPointerVersionMismatchException(
-          "Admission pointer changed before the requested version could be committed: id="
-              + entity.getId());
+    if (current.getPointerVersion() == null
+        || current.getCatalogRevision() == null
+        || entity.getCatalogRevision() == null
+        || entity.getCatalogRevision() <= 0L) {
+      throw new IllegalStateException(
+          "Admission pointer version and catalog revision must be present and positive");
     }
     if (!Objects.equals(entity.getRealmId(), current.getRealmId())
         || !Objects.equals(
             entity.getPlayableStateNamespaceId(), current.getPlayableStateNamespaceId())) {
       throw new IllegalStateException(
           "Admission pointer update cannot replace durable realm or playable-state identity");
+    }
+    boolean runtimeTargetChanged =
+        !Objects.equals(entity.getGameInstanceId(), current.getGameInstanceId());
+    boolean catalogChanged = !catalogPolicyMatches(current, entity);
+    long expectedPointerVersion =
+        runtimeTargetChanged
+            ? Math.addExact(current.getPointerVersion(), 1L)
+            : current.getPointerVersion();
+    long expectedCatalogRevision =
+        catalogChanged
+            ? Math.addExact(current.getCatalogRevision(), 1L)
+            : current.getCatalogRevision();
+    if (entity.getPointerVersion() != expectedPointerVersion
+        || entity.getCatalogRevision() != expectedCatalogRevision) {
+      throw new AdmissionPointerVersionMismatchException(
+          "Admission pointer version or catalog revision changed before the requested update could"
+              + " be committed: id="
+              + entity.getId());
     }
     long destinationCount =
         countByRuntimeTargetExcludingId(
@@ -166,7 +186,10 @@ public class GameplayAdmissionPointerRepository {
                       .eq(entity.getId())
                       .and(
                           GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
-                              entity.getPointerVersion() - 1L)))
+                              current.getPointerVersion()))
+                      .and(
+                          GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(
+                              current.getCatalogRevision())))
               .execute();
     } catch (IntegrityConstraintViolationException ex) {
       throw new IllegalStateException(
@@ -293,6 +316,20 @@ public class GameplayAdmissionPointerRepository {
     record.setLastUpdateReason(entity.getLastUpdateReason());
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
+  }
+
+  private boolean catalogPolicyMatches(
+      GameplayAdmissionPointer current, GameplayAdmissionPointer requested) {
+    return Objects.equals(current.getWorldSlug(), requested.getWorldSlug())
+        && Objects.equals(current.getWorldDisplayName(), requested.getWorldDisplayName())
+        && Objects.equals(current.getRealmSlug(), requested.getRealmSlug())
+        && Objects.equals(current.getRealmDisplayName(), requested.getRealmDisplayName())
+        && current.isVisible() == requested.isVisible()
+        && current.isPublicProductionRealm() == requested.isPublicProductionRealm()
+        && current.isRequiresCharacterSelection() == requested.isRequiresCharacterSelection()
+        && Objects.equals(current.getStateScope(), requested.getStateScope())
+        && Objects.equals(
+            current.getCharacterCreationPolicy(), requested.getCharacterCreationPolicy());
   }
 
   private GameplayAdmissionPointer toEntity(Record record) {

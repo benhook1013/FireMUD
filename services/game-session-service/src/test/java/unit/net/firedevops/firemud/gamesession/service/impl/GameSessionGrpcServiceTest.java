@@ -763,14 +763,14 @@ class GameSessionGrpcServiceTest {
     GameplayAdmissionPointerSnapshot policyChanged =
         authorityService.upsertPointer(pointerMutation(44L, false, 1L));
     GameplayAdmissionPointerSnapshot routeChanged =
-        authorityService.upsertPointer(pointerMutation(45L, false, 2L));
+        authorityService.upsertPointer(pointerMutation(45L, false, 1L));
 
     assertEquals(1L, created.catalogRevision());
     assertEquals(1L, created.pointerVersion());
     assertEquals(2L, policyChanged.catalogRevision());
-    assertEquals(2L, policyChanged.pointerVersion());
+    assertEquals(1L, policyChanged.pointerVersion());
     assertEquals(2L, routeChanged.catalogRevision());
-    assertEquals(3L, routeChanged.pointerVersion());
+    assertEquals(2L, routeChanged.pointerVersion());
   }
 
   private static GameplayAdmissionPointerMutation pointerMutation(

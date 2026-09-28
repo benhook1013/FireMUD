@@ -313,6 +313,29 @@ class AccountGrpcServiceTest {
   }
 
   @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void issueDirectTextConnectScopeRejectsBlankRequestIdBeforeServiceCall(String requestId) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(
+                validScopeRequest()
+                    .toBuilder()
+                    .setPlayerContext(validPlayerContext().toBuilder().setRequestId(requestId))
+                    .build(),
+                observer));
+
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @ParameterizedTest
   @ValueSource(strings = {"30", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
   void directTextScopeRejectsNoncanonicalRealmIdsAtBothIngressFields(String realmId) {
     PingService pingService = Mockito.mock(PingService.class);

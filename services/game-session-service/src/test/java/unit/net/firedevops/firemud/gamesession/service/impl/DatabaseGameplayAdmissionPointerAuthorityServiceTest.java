@@ -3,7 +3,9 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -133,6 +135,72 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   }
 
   @Test
+  void upsertPointerAdvancesCatalogRevisionWithoutAdvancingPointerVersion() {
+    GameplayAdmissionPointer existing = existingPointer();
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+        .thenReturn(Optional.of(existing));
+    when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    GameplayAdmissionPointerSnapshot snapshot =
+        service.upsertPointer(
+            new GameplayAdmissionPointerMutation(
+                "demo",
+                "Renamed Demo World",
+                "production",
+                "Live Realm",
+                1L,
+                7L,
+                true,
+                true,
+                false,
+                "SHARED",
+                "ALLOW_NEW",
+                "tester",
+                "display update",
+                "req-catalog-only",
+                1L,
+                null));
+
+    assertEquals(1L, snapshot.pointerVersion());
+    assertEquals(2L, snapshot.catalogRevision());
+    verify(pointerRepository).save(any(GameplayAdmissionPointer.class));
+    verify(eventRepository).save(any(GameplayAdmissionPointerEvent.class));
+  }
+
+  @Test
+  void upsertPointerExactNoOpDoesNotAdvanceOrPersistVersions() {
+    GameplayAdmissionPointer existing = existingPointer();
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+        .thenReturn(Optional.of(existing));
+
+    GameplayAdmissionPointerSnapshot snapshot =
+        service.upsertPointer(
+            new GameplayAdmissionPointerMutation(
+                "demo",
+                "Demo World",
+                "production",
+                "Live Realm",
+                1L,
+                7L,
+                true,
+                true,
+                false,
+                "SHARED",
+                "ALLOW_NEW",
+                "tester",
+                "repeat",
+                "req-no-op",
+                1L,
+                null));
+
+    assertEquals(1L, snapshot.pointerVersion());
+    assertEquals(1L, snapshot.catalogRevision());
+    verify(pointerRepository, never()).save(any(GameplayAdmissionPointer.class));
+    verifyNoInteractions(eventRepository);
+  }
+
+  @Test
   void findPointerByTenantAndRealmSlugDelegatesToRepository() {
     GameplayAdmissionPointer existing = new GameplayAdmissionPointer();
     existing.setWorldSlug("demo");
@@ -151,5 +219,24 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     assertEquals("demo", snapshot.worldSlug());
     assertEquals(44L, snapshot.gameInstanceId());
     verify(pointerRepository).findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production");
+  }
+
+  private static GameplayAdmissionPointer existingPointer() {
+    GameplayAdmissionPointer pointer = new GameplayAdmissionPointer();
+    pointer.setId(11L);
+    pointer.setWorldSlug("demo");
+    pointer.setWorldDisplayName("Demo World");
+    pointer.setRealmSlug("production");
+    pointer.setRealmDisplayName("Live Realm");
+    pointer.setTenantId(1L);
+    pointer.setGameInstanceId(7L);
+    pointer.setPointerVersion(1L);
+    pointer.setCatalogRevision(1L);
+    pointer.setVisible(true);
+    pointer.setPublicProductionRealm(true);
+    pointer.setRequiresCharacterSelection(false);
+    pointer.setStateScope("SHARED");
+    pointer.setCharacterCreationPolicy("ALLOW_NEW");
+    return pointer;
   }
 }

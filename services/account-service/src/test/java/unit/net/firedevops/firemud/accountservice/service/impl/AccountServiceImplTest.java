@@ -2304,6 +2304,30 @@ class AccountServiceImplTest {
         .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void issueDirectTextConnectScopeRejectsBlankRequestIdBeforeAuthorityOrScopeWork(
+      String requestId) {
+    DirectTextCallerContext caller =
+        new DirectTextCallerContext(
+            11L,
+            7L,
+            UUID.fromString(REALM_ID),
+            "production-namespace-7",
+            "SHARED",
+            44L,
+            "session-1",
+            requestId);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueDirectTextConnectScope(caller, directTextTarget()));
+
+    assertEquals("CONNECT_SCOPE_INVALID", exception.getCode());
+    verifyNoInteractions(accountRepository, subscriptionRepository, accountConnectScopeRepository);
+  }
+
   @Test
   void issueDirectTextConnectScopeRejectsBillingBlockedEntitlementWithoutRetainingScope() {
     Account account = directTextAccount();
