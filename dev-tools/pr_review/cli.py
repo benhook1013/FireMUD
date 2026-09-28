@@ -350,6 +350,14 @@ def _parser() -> argparse.ArgumentParser:
     prepost_recovery.add_argument("--reason", required=True)
     prepost_recovery.add_argument("--confirmed-not-posted", action="store_true")
     prepost_recovery.add_argument("--json", action="store_true", dest="as_json")
+    manual_adoption = decide_commands.add_parser(
+        "trigger-adopt-manual",
+        help="audit a completed, uniquely attributable manual Hosted request without posting another",
+    )
+    manual_adoption.add_argument("--pr", required=True, type=_positive_int)
+    manual_adoption.add_argument("--trigger-id", required=True, type=_positive_int)
+    manual_adoption.add_argument("--head", required=True, type=_exact_sha)
+    manual_adoption.add_argument("--json", action="store_true", dest="as_json")
     stuck_recovery = decide_commands.add_parser(
         "trigger-retire-stuck",
         help="retire a stuck trigger after the live PR head advanced",
@@ -1035,6 +1043,28 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 args.reason,
                 args.confirmed_not_posted,
                 lambda: github.fetch_pull_request(controller.repository, args.pr),
+            ), 0
+        if args.decide_command == "trigger-adopt-manual":
+            if fixture is not None:
+                raise CliError("manual Hosted adoption requires live GitHub and Git evidence")
+            state = controller.store.load()
+            if args.pr not in state.ordered_prs:
+                raise CliError(f"PR #{args.pr} is not in the configured review queue")
+            live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+            candidate = live.get(args.pr)
+            if candidate is None or candidate.head.casefold() != args.head.casefold():
+                raise CliError("manual Hosted adoption requires the current published PR head")
+            anchor = controller._reconciled_anchor(args.pr, candidate, reconciliation)
+            if anchor is None:
+                raise CliError("manual Hosted adoption requires a verified current parent and patch")
+            payload = github.fetch_pull_request(controller.repository, args.pr)
+            return hosted.adopt_manual_completed_trigger(
+                controller.repository,
+                args.pr,
+                args.trigger_id,
+                args.head,
+                anchor.as_dict(),
+                payload,
             ), 0
         if args.decide_command == "trigger-retire":
             paths = hosted.trigger_record_paths(controller.repository, args.pr)
