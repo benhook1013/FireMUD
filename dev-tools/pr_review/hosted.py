@@ -1276,13 +1276,19 @@ def trigger_state(
             else:
                 state = "ambiguous"
             terminal = parse_timestamp(item.get("updatedAt"))
-            if terminal is not None and terminal > created:
-                if next_dt is not None and terminal >= next_dt:
-                    candidates.append((terminal, "ambiguous", item, None))
-                    continue
-                candidates.append((terminal, state, item, None))
+            if terminal is not None and terminal > created and (next_dt is None or terminal < next_dt):
+                order_at = terminal
+            elif state == "completed" and zero_summary is not None:
+                # A later edit does not move this reply into a newer trigger.
+                # The exact-head zero summary proves completion in the old
+                # window and lets the linked finished reply outrank the
+                # summary comment without trusting the later edit for time.
+                summary_at = parse_timestamp(zero_summary.get("updatedAt"))
+                order_at = (summary_at + timedelta(microseconds=1)) if summary_at else created
             else:
-                candidates.append((created, state, item, None))
+                order_at = created
+            candidates.append((order_at, state, item, None))
+    review_candidates: list[tuple[datetime, str, dict[str, Any], datetime | None]] = []
     for review in reviews:
         if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
             continue
@@ -1303,7 +1309,12 @@ def trigger_state(
             if isinstance(commit, str) and commit.strip()
             else _matches_head(review.get("body") or "", record["head_sha"])
         )
-        candidates.append((submitted, "completed" if matched else "ambiguous", review, None))
+        review_candidates.append((submitted, "completed" if matched else "ambiguous", review, None))
+    # A GitHub review has an immutable submitted time and commit. A bot's
+    # finished-reply comment may be edited later, so it cannot supersede the
+    # review object that actually records this trigger's result.
+    if review_candidates:
+        candidates = review_candidates
     if not candidates:
         if newer:
             return TriggerState(

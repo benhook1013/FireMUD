@@ -1224,6 +1224,27 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
         self.assertIsNone(state.duration_seconds)
 
+    def test_exact_head_review_survives_later_finished_reply_edit(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:08Z")
+        reply["updatedAt"] = "2026-09-23T00:04:00Z"
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        review = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai"},
+            "body": "**Actionable comments posted: 1**",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": HEAD},
+        }
+
+        state = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, reply, next_trigger], [review]), trigger_record()
+        )
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 12)
+
     def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(

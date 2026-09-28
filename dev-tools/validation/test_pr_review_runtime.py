@@ -1619,7 +1619,8 @@ class RuntimeTest(unittest.TestCase):
             "author": {"login": "coderabbitai"},
             "body": "Full review finished.",
             "createdAt": "2026-09-27T17:27:40Z",
-            "updatedAt": "2026-09-27T17:34:20Z",
+            # A later edit must not erase this already-attributed review.
+            "updatedAt": "2026-09-27T21:38:20Z",
         }
         first_checkpoint = {
             "databaseId": 5858176568,
