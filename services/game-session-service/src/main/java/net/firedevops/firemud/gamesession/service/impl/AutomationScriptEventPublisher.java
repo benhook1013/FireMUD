@@ -627,7 +627,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
-      Long scriptPatchBaseVersionId,
+      long scriptPatchBaseVersionId,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
