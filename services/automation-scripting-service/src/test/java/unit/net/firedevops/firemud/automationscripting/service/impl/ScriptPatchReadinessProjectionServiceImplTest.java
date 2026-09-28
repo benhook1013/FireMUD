@@ -431,6 +431,103 @@ class ScriptPatchReadinessProjectionServiceImplTest {
   }
 
   @Test
+  void failsReadinessWhenRetainedOnLoadWorkHasNoBaseVersion() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem retainedOnLoad = new ScriptWorkItem();
+    retainedOnLoad.setTenantId("1");
+    retainedOnLoad.setScriptPatchVersion("patch-1");
+    retainedOnLoad.setEventType("onLoad");
+    retainedOnLoad.setStatus("CANCELED");
+    retainedOnLoad.setCancelReason("rollback_epoch_advanced");
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(retainedOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_base_version_unavailable");
+  }
+
+  @Test
+  void failsReadinessWhenRetainedOnLoadWorkConflictsWithMatchingBaseWork() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem retainedOnLoad = new ScriptWorkItem();
+    retainedOnLoad.setTenantId("1");
+    retainedOnLoad.setScriptPatchVersion("patch-1");
+    retainedOnLoad.setEventType("onLoad");
+    retainedOnLoad.setStatus("DEAD_LETTERED");
+    retainedOnLoad.setCancelReason("legacy_failure_reason");
+    retainedOnLoad.setScriptPatchBaseVersionId(8L);
+    ScriptWorkItem matchingOnLoad = new ScriptWorkItem();
+    matchingOnLoad.setTenantId("1");
+    matchingOnLoad.setScriptPatchVersion("patch-1");
+    matchingOnLoad.setEventType("onLoad");
+    matchingOnLoad.setStatus("HANDED_OFF");
+    matchingOnLoad.setScriptPatchBaseVersionId(7L);
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(matchingOnLoad, retainedOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_base_version_mismatch");
+  }
+
+  @Test
+  void matchingOnLoadBaseVersionUsesNormalReadinessAggregation() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setBaseVersionId(7L);
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem completedOnLoad = new ScriptWorkItem();
+    completedOnLoad.setTenantId("1");
+    completedOnLoad.setScriptPatchVersion("patch-1");
+    completedOnLoad.setEventType("onLoad");
+    completedOnLoad.setStatus("HANDED_OFF");
+    completedOnLoad.setScriptPatchBaseVersionId(7L);
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(completedOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("READY");
+    assertThat(projection.getStatusReason()).isEqualTo("ready_for_tenant");
+  }
+
+  @Test
   void marksPatchFailedWithConcreteDeadLetterReason() {
     ScriptPatchReadinessProjectionRepository repository =
         Mockito.mock(ScriptPatchReadinessProjectionRepository.class);

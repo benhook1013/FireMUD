@@ -181,7 +181,10 @@ public class ScriptPatchReadinessProjectionServiceImpl
             .stream()
             .filter(item -> "onLoad".equals(item.getEventType()))
             .toList();
-    if (onLoadWorkItems.isEmpty()) {
+    if (hasInvalidOnLoadBaseVersion(projection, onLoadWorkItems)) {
+      projection.setReadinessStatus("FAILED");
+      projection.setStatusReason(onLoadBaseVersionFailureReason(projection, onLoadWorkItems));
+    } else if (onLoadWorkItems.isEmpty()) {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("no_scripts_in_patch");
     } else if (onLoadWorkItems.stream()
@@ -354,6 +357,31 @@ public class ScriptPatchReadinessProjectionServiceImpl
   private boolean isFailedOnLoadCancellation(ScriptWorkItem item) {
     return "CANCELED".equals(item.getStatus())
         && "onload_budget_exceeded".equals(item.getCancelReason());
+  }
+
+  private static boolean hasInvalidOnLoadBaseVersion(
+      ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
+    Long expectedBaseVersionId = projection.getBaseVersionId();
+    return expectedBaseVersionId != null
+        && expectedBaseVersionId > 0L
+        && workItems.stream()
+            .anyMatch(
+                item ->
+                    item.getScriptPatchBaseVersionId() == null
+                        || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId()));
+  }
+
+  private static String onLoadBaseVersionFailureReason(
+      ScriptPatchReadinessProjection projection, List<ScriptWorkItem> workItems) {
+    Long expectedBaseVersionId = projection.getBaseVersionId();
+    if (workItems.stream().anyMatch(item -> item.getScriptPatchBaseVersionId() == null)) {
+      return "onload_base_version_unavailable";
+    }
+    if (workItems.stream()
+        .anyMatch(item -> !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId()))) {
+      return "onload_base_version_mismatch";
+    }
+    throw new IllegalStateException("onload_base_version_failure_reason_unavailable");
   }
 
   private static String latestCanceledReason(List<ScriptWorkItem> workItems, String fallback) {
