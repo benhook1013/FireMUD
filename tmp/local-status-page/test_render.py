@@ -82,7 +82,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
         self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
                       'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div>', result)
-        self.assertIn('Request states are not merge readiness.', result)
+        self.assertNotIn('Request states are not merge readiness.', result)
         self.assertNotIn('Result pills show raw/useful counts and age', result)
         self.assertIn('<dt>Ready</dt><dd>selected channel may request</dd>', result)
         self.assertIn(".queue-guide-reading { margin-top: .4rem; padding-top: .35rem; border-top: 1px solid #d5d9df; }",
@@ -507,6 +507,36 @@ class StatusPageTest(unittest.TestCase):
         updated = page.render(data, page.review_snapshot(None, 42, HEAD, NOW), NOW, github)
         self.assertIn('<li id="pr-44" class="merged">', updated)
         self.assertNotIn('<li id="pr-42"', updated)
+
+    def test_history_reverses_configured_order_with_stable_relative_queue_labels(self):
+        data = self.fixture()
+        data["stack"].extend({**data["stack"][0], "number": number} for number in (43, 44, 45, 46))
+        github = {"available": True, "states": {},
+                  "lifecycle": {42: "MERGED", 43: "MERGED", 44: "OPEN", 45: "OPEN", 46: "MERGED"},
+                  "merged_at": {
+                      42: (NOW - timedelta(hours=1)).isoformat(),
+                      43: (NOW - timedelta(hours=3)).isoformat(),
+                      46: (NOW - timedelta(hours=2)).isoformat(),
+                  }, "stats": {}}
+        review = page.review_snapshot(None, 42, HEAD, NOW)
+        main = page.render(data, review, NOW, github)
+        history = page.render(data, review, NOW, github, history_only=True)
+        expected_labels = {42: "−02", 43: "−01", 44: "01", 45: "02", 46: "03"}
+        for number, label in expected_labels.items():
+            marker = f'<li id="pr-{number}"'
+            self.assertIn(f'<span class="order" aria-label="Queue position {label}">{label}</span>',
+                          main.split(marker, 1)[1].split('</li>', 1)[0])
+        for number in (42, 43, 46):
+            label = expected_labels[number]
+            self.assertIn(f'<span class="order" aria-label="Queue position {label}">{label}</span>',
+                          history.split(f'<li id="pr-{number}"', 1)[1].split('</li>', 1)[0])
+        self.assertLess(main.index('id="pr-42"'), main.index('id="pr-43"'))
+        self.assertLess(main.index('id="pr-43"'), main.index('id="pr-46"'))
+        self.assertLess(history.index('id="pr-46"'), history.index('id="pr-43"'))
+        self.assertLess(history.index('id="pr-43"'), history.index('id="pr-42"'))
+        self.assertNotIn('id="pr-44"', history)
+        self.assertIn('Merged PRs appear in reverse queue order. Within each PR, recent reviews are ordered oldest to newest.', history)
+        self.assertIn('Current focus across active workstreams</p>', main)
 
     @patch.object(page, "_public_evidence_reader")
     def test_merged_identity_only_row_retains_public_checkpoint_review_history(self, evidence_reader):
@@ -957,7 +987,7 @@ vm.runInNewContext(process.argv[1], {
                   "stats": {42: {"changedFiles": 5, "additions": 10, "deletions": 3}}}
         result = page.render(data, review, NOW, github)
         self.assertIn('<span class="sub">Hosted new request blocked · CLI request status unknown</span>', result)
-        self.assertIn('<li id="pr-43" class="merged"><span class="order" aria-label="Queue position 2">02</span>', result)
+        self.assertIn('<li id="pr-43" class="merged"><span class="order" aria-label="Queue position 02">02</span>', result)
         merged_row = result.split('<li id="pr-43"', 1)[1].split('</li>', 1)[0]
         front_row = result.split('<li id="pr-42"', 1)[1].split('</li>', 1)[0]
         self.assertIn('<div class="pr-title-line"><a href="https://github.com/benhook1013/FireMUD/pull/43">'

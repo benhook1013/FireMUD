@@ -1248,6 +1248,11 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         if front_index is not None and github["available"] else None
     )
     rows = []
+    first_unmerged_position = next(
+        (position for position, item in enumerate(stack, 1)
+         if github.get("lifecycle", {}).get(item["number"]) != "MERGED"),
+        len(stack) + 1,
+    )
     front_size_html = "Diff size unavailable"
     front_controller_html = '<span class="front-controller-unavailable">Hosted/CLI states unavailable</span>'
     front_activity_grid = ""
@@ -1355,8 +1360,13 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         if number == next_pr:
             row_classes.append("next")
         row_class = f' class="{" ".join(row_classes)}"' if row_classes else ""
+        relative_position = position - first_unmerged_position
+        if relative_position >= 0:
+            relative_position += 1
+        position_label = (f'−{-relative_position:02d}' if relative_position < 0
+                          else f'{relative_position:02d}')
         rows.append((item["stage"], position, lifecycle == "MERGED", merged_time,
-            f'<li id="pr-{number}"{row_class}><span class="order" aria-label="Queue position {position}">{position:02d}</span><div class="pr-main">'
+            f'<li id="pr-{number}"{row_class}><span class="order" aria-label="Queue position {position_label}">{position_label}</span><div class="pr-main">'
             f'<div class="pr-title-line"><a href="{REPO_URL}{number}">#{number} {safe(item["title"])}</a></div>'
             f'<span class="sub">{size_html}</span>'
             f'<div class="pr-status-line">{queue_badge_html}{status_html}</div>'
@@ -1367,12 +1377,11 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         sections = []
         for stage_position, (stage, grouped_rows) in enumerate(groupby(selected_rows, key=lambda row: row[0]), 1):
             grouped_rows = list(grouped_rows)
-            first_position = grouped_rows[0][1]
             stage_id = f"{prefix}-{stage_position}"
             sections.append(
                 f'<section class="queue-stage" aria-labelledby="{stage_id}">'
                 f'<h3 id="{stage_id}">{safe(stage)}</h3>'
-                f'<ol class="stack" start="{first_position}">{"".join(row[4] for row in grouped_rows)}</ol></section>'
+                f'<ol class="stack">{"".join(row[4] for row in grouped_rows)}</ol></section>'
             )
         return "".join(sections)
 
@@ -1387,7 +1396,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         if not row[2] or row[3] is None or row[3] >= now - timedelta(days=2)
         or row[1] in newest_merged_positions
     ]
-    train = stage_sections(merged_rows if history_only else visible_rows, "queue-stage")
+    train = stage_sections(list(reversed(merged_rows)) if history_only else visible_rows, "queue-stage")
     front_html = ""
     if front_item and not history_only:
         front_html = (
@@ -1456,7 +1465,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
     workers_html = (
         "" if history_only else
         '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
-        '<p>Current focus across active workstreams.</p></div>'
+        '<p>Current focus across active workstreams</p></div>'
         f'<div class="cards">{"".join(cards)}</div></section>'
     )
     queue_heading = "Queue history" if history_only else "Configured review queue"
@@ -1474,12 +1483,16 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
 <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
 <div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
 <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
-</dl><p>Request states are not merge readiness.</p>'''
+</dl>'''
     )
     guide_class = "queue-guide-reading" if not history_only else "queue-guide-reading history-reading"
+    review_order_guide = (
+        'Merged PRs appear in reverse queue order. Within each PR, recent reviews are ordered oldest to newest.'
+        if history_only else 'Recent reviews are ordered oldest to newest.'
+    )
     queue_guide = (
         f'<div class="queue-guide">{request_guide}'
-        f'<div class="{guide_class}"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
+        f'<div class="{guide_class}"><h3>Reading reviews</h3><p>{review_order_guide} '
         'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div></div>'
     )
     footer_text = (
