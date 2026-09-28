@@ -271,6 +271,10 @@ public final class GameplayWorldCatalog {
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
     return GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointer)
+        && pointer.catalogRevision() > 0L
+        && pointer.realmId() != null
+        && pointer.playableStateNamespaceId() != null
+        && ("SHARED".equals(pointer.stateScope()) || "ISOLATED".equals(pointer.stateScope()))
         && pointer.characterCreationPolicy() != null
         && !pointer.characterCreationPolicy().isBlank();
   }

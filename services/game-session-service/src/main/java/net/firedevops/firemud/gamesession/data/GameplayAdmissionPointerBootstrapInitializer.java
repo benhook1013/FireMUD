@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Bootstraps the persisted gameplay admission-pointer authority from configuration only when the
- * authority store is empty.
+ * authority store is empty and full pointer audit identity is available.
  */
 @Component
 @RequiredArgsConstructor

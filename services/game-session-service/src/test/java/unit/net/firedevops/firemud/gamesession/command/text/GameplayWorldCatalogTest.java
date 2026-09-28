@@ -3,10 +3,16 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 
 class GameplayWorldCatalogTest {
@@ -73,6 +79,18 @@ class GameplayWorldCatalogTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveRuntimeTarget(1L, 11L)).isEmpty();
+  }
+
+  @ParameterizedTest(name = "authority projection rejects {0}")
+  @MethodSource("incompleteAuthorityPointers")
+  void visibleWorldsDropPointersWithoutCompleteCatalogIdentity(
+      String reason, GameplayAdmissionPointerSnapshot pointer) {
+    when(authorityService.listPointers()).thenReturn(List.of(pointer));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
     assertThat(catalog.resolveRuntimeTarget(1L, 11L)).isEmpty();
   }
 
@@ -252,6 +270,7 @@ class GameplayWorldCatalogTest {
       long gameInstanceId,
       long pointerVersion,
       boolean visible) {
+    UUID realmId = stableId("realm/" + tenantId + "/" + worldSlug + "/" + realmSlug);
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldDisplayName,
@@ -264,6 +283,106 @@ class GameplayWorldCatalogTest {
         "production".equals(realmSlug),
         false,
         "SHARED",
-        "ALLOW_NEW");
+        "ALLOW_NEW",
+        1L,
+        realmId,
+        stableId("namespace/" + realmId));
+  }
+
+  private static Stream<Arguments> incompleteAuthorityPointers() {
+    GameplayAdmissionPointerSnapshot complete =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo World",
+            "production",
+            "Live Realm",
+            1L,
+            11L,
+            7L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            stableId("realm/demo/production"),
+            stableId("namespace/demo/production"));
+    return Stream.of(
+        Arguments.of(
+            "non-positive catalog revision",
+            copyAuthorityPointer(
+                complete,
+                0L,
+                complete.realmId(),
+                complete.playableStateNamespaceId(),
+                complete.stateScope())),
+        Arguments.of(
+            "negative catalog revision",
+            copyAuthorityPointer(
+                complete,
+                -1L,
+                complete.realmId(),
+                complete.playableStateNamespaceId(),
+                complete.stateScope())),
+        Arguments.of(
+            "missing realm identity",
+            copyAuthorityPointer(
+                complete,
+                complete.catalogRevision(),
+                null,
+                complete.playableStateNamespaceId(),
+                complete.stateScope())),
+        Arguments.of(
+            "missing playable-state namespace",
+            copyAuthorityPointer(
+                complete,
+                complete.catalogRevision(),
+                complete.realmId(),
+                null,
+                complete.stateScope())),
+        Arguments.of(
+            "unknown playable-state scope",
+            copyAuthorityPointer(
+                complete,
+                complete.catalogRevision(),
+                complete.realmId(),
+                complete.playableStateNamespaceId(),
+                "UNKNOWN")),
+        Arguments.of(
+            "non-canonical playable-state scope",
+            copyAuthorityPointer(
+                complete,
+                complete.catalogRevision(),
+                complete.realmId(),
+                complete.playableStateNamespaceId(),
+                "shared")));
+  }
+
+  private static GameplayAdmissionPointerSnapshot copyAuthorityPointer(
+      GameplayAdmissionPointerSnapshot pointer,
+      long catalogRevision,
+      UUID realmId,
+      UUID playableStateNamespaceId,
+      String stateScope) {
+    return new GameplayAdmissionPointerSnapshot(
+        pointer.worldSlug(),
+        pointer.worldDisplayName(),
+        pointer.realmSlug(),
+        pointer.realmDisplayName(),
+        pointer.tenantId(),
+        pointer.gameInstanceId(),
+        pointer.pointerVersion(),
+        pointer.visible(),
+        pointer.publicProductionRealm(),
+        pointer.requiresCharacterSelection(),
+        stateScope,
+        pointer.characterCreationPolicy(),
+        catalogRevision,
+        realmId,
+        playableStateNamespaceId);
+  }
+
+  private static UUID stableId(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 }

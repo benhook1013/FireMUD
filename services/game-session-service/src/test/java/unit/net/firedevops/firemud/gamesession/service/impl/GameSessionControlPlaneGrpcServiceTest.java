@@ -1169,13 +1169,6 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void setAdmissionPointerRejectsInitialCreateUntilOwnerContractsAreSupported() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = runningGameInstance();
-    targetInstance.setId(7L);
-    targetInstance.setTenantId(1L);
-    targetInstance.setVersionId(9L);
-    targetInstance.setLaunchDescriptorId("ld-9");
-    targetInstance.setRemapSetId("remap-1");
-    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.findPointer(1L, "demo", "production"))

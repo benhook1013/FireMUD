@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.stereotype.Component;
 
 @ExtendWith(MockitoExtension.class)
 class GameplayAdmissionPointerBootstrapInitializerTest {
@@ -112,6 +113,12 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     verify(authorityService).upsertPointer(mutationCaptor.capture());
     assertEquals("SHARED", mutationCaptor.getValue().stateScope());
     assertEquals("ALLOW_NEW", mutationCaptor.getValue().characterCreationPolicy());
+  }
+
+  @Test
+  void initializerIsRegisteredAfterAuditIdentityBecomesComplete() {
+    assertTrue(
+        GameplayAdmissionPointerBootstrapInitializer.class.isAnnotationPresent(Component.class));
   }
 
   private static GameplayAdmissionPointerBootstrapProperties.PointerSeed pointerSeed(
