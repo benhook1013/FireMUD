@@ -169,8 +169,7 @@ class GameplayWorldCatalogTest {
 
   @Test
   void authoritativePointerIdentityAndCatalogRevisionReachRealmView() {
-    java.util.UUID realmId =
-        java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31");
+    java.util.UUID realmId = java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31");
     java.util.UUID playableStateNamespaceId =
         java.util.UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412");
     when(authorityService.listPointers())
@@ -195,7 +194,9 @@ class GameplayWorldCatalogTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     GameplayWorldCatalog.RealmView realm =
-        catalog.resolveRealm(catalog.resolveWorld("demo").orElseThrow(), "production").orElseThrow();
+        catalog
+            .resolveRealm(catalog.resolveWorld("demo").orElseThrow(), "production")
+            .orElseThrow();
 
     assertThat(realm.catalogRevision()).isEqualTo(29L);
     assertThat(realm.realmId()).isEqualTo(realmId);

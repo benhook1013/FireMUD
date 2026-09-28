@@ -299,8 +299,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
         .thenReturn(List.of(event));
 
     assertEquals(
-        2L,
-        service.listPointerAudit(1L, "demo", "production").getFirst().catalogRevision());
+        2L, service.listPointerAudit(1L, "demo", "production").getFirst().catalogRevision());
   }
 
   @Test
