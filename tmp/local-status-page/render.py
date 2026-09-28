@@ -1091,12 +1091,29 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
                         'shared controller history is available. This page currently summarizes review rounds only.</p>')
     elif state == "empty":
-        records_html = '<p class="history-note">No recorded history for this PR.</p>'
+        records_html = ('<p class="history-note">No detailed finding records have been imported for this PR. '
+                        'The completed review rounds above remain available.</p>')
     else:
         records_html = render_record_sections(history)
         if len(records_html) > MAX_REVIEW_DETAIL_RECORD_HTML_CHARS:
             records_html = ('<p class="history-note">Recorded history exceeds this page’s display limit; '
                             'the source data is unchanged.</p>')
+    if state in {"empty", "available"} and isinstance(queue_item, dict):
+        activity = queue_item.get("review_activity")
+        runs = history.get("runs", [])
+        if isinstance(activity, dict) and isinstance(runs, list):
+            coverage = []
+            partial = False
+            for channel, name in (("hosted", "Hosted"), ("cli", "CLI")):
+                channel_activity = activity.get(channel)
+                total = channel_activity.get("total") if isinstance(channel_activity, dict) else None
+                if type(total) is int and total > 0:
+                    recorded = sum(isinstance(run, dict) and run.get("channel") == channel for run in runs)
+                    coverage.append(f"{name} {recorded}/{total}")
+                    partial = partial or recorded < total
+            if coverage and partial:
+                records_html = (f'<p class="history-note">Detailed records: {safe(" · ".join(coverage))} '
+                                'completed rounds. The round counts above remain complete.</p>' + records_html)
     timestamp = safe(now.isoformat())
     mast = render_mast(
         f'PR #{pr} Review History',
@@ -1127,7 +1144,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 </style></head><body>{mast}<main>
 <section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
 <section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>
-<p class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
+<p class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
 <section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
 <footer>History comes from the controller's read-only records view.</footer>
 </main></body></html>'''
@@ -1493,7 +1510,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
     queue_guide = (
         f'<div class="queue-guide">{request_guide}'
         f'<div class="{guide_class}"><h3>Reading reviews</h3><p>{review_order_guide} '
-        'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div></div>'
+        'Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div></div>'
     )
     footer_text = (
         "Merged PRs remain in the configured controller queue; this page shows their review history."

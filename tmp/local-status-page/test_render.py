@@ -81,7 +81,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
         self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
         self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
-                      'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div>', result)
+                      'Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div>', result)
         self.assertNotIn('Request states are not merge readiness.', result)
         self.assertNotIn('Result pills show raw/useful counts and age', result)
         self.assertIn('<dt>Ready</dt><dd>selected channel may request</dd>', result)
@@ -226,9 +226,24 @@ class StatusPageTest(unittest.TestCase):
         })
         self.assertIn("Finding and decision history is unavailable until compatible shared controller history is available.", unavailable)
         self.assertIn("This page currently summarizes review rounds only.", unavailable)
-        self.assertNotIn("No recorded history for this PR", unavailable)
-        self.assertIn("No recorded history for this PR", empty)
+        self.assertNotIn("No detailed finding records have been imported", unavailable)
+        self.assertIn("No detailed finding records have been imported", empty)
         self.assertNotIn("Finding and decision history is unavailable", empty)
+
+    def test_detail_reports_missing_imports_without_hiding_review_rounds(self):
+        review = {
+            "available": True,
+            "queue": {42: {"review_activity": {
+                "hosted": {"total": 4, "recent": []},
+                "cli": {"total": 9, "recent": []},
+            }}},
+        }
+        rendered = page.render_review_detail(self.fixture(), review, NOW, 42, {
+            "state": "empty", "runs": [], "findings": [], "routes": [], "decisions": [],
+        })
+        self.assertIn("Detailed records: Hosted 0/4 · CLI 0/9 completed rounds.", rendered)
+        self.assertIn("The round counts above remain complete.", rendered)
+        self.assertIn("No detailed finding records have been imported", rendered)
 
     def test_review_detail_embeds_responsive_activity_card_and_pill_styles(self):
         review = {
@@ -343,10 +358,10 @@ class StatusPageTest(unittest.TestCase):
             self.assertTrue((Path(directory) / "review" / "pr-42.html").is_file())
             self.assertTrue((Path(directory) / "review" / "pr-43.html").is_file())
             detail = (Path(directory) / "review" / "pr-42.html").read_text()
-            self.assertIn("No recorded history", detail)
+            self.assertIn("No detailed finding records have been imported", detail)
             self.assertIn("Review rounds</h2>", detail)
             self.assertIn('class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. '
-                          'Each pill shows its age. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', detail)
+                          'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', detail)
 
     def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
         data = self.fixture()
