@@ -312,12 +312,16 @@ class SqliteBackupTest(unittest.TestCase):
         with sftp_patch, patch("sys.stdout.write"):
             self.assertEqual(sqlite_backup.main(arguments), 0)
         self.assertEqual(report.stat().st_mode & 0o777, 0o600)
-        success = json.loads(report.read_text(encoding="utf-8"))
+        report_text = report.read_text(encoding="utf-8")
+        success = json.loads(report_text)
         self.assertEqual(success["lastAttempt"]["status"], "success")
         self.assertEqual(len(success["lastSuccess"]["sha256"]), 64)
         self.assertTrue(success["lastSuccess"]["filename"].endswith(".sqlite3"))
-        self.assertNotIn("identity", report.read_text(encoding="utf-8"))
-        self.assertNotIn("synthetic review state", report.read_text(encoding="utf-8"))
+        self.assertNotIn("identity", report_text)
+        self.assertNotIn("synthetic review state", report_text)
+        self.assertNotIn("Synthetic backup finding", report_text)
+        self.assertNotIn("Synthetic bounded review detail.", report_text)
+        self.assertNotIn("fixture reviewer", report_text)
 
         arguments[0] = str(self.root / "missing.sqlite3")
         with patch("sys.stderr.write"):

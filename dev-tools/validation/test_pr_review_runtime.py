@@ -1516,7 +1516,7 @@ class RuntimeTest(unittest.TestCase):
             mismatched_provider_summary,
         ):
             with self.subTest(provider_summary=invalid_summary["body"]):
-                rejected = history_for([trigger, invalid_summary, edited_reply, checkpoint])
+                rejected = history_for([trigger, invalid_summary, edited_reply, edited_duration_checkpoint])
                 self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in rejected))
 
         inline_comment = {
@@ -1527,7 +1527,7 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": "2026-09-23T00:02:30Z",
         }
         with_inline_output = history_for(
-            [trigger, provider_summary, edited_reply, checkpoint],
+            [trigger, provider_summary, edited_reply, edited_duration_checkpoint],
             threads=[{"comments": {"nodes": [inline_comment]}}],
         )
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_inline_output))
@@ -1539,7 +1539,9 @@ class RuntimeTest(unittest.TestCase):
             "createdAt": "2026-09-23T00:02:30Z",
             "updatedAt": "2026-09-23T00:02:30Z",
         }
-        with_issue_output = history_for([trigger, provider_summary, post_trigger_comment, edited_reply, checkpoint])
+        with_issue_output = history_for(
+            [trigger, provider_summary, post_trigger_comment, edited_reply, edited_duration_checkpoint]
+        )
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_issue_output))
 
         mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
