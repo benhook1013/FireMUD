@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -76,7 +77,26 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
-    validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
+    GameplayAdmissionPointerSnapshot currentPointer =
+        gameplayAdmissionPointerAuthorityService
+            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
+            .orElse(null);
+    if (currentPointer != null) {
+      throw new AdmissionPointerVersionMismatchException(
+          "admission-pointer updates are temporarily disabled until catalog revision "
+              + "preconditions are supported");
+    }
+    if (!request.hasExpectedPointerVersion() || request.getExpectedPointerVersion() != 0L) {
+      throw new AdmissionPointerVersionMismatchException(
+          "new admission-pointer creation requires an explicit expected_pointer_version of 0");
+    }
+    validatePreparedUpgradeForPointerChange(
+        request.getWorldSlug(),
+        request.getRealmSlug(),
+        tenantId,
+        targetGameInstanceId,
+        request.getPreparedVersionUpgradeId(),
+        currentPointer);
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             request.getWorldSlug(),
@@ -107,6 +127,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+    rejectPreparedCutoverUntilCatalogRevisionPreconditionsAreSupported();
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
@@ -285,6 +306,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
           "prepared_version_upgrade_id execution state does not match current admission pointer");
     }
     return entry;
+  }
+
+  private void rejectPreparedCutoverUntilCatalogRevisionPreconditionsAreSupported() {
+    throw new AdmissionPointerVersionMismatchException(
+        "prepared cutover is temporarily disabled until catalog revision preconditions "
+            + "are supported");
   }
 
   private GameInstance getInstanceOrThrow(long gameInstanceId) {
