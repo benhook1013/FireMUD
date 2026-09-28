@@ -23,7 +23,7 @@ public class GameplayAdmissionPointerEventRepository {
     this.dsl = dsl;
   }
 
-  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByIdDesc(
       String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
@@ -31,14 +31,12 @@ public class GameplayAdmissionPointerEventRepository {
                 .WORLD_SLUG
                 .eq(worldSlug)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
   public List<GameplayAdmissionPointerEvent>
-      findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+      findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
           Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
@@ -47,9 +45,7 @@ public class GameplayAdmissionPointerEventRepository {
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
