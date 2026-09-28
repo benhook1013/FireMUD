@@ -11,6 +11,7 @@ from typing import Any
 RUN_NAME = re.compile(r"run\.[0-9a-f]{32}\Z")
 MAX_METADATA_BYTES = 16_384
 MAX_ATTEMPTS = 5
+MAX_EXIT_STATUS_BYTES = 33
 MAX_STDERR_BYTES = 4096
 
 
@@ -39,23 +40,27 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
             if not isinstance(metadata, dict) or str(metadata.get("pull_request")) != str(pr):
                 continue
             exit_path = directory / "exit-status"
+            stderr_path = directory / "stderr"
+            error_path = directory / "error"
+            if any(path.is_symlink() for path in (exit_path, stderr_path, error_path)):
+                continue
             if exit_path.exists():
-                exit_status = exit_path.read_text(encoding="utf-8")[:32].strip()
+                with exit_path.open("rb") as exit_file:
+                    exit_status = exit_file.read(MAX_EXIT_STATUS_BYTES).decode("utf-8")[:32].strip()
                 if exit_status == "0":
                     continue
                 when = exit_path.stat().st_mtime
                 if exit_status == "timeout":
                     outcome = "timed_out"
                 else:
-                    stderr_path = directory / "stderr"
                     if stderr_path.exists():
                         with stderr_path.open("rb") as stderr_file:
                             stderr = stderr_file.read(MAX_STDERR_BYTES).decode("utf-8", errors="replace")
                     else:
                         stderr = ""
                     outcome = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "provider_failed"
-            elif (directory / "error").exists():
-                when = (directory / "error").stat().st_mtime
+            elif error_path.exists():
+                when = error_path.stat().st_mtime
                 outcome = "setup_failed"
             else:
                 continue

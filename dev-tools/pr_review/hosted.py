@@ -234,6 +234,25 @@ def default_trigger_record_path(repo: str, pr_number: int, common: Path | None =
     return root / "firemud" / "hosted" / _safe_repo(repo) / f"pr-{pr_number}" / "trigger.json"
 
 
+def _trigger_record_common_for_path(path: Path, repo: str, pr_number: int) -> Path | None:
+    """Return the record root only for a canonical current/archive record path."""
+
+    if ".." in path.parts or (path.name != "trigger.json" and not ARCHIVED.fullmatch(path.name)):
+        return None
+    record_dir = path.parent
+    repository_dir = record_dir.parent
+    hosted_dir = repository_dir.parent
+    namespace_dir = hosted_dir.parent
+    if (
+        record_dir.name != f"pr-{pr_number}"
+        or repository_dir.name != _safe_repo(repo)
+        or hosted_dir.name != "hosted"
+        or namespace_dir.name not in {"firemud", "coderabbit-review-logs"}
+    ):
+        return None
+    return namespace_dir.parent
+
+
 def current_trigger_record_paths(repo: str, pr_number: int, common: Path | None = None) -> list[Path]:
     """Return every current reservation path, including legacy locations."""
 
@@ -443,6 +462,7 @@ def adopt_manual_completed_trigger(
     payload: dict[str, Any],
     *,
     path: str | Path | None = None,
+    common: Path | None = None,
 ) -> dict[str, Any]:
     """Audit a public manual request after its unique review has completed.
 
@@ -536,10 +556,13 @@ def adopt_manual_completed_trigger(
     if len(in_window) > 1 or (in_window and in_window[0] != state.response_id):
         raise ValueError("manual request has ambiguous CodeRabbit review responses")
     record["adoption"]["response_id"] = state.response_id
-    record_path = Path(path) if path is not None else default_trigger_record_path(repo, pr_number)
+    record_path = Path(path) if path is not None else default_trigger_record_path(repo, pr_number, common)
+    record_common = common
+    if record_common is None and path is not None:
+        record_common = _trigger_record_common_for_path(record_path, repo, pr_number)
     descriptor = _with_lock(record_path)
     try:
-        for candidate in trigger_record_paths(repo, pr_number):
+        for candidate in trigger_record_paths(repo, pr_number, record_common):
             try:
                 loaded = load_trigger_record(candidate, repo, pr_number)
             except (OSError, ValueError, TypeError) as error:

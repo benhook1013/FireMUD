@@ -134,16 +134,56 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             candidate.write_text("{", encoding="utf-8")
             record_path = common / "adopted-trigger.json"
 
-            with (
-                patch.object(evidence, "git_common_dir", return_value=common),
-                self.assertRaises(ValueError) as raised,
-            ):
+            with self.assertRaises(ValueError) as raised:
                 hosted.adopt_manual_completed_trigger(
-                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=record_path
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=record_path, common=common
                 )
 
             self.assertIn(str(candidate), str(raised.exception))
             self.assertFalse(record_path.exists())
+
+    def test_custom_common_root_duplicate_is_refused_with_path_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            first_path = hosted.default_trigger_record_path(REPO, 42, common)
+            second_path = common / "second-adoption.json"
+
+            hosted.adopt_manual_completed_trigger(
+                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+            )
+
+            with self.assertRaisesRegex(ValueError, "already has a durable record"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=second_path, common=common
+                )
+
+            self.assertTrue(first_path.exists())
+            self.assertFalse(second_path.exists())
+
+    def test_canonical_path_override_derives_custom_common_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            first_path = hosted.default_trigger_record_path(REPO, 42, common)
+            legacy_path = (
+                common
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+
+            hosted.adopt_manual_completed_trigger(
+                REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=first_path, common=common
+            )
+
+            with self.assertRaisesRegex(ValueError, "already has a durable record"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 10, HEAD, ANCHOR, public_payload(), path=legacy_path
+                )
+
+            self.assertTrue(first_path.exists())
+            self.assertFalse(legacy_path.exists())
 
     def test_ambiguous_or_mismatched_public_identity_is_not_adopted(self):
         duplicated_review = public_payload()

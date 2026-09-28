@@ -92,6 +92,58 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(stream.requested_bytes, 4096)
         self.assertEqual(attempts["attempts"][0]["outcome"], "rate_limited")
 
+    def test_failed_cli_attempt_reads_only_bounded_exit_status_prefix(self) -> None:
+        root = self.database.parent / "pr-review" / "runs"
+        failed = root / ("run." + "9" * 32)
+        failed.mkdir(parents=True)
+        (failed / "metadata.json").write_text(json.dumps({"pull_request": 2890}), encoding="utf-8")
+        exit_path = failed / "exit-status"
+        exit_path.touch()
+
+        class GuardedStream(io.BytesIO):
+            requested_bytes: int | None = None
+
+            def read(self, size: int = -1) -> bytes:
+                self.requested_bytes = size
+                if size < 0 or size > 33:
+                    raise AssertionError("exit-status read was not bounded")
+                return super().read(size)
+
+        stream = GuardedStream(b"1\n" + b"x" * 1_000_000)
+        original_open = Path.open
+
+        def open_exit_status(path: Path, *args: object, **kwargs: object) -> object:
+            if path == exit_path:
+                return stream
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", autospec=True, side_effect=open_exit_status):
+            attempts = cli_attempts.failed_attempts(self.database, 2890)
+
+        self.assertEqual(stream.requested_bytes, 33)
+        self.assertEqual(attempts["attempts"][0]["outcome"], "provider_failed")
+
+    def test_failed_cli_attempt_ignores_symlinked_capture_files(self) -> None:
+        root = self.database.parent / "pr-review" / "runs"
+        target = self.database.parent / "capture-target"
+        target.write_text("1\n", encoding="utf-8")
+        symlinked = {
+            "exit-status": "run." + "a" * 32,
+            "stderr": "run." + "b" * 32,
+            "error": "run." + "c" * 32,
+        }
+        for capture_name, run_name in symlinked.items():
+            directory = root / run_name
+            directory.mkdir(parents=True)
+            (directory / "metadata.json").write_text(json.dumps({"pull_request": 2890}), encoding="utf-8")
+            if capture_name == "stderr":
+                (directory / "exit-status").write_text("1\n", encoding="utf-8")
+            (directory / capture_name).symlink_to(target)
+
+        attempts = cli_attempts.failed_attempts(self.database, 2890)
+
+        self.assertEqual(attempts["attempts"], [])
+
     def test_failed_cli_attempt_metadata_is_bounded_at_the_size_limit(self) -> None:
         root = self.database.parent / "pr-review" / "runs"
         exact = root / ("run." + "d" * 32)
