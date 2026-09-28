@@ -397,8 +397,8 @@ public class AccountServiceImpl implements AccountService {
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     return gameSessionClient.listGameplayRealms(worldSlug).stream()
-        .map(this::readRuntimeRealmTarget)
-        .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
+        .map(realm -> readAdmissibleDiscoveryRealm(bootstrapContext, realm))
+        .flatMap(Optional::stream)
         .map(
             realm ->
                 new BootstrapRealmDto(
@@ -788,11 +788,61 @@ public class AccountServiceImpl implements AccountService {
   private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
     try {
       return gameSessionClient.listGameplayRealms(worldSlug).stream()
-          .map(this::readRuntimeRealmTarget)
-          .anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
+          .map(realm -> readAdmissibleDiscoveryRealm(bootstrapContext, realm))
+          .flatMap(Optional::stream)
+          .findAny()
+          .isPresent();
     } catch (IllegalStateException ex) {
       return false;
     }
+  }
+
+  private Optional<RuntimeRealmTarget> readAdmissibleDiscoveryRealm(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    final RuntimeRealmTarget target;
+    try {
+      target = readRuntimeRealmTarget(realm);
+    } catch (IllegalArgumentException ex) {
+      if (isMalformedRealmReachable(bootstrapContext, realm)) {
+        throw admissionPointerUnavailable(ex);
+      }
+      return Optional.empty();
+    }
+    return isRealmAdmissible(bootstrapContext, target) ? Optional.of(target) : Optional.empty();
+  }
+
+  private boolean isMalformedRealmReachable(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    if (realm.getVisible() && realm.getPublicProductionRealm()) {
+      return true;
+    }
+
+    final long tenantId;
+    try {
+      tenantId = requirePositiveLong(realm.getTenantId(), "tenantId");
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+    if (accountTenantMembershipRepository
+        .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
+        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+        .isEmpty()) {
+      return false;
+    }
+    if (!hasRealmAccessGrant(
+        bootstrapContext.accountId(), tenantId, realm.getWorldSlug(), realm.getRealmSlug())) {
+      return false;
+    }
+    return true;
+  }
+
+  private AuthenticationException admissionPointerUnavailable(Throwable cause) {
+    return new AuthenticationException(
+        "ADMISSION_POINTER_UNAVAILABLE",
+        "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry",
+        cause);
   }
 
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {

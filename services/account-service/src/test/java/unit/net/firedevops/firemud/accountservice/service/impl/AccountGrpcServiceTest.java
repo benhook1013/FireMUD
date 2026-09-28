@@ -141,6 +141,25 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void requestEmailLoginOtpRejectsBlankEmailBeforeCallingAccountService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<RequestEmailLoginOtpResponse> observer = new RecordingObserver<>();
+
+    service.requestEmailLoginOtp(
+        RequestEmailLoginOtpRequest.newBuilder().setEmail("   ").build(), observer);
+
+    assertNotNull(observer.response());
+    assertFalse(observer.response().getAccepted());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertEquals("email must not be blank", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void verifyEmailLoginOtpReturnsAuthenticatedSession() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
