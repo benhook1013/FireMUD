@@ -83,18 +83,13 @@ class GameplayAdmissionPointerRepositoryTest {
             "jdbc:h2:mem:gameplay-pointer-catalog-cas;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createSchema(dsl);
-      GameplayAdmissionPointerRepository repository =
-          new GameplayAdmissionPointerRepository(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
       repository.save(pointer(7L, 44L, "SHARED", "production"));
 
       GameplayAdmissionPointer stale =
-          repository
-              .findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production")
-              .orElseThrow();
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
       GameplayAdmissionPointer catalogUpdate =
-          repository
-              .findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production")
-              .orElseThrow();
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
       catalogUpdate.setWorldDisplayName("Renamed Demo World");
       catalogUpdate.setPointerVersion(1L);
       catalogUpdate.setCatalogRevision(2L);

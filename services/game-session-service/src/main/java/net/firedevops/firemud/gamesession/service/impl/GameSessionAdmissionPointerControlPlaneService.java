@@ -90,13 +90,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
       throw new AdmissionPointerVersionMismatchException(
           "new admission-pointer creation requires an explicit expected_pointer_version of 0");
     }
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
+    validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             request.getWorldSlug(),
