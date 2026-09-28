@@ -453,22 +453,22 @@ def record_posted_trigger(
     return record_path
 
 
-def unresolved_preceding_full_trigger(payload: dict[str, Any], trigger_id: int) -> bool:
-    """Detect a prior public command with no terminal bot output before this command.
+def unresolved_preceding_full_trigger(
+    repo: str, pr_number: int, payload: dict[str, Any], trigger_id: int, common: Path | None = None
+) -> bool:
+    """Require a separately audited terminal record for every earlier command.
 
-    A plain finished reply after two commands cannot be assigned to the later
-    one while the first remains unresolved. This is an admission/attribution
-    guard, not a review result or taper judgment.
+    Bot output alone cannot prove which of two overlapping manual requests it
+    answered. This guards attribution and admission, never taper history.
     """
 
     try:
         pr = payload["data"]["repository"]["pullRequest"]
         comments = pr["comments"]["nodes"]
-        reviews = pr["reviews"]["nodes"]
     except (KeyError, TypeError) as exc:
-        raise ValueError("complete public command and review history is required") from exc
-    if not isinstance(comments, list) or not isinstance(reviews, list):
-        raise TypeError("complete public command and review history is required")
+        raise ValueError("complete public command history is required") from exc
+    if not isinstance(comments, list):
+        raise TypeError("complete public command history is required")
     commands: list[tuple[datetime, int]] = []
     for item in comments:
         if not isinstance(item, dict):
@@ -484,42 +484,46 @@ def unresolved_preceding_full_trigger(payload: dict[str, Any], trigger_id: int) 
     positions = [index for index, (_, identity) in enumerate(commands) if identity == trigger_id]
     if len(positions) != 1:
         raise ValueError("public full-review command is missing or duplicated")
+    records: dict[int, tuple[dict[str, Any], Path]] = {}
+    for path in trigger_record_paths(repo, pr_number, common):
+        try:
+            record = load_trigger_record(path, repo, pr_number)
+        except (OSError, ValueError, TypeError) as exc:
+            raise ValueError(f"cannot inspect existing trigger record {path}: {exc}") from exc
+        recorded_id = (record.get("trigger") or {}).get("id")
+        if isinstance(recorded_id, int) and not isinstance(recorded_id, bool):
+            if recorded_id in records:
+                raise ValueError("public full-review command has duplicate private records")
+            records[recorded_id] = (record, path)
     for index in range(positions[0]):
-        start, _ = commands[index]
+        _, preceding_id = commands[index]
         end, _ = commands[index + 1]
-        if end <= start:
+        recorded = records.get(preceding_id)
+        if recorded is None:
             return True
-        terminal_comment = False
-        for item in comments:
-            if not is_coderabbit_login(_comment_author_login(item)):
-                continue
-            created = parse_timestamp(item.get("createdAt"))
-            if created is None:
-                raise ValueError("bot response has no creation time")
-            if not start < created < end:
-                continue
-            body = item.get("body") or ""
-            terminal_comment = bool(
-                FINISHED_REVIEW_PATTERN.search(_unquoted(body))
-                or FAILED_PATTERN.search(_unquoted(body))
-                or NOOP_MARKER in body
-                or REVIEW_LIMIT_MARKER in body
-                or _rate_limit(body, created) is not None
-                or _substantive(body)
+        record, path = recorded
+        if record.get("status") == "retired":
+            continue
+        state = trigger_state(repo, pr_number, payload, record, path)
+        response_at = parse_timestamp(state.response_created_at)
+        response_comments = [
+            item for item in comments if immutable_database_id(item) == state.response_id
+        ]
+        if len(response_comments) == 1:
+            terminal_at = parse_timestamp(response_comments[0].get("updatedAt"))
+        else:
+            reviews = (pr.get("reviews") or {}).get("nodes")
+            response_reviews = (
+                [item for item in reviews if immutable_database_id(item) == state.response_id]
+                if isinstance(reviews, list)
+                else []
             )
-            if terminal_comment:
-                break
-        terminal_review = False
-        for item in reviews:
-            if not isinstance(item, dict) or not is_coderabbit_login((item.get("author") or {}).get("login")):
-                continue
-            submitted = parse_timestamp(item.get("submittedAt"))
-            if submitted is None:
-                raise ValueError("bot review has no submission time")
-            if start < submitted < end and item.get("state") != "DISMISSED":
-                terminal_review = True
-                break
-        if not terminal_comment and not terminal_review:
+            terminal_at = (
+                parse_timestamp(response_reviews[0].get("submittedAt"))
+                if len(response_reviews) == 1
+                else None
+            )
+        if state.terminal is not True or response_at is None or terminal_at is None or terminal_at >= end:
             return True
     return False
 
@@ -659,7 +663,7 @@ def adopt_manual_completed_trigger(
             raise ValueError("manual request has ambiguous CodeRabbit review responses")
         record["adoption"]["response_id"] = state.response_id
 
-        if unresolved_preceding_full_trigger(payload, trigger_id):
+        if unresolved_preceding_full_trigger(repo, pr_number, payload, trigger_id, record_common):
             raise ValueError("an earlier full-review command is unresolved before the manual request")
 
         for candidate in trigger_record_paths(repo, pr_number, record_common):
@@ -983,6 +987,19 @@ def _substantive(body: str) -> bool:
     return any(marker in body for marker in SUBSTANTIVE_MARKERS)
 
 
+def _active_only_acknowledgement(body: str) -> bool:
+    visible = _unquoted(body)
+    return bool(ACTIVE_PATTERN.search(visible)) and not (
+        FINISHED_REVIEW_PATTERN.search(visible)
+        or FAILED_PATTERN.search(visible)
+        or _substantive(visible)
+        or NOOP_MARKER in visible
+        or REVIEW_LIMIT_MARKER in visible
+        or RATE_LIMIT_PATTERN.search(visible)
+        or any(pattern.search(visible) for pattern in POSITIVE_FINDING_COUNT_PATTERNS)
+    )
+
+
 def _unquoted(body: str) -> str:
     return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
 
@@ -1042,6 +1059,8 @@ def _zero_finding_summary(
         if not isinstance(body, str) or created is None or updated is None:
             return None
         if updated <= after or (before is not None and updated >= before):
+            continue
+        if created > after and _active_only_acknowledgement(body):
             continue
         # An edited standing summary may describe an earlier same-head run.
         # Its edit time alone cannot attribute it to this trigger.
@@ -1367,6 +1386,8 @@ def _provider_format_terminal_summary(
         updated_in_window = in_window(item.get("updatedAt"))
         if created_in_window is None or updated_in_window is None:
             return None
+        if created_in_window and updated_in_window and _active_only_acknowledgement(item.get("body") or ""):
+            continue
         if created_in_window or updated_in_window:
             return None
 
@@ -1493,6 +1514,13 @@ def finished_reply_without_findings(
             # CodeRabbit reuses its standing PR summary. A benign old zero
             # summary is not attributed to this trigger; the exact finished
             # reply and absence of reviews/threads are the zero proof.
+            continue
+        if (
+            created_in_window is True
+            and updated_in_window is True
+            and isinstance(body, str)
+            and _active_only_acknowledgement(body)
+        ):
             continue
         if created_in_window is None or updated_in_window is None or created_in_window or updated_in_window:
             return False

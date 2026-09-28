@@ -1177,7 +1177,7 @@ class RuntimeTest(unittest.TestCase):
                 42, Path(directory)
             )
         fetch_full.assert_called_once_with("owner/repo", 99)
-        preceding.assert_called_once_with(payload, 901)
+        preceding.assert_called_once_with("owner/repo", 99, payload, 901, Path(directory))
 
     def test_hosted_global_scan_blocks_new_manual_request_after_tracked_current_record(self) -> None:
         old_command = {
@@ -1237,7 +1237,7 @@ class RuntimeTest(unittest.TestCase):
                     42, common
                 )
         fetch_full.assert_called_once_with("owner/repo", 99)
-        preceding.assert_called_once_with(payload, 912)
+        preceding.assert_called_once_with("owner/repo", 99, payload, 912, common)
 
     def test_hosted_global_scan_allows_terminal_manual_request_off_queue(self) -> None:
         manual = {
@@ -1274,7 +1274,7 @@ class RuntimeTest(unittest.TestCase):
             HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
                 42, Path(directory)
             )
-        preceding.assert_called_once_with(payload, 920)
+        preceding.assert_called_once_with("owner/repo", 99, payload, 920, Path(directory))
 
     def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
         snapshots = {

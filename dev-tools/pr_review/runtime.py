@@ -2028,7 +2028,9 @@ class HostedRunner:
                 trigger_id = github.immutable_database_id(dict(command))
                 if trigger_id is None:
                     raise ControllerError("manual full-review command has incomplete immutable identity")
-                if hosted.unresolved_preceding_full_trigger(payload, trigger_id):
+                if hosted.unresolved_preceding_full_trigger(
+                    self.repo, other_pr, payload, trigger_id, common
+                ):
                     raise ControllerError(
                         f"another manual Hosted request is unresolved for PR #{other_pr}: "
                         "an earlier full-review command has no terminal response"

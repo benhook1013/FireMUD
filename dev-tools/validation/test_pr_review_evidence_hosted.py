@@ -970,6 +970,46 @@ class HostedEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid full-review identity"):
             hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), bool_record)
 
+    def test_active_acknowledgement_does_not_hide_clean_finished_result(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        acknowledgement = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:01:08Z")
+        finished = comment(12, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, acknowledgement, finished]), trigger_record())
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 12)
+
+        summary = comment(
+            13,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-23T00:02:10Z",
+        )
+        with_summary = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, acknowledgement, finished, summary]), trigger_record()
+        )
+        self.assertEqual(with_summary.state, "completed")
+
+    def test_manual_preceding_command_requires_its_own_audited_result(self):
+        first = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        unrelated = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        second = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        payload = review_payload([first, unrelated, second])
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            self.assertTrue(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
+            record_path = hosted.default_trigger_record_path(REPO, PR, common)
+            record_path.parent.mkdir(parents=True, exist_ok=True)
+            record_path.write_text(json.dumps(trigger_record()), encoding="utf-8")
+            self.assertFalse(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
+
+            edited = {**unrelated, "createdAt": "2026-09-23T00:01:30Z", "updatedAt": "2026-09-23T00:03:30Z"}
+            self.assertTrue(
+                hosted.unresolved_preceding_full_trigger(
+                    REPO, PR, review_payload([first, edited, second]), 12, common
+                )
+            )
+
     def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
         trigger_at = "2026-09-23T00:01:00Z"
         summary_at = "2026-09-23T00:03:20Z"
