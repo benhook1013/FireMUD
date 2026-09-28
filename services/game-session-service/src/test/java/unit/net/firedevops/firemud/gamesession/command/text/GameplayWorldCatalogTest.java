@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -80,6 +81,47 @@ class GameplayWorldCatalogTest {
 
     assertThat(catalog.visibleWorlds()).isEmpty();
     assertThat(catalog.resolveRuntimeTarget(1L, 11L)).isEmpty();
+  }
+
+  @Test
+  void authoritySnapshotRejectsPublicRealmsAcrossDifferentWorldsForOneTenant() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                publicPointer("alpha", "Alpha World", 1L, 11L),
+                publicPointer("beta", "Beta World", 1L, 12L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasMessageContaining("public-production realm count is invalid");
+  }
+
+  @Test
+  void authoritySnapshotRejectsTenantWithoutVisiblePublicRealm() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "private", "Private Realm", 1L, 11L, 7L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasMessageContaining("public-production realm count is invalid");
+  }
+
+  @Test
+  void authoritySnapshotKeepsPrivateRealmsWhenTenantHasOneVisiblePublicRealm() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                publicPointer("demo", "Demo World", 1L, 11L),
+                pointer("private", "Private World", "preview", "Preview", 1L, 12L, 1L),
+                publicPointer("hidden", "Hidden", 1L, 13L, false)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("demo", "private");
   }
 
   @ParameterizedTest(name = "authority projection rejects {0}")
@@ -281,6 +323,36 @@ class GameplayWorldCatalogTest {
         pointerVersion,
         visible,
         "production".equals(realmSlug),
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        1L,
+        realmId,
+        stableId("namespace/" + realmId));
+  }
+
+  private static GameplayAdmissionPointerSnapshot publicPointer(
+      String worldSlug, String worldDisplayName, long tenantId, long gameInstanceId) {
+    return publicPointer(worldSlug, worldDisplayName, tenantId, gameInstanceId, true);
+  }
+
+  private static GameplayAdmissionPointerSnapshot publicPointer(
+      String worldSlug,
+      String worldDisplayName,
+      long tenantId,
+      long gameInstanceId,
+      boolean visible) {
+    UUID realmId = stableId("realm/" + tenantId + "/" + worldSlug + "/public");
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldDisplayName,
+        "live",
+        "Live Realm",
+        tenantId,
+        gameInstanceId,
+        1L,
+        visible,
+        true,
         false,
         "SHARED",
         "ALLOW_NEW",

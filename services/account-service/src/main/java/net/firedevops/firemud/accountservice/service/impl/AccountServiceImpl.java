@@ -1057,6 +1057,17 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
     }
+    if (membership.membershipExists()
+        && "INACTIVE".equals(membership.membershipLifecycleState())
+        && isPublicProductionRealm(realm)) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
     if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
@@ -1681,6 +1692,16 @@ public class AccountServiceImpl implements AccountService {
     Optional<AccountTenantMembership> maybeMembership =
         accountTenantMembershipRepository.findByAccountIdAndTenantId(
             bootstrapContext.accountId(), currentRealm.tenantId());
+    if (maybeMembership.isPresent()
+        && "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState())
+        && publicProductionRealm) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
+    }
     if (maybeMembership.isPresent()
         && !maybeMembership.orElseThrow().isGameplayAdmissionAllowed()) {
       throw new AuthenticationException(

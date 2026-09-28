@@ -2858,6 +2858,49 @@ class AccountServiceImplTest {
     assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
   }
 
+  @ParameterizedTest
+  @CsvSource({"active, JOIN_REQUIRED", "grace, PUBLIC_PRODUCTION_ADMISSION_DENIED"})
+  void issueConnectTokenClassifiesInactivePublicMembershipByJoinPolicy(
+      String subscriptionStatus, String expectedCode) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership inactiveMembership = membership(account, 7L);
+    inactiveMembership.setLifecycleState("INACTIVE");
+    inactiveMembership.setGameplayAdmissionAllowed(false);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(inactiveMembership));
+    Subscription subscription = new Subscription();
+    subscription.setId(22L);
+    subscription.setTenantId(7L);
+    subscription.setStatus(subscriptionStatus);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(subscription));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-inactive-public")));
+
+    assertEquals(expectedCode, exception.getCode());
+    if ("JOIN_REQUIRED".equals(expectedCode)) {
+      assertEquals(
+          "Join the selected world before requesting a connect token", exception.getMessage());
+    } else {
+      assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+    }
+  }
+
   @Test
   void issueConnectTokenClassifiesKnownBillingDenialAndReplaysItDeterministically() {
     Account account = new Account();
@@ -3221,6 +3264,48 @@ class AccountServiceImplTest {
         org.mockito.Mockito.inOrder(subscriptionRepository, accountTenantMembershipRepository);
     order.verify(subscriptionRepository, org.mockito.Mockito.times(2)).findByTenantId(7L);
     order.verify(accountTenantMembershipRepository).findByAccountIdAndTenantId(11L, 7L);
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"active, JOIN_REQUIRED", "grace, PUBLIC_PRODUCTION_ADMISSION_DENIED"})
+  void listBootstrapCharactersClassifiesInactivePublicMembershipByJoinPolicy(
+      String subscriptionStatus, String expectedCode) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership inactiveMembership = membership(account, 7L);
+    inactiveMembership.setLifecycleState("INACTIVE");
+    inactiveMembership.setGameplayAdmissionAllowed(false);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(inactiveMembership));
+    Subscription subscription = new Subscription();
+    subscription.setId(22L);
+    subscription.setTenantId(7L);
+    subscription.setStatus(subscriptionStatus);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(subscription));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals(expectedCode, exception.getCode());
+    if ("JOIN_REQUIRED".equals(expectedCode)) {
+      assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    } else {
+      assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+    }
     verifyNoInteractions(entityManagementClient);
   }
 
