@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
-import net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.v1.GetFriendByOrdinalResponse;
@@ -453,7 +452,6 @@ public class FriendsCommandHandler {
         presence.getPointerVersion() > 0 ? presence.getPointerVersion() : null,
         activityState(presence.getActivityState()),
         presence.getLastSeenAtMs() > 0 ? presence.getLastSeenAtMs() : null,
-        recentDisposition(presence.getRecentDisposition()),
         visibilityPolicy(presence.getVisibilityPolicy()));
   }
 
@@ -466,7 +464,6 @@ public class FriendsCommandHandler {
         blankToNull(entry.getStatus()),
         entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
         displayName,
-        null,
         null,
         null,
         null,
@@ -521,15 +518,6 @@ public class FriendsCommandHandler {
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private String recentDisposition(FriendRecentPresenceDisposition disposition) {
-    return switch (disposition) {
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS -> "TRANSPORT_LOSS";
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT -> "LOGOUT";
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> "TAKEOVER";
-      default -> null;
-    };
   }
 
   private String playableStateScope(PlayableStateScope scope) {

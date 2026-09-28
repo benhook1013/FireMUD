@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,9 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnBean({WorkflowClient.class, TemporalTaskQueueResolver.class})
 public class TemporalVersionPublishOrchestrator {
+  static final String PENDING_RECONCILIATION_REQUIRED_CODE =
+      PublishAttemptPendingReconciliationException.ERROR_CODE;
+  private static final String VERSION_PUBLISH_WORKFLOW_FAILED = "VERSION_PUBLISH_WORKFLOW_FAILED";
   private static final Duration QUERY_WAIT_TIMEOUT = Duration.ofSeconds(30);
   private static final Duration QUERY_WAIT_INTERVAL = Duration.ofMillis(100);
 
@@ -46,14 +50,30 @@ public class TemporalVersionPublishOrchestrator {
     if (snapshot.isSucceeded()) {
       return commandService.publishFullVersion(tenantId, notes, publishRequestId, workflowId);
     }
-    if (snapshot.failureCode() != null && snapshot.failureCode().startsWith("DIGEST_")) {
-      throw new PublishGateFailureException(
-          PublishGateFailureCode.valueOf(snapshot.failureCode()), snapshot.failureMessage());
+    throw failureForSnapshot(snapshot);
+  }
+
+  static RuntimeException failureForSnapshot(PublishWorkflowSnapshot snapshot) {
+    String failureCode = snapshot.failureCode();
+    if (PublishAttemptPendingReconciliationException.ERROR_CODE.equals(failureCode)) {
+      return new PublishAttemptPendingReconciliationException();
     }
-    throw new IllegalStateException(
-        snapshot.failureMessage() == null || snapshot.failureMessage().isBlank()
-            ? snapshot.failureCode()
-            : snapshot.failureMessage());
+    if (failureCode != null && !failureCode.isBlank()) {
+      try {
+        PublishGateFailureCode gateFailureCode = PublishGateFailureCode.valueOf(failureCode);
+        return new PublishGateFailureException(gateFailureCode, snapshot.failureMessage());
+      } catch (IllegalArgumentException ignored) {
+        // Unknown snapshot codes remain generic failures.
+      }
+    }
+    String failureMessage = snapshot.failureMessage();
+    if (failureMessage != null && !failureMessage.isBlank()) {
+      return new IllegalStateException(failureMessage);
+    }
+    if (failureCode != null && !failureCode.isBlank()) {
+      return new IllegalStateException(failureCode);
+    }
+    return new IllegalStateException(VERSION_PUBLISH_WORKFLOW_FAILED);
   }
 
   private TemporalVersionPublishWorkflow newWorkflowStub(String workflowId) {
@@ -69,16 +89,26 @@ public class TemporalVersionPublishOrchestrator {
   private PublishWorkflowSnapshot waitForSnapshot(
       TemporalVersionPublishWorkflow workflow, String workflowId) {
     long deadline = System.nanoTime() + QUERY_WAIT_TIMEOUT.toNanos();
+    PublishWorkflowSnapshot lastSnapshot = null;
     while (System.nanoTime() < deadline) {
       PublishWorkflowSnapshot snapshot = workflow.currentSnapshot();
+      lastSnapshot = snapshot;
       if (snapshot != null && snapshot.isTerminal()) {
         return snapshot;
       }
       sleepQuietly();
     }
-    throw new IllegalStateException(
-        "TEMPORAL_WORKFLOW_TIMEOUT: version publish workflow did not converge for workflowId="
-            + workflowId);
+    throw timeoutException(lastSnapshot, workflowId);
+  }
+
+  static RuntimeException timeoutException(
+      PublishWorkflowSnapshot lastSnapshot, String workflowId) {
+    String timeoutDetail = "version publish workflow did not converge for workflowId=" + workflowId;
+    if (lastSnapshot != null
+        && PENDING_RECONCILIATION_REQUIRED_CODE.equals(lastSnapshot.failureCode())) {
+      return new PublishAttemptPendingReconciliationException();
+    }
+    return new IllegalStateException("TEMPORAL_WORKFLOW_TIMEOUT: " + timeoutDetail);
   }
 
   private void sleepQuietly() {

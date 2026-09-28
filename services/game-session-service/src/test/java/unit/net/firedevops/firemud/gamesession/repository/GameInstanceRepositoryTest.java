@@ -70,7 +70,8 @@ class GameInstanceRepositoryTest {
                       "operator",
                       "pin",
                       "EXPECT_EPOCH",
-                      1L));
+                      1L,
+                      10L));
       assertEquals("control_plane_request_id is required", applyError.getMessage());
 
       IllegalArgumentException failureError =

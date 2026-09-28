@@ -360,7 +360,6 @@ class TextCommandInterpreterTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService(),
             pointerAuthorityService,
@@ -984,7 +983,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         look.outputs().stream().map(PlayerOutput::kind).toList());
     assertTrue(((LookViewOutput) look.outputs().get(0).payload()).includeLongDescription());
-    verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("1", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("1", "LOOK", false);
   }
 

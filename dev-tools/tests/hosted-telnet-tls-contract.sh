@@ -89,8 +89,8 @@ proxy_container = next(
     if container.get("name") == "tcp-proxy-service"
 )
 proxy_env = {item["name"]: item.get("value") for item in proxy_container.get("env", [])}
-assert proxy_env.get("FIREMUD_TLS_READINESS_GATE_ENABLED") == "true", (
-    "hosted Telnet TLS must gate new TCP Proxy admission on TLS reload health"
+assert "FIREMUD_TLS_READINESS_GATE_ENABLED" not in proxy_env, (
+    "hosted Telnet TLS must use the route-specific listener TLS readiness gate"
 )
 service = next(
     document

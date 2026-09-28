@@ -24,6 +24,7 @@ import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptDeadLetterReplayRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
@@ -80,6 +81,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptPatchReadinessProjectionService readinessProjectionService;
   private final ScriptDeadLetterReplayRepository replayRepository;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptDefinitionRepository scriptDefinitionRepository;
 
   @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemServiceImpl(
@@ -96,7 +98,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ScriptDeadLetterReplayRepository replayRepository,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ScriptDefinitionRepository scriptDefinitionRepository) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -113,6 +116,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.meterRegistry = meterRegistry;
     Gauge.builder("automation_retention_blocked_rows", retentionBlockedRows, AtomicLong::get)
         .register(meterRegistry);
+    this.scriptDefinitionRepository = scriptDefinitionRepository;
   }
 
   @Override
@@ -192,7 +196,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     Instant now = Instant.now();
     List<ScriptWorkItem> items =
         workItemRepository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
-            STATUS_PENDING_EVALUATION, PageRequest.of(0, maxItems));
+            STATUS_PENDING_EVALUATION, now, PageRequest.of(0, maxItems));
     items.forEach(
         item -> {
           item.setStatus(STATUS_EVALUATING);
@@ -217,6 +221,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         workItemRepository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
             workItemIds.stream().distinct().toList(),
             STATUS_PENDING_EVALUATION,
+            now,
             PageRequest.of(0, maxItems));
     items.forEach(
         item -> {
@@ -269,7 +274,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .getProjection(tenantId, scriptPatchVersion)
         .map(
             readiness -> {
-              PublicationMetadata metadata = publicationMetadata(tenantId, scriptPatchVersion);
+              PublicationMetadata metadata =
+                  publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
               return PatchStatusSummary.fromProjection(
                   readiness,
                   metadata.baseVersionId(),
@@ -287,7 +293,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .map(
             readiness -> {
               PublicationMetadata metadata =
-                  publicationMetadata(tenantId, readiness.scriptPatchVersion());
+                  publicationMetadata(
+                      tenantId, readiness.baseVersionId(), readiness.scriptPatchVersion());
               return PatchStatusSummary.fromProjection(
                   readiness,
                   metadata.baseVersionId(),
@@ -750,7 +757,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         || !blankToEmpty(command.regionId()).isBlank()
         || !blankToEmpty(command.scriptPatchVersion()).isBlank()
         || command.createdAfterMs() > 0
-        || command.createdBeforeMs() > 0) {
+        || command.createdBeforeMs() > 0
+        || command.limit() != 0) {
       throw new IllegalArgumentException("replay_filters_require_preview");
     }
     if (blankToEmpty(command.controlPlaneRequestId()).isBlank()) {
@@ -928,7 +936,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
-    return publicationMetadata(tenantId, 0L, scriptPatchVersion);
+    // The authored patch identity is bound once to an immutable base. A later readiness
+    // projection cannot rewrite the base used to render a historical rollout or handoff.
+    Long retainedBaseVersionId =
+        scriptDefinitionRepository
+            .findScriptPatchBaseVersionId(tenantId, scriptPatchVersion)
+            .orElse(null);
+    if (retainedBaseVersionId == null || retainedBaseVersionId <= 0L) {
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion,
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "immutable script-patch base binding is unavailable for exact publication lookup");
+    }
+    return publicationMetadata(tenantId, retainedBaseVersionId, scriptPatchVersion);
   }
 
   private PublicationMetadata publicationMetadata(
@@ -936,8 +956,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (requestedBaseVersionId <= 0L) {
       return PublicationMetadata.lookupFailure(
           scriptPatchVersion,
-          "INVALID_ARGUMENT",
-          "base_version_id is required for exact script-patch publication lookup");
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "base_version_id is unavailable for exact script-patch publication lookup");
     }
     GetPublishedScriptPatchVersionResponse scriptPatchResponse =
         gameDesignControlPlaneClient.getPublishedScriptPatchVersion(
@@ -949,6 +969,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
           scriptPatchResponse.getError().getMessage());
     }
     long baseVersionId = scriptPatchResponse.getScriptPatch().getBaseVersionId();
+    if (baseVersionId != requestedBaseVersionId
+        || !scriptPatchVersion.equals(
+            blankToEmpty(scriptPatchResponse.getScriptPatch().getScriptPatchVersion()))) {
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion,
+          "FAILED_PRECONDITION",
+          "published script-patch identity does not match the exact requested base");
+    }
     ScriptPatchPublicationLink publication =
         new ScriptPatchPublicationLink(
             blankToEmpty(scriptPatchResponse.getScriptPatch().getScriptPatchVersion()),
@@ -1191,6 +1219,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (runtimeFailure != null) {
       return runtimeFailure;
     }
+    String baseVersionFailure = validateExactPatchBase(item, runtime);
+    if (baseVersionFailure != null) {
+      return baseVersionFailure;
+    }
     String capturedPluginFailure =
         ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(item);
     if (capturedPluginFailure != null) {
@@ -1211,6 +1243,20 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginState).orElse(null),
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginActivationEpoch).orElse(0L),
         plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::lifecycleRevision).orElse(0L));
+  }
+
+  private static String validateExactPatchBase(
+      ScriptWorkItem item, GetGameInstanceRuntimeStateResponse runtime) {
+    if (item.getScriptPatchBaseVersionId() == null
+        || item.getScriptPatchBaseVersionId() <= 0L
+        || runtime.getRuntimeState().getPinnedScriptPatchBaseVersionId() <= 0L) {
+      return "script_patch_base_version_unavailable";
+    }
+    if (item.getScriptPatchBaseVersionId()
+        != runtime.getRuntimeState().getPinnedScriptPatchBaseVersionId()) {
+      return "script_patch_base_version_mismatch";
+    }
+    return null;
   }
 
   private void persistReplayResult(

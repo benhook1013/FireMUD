@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Canonical unified PR-review command."""
 
+import sys
+
 from pr_review.cli import main
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--version"]:
+        print(f"pr-review sqlite_schema_version={SQLITE_SCHEMA_VERSION} writer_build={WRITER_BUILD}")
+        raise SystemExit(0)
     raise SystemExit(main())

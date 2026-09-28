@@ -334,6 +334,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredAuthoritativeText(coordinator.getScriptId(), root, "scriptId"),
                   requiredAuthoritativeText(
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
+                  followup.getScriptPatchBaseVersionId(),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
                   routingBundle == null ? null : routingBundle.playableStateScope(),
@@ -421,6 +422,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   authoritativeText(coordinator.getScriptId(), root, "scriptId"),
                   authoritativeText(
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
+                  followup.getScriptPatchBaseVersionId(),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
                   routingBundle == null ? null : routingBundle.playableStateScope(),

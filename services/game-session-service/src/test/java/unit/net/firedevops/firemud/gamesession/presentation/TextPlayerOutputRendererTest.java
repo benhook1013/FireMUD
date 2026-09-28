@@ -1083,7 +1083,6 @@ class TextPlayerOutputRendererTest {
                         1L,
                         "ACTIVE",
                         null,
-                        "FRIEND",
                         "SHARED"))),
             "en-NZ",
             new PresentationProperties(
@@ -1106,6 +1105,48 @@ class TextPlayerOutputRendererTest {
                 + "State scope: global\n"
                 + "Pointer version: 1\n"
                 + "Roster entry: #1\n\n");
+  }
+
+  @Test
+  void rendersGenericLastSeenWithoutDisconnectDisposition() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new FriendPresenceViewOutput(
+                    "ALL",
+                    1,
+                    1,
+                    List.of(
+                        new FriendPresenceViewOutput.Entry(
+                            1,
+                            null,
+                            77L,
+                            "active",
+                            null,
+                            "Sora",
+                            false,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            1_744_336_000_000L,
+                            "FRIENDS_ONLY")))));
+
+    assertThat(rendered)
+        .contains("last seen ")
+        .doesNotContain("logged out", "replaced session", "connection lost", "LOGOUT");
   }
 
   @Test

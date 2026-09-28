@@ -128,7 +128,7 @@ CREATE TABLE account_connect_token_response_envelopes (
 
 -- A request's first writer owns its identity and digest. Only its lifecycle/evidence may advance.
 -- ABORTED rows may later resolve to a deterministic committed or failed result after reconciliation.
--- This storage migration deliberately defines no deletion or expiry behavior.
+-- No retention cleanup path is defined here; direct deletion of either replay record is rejected.
 -- [jooq ignore start]
 CREATE FUNCTION account_connect_token_issuance_operation_update_guard()
 RETURNS TRIGGER
@@ -228,6 +228,25 @@ CREATE TRIGGER account_connect_token_response_envelope_insert_guard_trigger
     BEFORE INSERT ON account_connect_token_response_envelopes
     FOR EACH ROW
     EXECUTE FUNCTION account_connect_token_response_envelope_insert_guard();
+
+CREATE FUNCTION account_connect_token_issuance_no_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Connect-token issuance replay evidence cannot be deleted'
+        USING ERRCODE = '23514', CONSTRAINT = 'account_connect_token_issuance_no_delete';
+    RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER account_connect_token_issuance_operation_no_delete_trigger
+    BEFORE DELETE ON account_connect_token_issuance_operations
+    FOR EACH ROW EXECUTE FUNCTION account_connect_token_issuance_no_delete();
+
+CREATE TRIGGER account_connect_token_response_envelope_no_delete_trigger
+    BEFORE DELETE ON account_connect_token_response_envelopes
+    FOR EACH ROW EXECUTE FUNCTION account_connect_token_issuance_no_delete();
 
 CREATE FUNCTION account_connect_token_terminal_envelope_check()
 RETURNS TRIGGER

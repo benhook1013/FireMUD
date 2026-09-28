@@ -613,14 +613,7 @@ public class TextPlayerOutputRenderer {
       return line.toString();
     }
     if (entry.lastSeenAtEpochMs() != null) {
-      String qualifier =
-          switch (entry.recentDisposition()) {
-            case "LOGOUT" -> "logged out";
-            case "TAKEOVER" -> "replaced session";
-            case "TRANSPORT_LOSS" -> "connection lost";
-            default -> "last seen";
-          };
-      return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
+      return "last seen " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
     }
     return "offline";
   }
@@ -636,8 +629,7 @@ public class TextPlayerOutputRenderer {
         && !StringUtils.hasText(entry.characterName())
         && !StringUtils.hasText(entry.playableStateScope())
         && entry.pointerVersion() == null
-        && !StringUtils.hasText(entry.activityState())
-        && !StringUtils.hasText(entry.recentDisposition());
+        && !StringUtils.hasText(entry.activityState());
   }
 
   private String renderFriendLocation(FriendPresenceViewOutput.Entry entry) {

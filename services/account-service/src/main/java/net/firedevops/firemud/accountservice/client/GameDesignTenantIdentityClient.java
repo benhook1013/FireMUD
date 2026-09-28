@@ -6,7 +6,6 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
-import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
@@ -27,10 +26,8 @@ public class GameDesignTenantIdentityClient
   public GameDesignTenantIdentityClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
-    super(
-        endpoints, tlsProps, channelFactory, stubCustomizer, GameDesignTenantIdentityClient.class);
+      GrpcChannelFactory channelFactory) {
+    super(endpoints, tlsProps, channelFactory, GameDesignTenantIdentityClient.class);
   }
 
   @PostConstruct
@@ -51,8 +48,7 @@ public class GameDesignTenantIdentityClient
   @Override
   protected TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return applyStubCustomizer(
-        TenantIdentityServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
+    return TenantIdentityServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
   public ResolveLegacyAccountTenantAssociationResponse resolveApprovedAssociation(long tenantId) {

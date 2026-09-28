@@ -132,6 +132,11 @@ metadata:
     firemud.dev/managed-by: hosted-identity-controller
 spec:
   failurePolicy: Fail
+  variables:
+    - name: hostedPreviewIdentityNamespacePattern
+      expression: "'pr-[1-9][0-9]{0,50}-identity'"
+    - name: grpcWorkloadServiceRegexGroup
+      expression: "'(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)'"
   matchConstraints:
     matchPolicy: Equivalent
     resourceRules:
@@ -181,24 +186,25 @@ spec:
     - expression: >-
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          request.operation == 'DELETE' &&
-         (request.namespace in ['dev', 'dev-identity'] ||
-          request.namespace.matches('^pr-[1-9][0-9]{0,50}$') ||
-          request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-         request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)-previous|firemud-grpc-game-design-baseline-migrator|firemud-grpc-game-design-tenant-migrator|firemud-grpc-account-tenant-migrator|(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))(-previous)?)$') &&
-         (request.name == 'firemud-grpc-tls' || request.name == 'firemud-grpc-tls-previous' ||
-          request.name == 'firemud-grpc-game-design-baseline-migrator' ||
-          request.name == 'firemud-grpc-game-design-tenant-migrator' ||
-          request.name == 'firemud-grpc-account-tenant-migrator' ||
-          request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)(-previous)?$') ||
-          request.name.startsWith(
-            ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
-             request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
-               request.namespace.substring(0, request.namespace.size() - 9) :
-               request.namespace) + '-'))) ||
+         (((request.namespace in ['dev', 'dev-identity'] ||
+            request.namespace.matches('^pr-[1-9][0-9]{0,50}$') ||
+            request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')) &&
+           request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '|firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '-previous|(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')(-previous)?)$') &&
+           (request.name == 'firemud-grpc-tls' || request.name == 'firemud-grpc-tls-previous' ||
+            request.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '(-previous)?$') ||
+            request.name.startsWith(
+              ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
+               request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') ?
+                 request.namespace.substring(0, request.namespace.size() - 9) :
+                 request.namespace) + '-'))) ||
+          (request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
+           (request.name == 'firemud-grpc-game-design-baseline-migrator' ||
+            request.name == 'firemud-grpc-game-design-tenant-migrator' ||
+            request.name == 'firemud-grpc-account-tenant-migrator')))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
          ((request.operation == 'DELETE' &&
-           request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')) ||
+           request.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '$')) ||
           (request.operation in ['CREATE', 'UPDATE'] &&
            has(object.metadata.labels) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
@@ -207,22 +213,24 @@ spec:
             (object.metadata.name == 'firemud-grpc-world-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-world-management-service') ||
             (object.metadata.name == 'firemud-grpc-entity-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-entity-management-service') ||
             (object.metadata.name == 'firemud-grpc-game-logic-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-game-logic-service') ||
-            (object.metadata.name == 'firemud-grpc-automation-scripting-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-automation-scripting-service'))))) ||
+            (object.metadata.name == 'firemud-grpc-automation-scripting-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-automation-scripting-service') ||
+            (object.metadata.name == 'firemud-grpc-account-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-account-service') ||
+            (object.metadata.name == 'firemud-grpc-game-session-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service'))))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
            (request.name == 'firemud-grpc-tls' ||
-           (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
+           (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')$') &&
              request.name.startsWith(
                ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
-                request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
+                request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') ?
                   request.namespace.substring(0, request.namespace.size() - 9) :
                   request.namespace) + '-')) ||
-            ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+            ((request.namespace == 'dev-identity' || request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')) &&
              (request.name == 'firemud-grpc-tls-previous' ||
-             (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))-previous$') &&
+             (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')-previous$') &&
               request.name.startsWith(
                 ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
-                 request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
+                 request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') ?
                    request.namespace.substring(0, request.namespace.size() - 9) :
                    request.namespace) + '-')))))) ||
           (request.operation != 'DELETE' &&
@@ -230,19 +238,19 @@ spec:
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            (object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc', 'grpc-account-service', 'grpc-game-session-service'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
            object.metadata.labels['firemud.dev/retention'] == 'retained' &&
-            (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name == 'firemud-grpc-account-service' || object.metadata.name == 'firemud-grpc-game-session-service' ||
-            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
+           (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name == 'firemud-grpc-account-service' || object.metadata.name == 'firemud-grpc-game-session-service' ||
+            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')$') &&
              object.metadata.name.startsWith(
                ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
-                request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
+                request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') ?
                   request.namespace.substring(0, request.namespace.size() - 9) :
                   request.namespace) + '-')) ||
-            ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+            ((request.namespace == 'dev-identity' || request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')) &&
              (object.metadata.name == 'firemud-grpc-tls-previous' ||
-            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))-previous$') &&
+            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')-previous$') &&
                object.metadata.name.startsWith(
                  ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
-                  request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
+                  request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') ?
                     request.namespace.substring(0, request.namespace.size() - 9) :
                     request.namespace) + '-')))))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
@@ -307,7 +315,7 @@ spec:
             ref.name == request.namespace + '-grpc-account-tenant-migrator'))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.operation in ['CREATE', 'UPDATE'] &&
-         request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+         request.namespace.matches('^(dev-identity|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
          object.type == 'kubernetes.io/tls' &&
          has(object.metadata.labels) &&
          object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
@@ -337,7 +345,7 @@ spec:
               object.metadata.name == 'dev-grpc-' + object.metadata.labels['firemud.dev/role'].substring(17)) ||
              (object.metadata.labels['firemud.dev/role'] == 'grpc-account-service' && object.metadata.name == 'dev-grpc-account-service') ||
              (object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service' && object.metadata.name == 'dev-grpc-game-session-service'))) ||
-          (request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') &&
+          (request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') &&
            object.metadata.labels['firemud.dev/identity-name'] == request.namespace.substring(0, request.namespace.size() - 9) &&
            ((object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-tls' &&
              object.metadata.labels['firemud.dev/role'] == 'ingress') ||
@@ -377,13 +385,13 @@ spec:
               ref.apiVersion == 'cert-manager.io/v1' &&
               ref.kind == 'Certificate' &&
               ref.name == request.namespace + '-grpc-account-tenant-migrator'))) ||
-          (request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
-         object.metadata.name != 'firemud-grpc-tls' &&
-         ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
-          object.metadata.ownerReferences.all(ref,
-            ref.apiVersion == 'cert-manager.io/v1' &&
-            ref.kind == 'Certificate' &&
-            ref.name == object.metadata.name)))))
+          (request.namespace.matches('^(dev-identity|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
+           object.metadata.name != 'firemud-grpc-tls' &&
+           ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
+            object.metadata.ownerReferences.all(ref,
+              ref.apiVersion == 'cert-manager.io/v1' &&
+              ref.kind == 'Certificate' &&
+              ref.name == object.metadata.name)))))
       message: cert-manager may not write a TLS Secret outside its exact Certificate ownership boundary
       reason: Forbidden
 ---
@@ -397,6 +405,11 @@ metadata:
     firemud.dev/managed-by: hosted-identity-controller
 spec:
   failurePolicy: Fail
+  variables:
+    - name: hostedPreviewIdentityNamespacePattern
+      expression: "'pr-[1-9][0-9]{0,50}-identity'"
+    - name: grpcWorkloadServiceRegexGroup
+      expression: "'(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)'"
   matchConstraints:
     matchPolicy: Equivalent
     resourceRules:
@@ -443,7 +456,7 @@ spec:
         (request.userInfo.groups.exists(group, group == 'system:masters') &&
          request.subResource == '' &&
          request.operation == 'DELETE' &&
-         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$'))) ||
+         (request.namespace == 'dev-identity' || request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-standalone-certificate-writer' &&
          request.subResource == '' &&
          request.operation in ['CREATE', 'UPDATE'] &&
@@ -468,17 +481,17 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          request.subResource == '' &&
          request.operation == 'DELETE' &&
-         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+         (request.namespace == 'dev-identity' || request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')) &&
          (request.name == 'firemud-grpc-tls' ||
-          (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
+          (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')$') &&
            request.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-')))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          request.subResource == '' &&
-         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+         (request.namespace == 'dev-identity' || request.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$')) &&
          ((request.operation == 'DELETE' &&
-           (request.name.matches('^((dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)))$') &&
+           (request.name.matches('^((dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + '))$') &&
             request.name.startsWith(
               ((request.namespace == 'dev-identity') ? 'dev' :
                request.namespace.substring(0, request.namespace.size() - 9)) + '-'))) ||
@@ -487,7 +500,7 @@ spec:
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9)) &&
            (object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', 'grpc-game-session-service'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
-           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')$') &&
            object.metadata.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-') &&
@@ -544,7 +557,7 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
          request.operation == 'UPDATE' &&
-         object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$') &&
+         object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-' + variables.grpcWorkloadServiceRegexGroup + ')$') &&
          object.metadata.name.startsWith(
            ((request.namespace == 'dev-identity') ? 'dev' :
             request.namespace.substring(0, request.namespace.size() - 9)) + '-') &&
@@ -562,6 +575,9 @@ metadata:
     firemud.dev/managed-by: hosted-identity-controller
 spec:
   failurePolicy: Fail
+  variables:
+    - name: hostedPreviewIdentityNamespacePattern
+      expression: "'pr-[1-9][0-9]{0,50}-identity'"
   matchConstraints:
     matchPolicy: Equivalent
     resourceRules:
@@ -595,13 +611,13 @@ spec:
         request.userInfo.groups.exists(group, group == 'system:masters') ||
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          request.operation == 'DELETE' &&
-         ((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+         ((request.namespace.matches('^(dev-identity|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
            request.name == 'firemud-hosted-identity-scope') ||
           (request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
            request.name == 'firemud-hosted-runtime-scope'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
-          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$') &&
+          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
           request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
          (request.operation != 'DELETE' &&
           request.namespace == object.metadata.namespace &&
@@ -620,7 +636,7 @@ spec:
             object.metadata.name == 'firemud-hosted-identity-scope' &&
             object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
             object.metadata.labels['firemud.dev/environment-class'] == 'dev-demo-cluster') ||
-           (object.metadata.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') &&
+           (object.metadata.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') &&
             object.metadata.name == 'firemud-hosted-identity-scope' &&
             object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace.substring(0, object.metadata.namespace.size() - 9) &&
             object.metadata.labels['firemud.dev/environment-class'] == 'pr-preview') ||
@@ -638,7 +654,7 @@ spec:
             (!has(r.verbs) || r.verbs.all(verb, verb != '*')) &&
             (!has(r.nonResourceURLs) || r.nonResourceURLs.size() == 0)) &&
           ((object.metadata.name == 'firemud-hosted-identity-scope' &&
-            object.metadata.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+            object.metadata.namespace.matches('^(dev-identity|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
             object.rules.size() == 7 &&
             object.rules.exists(r,
               r.apiGroups == ['cert-manager.io'] &&
@@ -711,6 +727,9 @@ metadata:
     firemud.dev/managed-by: hosted-identity-controller
 spec:
   failurePolicy: Fail
+  variables:
+    - name: hostedPreviewIdentityNamespacePattern
+      expression: "'pr-[1-9][0-9]{0,50}-identity'"
   matchConstraints:
     matchPolicy: Equivalent
     resourceRules:
@@ -741,13 +760,13 @@ spec:
         request.userInfo.groups.exists(group, group == 'system:masters') ||
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          request.operation == 'DELETE' &&
-         ((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+         ((request.namespace.matches('^(dev-identity|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
            request.name == 'firemud-hosted-identity-scope') ||
           (request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
            request.name == 'firemud-hosted-runtime-scope'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
-          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$') &&
+          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|' + variables.hostedPreviewIdentityNamespacePattern + ')$') &&
           request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
          (request.operation != 'DELETE' &&
           request.namespace == object.metadata.namespace &&
@@ -766,7 +785,7 @@ spec:
             object.metadata.name == 'firemud-hosted-identity-scope' &&
             object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
             object.roleRef.name == 'firemud-hosted-identity-scope') ||
-           (object.metadata.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') &&
+           (object.metadata.namespace.matches('^' + variables.hostedPreviewIdentityNamespacePattern + '$') &&
             object.metadata.name == 'firemud-hosted-identity-scope' &&
             object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace.substring(0, object.metadata.namespace.size() - 9) &&
             object.roleRef.name == 'firemud-hosted-identity-scope') ||

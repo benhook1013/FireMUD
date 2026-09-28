@@ -50,8 +50,14 @@ public class ScriptPatchVersionCommandService {
 
   @Timed(value = "script.version.notify")
   public boolean notifyUpdate(
-      String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
+      String tenantId,
+      long baseVersionId,
+      String scriptPatchVersion,
+      List<String> affectedScripts) {
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    if (baseVersionId <= 0L) {
+      throw new IllegalArgumentException("base_version_id must be positive");
+    }
     logger.info(
         "Applying script patch {} for tenant {} affecting {} scripts",
         scriptPatchVersion,
@@ -65,9 +71,10 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
+    List<String> canonicalScriptNames = requestedNames.stream().sorted().toList();
     List<ScriptDefinition> defs =
         repository.findByTenantIdAndScriptVersionAndNameIn(
-            tenantKey, scriptPatchVersion, affectedScripts);
+            tenantKey, scriptPatchVersion, canonicalScriptNames);
     Set<String> resolvedNames =
         defs.stream().map(ScriptDefinition::getName).collect(java.util.stream.Collectors.toSet());
     if (defs.size() != requestedNames.size()
@@ -76,29 +83,64 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException(
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
-    if (!readinessProjectionService.beginPatchReadiness(
-        tenantId, scriptPatchVersion, defs.size())) {
+    if (defs.stream()
+        .anyMatch(
+            definition ->
+                definition.getBaseVersionId() == null
+                    || definition.getBaseVersionId() != baseVersionId
+                    || !scriptPatchVersion.equals(definition.getScriptVersion()))) {
+      throw new IllegalArgumentException("script_patch_base_version_mismatch");
+    }
+    defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();
+    readinessProjectionService.beginPatchReadiness(
+        tenantId, baseVersionId, scriptPatchVersion, canonicalScriptNames);
+    List<ScriptDefinition> canonicalDefinitions = defs;
+    boolean applied =
+        readinessProjectionService.applyIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            admitOnLoad -> {
+              if (admitOnLoad) {
+                canonicalDefinitions.forEach(
+                    def -> admitOnLoad(tenantId, baseVersionId, scriptPatchVersion, def));
+              }
+              scheduleDefinitionService.refreshPatchSchedules(
+                  tenantId, scriptPatchVersion, canonicalDefinitions, canonicalScriptNames);
+              scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
+            });
+    if (!applied) {
       return false;
     }
-    defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
-    scheduleDefinitionService.refreshPatchSchedules(
-        tenantId, scriptPatchVersion, defs, affectedScripts);
-    scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
-    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
-    affectedScripts.forEach(map::remove);
-    for (ScriptDefinition def : defs) {
-      map.put(def.getName(), def.getDefinition());
+    boolean registryRebuilt =
+        readinessProjectionService.rebuildRegistryIfCurrent(
+            tenantId,
+            scriptPatchVersion,
+            canonicalScriptNames,
+            () -> rebuildRegistry(tenantKey, canonicalScriptNames, canonicalDefinitions));
+    if (!registryRebuilt) {
+      return false;
     }
     logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
     return true;
   }
 
+  private void rebuildRegistry(
+      long tenantKey, List<String> scriptNames, List<ScriptDefinition> definitions) {
+    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
+    scriptNames.forEach(map::remove);
+    for (ScriptDefinition definition : definitions) {
+      map.put(definition.getName(), definition.getDefinition());
+    }
+  }
+
   private void admitOnLoad(
-      String tenantId, String scriptPatchVersion, ScriptDefinition definition) {
+      String tenantId, long baseVersionId, String scriptPatchVersion, ScriptDefinition definition) {
     TriggerScriptEventRequest request =
         TriggerScriptEventRequest.newBuilder()
             .setTenantId(tenantId)
             .setScriptId(definition.getName())
+            .setScriptPatchBaseVersionId(baseVersionId)
             .setEventType("onLoad")
             .setEventSchemaVersion("v1")
             .setScriptPatchVersion(scriptPatchVersion)

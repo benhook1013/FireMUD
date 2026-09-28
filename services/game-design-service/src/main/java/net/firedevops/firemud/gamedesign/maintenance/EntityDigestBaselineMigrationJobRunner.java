@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.maintenance;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -18,6 +17,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 /** Trusted, one-shot entry point; no HTTP, gRPC server, or user-JWT mutation route is exposed. */
 @Component

@@ -1293,12 +1293,13 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
     }
-    if (!membership.membershipExists() || !membership.gameplayAdmissionAllowed()) {
+    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+
+    if (!membership.membershipExists()) {
       if (!isPublicProductionRealm(realm)) {
-        if (membership.membershipExists()) {
-          throw new AuthenticationException(
-              "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-        }
         throw new AuthenticationException(
             "NON_PUBLIC_ENROLLMENT_REQUIRED",
             "Existing game membership is required for this non-public realm");
@@ -1593,13 +1594,19 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
-    if (!isPublicProductionRealm(realm)) {
-      if (accountTenantMembershipRepository
-          .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
-          .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-          .isEmpty()) {
-        return false;
-      }
+    boolean publicProductionRealm = isPublicProductionRealm(realm);
+    Optional<AccountTenantMembership> membership =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(
+            bootstrapContext.accountId(), tenantId);
+    if (membership.isPresent()
+        && (!membership.orElseThrow().isGameplayAdmissionAllowed()
+            || !"ACTIVE".equals(membership.orElseThrow().getLifecycleState()))) {
+      return false;
+    }
+    if (membership.isEmpty() && !publicProductionRealm) {
+      return false;
+    }
+    if (!publicProductionRealm) {
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
         return false;
@@ -1790,22 +1797,48 @@ public class AccountServiceImpl implements AccountService {
   private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
     RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
-    requireGameplayAdmissionMembership(bootstrapContext.accountId(), currentRealm);
-    if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(currentRealm.tenantId(), "bootstrap-characters");
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
+
+    boolean publicProductionRealm = isPublicProductionRealm(currentRealm);
+    Optional<AccountTenantMembership> maybeMembership =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(
+            bootstrapContext.accountId(), currentRealm.tenantId());
+    if (maybeMembership.isPresent()
+        && (!maybeMembership.orElseThrow().isGameplayAdmissionAllowed()
+            || "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState()))) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+    if (maybeMembership.isEmpty()) {
+      if (!publicProductionRealm) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
+    }
+
+    if (!publicProductionRealm
+        && !hasRealmAccessGrant(
+            bootstrapContext.accountId(),
+            currentRealm.tenantId(),
+            currentRealm.worldSlug(),
+            currentRealm.realmSlug())) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
-  }
-
-  private void requireGameplayAdmissionMembership(long accountId, RuntimeRealmTarget realm) {
-    if (accountTenantMembershipRepository
-        .findByAccountIdAndTenantId(accountId, realm.tenantId())
-        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-        .isEmpty()) {
-      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
-    }
   }
 
   private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
@@ -2112,10 +2145,12 @@ public class AccountServiceImpl implements AccountService {
     String url = String.format(mailProperties.getResetUrl(), token.getToken());
     runAfterCommit(
         () ->
-            emailService.sendEmail(
-                account.getEmail(),
-                "Password Reset",
-                String.format(readTemplate("password-reset.txt"), url)));
+            sendRecoveryEmailSafely(
+                () ->
+                    emailService.sendEmail(
+                        account.getEmail(),
+                        "Password Reset",
+                        String.format(readTemplate("password-reset.txt"), url))));
   }
 
   @Override
@@ -2155,22 +2190,28 @@ public class AccountServiceImpl implements AccountService {
     if (accountOptional.isEmpty()) {
       return;
     }
-    issueEmailVerification(accountOptional.get());
+    issueEmailVerification(accountOptional.get(), true);
   }
 
   private void issueEmailVerification(Account account) {
+    issueEmailVerification(account, false);
+  }
+
+  private void issueEmailVerification(Account account, boolean neutralPublicResponse) {
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
     token.setToken(java.util.UUID.randomUUID().toString());
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(24));
     emailVerificationTokenRepository.save(token);
     String url = String.format(mailProperties.getVerificationUrl(), token.getToken());
-    runAfterCommit(
+    Runnable sendVerification =
         () ->
             emailService.sendEmail(
                 account.getEmail(),
                 "Email Verification",
-                String.format(readTemplate("email-verification.txt"), url)));
+                String.format(readTemplate("email-verification.txt"), url));
+    runAfterCommit(
+        neutralPublicResponse ? () -> sendRecoveryEmailSafely(sendVerification) : sendVerification);
   }
 
   @Override
@@ -2226,10 +2267,21 @@ public class AccountServiceImpl implements AccountService {
     Account account = accountOptional.get();
     runAfterCommit(
         () ->
-            emailService.sendEmail(
-                account.getEmail(),
-                "Username Reminder",
-                String.format(readTemplate("username-reminder.txt"), account.getUsername())));
+            sendRecoveryEmailSafely(
+                () ->
+                    emailService.sendEmail(
+                        account.getEmail(),
+                        "Username Reminder",
+                        String.format(
+                            readTemplate("username-reminder.txt"), account.getUsername()))));
+  }
+
+  private void sendRecoveryEmailSafely(Runnable delivery) {
+    try {
+      delivery.run();
+    } catch (RuntimeException ex) {
+      logger.warn("Recovery email delivery failed");
+    }
   }
 
   private String hashPassword(String password) {

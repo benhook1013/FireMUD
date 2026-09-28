@@ -17,6 +17,8 @@ import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,8 +30,23 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 
-final class HostedIdentityTestFixtures {
+public final class HostedIdentityTestFixtures {
   private HostedIdentityTestFixtures() {}
+
+  public static Path findRepositoryFile(String relativePath) {
+    Path directory = Path.of("").toAbsolutePath();
+    while (directory != null) {
+      Path candidate = directory.resolve(relativePath);
+      if (Files.isRegularFile(candidate)) {
+        return candidate;
+      }
+      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
+        break;
+      }
+      directory = directory.getParent();
+    }
+    throw new AssertionError("could not locate repository file " + relativePath);
+  }
 
   static String encoded(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));

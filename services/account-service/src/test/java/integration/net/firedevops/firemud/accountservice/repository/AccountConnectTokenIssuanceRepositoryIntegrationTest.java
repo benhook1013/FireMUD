@@ -401,6 +401,60 @@ class AccountConnectTokenIssuanceRepositoryIntegrationTest {
   }
 
   @Test
+  void directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected() {
+    TestContext context = newTestContext();
+    AccountConnectTokenIssuanceIdentity identity = newIdentity(insertAccount(context.dsl()));
+    byte[] digest = digest(41);
+    var claim =
+        inTransaction(context.transaction(), () -> context.repository().claim(identity, digest));
+    AccountEnvelopeBinding binding = binding(claim.operation().operationId(), identity, digest);
+    inTransaction(
+        context.transaction(),
+        () ->
+            context
+                .repository()
+                .completeWithEnvelope(
+                    claim,
+                    digest,
+                    Lifecycle.COMMITTED,
+                    "SUCCESS",
+                    "gameplay-connect-jti-retained",
+                    digest(84),
+                    binding,
+                    encryptedEnvelope(AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE)));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "DELETE FROM account_connect_token_issuance_operations "
+                                    + "WHERE operation_id = ?",
+                                claim.operation().operationId())))
+        .hasMessageContaining("Connect-token issuance replay evidence cannot be deleted");
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "DELETE FROM account_connect_token_response_envelopes "
+                                    + "WHERE operation_id = ?",
+                                claim.operation().operationId())))
+        .hasMessageContaining("Connect-token issuance replay evidence cannot be deleted");
+
+    assertThat(context.dsl().fetchCount(DSL.table("account_connect_token_issuance_operations")))
+        .isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("account_connect_token_response_envelopes")))
+        .isEqualTo(1);
+  }
+
+  @Test
   void deterministicFailureIsStoredOnlyAsItsBoundEncryptedEnvelope() {
     TestContext context = newTestContext();
     AccountConnectTokenIssuanceIdentity identity = newIdentity(insertAccount(context.dsl()));

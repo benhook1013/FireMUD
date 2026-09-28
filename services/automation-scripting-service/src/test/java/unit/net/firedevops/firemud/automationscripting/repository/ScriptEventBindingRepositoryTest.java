@@ -60,7 +60,7 @@ class ScriptEventBindingRepositoryTest {
 
     repository
         .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-            1L, "patch-1", "onCommand", "v1");
+            1L, "patch-1", 1L, "onCommand", "v1");
 
     assertThat(sql.get())
         .containsSubsequence(

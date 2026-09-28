@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -305,6 +306,41 @@ class EntityDigestBaselineMigrationServiceTest {
         EntityDigestBaselineMigrationService.MigrationDisposition.RECOVERED_AFTER_WRITE_ERROR,
         result.disposition());
     assertEquals(AUDIT_ID, result.auditId());
+  }
+
+  @Test
+  void guardedWriteLoserRecoversFromWinnerAuditWithDifferentCommittedAt() {
+    RecordedParticipantDigest migrated = migratedBaseline("v2-content", "version:42");
+    EntityDigestBaselineMigrationAudit winnerAudit = audit(source, migrated, AUDIT_ID, auditTime());
+    AtomicReference<EntityDigestBaselineMigrationAudit> attemptedAudit = new AtomicReference<>();
+    EntityDigestBaselineMigrationWriteService writer =
+        org.mockito.Mockito.mock(EntityDigestBaselineMigrationWriteService.class);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              attemptedAudit.set(invocation.getArgument(2));
+              throw new IllegalStateException("guarded migration lost race");
+            })
+        .when(writer)
+        .commit(any(), any(), any());
+    when(auditRepository.findByOperationId(OPERATION_ID))
+        .thenReturn(Optional.empty(), Optional.of(winnerAudit));
+    when(baselineRepository.findById(BASELINE_ID))
+        .thenReturn(Optional.of(source), Optional.of(migrated));
+    when(baselineRepository.findEntityFullVersionBaselinesByScope(TENANT_ID, "42"))
+        .thenReturn(List.of(source));
+    when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
+        .thenReturn(Optional.of(version()));
+    when(entityManagementClient.getDraftDesignDigestForVersion(any()))
+        .thenReturn(v2Digest("v2-content", "version:42"));
+
+    EntityDigestBaselineMigrationService.MigrationResult result = service(writer).migrate(command);
+
+    assertEquals(
+        EntityDigestBaselineMigrationService.MigrationDisposition.RECOVERED_AFTER_WRITE_ERROR,
+        result.disposition());
+    assertEquals(AUDIT_ID, result.auditId());
+    assertEquals("v2-content", result.contentDigest());
+    assertNotEquals(winnerAudit.committedAt(), attemptedAudit.get().committedAt());
   }
 
   @Test
