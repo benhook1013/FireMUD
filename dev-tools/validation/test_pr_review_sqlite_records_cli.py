@@ -183,6 +183,37 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(len(history["result"]["runs"]), 1)
         self.assertEqual(len(history["result"]["decisions"]), 2)
 
+    def test_empty_incomplete_batch_is_recorded_as_unattributable(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        self.import_file.write_text(
+            json.dumps(
+                {
+                    "api_version": 1,
+                    "run": {
+                        "run_id": "manual-empty-incomplete",
+                        "source_pr": 2828,
+                        "channel": "manual",
+                        "reviewer": "reviewer",
+                        "scope": "narrow",
+                        "coverage_limits": ["review did not complete"],
+                        "outcome": "incomplete",
+                    },
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        status, imported = self.invoke(
+            "import-run", "--input", str(self.import_file), "--database", str(self.database)
+        )
+        self.assertEqual(status, 0)
+        self.assertFalse(imported["result"]["finalized"])
+        _, history = self.invoke("history", "--pr", "2828", "--database", str(self.database))
+        run = history["result"]["runs"][0]
+        self.assertEqual(run["outcome"], "incomplete")
+        self.assertFalse(run["attributable"])
+
     def test_provider_import_uses_exact_parsed_checkpoint_and_keeps_capture_import_explicit(self) -> None:
         checkpoint = {
             "id": "comment-123",
@@ -401,6 +432,84 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(report["record_route_store"]["status"], "available")
         self.assertFalse(report["ready"])
         self.assertTrue(any("SQLite-record incoming route" in reason for reason in report["reasons"]))
+
+    def test_selected_status_deduplicates_legacy_route_shadows_before_filtering(self) -> None:
+        retargeted = FindingRoute(
+            source_pr=2600,
+            source_channel="hosted",
+            source_review="summary:review:901",
+            source_finding="duplicate:ref:retargeted-shadow",
+            observations=("originally owned by this PR",),
+            target_pr=2879,
+        )
+        resolved = FindingRoute(
+            source_pr=2600,
+            source_channel="hosted",
+            source_review="summary:review:902",
+            source_finding="duplicate:ref:resolved-shadow",
+            observations=("originally owned by this PR",),
+            target_pr=2879,
+        )
+        legacy_path = Path(self.temporary_directory.name) / "legacy-shadow-state.json"
+        database = Path(self.temporary_directory.name) / "shadow-controller.sqlite3"
+        StateStore(legacy_path).save(ReviewState(routes=(retargeted, resolved)))
+        migrated = SqliteStateStore.migrate_legacy_json(legacy_path, database)
+        records = SqliteReviewRecords(database)
+        records.bootstrap()
+        shadow_findings = (
+            FindingObservation("retargeted-shadow-key", "Retargeted route shadow"),
+            FindingObservation("resolved-shadow-key", "Resolved route shadow"),
+        )
+        records.import_completed_run(
+            run_id="legacy-route-shadows",
+            source_pr=2600,
+            channel="hosted",
+            findings=shadow_findings,
+            source_decisions=(
+                {
+                    "source_finding_key": "retargeted-shadow-key",
+                    "decision_id": "retargeted-shadow-decision",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "preserve the imported legacy route identity",
+                    "target_pr": 2879,
+                    "route_id": retargeted.route_id,
+                    "route_status": "open",
+                },
+                {
+                    "source_finding_key": "resolved-shadow-key",
+                    "decision_id": "resolved-shadow-decision",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "preserve the imported legacy route identity",
+                    "target_pr": 2879,
+                    "route_id": resolved.route_id,
+                    "route_status": "open",
+                },
+            ),
+        )
+        self.assertEqual(
+            {route["route_id"] for route in records.open_routes(target_pr=2879)},
+            {retargeted.route_id, resolved.route_id},
+        )
+
+        controller = ReviewController(store=migrated)
+        controller.decide_route(
+            route_id=retargeted.route_id,
+            decision="retargeted",
+            target_pr=2880,
+            reason="the receiving owner changed",
+        )
+        controller.decide_route(
+            route_id=resolved.route_id,
+            decision="accepted-fixed",
+            proof="verified fix in the receiving owner",
+        )
+
+        with patch.object(cli, "_records_database_path", return_value=database):
+            incoming, state = cli._read_record_incoming_routes(2879)
+        self.assertEqual(state["status"], "available")
+        self.assertEqual(incoming, [])
 
 
 if __name__ == "__main__":

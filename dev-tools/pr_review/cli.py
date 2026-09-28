@@ -615,7 +615,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         return {"api_version": 1, "result": {"routes": routes}}, 0
     if args.records_command == "import-run":
         run, findings, decisions = _load_records_import(args.input)
-        if len(decisions) == len(findings) and (decisions or not findings):
+        if len(decisions) == len(findings) and (decisions or run["outcome"] == "completed"):
             if run["outcome"] != "completed":
                 raise CliError("atomic batch finalization requires a completed run outcome")
             result = store.import_completed_run(
@@ -738,7 +738,10 @@ def _read_record_incoming_routes(pr: int) -> tuple[list[dict[str, Any]], dict[st
     try:
         routes = [
             route
-            for route in SqliteReviewRecords(database).open_routes(target_pr=pr)
+            for route in SqliteReviewRecords(database).open_routes(
+                target_pr=pr,
+                include_legacy_routes=True,
+            )
             if route["origin"] == "review_records"
         ]
     except ReviewRecordsError as exc:
