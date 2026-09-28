@@ -27,6 +27,35 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void visibleWorldsDropsWorldSlugSharedAcrossTenants() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
+                pointer("DEMO", "Other Demo", "preview", "Preview Realm", 2L, 21L, 8L),
+                pointer("other", "Other World", "production", "Other Live", 2L, 22L, 9L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("other");
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
+  void visibleWorldsGroupsMultipleRealmsForTheSameTenantWorldSlug() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
+                pointer("demo", "Demo World", "event", "Event Realm", 1L, 12L, 8L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
+    assertThat(world.realms()).extracting(GameplayWorldCatalog.RealmView::slug)
+        .containsExactly("production", "event");
+  }
+
+  @Test
   void reverseRuntimeLookupFailsClosedWhenMultipleVisibleRealmsShareRuntimeTarget() {
     when(authorityService.listPointers())
         .thenReturn(

@@ -4,9 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
@@ -120,7 +122,7 @@ public class WorldsCommandHandler {
         if (scopeResponse.hasError()) {
           String errorCode = scopeResponse.getError().getCode();
           if ("REALM_UNAVAILABLE".equals(errorCode)) {
-            continue;
+            return RealmBrowseResult.failure("REALM_UNAVAILABLE");
           }
           return RealmBrowseResult.failure(errorCode.isBlank() ? "AUTH_UNAVAILABLE" : errorCode);
         }
@@ -320,13 +322,6 @@ public class WorldsCommandHandler {
     if (accountClient == null || connectScopeSessionStore == null) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
-    Optional<GameplayWorldCatalog.WorldView> maybeWorld = worldCatalog.resolveWorld(worldSelector);
-    if (maybeWorld.isEmpty()) {
-      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
-    }
-    if (!worldCatalog.hasValidPublicProductionRealm(maybeWorld.orElseThrow())) {
-      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
-    }
     Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope =
         connectScopeSessionStore.publicProductionScopeForJoin(
             sessionContext, worldSelector, Instant.now());
@@ -487,8 +482,17 @@ public class WorldsCommandHandler {
     }
     java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
         new java.util.ArrayList<>(response.getCharactersCount());
+    Set<String> characterIds = new HashSet<>();
     for (int i = 0; i < response.getCharactersCount(); i++) {
       net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
+      if (!Long.toString(realm.tenantId()).equals(character.getTenantId())
+          || !Long.toString(sessionContext.accountId()).equals(character.getAccountId())
+          || character.getPlayableStateScope() != toPlayableStateScope(realm)
+          || !StringUtils.hasText(character.getId())
+          || !StringUtils.hasText(character.getName())
+          || !characterIds.add(character.getId())) {
+        return CharacterBrowseResult.unavailable();
+      }
       entries.add(
           new CharacterBrowseViewOutput.CharacterEntry(
               i + 1, character.getId(), character.getName(), character.getLevel()));
@@ -610,12 +614,20 @@ public class WorldsCommandHandler {
       return false;
     }
     if (!response.getMembershipExists()) {
-      return response.getMembershipVersion() == 0L
+      return "MISSING".equalsIgnoreCase(response.getMembershipLifecycleState())
+          && !response.getGameplayAdmissionAllowed()
+          && response.getMembershipVersion() == 0L
           && response.getMembershipAuthorityGeneration() == 0L;
     }
-    return response.getMembershipVersion() > 0L
-        && response.getMembershipAuthorityGeneration() > 0L
-        && StringUtils.hasText(response.getMembershipLifecycleState());
+    if (response.getMembershipVersion() <= 0L
+        || response.getMembershipAuthorityGeneration() <= 0L) {
+      return false;
+    }
+    if ("ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())) {
+      return response.getGameplayAdmissionAllowed();
+    }
+    return "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
+        && !response.getGameplayAdmissionAllowed();
   }
 
   private boolean hasCompleteSelectedRealmPointerEvidence(

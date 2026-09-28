@@ -191,6 +191,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
+                        .setTenantId("22")
+                        .setAccountId("123")
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setName("Emberline")
                         .setLevel(12)
                         .build())

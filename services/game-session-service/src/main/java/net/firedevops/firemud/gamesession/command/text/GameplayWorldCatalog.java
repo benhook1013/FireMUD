@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -304,9 +306,10 @@ public final class GameplayWorldCatalog {
       }
       MutableWorldAccumulator world =
           worlds.computeIfAbsent(
-              pointer.worldSlug(),
+              pointer.worldSlug().toLowerCase(Locale.ROOT),
               ignored ->
                   new MutableWorldAccumulator(pointer.worldSlug(), pointer.worldDisplayName()));
+      world.tenantIds.add(pointer.tenantId());
       world
           .realmsBySlug
           .computeIfAbsent(pointer.realmSlug(), ignored -> new ArrayList<>())
@@ -314,6 +317,7 @@ public final class GameplayWorldCatalog {
     }
     return normalizeWorlds(
         worlds.values().stream()
+            .filter(world -> world.tenantIds.size() == 1)
             .map(
                 world ->
                     new WorldView(
@@ -467,6 +471,7 @@ public final class GameplayWorldCatalog {
   private static final class MutableWorldAccumulator {
     private final String slug;
     private final String displayName;
+    private final Set<Long> tenantIds = new HashSet<>();
     private final Map<String, List<GameplayAdmissionPointerSnapshot>> realmsBySlug =
         new LinkedHashMap<>();
 
