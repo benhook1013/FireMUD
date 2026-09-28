@@ -1554,6 +1554,7 @@ class LiveEvidence:
                     "anchored": anchor_complete if completed else None,
                     "accepted": checkpoint.accepted,
                     "raw": checkpoint.raw_found,
+                    "routed": checkpoint.routed,
                     "correction": checkpoint.correction,
                     "corrected_state": completed and exact_head == head,
                     "provisional": provisional,

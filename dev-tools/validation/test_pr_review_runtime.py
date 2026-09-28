@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError, StaleReviewTarget
+from pr_review.controller import ControllerError, StaleReviewTarget, _review_activity
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -698,6 +698,21 @@ class RuntimeTest(unittest.TestCase):
             self.assertTrue(completed[0]["attributable"])
             self.assertFalse(completed[0]["anchored"])
             self.assertEqual(completed[0]["accepted"], 0)
+            self.assertIsNone(completed[0]["routed"])
+            self.assertIsNone(_review_activity(history, HEAD)["recent"][0]["routed"])
+
+            payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][0]["body"] = (
+                f"CLI: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files\n"
+                "<!-- firemud-cli-run: run.Legacy -->"
+            )
+            (run / "decisions.tsv").write_text("1\trouted\tbelongs to another PR\n", encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+            ):
+                routed_history = LiveEvidence("owner/repo", live).history(42, "cli")
+            self.assertEqual(_review_activity(routed_history, HEAD)["recent"][0]["routed"], 1)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 100)
@@ -1348,7 +1363,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
-            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+            f"Hosted: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files · 2m 00s\n"
             "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
         )
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -1386,6 +1401,7 @@ class RuntimeTest(unittest.TestCase):
             record_path.write_text(json.dumps(record), encoding="utf-8")
             history = self._history(common, payload)
             self.assertTrue(any(item.get("completed") and item.get("anchored") for item in history))
+            self.assertEqual(_review_activity(history, HEAD)["recent"][0]["routed"], 1)
 
             mismatched = {**review, "databaseId": 56}
             history = self._history(common, self._payload([trigger, checkpoint], [mismatched]))
