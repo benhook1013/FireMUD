@@ -1502,14 +1502,11 @@ def render_independent_activity(history: dict | None, now: datetime) -> str:
         pills.append(f'<span class="{pill_class}" aria-label="{safe(label)}" title="{safe(label)}">'
                      f'<span>{found}/{accepted}/{routed}</span>{age_html}</span>')
     pending = len(independent) - len(completed)
-    note = ""
-    if pending:
-        note = f"{pending} awaiting completion or decisions · "
-    note += "no CodeRabbit taper credit"
+    note = f'<p class="activity-note">{pending} awaiting completion or decisions</p>' if pending else ""
     return (f'<div class="activity-card independent-review"><div class="activity-top">'
             f'<strong>Subagent pre-review</strong><span>{len(completed)} completed</span></div>'
             f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>'
-            f'<p class="activity-note">{safe(note)}</p></div>')
+            f'{note}</div>')
 
 
 def render_failed_cli_attempts(history: dict | None, now: datetime, *, compact: bool = False) -> str:

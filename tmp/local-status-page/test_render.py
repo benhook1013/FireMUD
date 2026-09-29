@@ -36,7 +36,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn("2/1/1", rendered)
         self.assertIn("0/0/0", rendered)
         self.assertIn("1h 5m", rendered)
-        self.assertIn("no CodeRabbit taper credit", rendered)
+        self.assertNotIn("no CodeRabbit taper credit", rendered)
         self.assertNotIn("Subagent pre-review", page.render(data, review, NOW))
         manual_only = page.render(data, review, NOW, histories={42: {
             "state": "available", "runs": [{**history["runs"][0], "channel": "manual"}],
