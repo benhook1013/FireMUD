@@ -60,6 +60,24 @@ SUMMARY_METADATA_LINES = (
     'echo "- Demo login password: repository smoke default (not printed)"',
     '} >> "$GITHUB_STEP_SUMMARY"',
 )
+SUMMARY_STATIC_WARNING_BLOCKS = (
+    (
+        "{",
+        'echo ""',
+        'echo "### Game Design recovery"',
+        'echo ""',
+        'echo "**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained) because the staged dev-demo deploy did not complete. Inspect and repair the Game Design Deployment, Pods, Service, and EndpointSlices before retrying."',
+        '} >> "$GITHUB_STEP_SUMMARY"',
+    ),
+    (
+        "{",
+        'echo ""',
+        'echo "### Migration writer recovery"',
+        'echo ""',
+        'echo "**Warning:** The Account, Game Session, and Automation writer Deployments may be partially quiesced because migration activation did not complete. This can happen when writer quiescence fails or the Helm deploy fails partway through. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."',
+        '} >> "$GITHUB_STEP_SUMMARY"',
+    ),
+)
 
 REPO_SHELL_HELPER_REFERENCE = re.compile(
     r"(?<![A-Za-z0-9_./$-])"
@@ -204,7 +222,7 @@ def closing_fi_index(lines: list[str], if_index: int) -> int | None:
 
 
 def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
-    """Find only the canonical direct helper and metadata summary regions."""
+    """Find only canonical direct helper and exact fixed summary regions."""
 
     lines = source.splitlines()
     ranges: list[tuple[int, int]] = []
@@ -235,6 +253,15 @@ def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
             if candidate == SUMMARY_METADATA_LINES:
                 ranges.append((index, index + len(SUMMARY_METADATA_LINES) - 1))
                 index += len(SUMMARY_METADATA_LINES) - 1
+        for warning_lines in SUMMARY_STATIC_WARNING_BLOCKS:
+            if index + len(warning_lines) <= len(lines):
+                candidate = tuple(
+                    line.strip() for line in lines[index : index + len(warning_lines)]
+                )
+                if candidate == warning_lines:
+                    ranges.append((index, index + len(warning_lines) - 1))
+                    index += len(warning_lines) - 1
+                    break
         index += 1
     return ranges
 
