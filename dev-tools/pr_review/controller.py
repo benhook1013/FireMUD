@@ -3734,6 +3734,7 @@ class ReviewController:
                     and view["status"] in {"PROMISED", "CAP_ACTIVE"}
                     and (view.get("remaining") is None or view.get("remaining", 0) > 0)
                 )
+                or view["status"] == "PROMISED"
             },
             taper_history_by_pr=taper_history_by_pr,
             active_review_prs=active_review_prs,
@@ -3768,7 +3769,8 @@ class ReviewController:
 
         if (
             channel != policy.Channel.HOSTED
-            or decision.status != policy.ReviewStatus.JUDGMENT_REQUIRED
+            or decision.status
+            not in {policy.ReviewStatus.JUDGMENT_REQUIRED, policy.ReviewStatus.READY}
             or decision.target is None
         ):
             return decision
@@ -3959,7 +3961,7 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
-            if decision.target is None and not selection_complete:
+            if (decision.target is None or decision.deferred_terminal) and not selection_complete:
                 result[channel.value] = {
                     "channel": channel.value,
                     "pr": None,
@@ -4117,7 +4119,7 @@ class ReviewController:
             selected,
             pr,
             policy.ReviewStatus.READY if completed_allocation_override else decision.status,
-            "explicit allocation reopens a fresh taper after completion"
+            "explicit allocation reopens review selection after completion"
             if completed_allocation_override
             else decision.reason,
             selected_target,
@@ -4398,10 +4400,28 @@ class ReviewController:
                 }:
                     channel_status[channel.value] = channel_reconciliation.value
                 else:
+                    taper_history = None
+                    allocation = state.allocations.get(f"{pr}:{channel.value}")
+                    bounded_snapshot = bounded_evidence_cache.get((pr, channel.value))
+                    if allocation is not None and bounded_snapshot is not None and (
+                        allocations[channel].get(pr, {}).get("reopens_taper") is True
+                        or any(result["accepted"] > 0 for result in bounded_snapshot["results"])
+                    ):
+                        taper_history = policy.fresh_taper_history(
+                            state,
+                            channel,
+                            histories[channel][pr],
+                            baseline_checkpoints=self._bounded_allocation_taper_baseline(
+                                allocation,
+                                bounded_snapshot,
+                                histories[channel][pr],
+                            ),
+                        )
                     channel_status[channel.value] = policy.completion_status(
                         state,
                         channel,
                         histories[channel][pr],
+                        taper_history=taper_history,
                         reconciliation=channel_reconciliation,
                         other_channel_head=(
                             other_head

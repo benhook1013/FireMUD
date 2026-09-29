@@ -5173,6 +5173,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setTargetRegionId("region-b");
     coordinator.setTargetRegionEpoch(4L);
     coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPatchBaseVersionId(100L);
     RemoteCommandCoordinatorRepository coordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-foreign-origin"))
@@ -5211,12 +5212,12 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals(
-        "SCRIPT_PATCH_BASE_VERSION_REQUIRED",
-        responseRef.get().getCoordinator().getPublication().getLookupErrorCode());
+    assertEquals(100L, responseRef.get().getCoordinator().getPublication().getBaseVersionId());
+    assertEquals("", responseRef.get().getCoordinator().getPublication().getLookupErrorCode());
     Mockito.verifyNoInteractions(gameInstanceRepository);
+    Mockito.verify(gameDesignClient).getPublishedScriptPatchVersion(1L, "patch-1", 100L);
     Mockito.verify(gameDesignClient, Mockito.never())
-        .getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong());
+        .getPublishedScriptPatchVersion(1L, "patch-1", foreignOrigin.getVersionId());
   }
 
   @Test

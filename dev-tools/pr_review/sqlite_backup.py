@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from .sqlite_review_records import (
+    _FULL_COMMIT_SHA,
+    _LOW_ENTROPY_IDENTIFIER,
     _SECRET_PATTERNS,
     SqliteReviewRecords,
 )
@@ -52,6 +54,9 @@ _COMMAND_TIMEOUT_SECONDS = 120
 _DEFAULT_RETENTION_COUNT = 30
 _GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
 _SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
+# Legacy route notes can name long Java test classes; keep this exception to
+# alphabetic PascalCase test names, after the explicit credential patterns run.
+_JAVA_TEST_IDENTIFIER = re.compile(r"(?:[A-Z][a-z]{2,}){4,}Test")
 _EXPECTED_COLUMNS = {
     "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
     "review_state": ("singleton", "state_json"),
@@ -517,15 +522,16 @@ def _looks_secret(value: str) -> bool:
 
 
 def _is_known_identifier(token: str) -> bool:
-    if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", token):
+    if _FULL_COMMIT_SHA.fullmatch(token):
         return True
-    words = token.split("_")
-    return (
-        len(token) <= 120
-        and len(words) >= 5
-        and not set(words) & {"access", "aws", "bearer", "credential", "github", "key", "password", "private", "secret", "token"}
-        and all(2 <= len(word) <= 24 and word.isascii() and word.isalpha() and word.islower() for word in words)
-    )
+    if _JAVA_TEST_IDENTIFIER.fullmatch(token):
+        return True
+    if not _LOW_ENTROPY_IDENTIFIER.fullmatch(token):
+        return False
+    words = re.split(r"[_-]", token)
+    return not set(words) & {
+        "access", "aws", "bearer", "credential", "github", "key", "password", "private", "secret", "token"
+    }
 
 
 def _require_integrity(connection: sqlite3.Connection, label: str) -> None:

@@ -262,11 +262,20 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"reconciliation head {sha1} was checked"))
         self.assertFalse(sqlite_backup._looks_secret(f"review target {sha256} matched"))
         self.assertFalse(sqlite_backup._looks_secret(f"route proof names {code_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret("GameSessionOperatorControlPlaneServiceTest fallback fixture"))
+
+    def test_secret_screen_matches_write_valid_segmented_identifiers(self) -> None:
+        long_identifier = "review_v2_route-reconciliation_source-proof_identifier_with-many-segments"
+        very_long_identifier = "_".join(["review"] + [f"segment{index}" for index in range(1, 18)])
+
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {long_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {very_long_identifier}"))
 
     def test_secret_screen_still_rejects_unknown_tokens_and_credentials(self) -> None:
         high_entropy_token = "Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA"
 
         self.assertTrue(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
+        self.assertTrue(sqlite_backup._looks_secret("opaque value QrTzPabLmNuvWxyZabcDefGhiJklMnoPqrStuVwxYzTest"))
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-token-value"))
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
         self.assertTrue(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
