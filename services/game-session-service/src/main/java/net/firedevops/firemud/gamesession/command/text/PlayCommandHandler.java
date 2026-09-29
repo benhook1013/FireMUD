@@ -55,6 +55,10 @@ public class PlayCommandHandler {
   private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
   private static final String FRESH_ENTRY_FALLBACK_METRIC =
       "gamesession.session.fresh_entry_fallback";
+  private static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE =
+      "PUBLIC_PRODUCTION_ADMISSION_DENIED";
+  private static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_MESSAGE =
+      "Public joining is not available for this world.";
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -808,6 +812,25 @@ public class PlayCommandHandler {
     }
     if (!response.getMembershipExists() || !response.getGameplayAdmissionAllowed()) {
       if (isPublicProductionRealm(selectedRealm)) {
+        GetTenantEntitlementsForRuntimeResponse entitlementResponse =
+            accountClient.getTenantEntitlementsForRuntime(
+                Long.toString(selectedRealm.tenantId()), requestId);
+        Optional<PlayCommandHandlingResult> entitlementFailure =
+            validateEntitlementsResponse(
+                entitlementResponse,
+                context,
+                tenantTag,
+                selectedWorld,
+                selectedRealm,
+                requestedCharacterId);
+        if (entitlementFailure.isPresent()) {
+          return entitlementFailure;
+        }
+        if (!entitlementResponse.getAllowPublicJoin()) {
+          return Optional.of(
+              publicProductionAdmissionDeniedFailure(
+                  context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+        }
         recordResumeDeniedIfApplicable(
             context,
             selectedWorld.slug(),
@@ -880,6 +903,32 @@ public class PlayCommandHandler {
         GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
         GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
         "error.play.world-access-denied",
+        Map.of(),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        Long.toString(requestedCharacterId),
+        null);
+  }
+
+  private PlayCommandHandlingResult publicProductionAdmissionDeniedFailure(
+      SessionContext context,
+      String tenantTag,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      long requestedCharacterId) {
+    recordResumeDeniedIfApplicable(
+        context,
+        selectedWorld.slug(),
+        selectedRealm.slug(),
+        selectedRealm.pointerVersion(),
+        selectedRealm.gameInstanceId(),
+        requestedCharacterId,
+        tenantTag,
+        "public_admission_denied");
+    return failure(
+        PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE,
+        PUBLIC_PRODUCTION_ADMISSION_DENIED_MESSAGE,
+        "error.play.public-production-admission-denied",
         Map.of(),
         tenantTag,
         Long.toString(selectedRealm.gameInstanceId()),

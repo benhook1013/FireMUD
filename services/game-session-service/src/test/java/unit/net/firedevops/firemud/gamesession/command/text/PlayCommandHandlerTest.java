@@ -1377,6 +1377,8 @@ class PlayCommandHandlerTest {
                 .setMembershipAuthorityGeneration(0L)
                 .setEvaluatedAt(evaluatedAtNow())
                 .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
@@ -1408,6 +1410,8 @@ class PlayCommandHandlerTest {
                 .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt(evaluatedAtNow())
                 .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1418,6 +1422,90 @@ class PlayCommandHandlerTest {
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.join-required");
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "join_required");
+  }
+
+  @Test
+  void playPublicAdmissionDeniedWhenFreshEntitlementsDisallowJoin() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 0L, null, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(0L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(false));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Public joining is not available for this world.");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.public-production-admission-denied");
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"outage", "malformed", "stale"})
+  void playPublicJoinRequiresFreshEntitlementEvidence(String evidence) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 0L, null, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(0L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    GetTenantEntitlementsForRuntimeResponse entitlementResponse;
+    if ("outage".equals(evidence)) {
+      entitlementResponse =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE)
+                      .setMessage(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE))
+              .build();
+    } else {
+      GetTenantEntitlementsForRuntimeResponse.Builder builder = publicEntitlement(true).toBuilder();
+      if ("malformed".equals(evidence)) {
+        builder.clearTenantId();
+      } else {
+        builder.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
+      }
+      entitlementResponse = builder.build();
+    }
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse);
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
   }
 
   @Test
@@ -1790,6 +1878,18 @@ class PlayCommandHandlerTest {
         .setRealmSlug(realmSlug)
         .setGranted(true)
         .setGrantVersion(1L)
+        .setEvaluatedAt(evaluatedAtNow())
+        .build();
+  }
+
+  private static GetTenantEntitlementsForRuntimeResponse publicEntitlement(
+      boolean allowPublicJoin) {
+    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
+        .setTenantId("22")
+        .setGameplayAvailable(true)
+        .setAllowPublicJoin(allowPublicJoin)
+        .setEntitlementVersion(1L)
+        .setTenantBillingSequence(1L)
         .setEvaluatedAt(evaluatedAtNow())
         .build();
   }
