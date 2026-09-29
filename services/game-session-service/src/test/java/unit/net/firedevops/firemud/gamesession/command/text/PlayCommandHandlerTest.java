@@ -108,8 +108,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "1"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .active(123L, 22L, "1")),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1054,13 +1055,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net
-                            .firedevops
-                            .firemud
-                            .gamesession
-                            .support
-                            .RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "2")
+                        freshMembership(
+                                net.firedevops.firemud.gamesession.support
+                                    .RuntimeMembershipTestFixtures.active(123L, 22L, "2"))
                             .toBuilder()
                             .setGameplayAdmissionAllowed(false)
                             .build(),
@@ -1088,8 +1085,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result =
@@ -1125,8 +1123,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(123L, 22L, "3"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .inactive(123L, 22L, "3")),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
@@ -1366,8 +1365,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1393,8 +1393,9 @@ class PlayCommandHandlerTest {
         .thenAnswer(
             invocation -> {
               var response =
-                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
-                      123L, 22L);
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .missing(123L, 22L));
               var malformedLifecycle =
                   response.toBuilder()
                       .setMembershipLifecycleState(lifecycleState)
@@ -1428,10 +1429,12 @@ class PlayCommandHandlerTest {
             invocation -> {
               var response =
                   "INACTIVE".equals(lifecycleState)
-                      ? net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .inactive(123L, 22L, "3")
-                      : net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .missing(123L, 22L);
+                      ? freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .inactive(123L, 22L, "3"))
+                      : freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .missing(123L, 22L));
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                   .echoRequestId(
                       response.toBuilder().setGameplayAdmissionAllowed(true).build(),
@@ -1457,8 +1460,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(123L, 22L, "4"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .inactive(123L, 22L, "4")),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result =
@@ -1492,8 +1496,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1529,8 +1534,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1566,8 +1572,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1632,8 +1639,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1660,8 +1668,9 @@ class PlayCommandHandlerTest {
         entityManagementClient, sessionContextService, gameplayPresenceLifecycleService);
   }
 
-  @Test
-  void playWhenMembershipAuthorityTimestampIsMalformedFailsClosed() {
+  @ParameterizedTest
+  @ValueSource(strings = {"malformed", "future", "stale"})
+  void playWhenMembershipAuthorityTimestampIsUnsafeFailsClosed(String defect) {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1670,10 +1679,16 @@ class PlayCommandHandlerTest {
         .thenAnswer(
             invocation -> {
               var response =
-                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          123L, 22L, "1")
+                  freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .active(123L, 22L, "1"))
                       .toBuilder()
-                      .setEvaluatedAt("not-a-timestamp")
+                      .setEvaluatedAt(
+                          switch (defect) {
+                            case "future" -> Instant.now().plusSeconds(1L).toString();
+                            case "stale" -> Instant.now().minus(16L, ChronoUnit.SECONDS).toString();
+                            default -> "not-a-timestamp";
+                          })
                       .build();
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                   .echoRequestId(response, invocation.getArgument(0));
@@ -1692,6 +1707,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -1706,8 +1722,9 @@ class PlayCommandHandlerTest {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                       .echoRequestId(
-                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                              .active(123L, 22L, "1"),
+                          freshMembership(
+                              net.firedevops.firemud.gamesession.support
+                                  .RuntimeMembershipTestFixtures.active(123L, 22L, "1")),
                           invocation.getArgument(0));
               return response.toBuilder().setRequestId("wrong-request-id").build();
             });
@@ -1737,8 +1754,9 @@ class PlayCommandHandlerTest {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                       .echoRequestId(
-                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                              .active(123L, 22L, "1"),
+                          freshMembership(
+                              net.firedevops.firemud.gamesession.support
+                                  .RuntimeMembershipTestFixtures.active(123L, 22L, "1")),
                           invocation.getArgument(0));
               return response.toBuilder().clearMembershipAuthorityGeneration().build();
             });
@@ -2027,6 +2045,11 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response) {
+    return response.toBuilder().setEvaluatedAt(Instant.now().toString()).build();
   }
 
   private void assertIdentityUnavailableWithoutMutation(PlayCommandHandlingResult result) {

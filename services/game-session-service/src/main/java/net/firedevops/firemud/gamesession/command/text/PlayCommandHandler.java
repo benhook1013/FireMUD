@@ -1204,7 +1204,11 @@ public class PlayCommandHandler {
       return false;
     }
     try {
-      Instant.parse(response.getEvaluatedAt());
+      Instant evaluatedAt = Instant.parse(response.getEvaluatedAt());
+      Instant now = Instant.now();
+      if (evaluatedAt.isAfter(now) || !evaluatedAt.isAfter(now.minus(15, ChronoUnit.SECONDS))) {
+        return false;
+      }
     } catch (DateTimeParseException ex) {
       return false;
     }
