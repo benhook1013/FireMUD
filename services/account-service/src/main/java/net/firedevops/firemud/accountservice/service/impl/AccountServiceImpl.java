@@ -393,11 +393,10 @@ public class AccountServiceImpl implements AccountService {
               RuntimeRealmTarget current =
                   requireRealmTarget(
                       discovered.tenantId(), discovered.worldSlug(), discovered.realmSlug());
-              if (discovered.visible() != current.visible()
-                  || discovered.publicProductionRealm() != current.publicProductionRealm()) {
+              if (!sameRuntimeRealmAuthority(discovered, current)) {
                 throw admissionPointerUnavailable(
                     new IllegalStateException(
-                        "Public realm is no longer visible for bootstrap discovery"));
+                        "Public realm authority changed during bootstrap discovery"));
               }
               return current;
             })
@@ -1553,6 +1552,23 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {
     return realm.visible() && realm.publicProductionRealm();
+  }
+
+  private boolean sameRuntimeRealmAuthority(
+      RuntimeRealmTarget expected, RuntimeRealmTarget actual) {
+    return expected.tenantId() == actual.tenantId()
+        && expected.realmId().equals(actual.realmId())
+        && expected.playableStateNamespaceId().equals(actual.playableStateNamespaceId())
+        && expected.gameInstanceId() == actual.gameInstanceId()
+        && expected.worldSlug().equals(actual.worldSlug())
+        && expected.realmSlug().equals(actual.realmSlug())
+        && expected.pointerVersion() == actual.pointerVersion()
+        && expected.catalogRevision() == actual.catalogRevision()
+        && expected.visible() == actual.visible()
+        && expected.publicProductionRealm() == actual.publicProductionRealm()
+        && expected.stateScope().equals(actual.stateScope())
+        && expected.characterCreationPolicy().equals(actual.characterCreationPolicy())
+        && expected.requiresCharacterSelection() == actual.requiresCharacterSelection();
   }
 
   private String mintConnectScopeId(

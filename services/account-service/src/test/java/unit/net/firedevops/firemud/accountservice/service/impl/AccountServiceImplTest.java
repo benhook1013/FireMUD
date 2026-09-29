@@ -2005,6 +2005,40 @@ class AccountServiceImplTest {
         .insert(org.mockito.ArgumentMatchers.any());
   }
 
+  @Test
+  void listBootstrapRealmsDoesNotIssueScopeWhenPointerChangesDuringDiscovery() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+
+    var initiallyDiscovered = gameSessionClient.listGameplayRealms("demo").getFirst();
+    var changedRealmId = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
+    var currentRealm =
+        initiallyDiscovered.toBuilder().setRealmId(changedRealmId).setPointerVersion(18L).build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(initiallyDiscovered), java.util.List.of(currentRealm));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            admissionPointer(7L, "demo", "production", "44", 18L, true, true, "SHARED", "ALLOW_NEW")
+                .toBuilder()
+                .setRealmId(changedRealmId)
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"101", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
   void listBootstrapRealmsRejectsNoncanonicalRealmIds(String realmId) {
