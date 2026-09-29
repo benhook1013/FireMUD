@@ -365,20 +365,27 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   }
 
   @Test
-  void listPointerAuditLeavesHistoricalIdentityAbsent() {
+  void listPointerAuditPreservesPreV7UnknownRevisionAndIdentity() {
     GameplayAdmissionPointerEvent historicalEvent = new GameplayAdmissionPointerEvent();
     historicalEvent.setWorldSlug("demo");
     historicalEvent.setRealmSlug("production");
+    historicalEvent.setWorldDisplayName("Demo World");
+    historicalEvent.setRealmDisplayName("Live Realm");
     historicalEvent.setTenantId(1L);
     historicalEvent.setGameInstanceId(7L);
     historicalEvent.setPointerVersion(1L);
-    historicalEvent.setCatalogRevision(1L);
+    historicalEvent.setStateScope("SHARED");
+    historicalEvent.setCharacterCreationPolicy("ALLOW_NEW");
+    historicalEvent.setActorPrincipal("legacy-operator");
+    historicalEvent.setReason("retained pre-V7 event");
+    historicalEvent.setControlPlaneRequestId("legacy-request");
+    historicalEvent.setOccurredAt(java.time.Instant.parse("2026-09-29T00:00:00Z"));
     when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
             1L, "demo", "production"))
         .thenReturn(List.of(historicalEvent));
 
     var auditEntry = service.listPointerAudit(1L, "demo", "production").getFirst();
-    assertEquals(1L, auditEntry.catalogRevision());
+    assertNull(auditEntry.catalogRevision());
     assertNull(auditEntry.realmId());
     assertNull(auditEntry.playableStateNamespaceId());
   }
