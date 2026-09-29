@@ -2071,11 +2071,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
             .setTenantId("1")
             .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("  ")
             .build(),
         observer(ref));
 
     assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("actorPrincipal is required for replay");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
   }
 
@@ -2095,11 +2099,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
             .setTenantId("1")
             .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("another-account")
             .build(),
         observer(ref));
 
     assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("actorPrincipal must match the authenticated account");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
   }
 
@@ -2119,12 +2127,49 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
             .setTenantId("1")
             .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("1")
             .build(),
         observer(ref));
 
     assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("PERMISSION_DENIED");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("authenticated account is required for replay");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
+  }
+
+  @Test
+  void mapsReplayIdempotencyConflictToFailedPreconditionWithoutSecondMutation() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(
+            new ScriptWorkItemServiceImpl.ReplayIdempotencyConflictException(
+                "control_plane_request_id already records a different replay request"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("control_plane_request_id already records a different replay request");
+    Mockito.verify(workItemService).replayDeadLetters(Mockito.any());
   }
 
   @Test

@@ -341,12 +341,21 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             statement ->
                 assertThat(statement)
-                    .contains("update", "status", "row_version", "failure_generation")
+                    .contains(
+                        "update",
+                        "status",
+                        "authority_unavailable_since",
+                        "authority_unavailable_count",
+                        "next_eligible_at",
+                        "row_version",
+                        "failure_generation")
                     .satisfies(
                         sqlText ->
                             assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
                                 .doesNotContain("cancel_reason")));
-    assertThat(bindings.get()).contains("PENDING_EVALUATION", "DEAD_LETTERED", 4, 3L);
+    assertThat(bindings.get())
+        .containsSubsequence("PENDING_EVALUATION", null, 0, 0, null)
+        .contains("DEAD_LETTERED", 4, 3L);
   }
 
   @Test

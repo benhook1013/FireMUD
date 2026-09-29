@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -43,8 +42,12 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse
 import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -99,6 +102,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private final TransactionTemplate transactionTemplate;
+  private final TransactionTemplate pluginFenceReadTransactionTemplate;
 
   /** Compatibility constructor for focused plugin-fence tests. */
   public ScriptWorkItemExecutionServiceImpl(
@@ -254,7 +258,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       MeterRegistry meterRegistry,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       PluginRuntimeStateRepository pluginRuntimeStateRepository,
-      org.springframework.transaction.PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -272,7 +276,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         readinessCapacityService,
         gameSessionControlPlaneClient,
         pluginRuntimeStateRepository,
-        transactionManager == null ? null : new TransactionTemplate(transactionManager));
+        transactionManager == null ? null : new TransactionTemplate(transactionManager),
+        newPluginFenceReadTransactionTemplate(transactionManager));
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -393,6 +398,46 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       PluginRuntimeStateRepository pluginRuntimeStateRepository,
       TransactionTemplate transactionTemplate) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        gameSessionControlPlaneClient,
+        pluginRuntimeStateRepository,
+        transactionTemplate,
+        null);
+  }
+
+  private ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      TransactionTemplate transactionTemplate,
+      TransactionTemplate pluginFenceReadTransactionTemplate) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -410,6 +455,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
     this.transactionTemplate = transactionTemplate;
+    this.pluginFenceReadTransactionTemplate = pluginFenceReadTransactionTemplate;
+  }
+
+  private static TransactionTemplate newPluginFenceReadTransactionTemplate(
+      PlatformTransactionManager transactionManager) {
+    if (transactionManager == null) {
+      return null;
+    }
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    template.setReadOnly(true);
+    return template;
   }
 
   @Override
@@ -651,9 +708,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   /**
-   * Final Automation-side admission fence. Queue claims are intentionally not authority: the exact
-   * owner tuple is reread immediately before definition evaluation and any gameplay handoff.
-   * Missing pre-fence evidence is rejected, which keeps legacy rows fail closed.
+   * Final Automation-side runtime/pin fence. Queue claims are intentionally not authority: the
+   * runtime/pin tuple is reread immediately before definition evaluation and any gameplay handoff.
+   * Plugin lifecycle is an independent fence checked at its own boundaries below.
    */
   private String validateCurrentExecutionFences(ScriptWorkItem workItem) {
     if (isOnLoad(workItem)) {
@@ -688,62 +745,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (runtimeFailure != null) {
       return runtimeFailure;
     }
-    String pluginFailure =
-        ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem);
-    if (pluginFailure != null) {
-      return pluginFailure;
-    }
-    if (ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()).isBlank()) {
-      return null;
-    }
-    if (pluginRuntimeStateRepository == null) {
-      return "plugin_lifecycle_collaborator_unavailable";
-    }
-    String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId());
-    Optional<PluginRuntimeState> plugin;
-    try {
-      plugin =
-          pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
-              workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
-    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
-      if (isRepositoryUnavailable(ex)) {
-        return REASON_AUTHORITY_UNAVAILABLE;
-      }
-      return "plugin_lifecycle_evidence_unavailable";
-    }
-    if (plugin == null || plugin.isEmpty()) {
-      return REASON_AUTHORITY_UNAVAILABLE;
-    }
-    PluginState pluginState = null;
-    String activePluginVersionId = "";
-    long pluginActivationEpoch = 0L;
-    long lifecycleRevision = 0L;
-    var state = plugin.orElseThrow();
-    if (state.getPluginState() != null) {
-      try {
-        pluginState = PluginState.valueOf(state.getPluginState());
-      } catch (IllegalArgumentException ex) {
-        if ("REVOKED".equals(state.getPluginState().trim().toUpperCase(Locale.ROOT))) {
-          return "plugin_disabled";
-        }
-        return REASON_AUTHORITY_UNAVAILABLE;
-      }
-    }
-    if (pluginState == null || pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
-      return REASON_AUTHORITY_UNAVAILABLE;
-    }
-    if (pluginState == PluginState.PLUGIN_STATE_ENABLED) {
-      activePluginVersionId = state.getActivePluginVersionId();
-      pluginActivationEpoch = state.getPluginActivationEpoch();
-      lifecycleRevision = state.getLifecycleRevision();
-      if (ScriptWorkItemFenceEvaluationSupport.normalize(activePluginVersionId).isBlank()
-          || pluginActivationEpoch <= 0
-          || lifecycleRevision <= 0) {
-        return REASON_AUTHORITY_UNAVAILABLE;
-      }
-    }
-    return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
-        workItem, activePluginVersionId, pluginState, pluginActivationEpoch, lifecycleRevision);
+    // Plugin lifecycle is an independent fence with its own bounded retry budget. It is checked
+    // by validateCurrentPluginFence at each plugin-owned boundary below.
+    return null;
   }
 
   private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
@@ -986,13 +990,19 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     while (cause != null) {
       if (cause instanceof SQLTransientException
           || cause instanceof SQLRecoverableException
+          || cause instanceof TransientDataAccessException
+          || cause instanceof RecoverableDataAccessException
           || cause instanceof ConnectException
           || cause instanceof SocketTimeoutException) {
         return true;
       }
       if (cause instanceof SQLException sqlException) {
         String sqlState = sqlException.getSQLState();
-        if (sqlState != null && sqlState.startsWith("08")) {
+        if (sqlState != null
+            && (sqlState.startsWith("08")
+                || sqlState.startsWith("40")
+                || sqlState.equals("57014")
+                || sqlState.equals("55P03"))) {
           return true;
         }
       }
@@ -1048,6 +1058,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
     Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
     workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
+    workItem.setCancelReason(pluginFence.reason());
     workItem.setNextEligibleAt(retryAt.plus(delay));
     persistDelayedRetry(workItem);
   }
@@ -1522,6 +1533,23 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
   }
 
+  private Optional<PluginRuntimeState> readCurrentPluginRuntimeState(ScriptWorkItem workItem) {
+    if (pluginRuntimeStateRepository == null) {
+      return Optional.empty();
+    }
+    String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId());
+    if (pluginFenceReadTransactionTemplate == null) {
+      return pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+          workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
+    }
+    Optional<PluginRuntimeState> state =
+        pluginFenceReadTransactionTemplate.execute(
+            ignored ->
+                pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+                    workItem.getTenantId(), workItem.getGameInstanceId(), pluginId));
+    return state == null ? Optional.empty() : state;
+  }
+
   private PluginFenceValidation validateCurrentPluginFence(ScriptWorkItem workItem) {
     if (isOnLoad(workItem)) {
       return null;
@@ -1537,13 +1565,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
     final PluginRuntimeState state;
     try {
-      state =
-          pluginRuntimeStateRepository
-              .findByTenantIdAndGameInstanceIdAndPluginId(
-                  workItem.getTenantId(),
-                  workItem.getGameInstanceId(),
-                  ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
-              .orElse(null);
+      state = readCurrentPluginRuntimeState(workItem).orElse(null);
     } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       if (isRepositoryUnavailable(ex)) {
         return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
@@ -1560,6 +1582,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     try {
       pluginState = PluginState.valueOf(state.getPluginState());
     } catch (IllegalArgumentException ex) {
+      if ("REVOKED".equals(state.getPluginState().trim().toUpperCase(java.util.Locale.ROOT))) {
+        return new PluginFenceValidation("plugin_disabled", false);
+      }
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
     if (pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {

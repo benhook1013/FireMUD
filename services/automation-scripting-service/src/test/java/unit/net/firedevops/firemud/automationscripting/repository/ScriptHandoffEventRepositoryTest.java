@@ -588,7 +588,7 @@ class ScriptHandoffEventRepositoryTest {
             "tenant_id",
             "observed_at",
             " < ",
-            "retention_hold_until",
+            "\"retention_candidates\".\"retention_hold_until\"",
             "handoff_outcome",
             "regexp_replace",
             "retention_siblings",

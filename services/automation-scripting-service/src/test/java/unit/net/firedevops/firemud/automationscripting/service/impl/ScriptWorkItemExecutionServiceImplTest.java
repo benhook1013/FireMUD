@@ -54,6 +54,8 @@ import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -268,7 +270,13 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
-    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    assertThat(item.getNextEligibleAt())
+        .isNotNull()
+        .isAfterOrEqualTo(Instant.now().plusSeconds(14));
+    verify(pluginRuntimeStateRepository)
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
   }
 
   @Test
@@ -303,7 +311,94 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
-    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    verify(pluginRuntimeStateRepository)
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"57014", "55P03", "40001"})
+  void retriesPluginRepositoryTransientSqlStates(String sqlState) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenThrow(
+            new DataAccessException(
+                "plugin lookup unavailable", new SQLException("transient", sqlState)));
+    ScriptWorkItem item = replayPluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            gameSessionClient,
+            pluginRuntimeStateRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    verify(pluginRuntimeStateRepository)
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+  }
+
+  @Test
+  void retriesSpringTransientDataAccessExceptionWithoutUsingGenericBudget() {
+    assertPluginRepositoryFailureRetries(
+        new TransientDataAccessResourceException("plugin lookup unavailable"));
+  }
+
+  @Test
+  void retriesSpringRecoverableDataAccessExceptionWithoutUsingGenericBudget() {
+    assertPluginRepositoryFailureRetries(
+        new RecoverableDataAccessException("plugin lookup unavailable"));
+  }
+
+  private static void assertPluginRepositoryFailureRetries(Throwable failure) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenThrow(failure);
+    ScriptWorkItem item = replayPluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            gameSessionClient,
+            pluginRuntimeStateRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    verify(pluginRuntimeStateRepository)
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
   }
 
   @Test
@@ -395,8 +490,8 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(PluginRuntimeStateRepository.class);
     PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
     TransactionStatus transactionStatus = Mockito.mock(TransactionStatus.class);
-    AtomicBoolean transactionActive = new AtomicBoolean();
     AtomicInteger nextTransactionId = new AtomicInteger();
+    List<TransactionDefinition> transactionDefinitions = new ArrayList<>();
     List<String> committedStatuses = new ArrayList<>();
     ScriptWorkItem item = replayPluginWorkItem();
     item.setStatus("PENDING_EVALUATION");
@@ -410,13 +505,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
         .thenAnswer(
             invocation -> {
-              assertThat(transactionActive.compareAndSet(false, true)).isTrue();
+              transactionDefinitions.add(invocation.getArgument(0));
               nextTransactionId.incrementAndGet();
               return transactionStatus;
             });
     Mockito.doAnswer(
             invocation -> {
-              assertThat(transactionActive.compareAndSet(true, false)).isTrue();
               committedStatuses.add(item.getStatus());
               return null;
             })
@@ -424,7 +518,6 @@ class ScriptWorkItemExecutionServiceImplTest {
         .commit(transactionStatus);
     Mockito.doAnswer(
             invocation -> {
-              assertThat(transactionActive.get()).isTrue();
               item.setStatus("EVALUATING");
               return List.of(item);
             })
@@ -464,12 +557,21 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.claimedCount()).isEqualTo(1);
     assertThat(result.failedCount()).isEqualTo(1);
-    assertThat(committedStatuses).containsExactly("EVALUATING", "PENDING_EVALUATION");
+    assertThat(committedStatuses).containsExactly("EVALUATING", "EVALUATING", "PENDING_EVALUATION");
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
     verify(pluginRuntimeStateRepository, Mockito.times(2))
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
-    assertThat(nextTransactionId).hasValue(2);
+    assertThat(
+            transactionDefinitions.stream()
+                .filter(
+                    definition ->
+                        definition.getPropagationBehavior()
+                                == TransactionDefinition.PROPAGATION_REQUIRES_NEW
+                            && definition.isReadOnly())
+                .count())
+        .isEqualTo(2);
+    assertThat(nextTransactionId).hasValue(4);
   }
 
   @ParameterizedTest
@@ -954,7 +1056,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("CANCELED");
     assertThat(item.getCancelReason()).isEqualTo("plugin_binding_mismatch");
     assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
-    assertThat(audit.getFinalOutcome()).isEqualTo("stale_execution_fenced");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
     assertThat(audit.getFinalReason()).isEqualTo("plugin_binding_mismatch");
     verify(auditRepository).save(audit);
     Mockito.verifyNoInteractions(pluginRuntimeStateRepository);
@@ -1052,7 +1154,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("CANCELED");
     assertThat(item.getCancelReason()).isEqualTo("plugin_binding_mismatch");
     assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
-    assertThat(audit.getFinalOutcome()).isEqualTo("stale_execution_fenced");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
     assertThat(audit.getFinalReason()).isEqualTo("plugin_binding_mismatch");
     verify(auditRepository).save(audit);
   }
@@ -4625,7 +4727,8 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.result().failedCount()).isEqualTo(1);
     assertThat(result.item().getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(result.item().getCancelReason()).isEqualTo("authority_unavailable");
-    assertThat(result.item().getAuthorityUnavailableCount()).isEqualTo(1);
+    assertThat(result.item().getAuthorityUnavailableCount()).isZero();
+    assertThat(result.item().getAuthorityUnavailableRetryCount()).isEqualTo(1);
     verify(result.auditRepository(), Mockito.never()).findByWorkItemId(Mockito.anyLong());
   }
 

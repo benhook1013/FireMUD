@@ -57,6 +57,12 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
+  static final class ReplayIdempotencyConflictException extends RuntimeException {
+    ReplayIdempotencyConflictException(String message) {
+      super(message);
+    }
+  }
+
   private static final Logger LOGGER = LoggerFactory.getLogger(ScriptWorkItemServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
@@ -71,6 +77,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final List<String> DRAIN_RELEVANT_STATUSES =
       List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final int CANCELLATION_PAGE_SIZE = 100;
+  private static final int REPLAY_CONTROL_PLANE_REQUEST_ID_MAX_LENGTH = 128;
+  private static final int REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH = 256;
+  private static final int REPLAY_REASON_MAX_LENGTH = 256;
   private final AtomicLong retentionBlockedRows = new AtomicLong();
   private final MeterRegistry meterRegistry;
 
@@ -619,7 +628,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     validateReplayCommand(command);
     String normalizedTenantId = normalizeText(command.tenantId());
     requireText(normalizedTenantId, "tenant_id");
-    int boundedLimit = command.workItemIds().size();
     Instant now = Instant.now();
     String reason = normalizeReplayReason(command.reason());
     String fingerprint = replayRequestFingerprint(command);
@@ -635,7 +643,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
               reason,
               now);
       if (!fingerprint.equals(durableRequest.requestFingerprint())) {
-        throw new IllegalArgumentException(
+        throw new ReplayIdempotencyConflictException(
             "control_plane_request_id already records a different replay request");
       }
       priorResults =
@@ -648,8 +656,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return replayResultFromDurable(command, durableRequest, priorResults);
       }
     }
-    List<ScriptWorkItem> candidates =
-        selectReplayCandidates(command, normalizedTenantId, boundedLimit);
+    List<ScriptWorkItem> candidates = selectReplayCandidates(command, normalizedTenantId);
     Map<Long, ScriptWorkItem> byId =
         candidates.stream().collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
     List<ReplayItemResult> results = new ArrayList<>();
@@ -836,12 +843,23 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         || command.limit() != 0) {
       throw new IllegalArgumentException("replay_filters_require_preview");
     }
-    if (blankToEmpty(command.controlPlaneRequestId()).isBlank()) {
+    String controlPlaneRequestId = normalizeText(command.controlPlaneRequestId());
+    if (controlPlaneRequestId.isBlank()) {
       throw new IllegalArgumentException("control_plane_request_id is required");
     }
+    requireReplayTextLength(
+        controlPlaneRequestId,
+        REPLAY_CONTROL_PLANE_REQUEST_ID_MAX_LENGTH,
+        "control_plane_request_id");
+    requireReplayTextLength(
+        normalizeText(command.actorPrincipal()),
+        REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH,
+        "actor_principal");
+    requireReplayTextLength(
+        normalizeReplayReason(command.reason()), REPLAY_REASON_MAX_LENGTH, "reason");
   }
 
-  private static String replayRequestFingerprint(ReplayDeadLettersCommand command) {
+  static String replayRequestFingerprint(ReplayDeadLettersCommand command) {
     List<String> normalizedWorkItemIds =
         command.workItemIds().stream()
             // Work-item IDs are numeric identities.  Canonicalize accepted alternate spellings
@@ -1259,59 +1277,23 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
-      ReplayDeadLettersCommand command, String normalizedTenantId, int boundedLimit) {
-    if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
-      List<Long> requestedIds =
-          command.workItemIds().stream()
-              .limit(boundedLimit)
-              .map(ScriptWorkItemServiceImpl::parseWorkItemId)
-              .sorted()
-              .toList();
-      Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
-      for (Long id : requestedIds) {
-        workItemRepository
-            .findByIdForUpdate(id)
-            .filter(item -> normalizedTenantId.equals(item.getTenantId()))
-            .filter(item -> matchesReplayFilters(item, command))
-            .ifPresent(item -> lockedById.put(id, item));
-      }
-      return requestedIds.stream().map(lockedById::get).filter(Objects::nonNull).toList();
-    }
-    List<ScriptWorkItem> pageCandidates =
-        workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit));
+      ReplayDeadLettersCommand command, String normalizedTenantId) {
+    List<Long> requestedIds =
+        command.workItemIds().stream()
+            .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+            .sorted()
+            .toList();
     Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
-    for (Long id :
-        pageCandidates.stream().map(ScriptWorkItem::getId).distinct().sorted().toList()) {
+    for (Long id : requestedIds) {
       workItemRepository
           .findByIdForUpdate(id)
           .filter(item -> normalizedTenantId.equals(item.getTenantId()))
-          .filter(item -> STATUS_DEAD_LETTERED.equals(item.getStatus()))
-          .filter(item -> matchesReplayFilters(item, command))
           .ifPresent(item -> lockedById.put(id, item));
     }
-    return pageCandidates.stream()
-        .map(item -> lockedById.get(item.getId()))
-        .filter(Objects::nonNull)
-        .toList();
+    return requestedIds.stream().map(lockedById::get).filter(Objects::nonNull).toList();
   }
 
-  private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
-    String normalizedGameInstanceId = normalizeText(command.gameInstanceId());
-    String normalizedRegionId = normalizeText(command.regionId());
-    return (normalizedGameInstanceId.isBlank()
-            || item.getGameInstanceId().equals(normalizedGameInstanceId))
-        && (normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
-        && (command.scriptPatchVersion() == null
-            || command.scriptPatchVersion().isBlank()
-            || item.getScriptPatchVersion().equals(command.scriptPatchVersion()))
-        && (command.createdAfterMs() <= 0
-            || item.getCreatedAt().toEpochMilli() >= command.createdAfterMs())
-        && (command.createdBeforeMs() <= 0
-            || item.getCreatedAt().toEpochMilli() <= command.createdBeforeMs());
-  }
-
-  private String replayEligibilityReason(
+  String replayEligibilityReason(
       ScriptWorkItem item,
       Map<RuntimeScopeKey, Optional<GetGameInstanceRuntimeStateResponse>> runtimeStateCache) {
     if ("onLoad".equals(item.getEventType())) {
@@ -1528,7 +1510,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             });
   }
 
-  private record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
+  record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
 
   private record OriginalFailureEvidence(
       String stage, String reason, String outcome, boolean consistent) {
@@ -1560,6 +1542,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private static String normalizeReplayReason(String reason) {
     return reason == null || reason.isBlank() ? "operator_replay" : reason.strip();
+  }
+
+  private static void requireReplayTextLength(String value, int maxLength, String fieldName) {
+    if (value.length() > maxLength) {
+      throw new IllegalArgumentException(
+          fieldName + " must be at most " + maxLength + " characters");
+    }
   }
 
   private static void requireText(String value, String fieldName) {

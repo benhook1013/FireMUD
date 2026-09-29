@@ -3,8 +3,12 @@ package net.firedevops.firemud.automationscripting.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
+import java.sql.Connection;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -13,6 +17,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeRequestHistory;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemExecutionServiceImpl;
+import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -23,8 +31,11 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -251,6 +262,90 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   }
 
   @Test
+  void transientNestedPluginReadFailureCommitsPendingBackoffAfterDurableClaim() throws Exception {
+    DriverManagerDataSource timeoutDataSource = dataSource(schema, "100ms");
+    DSLContext transactionalDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(timeoutDataSource), SQLDialect.POSTGRES);
+    ScriptWorkItemRepository workItemRepository = new ScriptWorkItemRepository(transactionalDsl);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptWorkItemServiceImpl workItemService =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            rolloutProjectionService,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new SimpleMeterRegistry(),
+            null,
+            null);
+    DataSourceTransactionManager transactionManager =
+        new DataSourceTransactionManager(timeoutDataSource);
+    ScriptWorkItemExecutionServiceImpl executionService =
+        new ScriptWorkItemExecutionServiceImpl(
+            null,
+            workItemService,
+            null,
+            null,
+            workItemRepository,
+            null,
+            rolloutProjectionService,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new SimpleMeterRegistry(),
+            null,
+            new PluginRuntimeStateRepository(transactionalDsl),
+            transactionManager);
+
+    transactionalDsl.execute(
+        "insert into plugin_runtime_states "
+            + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
+            + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
+            + "values ('1', 'instance-transient', 'plugin-transient', 'version-transient', "
+            + "'PLUGIN_STATE_ENABLED', 'enabled', 1, 1)");
+    ScriptWorkItem inserted = workItemRepository.save(transientPluginWorkItem());
+    Instant attemptStarted = Instant.now();
+
+    try (Connection lockConnection = timeoutDataSource.getConnection()) {
+      lockConnection.setAutoCommit(false);
+      try (var statement = lockConnection.createStatement()) {
+        statement.execute("LOCK TABLE plugin_runtime_states IN ACCESS EXCLUSIVE MODE");
+      }
+
+      var result = executionService.processPendingWorkItems(1);
+
+      assertThat(result.claimedCount()).isEqualTo(1);
+      assertThat(result.completedCount()).isZero();
+      assertThat(result.failedCount()).isEqualTo(1);
+    }
+
+    var persisted =
+        dsl.fetchSingle(
+            "select status, cancel_reason, authority_unavailable_retry_count, next_eligible_at "
+                + "from script_work_items where id = ?",
+            inserted.getId());
+    assertThat(persisted.get("status", String.class)).isEqualTo("PENDING_EVALUATION");
+    assertThat(persisted.get("cancel_reason", String.class)).isEqualTo("authority_unavailable");
+    assertThat(persisted.get("authority_unavailable_retry_count", Integer.class)).isEqualTo(1);
+    Instant nextEligibleAt =
+        persisted.get("next_eligible_at", LocalDateTime.class).atOffset(ZoneOffset.UTC).toInstant();
+    assertThat(nextEligibleAt).isAfter(attemptStarted.plusSeconds(10));
+    assertThat(nextEligibleAt).isBefore(Instant.now().plusSeconds(20));
+  }
+
+  @Test
   void migrationFoundsRetainedRuntimeFenceAndOnlyMatchesCompleteScheduleProvenance() {
     String retainedSchema = newSchemaName();
     try {
@@ -444,12 +539,45 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     return history;
   }
 
+  private static ScriptWorkItem transientPluginWorkItem() {
+    ScriptWorkItem workItem = new ScriptWorkItem();
+    workItem.setTenantId("1");
+    workItem.setGameInstanceId("instance-transient");
+    workItem.setRegionId("region-transient");
+    workItem.setRegionEpoch(1L);
+    workItem.setEntityId("entity-transient");
+    workItem.setScriptId("script-transient");
+    workItem.setPluginId("plugin-transient");
+    workItem.setPluginVersionId("version-transient");
+    workItem.setPluginActivationEpoch(1L);
+    workItem.setLifecycleRevision(1L);
+    workItem.setEventType("onCommand");
+    workItem.setEventSchemaVersion("v1");
+    workItem.setScriptPatchVersion("patch-transient");
+    workItem.setScriptPatchBaseVersionId(1L);
+    workItem.setScriptPinEpoch(3L);
+    workItem.setScriptPinControlPlaneRequestId("pin-request-transient");
+    workItem.setScriptEventId("event-transient");
+    workItem.setSourceService("integration-test");
+    workItem.setTriggerMode("EVENT");
+    workItem.setStatus("PENDING_EVALUATION");
+    workItem.setNextEligibleAt(Instant.now().minusSeconds(1));
+    workItem.setCreatedAt(Instant.EPOCH);
+    workItem.setUpdatedAt(Instant.EPOCH);
+    return workItem;
+  }
+
   private DriverManagerDataSource dataSource(String targetSchema) {
+    return dataSource(targetSchema, null);
+  }
+
+  private DriverManagerDataSource dataSource(String targetSchema, String lockTimeout) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     String baseUrl = postgres.getJdbcUrl();
+    String options = lockTimeout == null ? "" : "&options=-c%20lock_timeout%3D" + lockTimeout;
     dataSource.setUrl(
-        baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + targetSchema);
+        baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + targetSchema + options);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;

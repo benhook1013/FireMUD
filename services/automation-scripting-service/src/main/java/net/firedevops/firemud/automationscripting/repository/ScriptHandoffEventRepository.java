@@ -89,7 +89,11 @@ public class ScriptHandoffEventRepository {
             .TENANT_ID
             .isNotNull()
             .and(candidates.OBSERVED_AT.lt(cutoff))
-            .and(RETENTION_HOLD_UNTIL.isNull().or(RETENTION_HOLD_UNTIL.le(current)))
+            .and(
+                candidates
+                    .RETENTION_HOLD_UNTIL
+                    .isNull()
+                    .or(candidates.RETENTION_HOLD_UNTIL.le(current)))
             .and(nonBlankHandoffOutcome(candidates.HANDOFF_OUTCOME))
             .and(noIncompleteSibling)
             .and(noIneligibleParent);

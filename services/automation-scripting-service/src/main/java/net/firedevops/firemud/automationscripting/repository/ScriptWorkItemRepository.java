@@ -654,7 +654,6 @@ public class ScriptWorkItemRepository {
             .set(
                 SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT,
                 entity.getAuthorityUnavailableRetryCount())
-            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
             .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
@@ -1196,7 +1195,6 @@ public class ScriptWorkItemRepository {
         record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT);
     entity.setAuthorityUnavailableRetryCount(
         authorityUnavailableRetryCount == null ? 0 : authorityUnavailableRetryCount);
-    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
     entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
     Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);
