@@ -508,22 +508,42 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
                         document = json.loads(value)
                     except json.JSONDecodeError as exc:
                         raise BackupError("persisted JSON cannot be screened") from exc
-                    identifier_keys = {"source_finding_key"} if column == "import_payload_json" else set()
-                    _screen_json_values(document, identifier_keys=identifier_keys)
+                    if column == "import_payload_json":
+                        _screen_import_payload(document)
+                    else:
+                        _screen_json_values(document)
                 elif _looks_secret(value, identifier=column in _IDENTIFIER_TEXT_COLUMNS.get(table, set())):
                     raise BackupError("database contains credential- or raw-secret-looking text")
 
 
-def _screen_json_values(value: object, key: str = "", *, identifier_keys: set[str] | None = None) -> None:
+def _screen_import_payload(document: object) -> None:
+    if not isinstance(document, dict):
+        raise BackupError("review import payload is not an object")
+    for key, value in document.items():
+        if key != "findings" or not isinstance(value, list):
+            _screen_json_values(value)
+            continue
+        for finding in value:
+            if not isinstance(finding, dict):
+                raise BackupError("review import finding is not an object")
+            for finding_key, finding_value in finding.items():
+                if finding_key == "source_finding_key" and isinstance(finding_value, str):
+                    if _looks_secret(finding_value, identifier=True):
+                        raise BackupError("database contains credential- or raw-secret-looking text")
+                else:
+                    _screen_json_values(finding_value)
+
+
+def _screen_json_values(value: object) -> None:
     if isinstance(value, str):
-        if _looks_secret(value, identifier=key in (identifier_keys or ())):
+        if _looks_secret(value):
             raise BackupError("database contains credential- or raw-secret-looking text")
     elif isinstance(value, dict):
-        for nested_key, nested_value in value.items():
-            _screen_json_values(nested_value, nested_key, identifier_keys=identifier_keys)
+        for nested_value in value.values():
+            _screen_json_values(nested_value)
     elif isinstance(value, list):
         for nested_value in value:
-            _screen_json_values(nested_value, key, identifier_keys=identifier_keys)
+            _screen_json_values(nested_value)
 
 
 def _looks_secret(value: str, *, identifier: bool = False) -> bool:

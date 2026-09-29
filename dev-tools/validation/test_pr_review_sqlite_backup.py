@@ -257,6 +257,17 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-secret-value", identifier=True))
         self.assertTrue(sqlite_backup._looks_secret("Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA", identifier=True))
 
+    def test_import_payload_identifier_exception_is_limited_to_finding_key(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_runs SET import_payload_json = ?",
+                (json.dumps({"findings": [{"detail": {"source_finding_key": "bearer-private-key-evidence-review-finding"}}]}),),
+            )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
 
