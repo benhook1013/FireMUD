@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -15,10 +16,18 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.EntityDigestBaselineMigrationAudit;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
@@ -90,6 +99,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
   @Autowired private EntityDigestBaselineMigrationAuditRepository auditRepository;
   @Autowired private EntityDigestBaselineMigrationService migrationService;
   @Autowired private EntityDigestBaselineMigrationWriteService writeService;
+  @Autowired private VersionService versionService;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
 
@@ -254,6 +264,107 @@ class EntityDigestBaselineMigrationIntegrationTest {
         .usingRecursiveComparison()
         .isEqualTo(baseline);
     assertThat(auditRepository.findByOperationId(command.operationId())).isEmpty();
+  }
+
+  @Test
+  void competingSameEpochCasTransitionsAllowOnlyOneWriter() throws Exception {
+    Version version = createVersion("cas-tenant", 1, VersionLifecycleState.PUBLISHED);
+    CountDownLatch start = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      List<Future<?>> transitions =
+          List.of(
+              executor.submit(
+                  () -> {
+                    awaitLatch(start);
+                    return versionService.compareAndSetVersionState(
+                        "cas-tenant", version.getId(), 1L, VersionLifecycleState.DRAFT, "cas-1");
+                  }),
+              executor.submit(
+                  () -> {
+                    awaitLatch(start);
+                    return versionService.compareAndSetVersionState(
+                        "cas-tenant", version.getId(), 1L, VersionLifecycleState.RETIRED, "cas-2");
+                  }));
+      start.countDown();
+
+      int successes = 0;
+      int staleFailures = 0;
+      for (Future<?> transition : transitions) {
+        try {
+          transition.get(5, TimeUnit.SECONDS);
+          successes++;
+        } catch (ExecutionException failure) {
+          assertThat(failure.getCause())
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageStartingWith("VERSION_STATE_EPOCH_STALE:");
+          staleFailures++;
+        }
+      }
+      assertThat(successes).isOne();
+      assertThat(staleFailures).isOne();
+    }
+
+    Version finalVersion =
+        versionRepository.findByTenantIdAndId("cas-tenant", version.getId()).orElseThrow();
+    assertThat(finalVersion.getVersionStateEpoch()).isEqualTo(2L);
+    assertThat(finalVersion.getVersionState())
+        .isIn(VersionLifecycleState.DRAFT, VersionLifecycleState.RETIRED);
+  }
+
+  @Test
+  void migrationDigestOverlapWithLifecycleTransitionRejectsStaleEpoch() throws Exception {
+    String tenantId = "migration-race-tenant";
+    createGame(tenantId);
+    Version version = createVersion(tenantId, 1, VersionLifecycleState.PUBLISHED);
+    RecordedParticipantDigest baseline = seedEntityBaseline(tenantId, version, 1);
+    MigrationCommand command = command("migration-race-operation", tenantId, baseline);
+    CountDownLatch digestRead = new CountDownLatch(1);
+    CountDownLatch releaseDigest = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              digestRead.countDown();
+              awaitLatch(releaseDigest);
+              PublicationDigestRequestBinding binding = invocation.getArgument(0);
+              long versionId = Long.parseLong(binding.versionId());
+              return new PublishParticipantDigestDto(
+                  PublishParticipantKey.ENTITY_MANAGEMENT.name(),
+                  binding.versionId(),
+                  null,
+                  "version:" + versionId,
+                  v2Digest(versionId),
+                  2,
+                  null,
+                  null);
+            })
+        .when(entityManagementClient)
+        .getDraftDesignDigestForVersion(any());
+
+    try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+      Future<?> migration = executor.submit(() -> migrationService.migrate(command));
+      assertThat(digestRead.await(5, TimeUnit.SECONDS)).isTrue();
+
+      VersionStateDto transitioned =
+          versionService.compareAndSetVersionState(
+              tenantId, version.getId(), 1L, VersionLifecycleState.ACTIVE, "migration-race");
+      assertThat(transitioned.versionState()).isEqualTo(VersionLifecycleState.ACTIVE);
+      assertThat(transitioned.versionStateEpoch()).isEqualTo(2L);
+      releaseDigest.countDown();
+
+      assertThatThrownBy(() -> migration.get(5, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(EntityDigestBaselineMigrationService.MigrationRejectedException.class)
+          .hasRootCauseMessage(
+              "version lifecycle changed while the Entity digest was being recomputed");
+    } finally {
+      releaseDigest.countDown();
+    }
+
+    assertBaselineUnchanged(baseline);
+    assertThat(auditRepository.findByOperationId(command.operationId())).isEmpty();
+    Version finalVersion =
+        versionRepository.findByTenantIdAndId(tenantId, version.getId()).orElseThrow();
+    assertThat(finalVersion.getVersionState()).isEqualTo(VersionLifecycleState.ACTIVE);
+    assertThat(finalVersion.getVersionStateEpoch()).isEqualTo(2L);
   }
 
   @Test
@@ -735,6 +846,15 @@ class EntityDigestBaselineMigrationIntegrationTest {
   private void assertBaselineUnchanged(RecordedParticipantDigest expected) {
     RecordedParticipantDigest actual = baselineRepository.findById(expected.getId()).orElseThrow();
     assertThat(actual).usingRecursiveComparison().isEqualTo(expected);
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while waiting for test coordination", exception);
+    }
   }
 
   private String v2Digest(long versionId) {

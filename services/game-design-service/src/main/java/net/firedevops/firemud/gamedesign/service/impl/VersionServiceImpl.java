@@ -340,7 +340,7 @@ public class VersionServiceImpl implements VersionService {
       return new ScriptPatchFinalization(
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
-    Version saved = requireAttemptVersion(attempt, patchBinding);
+    Version saved = requireAttemptVersionForUpdate(attempt, patchBinding);
     if (saved.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: pending attempt does not reference a draft version");
@@ -380,7 +380,8 @@ public class VersionServiceImpl implements VersionService {
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
     Optional<Version> draft =
-        versionRepository.findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId());
+        versionRepository.findByTenantIdAndIdForUpdate(
+            patchBinding.tenantId(), attempt.getVersionId());
     if (draft.isPresent() && draft.get().getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
@@ -425,13 +426,26 @@ public class VersionServiceImpl implements VersionService {
 
   private Version requireAttemptVersion(
       PublishAttempt attempt, PublicationDigestRequestBinding patchBinding) {
+    return requireAttemptVersion(attempt, patchBinding, false);
+  }
+
+  private Version requireAttemptVersionForUpdate(
+      PublishAttempt attempt, PublicationDigestRequestBinding patchBinding) {
+    return requireAttemptVersion(attempt, patchBinding, true);
+  }
+
+  private Version requireAttemptVersion(
+      PublishAttempt attempt, PublicationDigestRequestBinding patchBinding, boolean forUpdate) {
     if (attempt.getVersionId() == null || attempt.getVersionNumber() <= 0) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCOMPLETE: attempt is missing its durable version evidence");
     }
     Version version =
-        versionRepository
-            .findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId())
+        (forUpdate
+                ? versionRepository.findByTenantIdAndIdForUpdate(
+                    patchBinding.tenantId(), attempt.getVersionId())
+                : versionRepository.findByTenantIdAndId(
+                    patchBinding.tenantId(), attempt.getVersionId()))
             .orElseThrow(
                 () ->
                     new IllegalStateException(
@@ -803,7 +817,7 @@ public class VersionServiceImpl implements VersionService {
       long expectedVersionStateEpoch,
       VersionLifecycleState newState,
       String reason) {
-    Version version = requireTenantVersion(tenantId, versionId);
+    Version version = requireTenantVersionForUpdate(tenantId, versionId);
     if (newState == null) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: new version state is required");
     }
@@ -837,6 +851,12 @@ public class VersionServiceImpl implements VersionService {
             .map(Version::getVersionNumber)
             .orElse(0)
         + 1;
+  }
+
+  private Version requireTenantVersionForUpdate(String tenantId, long versionId) {
+    return versionRepository
+        .findByTenantIdAndIdForUpdate(tenantId, versionId)
+        .orElseThrow(() -> new IllegalArgumentException("version not found"));
   }
 
   private String publishFailureCode(RuntimeException ex) {

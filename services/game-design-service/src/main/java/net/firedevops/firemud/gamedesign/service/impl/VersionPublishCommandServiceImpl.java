@@ -265,7 +265,7 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation("full-version attempt is no longer pending");
     }
 
-    Version version = requireAttemptVersion(attempt, request);
+    Version version = requireAttemptVersionForUpdate(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
     if (existingPublication.isComplete()) {
       assertCommittedBundleMayMarkSuccess(request, existingPublication);
@@ -599,6 +599,22 @@ public class VersionPublishCommandServiceImpl {
   private Version requireAttemptVersion(PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttempt(attempt, request);
     Version version = requireTenantVersion(request.tenantId(), attempt.getVersionId());
+    if (!Objects.equals(version.getTenantId(), request.tenantId())
+        || version.getVersionNumber() != attempt.getVersionNumber()
+        || version.isScriptOnly()) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match request");
+    }
+    return version;
+  }
+
+  private Version requireAttemptVersionForUpdate(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
+    validateFullVersionAttempt(attempt, request);
+    Version version =
+        versionRepository
+            .findByTenantIdAndIdForUpdate(request.tenantId(), attempt.getVersionId())
+            .orElseThrow(() -> new IllegalArgumentException("version not found"));
     if (!Objects.equals(version.getTenantId(), request.tenantId())
         || version.getVersionNumber() != attempt.getVersionNumber()
         || version.isScriptOnly()) {

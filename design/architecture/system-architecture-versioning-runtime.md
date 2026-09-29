@@ -203,7 +203,7 @@ Required control-plane APIs:
 
 `versionStateEpoch` increments on any lifecycle transition that can affect activation eligibility (for example `Published -> Retired`, `Failed -> Draft`, or admin policy transitions).
 
-The target `CompareAndSetVersionState` contract requires a database epoch predicate and affected-row/lock proof, not only a service-memory comparison. The current `VersionService` checks the loaded epoch and then performs an unconditional row-ID save, so concurrent state writers can overwrite one another; this is an implementation gap that blocks treating `expectedVersionStateEpoch` as abandonment or purge invalidation evidence.
+The target `CompareAndSetVersionState` contract requires a database epoch predicate or exact-row lock with affected-row/lock proof, not only a service-memory comparison. The current `VersionService` locks the exact tenant/version row before comparing the epoch and saving; both publication finalizers also lock that Version row after their existing Game lock. This serializes the known live lifecycle writers, but local PostgreSQL concurrency tests remain Docker-gated and legal transition, release-artifact, retirement, and purge predicates are not implemented. The epoch alone is not abandonment or purge authorization evidence.
 
 Normative CAS call flow for activation and rollback:
 

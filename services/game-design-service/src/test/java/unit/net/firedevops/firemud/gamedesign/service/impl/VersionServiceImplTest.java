@@ -5,8 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,6 +60,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.data.domain.Pageable;
@@ -91,6 +95,11 @@ class VersionServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(publishAttemptService.findByPublishWorkflowId(any(String.class)))
         .thenReturn(Optional.empty());
+    when(versionRepository.findByTenantIdAndIdForUpdate(any(String.class), any(Long.class)))
+        .thenAnswer(
+            invocation ->
+                versionRepository.findByTenantIdAndId(
+                    invocation.getArgument(0), invocation.getArgument(1)));
     doAnswer(
             invocation -> {
               try {
@@ -131,6 +140,30 @@ class VersionServiceImplTest {
     assertTrue(thrown.getMessage().startsWith("PUBLISH_WORKFLOW_UNAVAILABLE"));
     verify(publishCommandService, org.mockito.Mockito.never())
         .publishFullVersion(any(), any(), any(), any());
+  }
+
+  @Test
+  void compareAndSetVersionStateLocksExactVersionBeforeSaving() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    doReturn(Optional.of(version))
+        .when(versionRepository)
+        .findByTenantIdAndIdForUpdate("tenant-1", 7L);
+    when(versionRepository.save(any(Version.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    clearInvocations(versionRepository);
+
+    service.compareAndSetVersionState(
+        "tenant-1", 7L, 1L, VersionLifecycleState.PUBLISHED, "unit-test");
+
+    InOrder versionOrder = inOrder(versionRepository);
+    versionOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 7L);
+    versionOrder.verify(versionRepository).save(version);
+    verify(versionRepository, org.mockito.Mockito.never()).findByTenantIdAndId("tenant-1", 7L);
   }
 
   @Test
@@ -205,6 +238,9 @@ class VersionServiceImplTest {
     assertEquals(8, dto.versionNumber());
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
     verify(versionRepository, times(2)).save(any(Version.class));
+    InOrder versionOrder = inOrder(versionRepository);
+    versionOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 11L);
+    versionOrder.verify(versionRepository).save(any(Version.class));
     verify(publishAttemptService)
         .createScriptPatchAttempt(
             any(VersionDto.class),
