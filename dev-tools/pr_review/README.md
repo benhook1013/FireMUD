@@ -10,6 +10,8 @@ dev-tools/pr-review --version
 
 The output identifies the SQLite schema and writer build. The live shared cutover waits until this merged, version-matched entrypoint is installed and selected. This guide describes the explicit operation; it does not assert that JSON-to-SQLite cutover or migration proof has already happened.
 
+For a posted Hosted request, `dev-tools/pr-review wait hosted --pr <number> --trigger-id <comment ID>` watches only that saved trigger. `--poll-seconds` defaults to 30 and `--max-wait-minutes` to 90. It returns JSON and exit status 0 for an attributable completion, 3 for another terminal result, or 4 when the wait expires; it never posts a request, grants review credit, or retires the trigger. The caller must read the result and use `records sync-hosted --pr <number>` before adjudicating a completed review. A wait expiration leaves the underlying trigger unchanged.
+
 ### Manual Hosted adoption
 
 A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current anchor before writing a private attribution record. A queued PR uses its reconciled stack parent; an off-queue PR uses its actual live base branch after matching the live base and head tips to their remote refs. Off-queue adoption leaves the configured review queue unchanged. The command does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
