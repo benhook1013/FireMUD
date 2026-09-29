@@ -285,6 +285,172 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
   }
 
+  @Test
+  void retriesWhenLaterPluginFenceReadReportsTransientConnectionFailure() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(4L, 8L)))
+        .thenThrow(
+            new DataAccessException(
+                "plugin lookup unavailable", new SQLTransientConnectionException("offline")));
+    ScriptWorkItem item = replayPluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            gameSessionClient,
+            pluginRuntimeStateRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    assertThat(item.getNextEligibleAt()).isNotNull();
+    verify(pluginRuntimeStateRepository, Mockito.times(2))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+  }
+
+  @Test
+  void deniesWhenLaterPluginFenceReadReportsNonTransientFailure() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(4L, 8L)))
+        .thenThrow(
+            new DataAccessException("invalid plugin query", new SQLException("syntax", "42601")));
+    ScriptWorkItem item = replayPluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            gameSessionClient,
+            pluginRuntimeStateRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_lifecycle_evidence_unavailable");
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
+    verify(pluginRuntimeStateRepository, Mockito.times(2))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+  }
+
+  @Test
+  void retriesLaterPluginFenceReadFailureAfterDurablyCommittedClaim() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
+    TransactionStatus transactionStatus = Mockito.mock(TransactionStatus.class);
+    AtomicBoolean transactionActive = new AtomicBoolean();
+    AtomicInteger nextTransactionId = new AtomicInteger();
+    List<String> committedStatuses = new ArrayList<>();
+    ScriptWorkItem item = replayPluginWorkItem();
+    item.setStatus("PENDING_EVALUATION");
+
+    when(automationQueueService.drainIndexedWorkItemPointers(2, 1)).thenReturn(List.of());
+    when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenReturn(List.of(item));
+    when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(transactionActive.compareAndSet(false, true)).isTrue();
+              nextTransactionId.incrementAndGet();
+              return transactionStatus;
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive.compareAndSet(true, false)).isTrue();
+              committedStatuses.add(item.getStatus());
+              return null;
+            })
+        .when(transactionManager)
+        .commit(transactionStatus);
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive.get()).isTrue();
+              item.setStatus("EVALUATING");
+              return List.of(item);
+            })
+        .when(workItemService)
+        .claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenReturn(Optional.of(pluginState(4L, 8L)))
+        .thenThrow(
+            new DataAccessException(
+                "plugin lookup unavailable", new SQLTransientConnectionException("offline")));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            automationQueueService,
+            workItemService,
+            Mockito.mock(ScriptDefinitionRepository.class),
+            Mockito.mock(ScriptGameplayCommandHandoffService.class),
+            workItemRepository,
+            auditRepository,
+            rolloutProjectionService,
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            null,
+            null,
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            gameSessionClient,
+            pluginRuntimeStateRepository,
+            transactionManager);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.claimedCount()).isEqualTo(1);
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(committedStatuses).containsExactly("EVALUATING", "PENDING_EVALUATION");
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
+    verify(pluginRuntimeStateRepository, Mockito.times(2))
+        .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+    assertThat(nextTransactionId).hasValue(2);
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = {"NOT_A_PLUGIN_STATE", "PLUGIN_STATE_UNSPECIFIED"})

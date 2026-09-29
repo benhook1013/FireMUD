@@ -1515,13 +1515,21 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (pluginRuntimeStateRepository == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
-    PluginRuntimeState state =
-        pluginRuntimeStateRepository
-            .findByTenantIdAndGameInstanceIdAndPluginId(
-                workItem.getTenantId(),
-                workItem.getGameInstanceId(),
-                ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
-            .orElse(null);
+    final PluginRuntimeState state;
+    try {
+      state =
+          pluginRuntimeStateRepository
+              .findByTenantIdAndGameInstanceIdAndPluginId(
+                  workItem.getTenantId(),
+                  workItem.getGameInstanceId(),
+                  ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
+              .orElse(null);
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
+      if (isRepositoryUnavailable(ex)) {
+        return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+      }
+      return new PluginFenceValidation("plugin_lifecycle_evidence_unavailable", false);
+    }
     if (state == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
