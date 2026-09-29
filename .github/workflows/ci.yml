@@ -382,6 +382,7 @@ jobs:
           bash ./dev-tools/tests/backup-verifier-image-contract.sh
           bash ./dev-tools/tests/kubectl-version-skew-contract.sh
           bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          bash ./dev-tools/tests/helm-entity-digest-baseline-migration-contract.sh
           bash ./dev-tools/tests/preview-image-tag-contract.sh
           bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
