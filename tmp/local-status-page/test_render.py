@@ -125,7 +125,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Legacy next action must not render", result)
         self.assertNotIn("<script>", result)
         self.assertIn('href="https://github.com/benhook1013/FireMUD/pull/42"', result)
-        self.assertIn('href="https://github.com/benhook1013/FireMUD"', result)
+        self.assertIn('href="https://github.com/benhook1013/FireMUD" target="_blank" rel="noopener noreferrer"', result)
         self.assertIn('<form class="refresh-form" action="/refresh" method="post">', result)
         self.assertIn('<span class="refresh-slot"><button type="submit">Refresh</button></span>', result)
         self.assertIn('<link rel="icon" type="image/svg+xml" href="/flame-ember.svg">', result)

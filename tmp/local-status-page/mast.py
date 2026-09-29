@@ -13,8 +13,11 @@ def render_mast(title: str, middle_html: str, middle_class: str,
                 links: tuple[tuple[str, str, str], ...]) -> str:
     if middle_class not in {"refresh-space", "mast-meta"}:
         raise ValueError("unknown mast middle class")
+    github_new_tab = ' target="_blank" rel="noopener noreferrer"'
     navigation = "".join(
-        f'<a href="{escape(url, quote=True)}"><span class="nav-full">{escape(full)}</span>'
+        f'<a href="{escape(url, quote=True)}"'
+        f'{github_new_tab if url == "https://github.com/benhook1013/FireMUD" else ""}>'
+        f'<span class="nav-full">{escape(full)}</span>'
         f'<span class="nav-short">{escape(short)}</span></a>'
         for url, full, short in links
     )
