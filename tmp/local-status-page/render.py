@@ -1858,7 +1858,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .refresh-space {{ position: relative; display: flex; align-items: center; min-height: 2.1rem; }}
 .refresh-space .refresh-time {{ margin: 0; white-space: nowrap; }}
 .front-board {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(360px,1fr); background: var(--smoke); color: #fff; overflow: hidden; }}
-.front-copy {{ padding: clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
+.front-copy {{ padding: clamp(1.2rem,3.2vw,2.6rem) clamp(1.5rem,4vw,3.25rem) clamp(1.5rem,4vw,3.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 300px; }}
 .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
 .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
 .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
@@ -1870,7 +1870,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-fact-value .additions {{ color: #237451; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #a13047; }}
 .front-controller-unavailable {{ color: #f1dfe1; font-weight: 600; }}
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
-@media (min-width: 901px) {{ .front-copy {{ padding: 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
+@media (min-width: 901px) {{ .front-copy {{ padding: 1.7rem 2.15rem 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
 .front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
 .front-evidence .independent-review {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
