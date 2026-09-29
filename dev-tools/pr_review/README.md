@@ -12,7 +12,7 @@ The output identifies the SQLite schema and writer build. The live shared cutove
 
 ### Manual Hosted adoption
 
-A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current stack anchor before writing a private attribution record. It does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
+A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current anchor before writing a private attribution record. A queued PR uses its reconciled stack parent; an off-queue PR uses its actual live base branch after matching the live base and head tips to their remote refs. Off-queue adoption leaves the configured review queue unchanged. The command does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
 
 The controller continues using its selected JSON state until cutover is explicitly requested. Inspect the current format, then migrate the existing controller state with the matching entrypoint:
 

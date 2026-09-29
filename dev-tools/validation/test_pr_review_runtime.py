@@ -1092,7 +1092,7 @@ class RuntimeTest(unittest.TestCase):
                     side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
                 ),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
-                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
                 patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
@@ -1104,7 +1104,13 @@ class RuntimeTest(unittest.TestCase):
 
     def test_hosted_request_checks_new_manual_command_after_other_prs_terminal_record(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
-        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), PATCH, BASE, "owner/repo")
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
         live = LiveGitHub("owner/repo")
         old_command = {
             "databaseId": 10,
@@ -1161,7 +1167,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(live, "branch_head", return_value=BASE),
                 patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
-                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
                 patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
@@ -1215,7 +1221,7 @@ class RuntimeTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
             patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
-            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
             self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
         ):
             HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
@@ -1223,6 +1229,66 @@ class RuntimeTest(unittest.TestCase):
             )
         fetch_full.assert_called_once_with("owner/repo", 99)
         preceding.assert_called_once_with("owner/repo", 99, payload, 901, Path(directory))
+
+    def test_hosted_global_scan_releases_slot_after_off_queue_manual_adoption(self) -> None:
+        manual = {
+            "databaseId": 905,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-28T10:08:38Z",
+            "url": "https://example.test/comments/905",
+        }
+        completed_review = {
+            "databaseId": 906,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-28T10:19:19Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([manual], [completed_review])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+        anchor = {
+            "pr": 99,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            adopted = hosted.adopt_manual_completed_trigger(
+                "owner/repo",
+                99,
+                manual["databaseId"],
+                HEAD,
+                anchor,
+                lambda: payload,
+                path=record_path,
+                common=common,
+            )
+            self.assertEqual(adopted["status"], "adopted")
+
+            with (
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                    42, common
+                )
+
+            self.assertTrue(record_path.exists())
+            fetch_full.assert_called_once_with("owner/repo", 99)
 
     def test_hosted_global_scan_blocks_new_manual_request_after_tracked_current_record(self) -> None:
         old_command = {
@@ -1275,7 +1341,7 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
                 patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
-                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
                 self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
             ):
                 HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
@@ -1314,7 +1380,7 @@ class RuntimeTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
             patch.object(github, "fetch_pull_request", return_value=payload),
-            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True) as preceding,
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
         ):
             HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
                 42, Path(directory)
@@ -1350,7 +1416,7 @@ class RuntimeTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
             patch.object(github, "fetch_pull_request", return_value=payload),
-            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
             self.assertRaisesRegex(
                 ControllerError,
                 r"another manual Hosted request is unresolved for PR #99: its command-time head cannot be verified",

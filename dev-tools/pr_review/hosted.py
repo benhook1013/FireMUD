@@ -835,6 +835,10 @@ def adopt_manual_completed_trigger(
         comments = (pr.get("comments") or {}).get("nodes")
         if not isinstance(comments, list):
             raise TypeError("manual adoption requires complete public comments")
+        review_connection = pr.get("reviews")
+        reviews = review_connection.get("nodes") if isinstance(review_connection, dict) else None
+        if not isinstance(reviews, list) or any(not isinstance(item, dict) for item in reviews):
+            raise TypeError("manual adoption requires complete public review history")
         matches = [item for item in comments if immutable_database_id(item) == trigger_id]
         if len(matches) != 1:
             raise ValueError("manual trigger identity is missing or duplicated")
@@ -879,7 +883,7 @@ def adopt_manual_completed_trigger(
         trigger_at = parse_timestamp(created)
         response_reviews = [
             item
-            for item in (pr.get("reviews") or {}).get("nodes", [])
+            for item in reviews
             if immutable_database_id(item) == state.response_id
         ]
         response_comments = [
@@ -919,9 +923,6 @@ def adopt_manual_completed_trigger(
         next_trigger = min(later_commands, default=None)
         if next_trigger is not None:
             raise ValueError("manual adoption requires the latest public full-review command")
-        reviews = (pr.get("reviews") or {}).get("nodes")
-        if not isinstance(reviews, list):
-            raise TypeError("manual adoption requires complete public review history")
         in_window = []
         for review in reviews:
             if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":

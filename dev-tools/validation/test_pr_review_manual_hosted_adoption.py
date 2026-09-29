@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli, evidence, github, hosted, stack
 from pr_review.cli_runner import PullRequestSnapshot
+from pr_review.controller import ControllerError
 from pr_review.runtime import LiveEvidence, LiveGitHub
 
 REPO = "owner/repo"
@@ -123,6 +124,184 @@ def finished_only_payload(*, exact_head_proof: bool):
 
 
 class ManualHostedAdoptionTest(unittest.TestCase):
+    @staticmethod
+    def _off_queue_controller(
+        *,
+        snapshot: PullRequestSnapshot | None = None,
+        remote_heads: dict[str, str] | None = None,
+        ancestor: bool = True,
+        patch_id: str = "c" * 64,
+    ):
+        snapshot = snapshot or PullRequestSnapshot(
+            number=42,
+            state="OPEN",
+            base_ref_name="develop",
+            base_sha=BASE,
+            head_sha=HEAD,
+            head_ref_name="feature",
+            changed_files=73,
+            mergeable="MERGEABLE",
+            merged=False,
+            base_exists=True,
+            head_repository=REPO,
+        )
+        state = SimpleNamespace(ordered_prs=(41,))
+
+        class Git:
+            def remote_heads(self):
+                return remote_heads if remote_heads is not None else {"develop": BASE, "feature": HEAD}
+
+            def is_ancestor(self, _base, _head):
+                return ancestor
+
+            def merge_base(self, _base, _head):
+                return BASE
+
+            def patch_identity(self, _merge_base, _head):
+                return patch_id
+
+        controller = cli.ReviewController(
+            store=SimpleNamespace(load=lambda: state),
+            github=SimpleNamespace(pull_request=lambda _pr: snapshot),
+            git=Git(),
+            repository=REPO,
+        )
+        return controller, state
+
+    def test_off_queue_manual_adoption_uses_live_base_without_changing_queue(self):
+        controller, state = self._off_queue_controller()
+        args = cli._parser().parse_args(
+            ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path(REPO, 42, common)
+            with (
+                patch.object(cli, "_controller", return_value=(controller, None)),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(github, "fetch_pull_request", return_value=public_payload()),
+            ):
+                result = cli._dispatch(args)
+
+            self.assertEqual(result[0]["status"], "adopted")
+            self.assertEqual(state.ordered_prs, (41,))
+            self.assertTrue(record_path.exists())
+
+    def test_off_queue_manual_adoption_fails_closed_on_live_identity_or_anchor_mismatch(self):
+        default_snapshot = PullRequestSnapshot(
+            number=42,
+            state="OPEN",
+            base_ref_name="develop",
+            base_sha=BASE,
+            head_sha=HEAD,
+            head_ref_name="feature",
+            changed_files=73,
+            mergeable="MERGEABLE",
+            merged=False,
+            base_exists=True,
+            head_repository=REPO,
+        )
+        cases = (
+            ("requested head mismatch", default_snapshot, None, True, "d" * 40, public_payload()),
+            (
+                "remote base mismatch",
+                PullRequestSnapshot(**{**default_snapshot.__dict__, "base_sha": "d" * 40}),
+                None,
+                True,
+                HEAD,
+                public_payload(),
+            ),
+            (
+                "remote head mismatch",
+                default_snapshot,
+                {"develop": BASE, "feature": "d" * 40},
+                True,
+                HEAD,
+                public_payload(),
+            ),
+            ("public base mismatch", default_snapshot, None, True, HEAD, public_payload(base_name="release")),
+            ("public head mismatch", default_snapshot, None, True, HEAD, public_payload(head="d" * 40)),
+            (
+                "closed PR",
+                PullRequestSnapshot(**{**default_snapshot.__dict__, "state": "CLOSED"}),
+                None,
+                True,
+                HEAD,
+                public_payload(),
+            ),
+            (
+                "missing base",
+                PullRequestSnapshot(**{**default_snapshot.__dict__, "base_exists": False}),
+                None,
+                True,
+                HEAD,
+                public_payload(),
+            ),
+            ("missing head branch", default_snapshot, {"develop": BASE}, True, HEAD, public_payload()),
+            (
+                "foreign head repository",
+                PullRequestSnapshot(**{**default_snapshot.__dict__, "head_repository": "fork/repo"}),
+                None,
+                True,
+                HEAD,
+                public_payload(),
+            ),
+            ("base not ancestor", default_snapshot, None, False, HEAD, public_payload()),
+        )
+
+        args_template = ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head"]
+        for label, snapshot, remote_heads, ancestor, requested_head, payload in cases:
+            with self.subTest(reason=label), tempfile.TemporaryDirectory() as directory:
+                controller, _state = self._off_queue_controller(
+                    snapshot=snapshot, remote_heads=remote_heads, ancestor=ancestor
+                )
+                args = cli._parser().parse_args([*args_template, requested_head])
+                common = Path(directory)
+                record_path = hosted.default_trigger_record_path(REPO, 42, common)
+                with (
+                    patch.object(cli, "_controller", return_value=(controller, None)),
+                    patch.object(evidence, "git_common_dir", return_value=common),
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    self.assertRaises((cli.CliError, ControllerError, ValueError)),
+                ):
+                    cli._dispatch(args)
+                self.assertFalse(record_path.exists())
+
+    def test_off_queue_manual_adoption_refuses_active_public_response(self):
+        controller, _state = self._off_queue_controller()
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull["reviews"]["nodes"] = []
+        pull["comments"]["nodes"] = pull["comments"]["nodes"][:1]
+        args = cli._parser().parse_args(
+            ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path(REPO, 42, common)
+            with (
+                patch.object(cli, "_controller", return_value=(controller, None)),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaises(ValueError),
+            ):
+                cli._dispatch(args)
+            self.assertFalse(record_path.exists())
+
+    def test_manual_adoption_rejects_malformed_review_nodes_before_attribution(self):
+        for reviews in (None, [{"databaseId": 55}, None]):
+            with self.subTest(reviews=reviews), tempfile.TemporaryDirectory() as directory:
+                payload = public_payload()
+                payload["data"]["repository"]["pullRequest"]["reviews"]["nodes"] = reviews
+                path = hosted.default_trigger_record_path(REPO, 42, Path(directory))
+
+                with self.assertRaisesRegex(TypeError, "complete public review history"):
+                    hosted.adopt_manual_completed_trigger(
+                        REPO, 42, 10, HEAD, ANCHOR, payload_fetcher(payload), path=path
+                    )
+
+                self.assertFalse(path.exists())
+
     def test_later_manual_request_cannot_claim_first_requests_late_reply(self):
         payload = public_payload()
         pull = payload["data"]["repository"]["pullRequest"]
