@@ -1,7 +1,9 @@
+import contextlib
 import dataclasses
 import fcntl
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -15,7 +17,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
-from pr_review import evidence, hosted
+from pr_review import cli_attempts, cli_runner, evidence, hosted
 from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -35,6 +37,8 @@ from pr_review.cli_runner import (
     target_from_resolver,
 )
 from pr_review.patch_identity import patch_diff_args
+from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+from pr_review.sqlite_store import SqliteStateStore
 
 BASE = "a" * 40
 PARENT = BASE
@@ -191,6 +195,8 @@ class FakeCommands:
         timeout_review=False,
         timeout_git=False,
         review_output="review output\n",
+        review_stderr="",
+        review_returncode=0,
         parent_is_ancestor=True,
         merge_base=None,
         merge_conflict=False,
@@ -210,17 +216,25 @@ class FakeCommands:
         self.timeout_review = timeout_review
         self.timeout_git = timeout_git
         self.review_output = review_output
+        self.review_stderr = review_stderr
+        self.review_returncode = review_returncode
         self.parent_is_ancestor = parent_is_ancestor
         self.merge_base = merge_base or PARENT
         self.merge_conflict = merge_conflict
         self.merge_tree = merge_tree
         self.timeout_calls = []
         self.test_worktrees = set()
+        self.records = None
+        self.attempt_states_at_review_invocation = []
 
     def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
         self.calls.append((tuple(args), cwd))
         self.timeout_calls.append((tuple(args), timeout, text))
         if args[0] == "coderabbit":
+            if self.records is not None:
+                self.attempt_states_at_review_invocation = [
+                    attempt["state"] for attempt in self.records.attempt_history(42)
+                ]
             if self.timeout_review:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial \xff\n", stderr=b"timed out\n")
             with self.guard:
@@ -234,7 +248,7 @@ class FakeCommands:
             time.sleep(self.delay)
             with self.guard:
                 self.active -= 1
-            return CompletedProcess(args, 0, self.review_output, "")
+            return CompletedProcess(args, self.review_returncode, self.review_output, self.review_stderr)
         if args and args[0] == "git" and "-C" in args:
             if self.timeout_git:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial git\n", stderr=b"timed out\n")
@@ -398,6 +412,432 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_sqlite_attempt_is_written_before_provider_and_completed_with_json_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = (
+                '{"type":"start","reviewType":"full"}\n'
+                '{"type":"complete","status":"review_completed",'
+                '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+            )
+            commands = FakeCommands(root, review_output=output)
+            commands.records = records
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+            )
+            attempts = records.attempt_history(result.pull_request)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["attempt_id"], result.run_id)
+            self.assertEqual(commands.attempt_states_at_review_invocation, ["started"])
+            self.assertEqual(attempts[0]["state"], "completed")
+            attempt = records.attempt(result.run_id)
+            run = records.history(result.pull_request)["runs"][0]
+            self.assertTrue(attempt["finished_at"].endswith("Z"))
+            self.assertEqual(attempt["finished_at"], run["finished_at"])
+            self.assertEqual(attempts[0]["duration_seconds"], result.duration_seconds)
+            self.assertEqual(attempt["metadata"]["candidate_sha"], result.candidate_sha)
+            with sqlite3.connect(database) as connection:
+                kinds = {row[0] for row in connection.execute(
+                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)
+                )}
+            self.assertEqual(kinds, {"cli_events", "cli_diagnostic", "metadata"})
+
+    def test_runner_accepts_unicode_line_separators_inside_json_finding(self):
+        output = (
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": "Review comment at @src/Representative.java:1\nKeep\u2028the\u2029line.",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output),
+                records=records,
+            )
+
+            self.assertEqual(records.attempt(result.run_id)["state"], "completed")
+            self.assertEqual(records.history(result.pull_request)["findings"][0]["title"], "Keep\u2028the\u2029line.")
+
+    def test_successful_capture_recovers_the_original_started_attempt_after_sql_failure(self):
+        output = (
+            json.dumps({
+                "type": "finding",
+                "codegenInstructions": "Review comment at @src/Representative.java:1\nUse the safer path.",
+            })
+            + "\n"
+            + json.dumps({
+                "type": "complete",
+                "status": "review_completed",
+                "findings": 1,
+                "reviewedFiles": ["src/Representative.java"],
+            })
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root, review_output=output)
+            interleaved_reports = []
+            atomic_json = cli_runner._atomic_json
+
+            def migrate_before_final_metadata(path, value):
+                if path.name == "metadata.json" and "duration_seconds" in value:
+                    report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
+                    interleaved_reports.append(report)
+                    self.assertEqual(records.attempt(value["run_id"])["state"], "started")
+                atomic_json(path, value)
+
+            with (
+                patch.object(
+                    records,
+                    "complete_attempt_run",
+                    side_effect=ReviewRecordsError("simulated archive failure"),
+                ),
+                patch("pr_review.cli_runner._atomic_json", side_effect=migrate_before_final_metadata),
+            ):
+                result = run_cli_review(
+                    target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+                )
+
+            self.assertIn("was not saved", result.warning)
+            self.assertEqual(len(interleaved_reports), 1)
+            self.assertFalse(interleaved_reports[0]["available"])
+            self.assertIn("CLI review is active", interleaved_reports[0]["reason"])
+            self.assertEqual(interleaved_reports[0]["recovered"], [])
+            run_id = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir()).name
+            self.assertEqual(
+                (root / ".git" / "firemud" / "pr-review" / "runs" / run_id / "capture-complete").read_text(),
+                f"{run_id}\n",
+            )
+            self.assertEqual(records.attempt(run_id)["state"], "started")
+            report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
+            self.assertEqual(report["recovered"], [{"run_id": run_id, "pr": "42"}])
+            self.assertEqual(report["terminally_classified"], [])
+            attempt = records.attempt(run_id)
+            self.assertEqual(attempt["state"], "completed")
+            self.assertEqual(attempt["run_id"], run_id)
+            self.assertEqual(records.history(42)["runs"][0]["counts"]["found"], 1)
+
+    def test_provider_runs_when_optional_attempt_start_fails(self):
+        for failure in (
+            ReviewRecordsError("SQLite attempt start failed"),
+            OSError("attempt database unavailable"),
+            sqlite3.DatabaseError("SQLite connection failed"),
+        ):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                SqliteStateStore(database).update(lambda state: state)
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                commands = FakeCommands(
+                    root,
+                    review_output=(
+                        '{"type":"complete","status":"review_completed",'
+                        '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                    ),
+                )
+                commands.records = records
+
+                with patch.object(records, "start_attempt", side_effect=failure):
+                    result = run_cli_review(
+                        target(), github=FakeGitHub(), source_root=root,
+                        runner=commands, records=records,
+                    )
+
+                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+                self.assertTrue((result.capture_dir / "capture-complete").is_file())
+                self.assertIn("SQLite attempt and source decisions are missing", result.warning)
+                self.assertIn("durable CLI capture remains", result.warning)
+                self.assertIn("Record decisions.tsv for this run", result.warning)
+                self.assertEqual(result.exit_status, 0)
+                self.assertEqual(records.attempt_history(42), [])
+
+    def test_setup_error_survives_sqlite_archival_database_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+
+            with (
+                patch.object(
+                    cli_runner,
+                    "_verify_target_still_current",
+                    side_effect=ReviewRunnerError("target changed during setup"),
+                ),
+                patch.object(
+                    records,
+                    "finish_attempt",
+                    side_effect=sqlite3.DatabaseError("archive database unavailable"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "target changed during setup"),
+            ):
+                run_cli_review(
+                    target(), github=FakeGitHub(), source_root=root,
+                    runner=commands, records=records,
+                )
+
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
+            self.assertIn("target changed during setup", (capture_dir / "error").read_text())
+
+    def test_provider_result_survives_sqlite_completion_failures(self):
+        cases = (
+            ("finding validation", "finding"),
+            ("completed attempt archival", "complete"),
+            ("failed attempt archival", "finish"),
+        )
+        for _label, failure_kind in cases:
+            with self.subTest(failure_kind=failure_kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                SqliteStateStore(database).update(lambda state: state)
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                if failure_kind == "finish":
+                    output = "provider returned no complete result\n"
+                    returncode = 1
+                else:
+                    output = (
+                        '{"type":"finding","codegenInstructions":"Review comment at '
+                        '@src/Representative.java:1\\nKeep the safer path."}\n'
+                        '{"type":"complete","status":"review_completed",'
+                        '"findings":1,"reviewedFiles":["src/Representative.java"]}\n'
+                    )
+                    returncode = 0
+                commands = FakeCommands(root, review_output=output, review_returncode=returncode)
+                failure = ReviewRecordsError("injected SQLite completion failure")
+                with contextlib.ExitStack() as stack:
+                    if failure_kind == "finding":
+                        stack.enter_context(patch.object(cli_runner, "FindingObservation", side_effect=failure))
+                    elif failure_kind == "complete":
+                        stack.enter_context(patch.object(records, "complete_attempt_run", side_effect=failure))
+                    else:
+                        stack.enter_context(patch.object(records, "finish_attempt", side_effect=failure))
+                    result = run_cli_review(
+                        target(), github=FakeGitHub(), source_root=root,
+                        runner=commands, records=records,
+                    )
+
+                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+                self.assertEqual(result.exit_status, returncode)
+                self.assertIn("was not saved", result.warning)
+                self.assertTrue((result.capture_dir / "capture-complete").is_file())
+                self.assertEqual(records.attempt(result.run_id)["state"], "started")
+
+    def test_zero_exit_with_incomplete_json_is_a_failed_command_and_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output="not JSON\n", review_returncode=0),
+                records=records,
+            )
+
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual((result.capture_dir / "exit-status").read_text(), "0\n")
+            self.assertEqual(
+                json.loads((result.capture_dir / "metadata.json").read_text())["exit_status"],
+                0,
+            )
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request)
+                if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertEqual(attempt["exit_status"], 0)
+            self.assertEqual(
+                attempt["diagnostic"],
+                "CodeRabbit CLI did not return a complete JSON review",
+            )
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
+        long_headline = " ".join(["Bearer x"] * 40)
+        output = (
+            json.dumps({
+                "type": "finding",
+                "codegenInstructions": long_headline,
+            })
+            + "\n"
+            + json.dumps({
+                "type": "complete",
+                "status": "review_completed",
+                "findings": 1,
+                "reviewedFiles": ["src/Representative.java"],
+            })
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output),
+                records=records,
+            )
+
+            with sqlite3.connect(database) as connection:
+                title = connection.execute(
+                    "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
+                ).fetchone()[0]
+            self.assertEqual(len(title), 300)
+            self.assertNotIn("Bearer ", title)
+
+    def test_control_characters_in_cli_headline_are_normalized_before_recording(self):
+        output = (
+            json.dumps({
+                "type": "finding",
+                "codegenInstructions": (
+                    "Review comment at @src/Representative.java:1\n"
+                    "Keep\u0000 the \u001b[31msafer\u001b[0m path."
+                ),
+            })
+            + "\n"
+            + json.dumps({
+                "type": "complete",
+                "status": "review_completed",
+                "findings": 1,
+                "reviewedFiles": ["src/Representative.java"],
+            })
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root,
+                runner=FakeCommands(root, review_output=output), records=records,
+            )
+
+            with sqlite3.connect(database) as connection:
+                title = connection.execute(
+                    "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
+                ).fetchone()[0]
+            self.assertEqual(title, "Keep the safer path.")
+
+    def test_unrecordable_success_capture_is_terminally_non_counting(self):
+        output = (
+            '{"type":"complete","status":"review_completed","findings":0,'
+            '"reviewedFiles":["src/Representative.java"]}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root, review_output=output)
+            with patch.object(
+                records,
+                "complete_attempt_run",
+                side_effect=ReviewRecordsError("simulated archive failure"),
+            ):
+                result = run_cli_review(
+                    target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+                )
+            self.assertIn("was not saved", result.warning)
+            capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
+            run_id = capture_dir.name
+            capture_dir.joinpath("stdout").write_text("not JSON\n", encoding="utf-8")
+
+            report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
+            self.assertEqual(report["recovered"], [])
+            self.assertEqual(
+                report["terminally_classified"], [{"run_id": run_id, "pr": "42"}]
+            )
+            self.assertEqual(records.attempt(run_id)["state"], "failed")
+            self.assertEqual(records.history(42)["runs"], [])
+
+    def test_sqlite_records_rate_limit_without_taper_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root,
+                runner=FakeCommands(
+                    root,
+                    review_output="provider interrupted\n",
+                    review_stderr="Rate limit exceeded; retry later\n",
+                    review_returncode=1,
+                ),
+                records=records,
+            )
+            attempts = records.attempt_history(result.pull_request)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "rate_limited")
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
     def test_cli_review_accepts_111_changed_files(self):
         files = [f"src/File{index}.java" for index in range(111)]
         with tempfile.TemporaryDirectory() as directory:
@@ -453,6 +893,37 @@ class CliReviewRunnerTests(unittest.TestCase):
                 (capture_dir / "review-duration-seconds").read_text(),
                 f"{metadata['duration_seconds']}\n",
             )
+
+    def test_timeout_capture_is_complete_before_sqlite_finalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+
+            with (
+                patch.object(
+                    records, "finish_attempt", side_effect=ReviewRecordsError("SQLite finish failed")
+                ),
+                self.assertRaisesRegex(
+                    ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"
+                ),
+            ):
+                run_cli_review(
+                    target(), github=FakeGitHub(), source_root=root,
+                    runner=FakeCommands(root, timeout_review=True), records=records,
+                    review_timeout_seconds=13,
+                )
+
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            capture_dir = run_dirs[0]
+            self.assertEqual((capture_dir / "capture-complete").read_text(), f"{capture_dir.name}\n")
+            self.assertTrue(json.loads((capture_dir / "metadata.json").read_text())["timed_out"])
+            self.assertEqual(records.attempt(capture_dir.name)["state"], "started")
 
     def test_nul_path_output_preserves_multiple_paths_and_timeout_configuration(self):
         files = ["src/Representative.java", "src/path with spaces\n.txt"]
