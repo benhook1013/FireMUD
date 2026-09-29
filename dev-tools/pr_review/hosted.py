@@ -614,7 +614,9 @@ def adopt_manual_completed_trigger(
         live_base_name = pr.get("baseRefName")
         live_base_oid = pr.get("baseRefOid")
         if (
-            live_base_name != anchor["parent_identity"]
+            not isinstance(live_base_name, str)
+            or not live_base_name
+            or (not anchor["parent_identity"].isdecimal() and live_base_name != anchor["parent_identity"])
             or not isinstance(live_base_oid, str)
             or not EXACT_SHA.fullmatch(live_base_oid)
             or live_base_oid.casefold() != anchor["parent_head"].casefold()
@@ -666,6 +668,36 @@ def adopt_manual_completed_trigger(
         if state.state != "completed" or state.attributed is not True or state.response_id is None:
             raise ValueError(f"manual request lacks a unique completed review: {state.state}")
         trigger_at = parse_timestamp(created)
+        response_reviews = [
+            item
+            for item in (pr.get("reviews") or {}).get("nodes", [])
+            if immutable_database_id(item) == state.response_id
+        ]
+        response_comments = [
+            item
+            for item in comments
+            if immutable_database_id(item) == state.response_id
+        ]
+        if (
+            not response_reviews
+            and len(response_comments) == 1
+            and isinstance(response_comments[0].get("body"), str)
+            and _is_finished_action_response(response_comments[0]["body"], allow_action_wrapper=True)
+        ):
+            exact_zero_summary = _zero_finding_summary(
+                payload, head_sha, trigger_at, state.response_id, None
+            )
+            if (
+                exact_zero_summary is None
+                or (_scope_head(exact_zero_summary.get("body", "")) or "").casefold() != head_sha.casefold()
+            ):
+                exact_zero_summary = provider_format_zero_finding_summary(
+                    payload, head_sha, trigger_at, state.response_id
+                )
+            if exact_zero_summary is None:
+                raise ValueError(
+                    "finished-reply-only zero result lacks exact public proof of the reviewed head"
+                )
         later_commands = [
             timestamp
             for item in comments

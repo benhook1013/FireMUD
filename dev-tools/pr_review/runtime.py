@@ -1857,6 +1857,66 @@ class HostedRunner:
         return None if comment_id in tracked_ids else comment
 
     @staticmethod
+    def _manual_trigger_reviewed_head(payload: Mapping[str, Any], command: Mapping[str, Any]) -> str | None:
+        """Return the unique immutable review head attributable to a manual command."""
+
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            comments = pull["comments"]["nodes"]
+            reviews = pull["reviews"]["nodes"]
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(comments, list) or not isinstance(reviews, list):
+            return None
+
+        command_at = hosted.parse_timestamp(command.get("createdAt"))
+        if command_at is None:
+            return None
+        later_commands: list[datetime] = []
+        for item in comments:
+            if not isinstance(item, Mapping):
+                return None
+            author = item.get("author")
+            login = author.get("login") if isinstance(author, Mapping) else None
+            body = item.get("body")
+            created = hosted.parse_timestamp(item.get("createdAt"))
+            if (
+                not github.is_coderabbit_login(login)
+                and isinstance(body, str)
+                and hosted.normalize_command(body) == hosted.FULL_COMMAND
+                and created is not None
+                and created > command_at
+            ):
+                later_commands.append(created)
+        next_command_at = min(later_commands, default=None)
+
+        candidate_heads: list[str | None] = []
+        for review in reviews:
+            if not isinstance(review, Mapping):
+                return None
+            author = review.get("author")
+            login = author.get("login") if isinstance(author, Mapping) else None
+            if not github.is_coderabbit_login(login) or review.get("state") == "DISMISSED":
+                continue
+            submitted = hosted.parse_timestamp(review.get("submittedAt"))
+            if (
+                submitted is None
+                or submitted <= command_at
+                or (next_command_at is not None and submitted >= next_command_at)
+            ):
+                continue
+            body = review.get("body")
+            if not isinstance(body, str) or not hosted._substantive(body):
+                continue
+            commit = review.get("commit")
+            oid = commit.get("oid") if isinstance(commit, Mapping) else None
+            candidate_heads.append(oid if isinstance(oid, str) and hosted.EXACT_SHA.fullmatch(oid) else None)
+
+        if len(candidate_heads) != 1 or candidate_heads[0] is None:
+            return None
+        return candidate_heads[0]
+
+    @staticmethod
     def _normalize_rest_issue_comments(pr: int, comments: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         """Project a complete REST issue-comment history into the matcher shape."""
 
@@ -2024,7 +2084,6 @@ class HostedRunner:
                 command = self._latest_untracked_manual_trigger(other_pr, payload)
                 if command is None:
                     raise ControllerError("manual command history changed during the pre-POST check")
-                pull = payload["data"]["repository"]["pullRequest"]
                 trigger_id = github.immutable_database_id(dict(command))
                 if trigger_id is None:
                     raise ControllerError("manual full-review command has incomplete immutable identity")
@@ -2035,10 +2094,16 @@ class HostedRunner:
                         f"another manual Hosted request is unresolved for PR #{other_pr}: "
                         "an earlier full-review command has no terminal response"
                     )
+                reviewed_head = self._manual_trigger_reviewed_head(payload, command)
+                if reviewed_head is None:
+                    raise ControllerError(
+                        f"another manual Hosted request is unresolved for PR #{other_pr}: "
+                        "its command-time head cannot be verified"
+                    )
                 author = command.get("author")
                 record = {
                     "status": "posted",
-                    "head_sha": pull.get("headRefOid"),
+                    "head_sha": reviewed_head,
                     "trigger": {
                         "id": github.immutable_database_id(dict(command)),
                         "created_at": command.get("createdAt"),
@@ -2067,8 +2132,16 @@ class HostedRunner:
                 json.JSONDecodeError,
             ) as exc:
                 raise ControllerError(f"manual Hosted request on PR #{other_pr} cannot be verified") from exc
-            if state.terminal is not True or state.response_id is None:
-                raise ControllerError(f"another manual Hosted request is unresolved for PR #{other_pr}")
+            if (
+                state.state not in {"completed", "failed", "rate_limited", "noop"}
+                or state.terminal is not True
+                or state.attributed is not True
+                or state.response_id is None
+                or state.reason == "CodeRabbit finished after explicitly reporting incomplete file coverage"
+            ):
+                raise ControllerError(
+                    f"another manual Hosted request is unresolved for PR #{other_pr}: {state.state}"
+                )
 
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
         if target.default_base_front and not target.has_current_default_test_merge_proof():

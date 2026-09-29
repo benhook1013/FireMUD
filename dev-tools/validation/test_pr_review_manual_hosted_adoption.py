@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli, evidence, github, hosted
+from pr_review import cli, evidence, github, hosted, stack
 from pr_review.cli_runner import PullRequestSnapshot
 from pr_review.runtime import LiveEvidence, LiveGitHub
 
@@ -91,6 +91,37 @@ def payload_fetcher(payload):
     return lambda: payload
 
 
+def finished_only_payload(*, exact_head_proof: bool):
+    payload = public_payload()
+    pull = payload["data"]["repository"]["pullRequest"]
+    pull["reviews"]["nodes"] = []
+    pull["comments"]["nodes"] = [pull["comments"]["nodes"][0]]
+    pull["comments"]["nodes"].append(
+        {
+            "databaseId": 13,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-28T10:21:00Z",
+            "updatedAt": "2026-09-28T10:21:00Z",
+        }
+    )
+    if exact_head_proof:
+        pull["comments"]["nodes"].append(
+            {
+                "databaseId": 14,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": (
+                    "No actionable comments were generated in the recent review.\n"
+                    "Reviewing files that changed from the base of the PR and between "
+                    f"{BASE} and {HEAD}."
+                ),
+                "createdAt": "2026-09-28T10:20:00Z",
+                "updatedAt": "2026-09-28T10:20:00Z",
+            }
+        )
+    return payload
+
+
 class ManualHostedAdoptionTest(unittest.TestCase):
     def test_later_manual_request_cannot_claim_first_requests_late_reply(self):
         payload = public_payload()
@@ -160,6 +191,47 @@ class ManualHostedAdoptionTest(unittest.TestCase):
             self.assertTrue(matched[0]["completed"])
             self.assertTrue(matched[0]["anchored"])
             self.assertEqual(matched[0]["accepted"], 2)
+
+    def test_numeric_parent_identity_does_not_have_to_match_live_base_branch_name(self):
+        payload = public_payload(base_name="parent-feature")
+        anchor = {**ANCHOR, "parent_identity": "41"}
+        with tempfile.TemporaryDirectory() as directory:
+            adopted = hosted.adopt_manual_completed_trigger(
+                REPO,
+                42,
+                10,
+                HEAD,
+                anchor,
+                payload_fetcher(payload),
+                path=Path(directory) / "trigger.json",
+            )
+
+        self.assertEqual(adopted["status"], "adopted")
+
+    def test_finished_reply_only_zero_after_trigger_requires_exact_public_reviewed_head_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "lacks exact public proof of the reviewed head"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO,
+                    42,
+                    10,
+                    HEAD,
+                    ANCHOR,
+                    payload_fetcher(finished_only_payload(exact_head_proof=False)),
+                    path=Path(directory) / "without-proof.json",
+                )
+
+            adopted = hosted.adopt_manual_completed_trigger(
+                REPO,
+                42,
+                10,
+                HEAD,
+                ANCHOR,
+                payload_fetcher(finished_only_payload(exact_head_proof=True)),
+                path=Path(directory) / "with-proof.json",
+            )
+
+        self.assertEqual(adopted["status"], "adopted")
 
     def test_malformed_existing_candidate_reports_path_and_refuses_adoption(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -274,12 +346,15 @@ class ManualHostedAdoptionTest(unittest.TestCase):
                 self.assertFalse(path.exists())
 
     def test_cli_rejects_base_advanced_before_locked_manual_adoption_fetch(self):
-        candidate = SimpleNamespace(head=HEAD)
+        candidate = SimpleNamespace(head=HEAD, head_ref="feature", base_ref="develop", base_tip=BASE)
         anchor = SimpleNamespace(as_dict=lambda: ANCHOR)
+        reconciliation = SimpleNamespace(
+            status_for=lambda _pr: stack.ReconciliationStatus.COHERENT,
+        )
         controller = SimpleNamespace(
             repository=REPO,
             store=SimpleNamespace(load=lambda: SimpleNamespace(ordered_prs=[42])),
-            _reconciliation=lambda _state, evidence_prs: ({42: candidate}, object()),
+            _reconciliation=lambda _state, evidence_prs: ({42: candidate}, reconciliation),
             _reconciled_anchor=lambda _pr, _candidate, _reconciliation: anchor,
         )
         stale_payloads = (
@@ -316,6 +391,46 @@ class ManualHostedAdoptionTest(unittest.TestCase):
                     cli._dispatch(args)
 
                 self.assertFalse(record_path.exists())
+
+    def test_cli_requires_coherent_reconciliation_and_live_branch_identity_before_anchor(self):
+        args = cli._parser().parse_args(
+            ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]
+        )
+        for candidate, reconciliation, message in (
+            (
+                SimpleNamespace(head=HEAD, head_ref="feature"),
+                SimpleNamespace(status_for=lambda _pr: stack.ReconciliationStatus.PARENT_MOVED),
+                "coherent live stack reconciliation",
+            ),
+            (
+                SimpleNamespace(head=HEAD, head_ref=""),
+                SimpleNamespace(status_for=lambda _pr: stack.ReconciliationStatus.COHERENT),
+                "live PR branch identity",
+            ),
+        ):
+            anchor_called = False
+
+            def reconciled_anchor(_pr, _candidate, _reconciliation):
+                nonlocal anchor_called
+                anchor_called = True
+                return SimpleNamespace(as_dict=lambda: ANCHOR)
+
+            controller = SimpleNamespace(
+                repository=REPO,
+                store=SimpleNamespace(load=lambda: SimpleNamespace(ordered_prs=[42])),
+                _reconciliation=lambda _state, evidence_prs, candidate=candidate, reconciliation=reconciliation: (
+                    {42: candidate},
+                    reconciliation,
+                ),
+                _reconciled_anchor=reconciled_anchor,
+            )
+            with (
+                self.subTest(message=message),
+                patch.object(cli, "_controller", return_value=(controller, None)),
+                self.assertRaisesRegex(cli.CliError, message),
+            ):
+                cli._dispatch(args)
+            self.assertFalse(anchor_called)
 
 
 if __name__ == "__main__":

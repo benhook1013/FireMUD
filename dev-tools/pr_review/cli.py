@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, cli_attempts, github, hosted, sqlite_provider_imports
+from . import acceptance, cli_attempts, github, hosted, sqlite_provider_imports, stack
 from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
@@ -1055,6 +1055,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             candidate = live.get(args.pr)
             if candidate is None or candidate.head.casefold() != args.head.casefold():
                 raise CliError("manual Hosted adoption requires the current published PR head")
+            if reconciliation.status_for(args.pr) != stack.ReconciliationStatus.COHERENT:
+                raise CliError("manual Hosted adoption requires coherent live stack reconciliation")
+            if not isinstance(candidate.head_ref, str) or not candidate.head_ref.strip():
+                raise CliError("manual Hosted adoption requires a live PR branch identity")
             anchor = controller._reconciled_anchor(args.pr, candidate, reconciliation)
             if anchor is None:
                 raise CliError("manual Hosted adoption requires a verified current parent and patch")

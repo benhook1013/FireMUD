@@ -1284,7 +1284,7 @@ class RuntimeTest(unittest.TestCase):
         fetch_full.assert_called_once_with("owner/repo", 99)
         preceding.assert_called_once_with("owner/repo", 99, payload, 912, common)
 
-    def test_hosted_global_scan_allows_terminal_manual_request_off_queue(self) -> None:
+    def test_hosted_global_scan_uses_reviewed_head_for_historical_manual_request(self) -> None:
         manual = {
             "databaseId": 920,
             "author": {"login": "maintainer"},
@@ -1300,7 +1300,7 @@ class RuntimeTest(unittest.TestCase):
             "submittedAt": "2026-09-23T00:01:00Z",
             "commit": {"oid": HEAD},
         }
-        payload = self._payload([manual], [completed_review])
+        payload = self._payload([manual], [completed_review], head="d" * 40)
         payload["data"]["repository"]["pullRequest"]["number"] = 99
 
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
@@ -1320,6 +1320,45 @@ class RuntimeTest(unittest.TestCase):
                 42, Path(directory)
             )
         preceding.assert_called_once_with("owner/repo", 99, payload, 920, Path(directory))
+
+    def test_hosted_global_scan_keeps_active_manual_request_unresolved_without_head_proof(self) -> None:
+        manual = {
+            "databaseId": 922,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/922",
+        }
+        active_reply = {
+            "databaseId": 923,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review triggered. I am reviewing the pull request now.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, active_reply], head="d" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False, create=True),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"another manual Hosted request is unresolved for PR #99: its command-time head cannot be verified",
+            ),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
 
     def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
         snapshots = {
