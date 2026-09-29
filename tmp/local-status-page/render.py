@@ -1364,7 +1364,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 </style></head><body>{mast}<main>
 <section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
 <section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>
-<p class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
+<p class="activity-caption activity-explanation">Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
 <section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
 <footer>History comes from the controller's read-only records view.</footer>
 </main></body></html>'''
@@ -1802,10 +1802,6 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
 </dl>'''
     )
     guide_class = "queue-guide-reading" if not history_only else "queue-guide-reading history-reading"
-    review_order_guide = (
-        'Within each PR, recent reviews are ordered oldest to newest.'
-        if history_only else 'Recent reviews are ordered oldest to newest.'
-    )
     merged_guide = (
         '' if history_only else
         '<p>Merged PRs stay here for two days, with at least the latest two shown. '
@@ -1813,7 +1809,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
     )
     queue_guide = (
         f'<div class="queue-guide">{request_guide}'
-        f'<div class="{guide_class}"><h3>Reading reviews</h3><p>{review_order_guide} '
+        f'<div class="{guide_class}"><h3>Reading reviews</h3><p>'
         f'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{merged_guide}'
         '</div></div>'
     )

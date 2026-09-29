@@ -104,8 +104,9 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Review overview partial", result)
         self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
         self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
-        self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
+        self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>'
                       'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', result)
+        self.assertNotIn('Recent reviews are ordered oldest to newest', result)
         self.assertIn('Merged PRs stay here for two days, with at least the latest two shown. '
                       '<a href="/queue-history.html">Queue history</a> has the rest.</p>', result)
         self.assertNotIn('Request states are not merge readiness.', result)
@@ -497,7 +498,7 @@ class StatusPageTest(unittest.TestCase):
             detail = (Path(directory) / "review" / "pr-42.html").read_text()
             self.assertIn("No detailed finding records have been imported", detail)
             self.assertIn("Review rounds</h2>", detail)
-            self.assertIn('class="activity-caption activity-explanation">Recent reviews are ordered oldest to newest. '
+            self.assertIn('class="activity-caption activity-explanation">'
                           'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', detail)
 
     def test_lane_summaries_are_lists_and_optional_sections_disappear(self):
@@ -687,7 +688,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertLess(history.index('id="pr-46"'), history.index('id="pr-43"'))
         self.assertLess(history.index('id="pr-43"'), history.index('id="pr-42"'))
         self.assertNotIn('id="pr-44"', history)
-        self.assertIn('Within each PR, recent reviews are ordered oldest to newest.', history)
+        self.assertNotIn('oldest to newest', history)
         self.assertNotIn('Merged PRs appear in reverse queue order.', history)
         self.assertIn('Current focus across active workstreams</p>', main)
 
