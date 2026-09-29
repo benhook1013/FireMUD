@@ -14,8 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .sqlite_provider_imports import _cli_headline
-from .sqlite_review_records import FindingObservation, ReviewRecordsError, _redact_archive_text
+from .sqlite_provider_imports import _cli_finding_title
+from .sqlite_review_records import (
+    AttemptNotFound,
+    FindingObservation,
+    ReviewRecordsError,
+    _redact_archive_text,
+)
 
 RUN_NAME = re.compile(r"run\.[0-9a-f]{32}\Z")
 MAX_METADATA_BYTES = 16_384
@@ -272,11 +277,11 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
         }
         try:
             existing = records.attempt(run_id)
-        except ReviewRecordsError as error:
-            if str(error) != "review attempt does not exist":
-                conflicts.append({"run_id": run_id, "reason": "existing attempt could not be read"})
-                continue
+        except AttemptNotFound:
             existing = None
+        except ReviewRecordsError:
+            conflicts.append({"run_id": run_id, "reason": "existing attempt could not be read"})
+            continue
 
         if existing is not None:
             if existing.get("source_pr") != pr or existing.get("channel") != "cli":
@@ -383,9 +388,9 @@ def _reconcile_successful_capture(records: Any, directory: Path) -> dict[str, An
 
     try:
         attempt = records.attempt(directory.name)
-    except ReviewRecordsError as error:
-        if str(error) == "review attempt does not exist":
-            return None
+    except AttemptNotFound:
+        return None
+    except ReviewRecordsError:
         return {"action": "conflict", "pr": 0, "reason": "existing attempt could not be read"}
     if attempt["state"] != "started":
         return None
@@ -397,6 +402,7 @@ def _reconcile_successful_capture(records: Any, directory: Path) -> dict[str, An
         try:
             try:
                 finished_at = _capture_finished_at(exit_path)
+                finished_at = _finished_at_not_before(finished_at, attempt["started_at"])
             except _UnrecordableCapture:
                 finished_at = None
             records.finish_attempt(
@@ -457,9 +463,9 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
 
     try:
         attempt = records.attempt(directory.name)
-    except ReviewRecordsError as error:
-        if str(error) == "review attempt does not exist":
-            return None
+    except AttemptNotFound:
+        return None
+    except ReviewRecordsError:
         return {"action": "conflict", "pr": 0, "reason": "existing attempt could not be read"}
     if attempt["state"] != "started" or attempt["channel"] != "cli":
         return None
@@ -519,6 +525,7 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
         else:
             duration = None
         finished_at = _capture_finished_at(exit_path)
+        finished_at = _finished_at_not_before(finished_at, attempt["started_at"])
     except _UnrecordableCapture:
         return None
 
@@ -554,9 +561,9 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
 
     try:
         attempt = records.attempt(directory.name)
-    except ReviewRecordsError as error:
-        if str(error) == "review attempt does not exist":
-            return None
+    except AttemptNotFound:
+        return None
+    except ReviewRecordsError:
         return {"action": "conflict", "pr": 0, "reason": "existing attempt could not be read"}
     if attempt["state"] != "started" or attempt["channel"] != "cli":
         return None
@@ -590,12 +597,14 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
             if metadata_age < ORPHANED_CAPTURE_MIN_AGE_SECONDS:
                 return None
             finished_at = _capture_finished_at(metadata_path)
+            finished_at = _finished_at_not_before(finished_at, attempt["started_at"])
             summary = "CLI runner ended without a terminal capture record"
             exit_status = None
             state = "failed"
             detail = ""
         elif terminal_path == error_path:
             finished_at = _capture_finished_at(error_path)
+            finished_at = _finished_at_not_before(finished_at, attempt["started_at"])
             summary = "CLI setup or capture failed"
             exit_status = None
             state = "failed"
@@ -603,6 +612,7 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
         else:
             exit_text = _read_capture_text(exit_path, MAX_EXIT_STATUS_BYTES, "exit status").strip()
             finished_at = _capture_finished_at(exit_path)
+            finished_at = _finished_at_not_before(finished_at, attempt["started_at"])
             if exit_text == "timeout":
                 state = "timed_out"
                 exit_status = None
@@ -684,17 +694,18 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
     findings = _parse_successful_stdout(stdout)
     observations = []
     for index, finding in enumerate(findings, 1):
-        title = _cli_headline(finding.get("codegenInstructions")) or ""
-        title, _ = _redact_archive_text(title)
-        title = title[:300].rstrip()
+        title = _cli_finding_title(
+            finding.get("codegenInstructions"), f"CodeRabbit CLI finding {index}"
+        )
         try:
             observations.append(FindingObservation(
                 source_finding_key=f"cli-run:{run_id}:finding:{index}",
-                title=title or f"CodeRabbit CLI finding {index}",
+                title=title,
             ))
         except ReviewRecordsError as error:
             raise _UnrecordableCapture("capture finding metadata is invalid") from error
     finished_at = _capture_finished_at(directory / "exit-status")
+    _finished_at_not_before(finished_at, attempt["started_at"], fail_closed=True)
     return {
         "pr": pr,
         "candidate_sha": candidate_sha,
@@ -797,6 +808,36 @@ def _capture_finished_at(path: Path) -> str:
     except (OSError, OverflowError, ValueError) as error:
         raise _UnrecordableCapture("capture completion time is unavailable") from error
     return finished_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _finished_at_not_before(
+    finished_at: str,
+    started_at: str,
+    *,
+    fail_closed: bool = False,
+) -> str:
+    """Keep a linked terminal timestamp at or after its attempt start.
+
+    Legacy failure captures may have stale filesystem mtimes, so their
+    terminal timestamp is clamped to the durable attempt start. A successful
+    capture must instead fail closed when its completion precedes the linked
+    attempt, since clamping would manufacture credited review evidence.
+    """
+
+    try:
+        finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as error:
+        raise _UnrecordableCapture("capture completion time is invalid") from error
+    if finished.tzinfo is None or finished.utcoffset() is None:
+        raise _UnrecordableCapture("capture completion time has no timezone")
+    if started.tzinfo is None or started.utcoffset() is None:
+        raise _UnrecordableCapture("attempt start time has no timezone")
+    if finished < started:
+        if fail_closed:
+            raise _UnrecordableCapture("capture completion precedes the attempt start")
+        return started_at
+    return finished_at
 
 
 def _legacy_failure(directory: Path) -> dict[str, Any] | None:

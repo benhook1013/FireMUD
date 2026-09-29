@@ -42,6 +42,11 @@ class SqliteProviderImportsTest(unittest.TestCase):
             pr_review.sqlite_provider_imports._cli_headline("Direct finding title.\nMore detail."),
             "Direct finding title.",
         )
+        self.assertEqual(
+            pr_review.sqlite_provider_imports._cli_headline("Direct\u0000 finding\u0001\u000btitle."),
+            "Direct  finding  title.",
+        )
+        self.assertIsNone(pr_review.sqlite_provider_imports._cli_headline("\u0000\u0001"))
 
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()

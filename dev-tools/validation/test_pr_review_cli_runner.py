@@ -697,6 +697,40 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(len(title), 300)
             self.assertNotIn("Bearer ", title)
 
+    def test_control_characters_in_cli_headline_are_normalized_before_recording(self):
+        output = (
+            json.dumps({
+                "type": "finding",
+                "codegenInstructions": "Review comment at @src/Representative.java:1\nKeep\u0000 the\u0001 safer path.",
+            })
+            + "\n"
+            + json.dumps({
+                "type": "complete",
+                "status": "review_completed",
+                "findings": 1,
+                "reviewedFiles": ["src/Representative.java"],
+            })
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root,
+                runner=FakeCommands(root, review_output=output), records=records,
+            )
+
+            with sqlite3.connect(database) as connection:
+                title = connection.execute(
+                    "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
+                ).fetchone()[0]
+            self.assertEqual(title, "Keep  the  safer path.")
+
     def test_unrecordable_success_capture_is_terminally_non_counting(self):
         output = (
             '{"type":"complete","status":"review_completed","findings":0,'

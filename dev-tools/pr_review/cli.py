@@ -870,6 +870,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         store.history(args.pr)
         repo = github.infer_repo(args.repo)
         selected, payload = _provider_checkpoints(args, repo)
+        if len(selected) != 1:
+            raise CliError("checkpoint ID must identify exactly one parsed checkpoint comment")
         checkpoint = selected[0]
         if checkpoint.type.casefold() != args.channel:
             raise CliError("checkpoint channel does not match the requested provider channel")

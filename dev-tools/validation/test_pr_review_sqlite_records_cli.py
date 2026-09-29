@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review import cli, cli_attempts
 from pr_review.controller import ReviewController
-from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import FindingRoute, ReviewState, StateStore, SummaryFindingDisposition
 
@@ -78,6 +78,32 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertIn("CLI review is active", result["reason"])
         self.assertEqual(records.attempt(run_id)["state"], "started")
+
+    def test_cli_attempt_reconciliation_does_not_match_missing_attempt_by_error_text(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "f" * 32
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(
+            json.dumps({
+                "run_id": run_id,
+                "kind": "cli",
+                "capture_completion_marker": "capture-complete",
+                "pull_request": 2885,
+                "candidate_sha": "d" * 40,
+            }),
+            encoding="utf-8",
+        )
+        (capture / "exit-status").write_text("0\n", encoding="utf-8")
+        records = SqliteReviewRecords(self.database)
+
+        with patch.object(records, "attempt", side_effect=ReviewRecordsError("review attempt does not exist")):
+            result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["conflicts"], [{
+            "run_id": run_id,
+            "reason": "existing attempt could not be read",
+        }])
 
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
@@ -434,7 +460,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         )
         (capture / "review-duration-seconds").write_text("7\n", encoding="utf-8")
         (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
-        completed_epoch = 1_790_000_000
+        completed_epoch = 1_790_700_000
         os.utime(capture / "exit-status", (completed_epoch, completed_epoch))
 
         result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
@@ -503,7 +529,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         capture.mkdir(parents=True)
         (capture / "metadata.json").write_text(json.dumps(started_metadata), encoding="utf-8")
         (capture / "error").write_text("preflight failed; " + "detail " * 1000, encoding="utf-8")
-        completed_epoch = 1_790_000_000
+        completed_epoch = 1_790_700_000
         os.utime(capture / "error", (completed_epoch, completed_epoch))
 
         result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
@@ -537,13 +563,14 @@ class ReviewRecordsCliTest(unittest.TestCase):
             source_pr=2885,
             channel="cli",
             candidate_sha="a" * 40,
+            started_at="2026-09-28T01:00:00Z",
             metadata=started_metadata,
         )
         capture = self.database.parent / "pr-review" / "runs" / run_id
         capture.mkdir(parents=True)
         metadata_path = capture / "metadata.json"
         metadata_path.write_text(json.dumps(started_metadata), encoding="utf-8")
-        started_epoch = 1_700_000_000
+        started_epoch = 1_790_600_000
         os.utime(metadata_path, (started_epoch, started_epoch))
 
         result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
@@ -558,6 +585,91 @@ class ReviewRecordsCliTest(unittest.TestCase):
             item for item in records.attempt_history(2885) if item["attempt_id"] == run_id
         )
         self.assertIn("without a terminal capture record", attempt_summary["diagnostic"])
+        self.assertEqual(records.history(2885)["runs"], [])
+
+    def test_stale_native_failure_mtime_cannot_predate_started_attempt(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "8" * 32
+        started_at = "2026-09-29T01:00:00Z"
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "c" * 40,
+            "candidate_files": 1,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="c" * 40,
+            started_at=started_at,
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        final_metadata = {**started_metadata, "duration_seconds": 2, "exit_status": 1}
+        (capture / "metadata.json").write_text(json.dumps(final_metadata), encoding="utf-8")
+        exit_path = capture / "exit-status"
+        exit_path.write_text("1\n", encoding="utf-8")
+        (capture / "stderr").write_text("provider failed", encoding="utf-8")
+        (capture / "review-duration-seconds").write_text("2\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+        os.utime(exit_path, (1_700_000_000, 1_700_000_000))
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["finished_at"], started_at)
+        self.assertEqual(records.history(2885)["runs"], [])
+
+    def test_stale_successful_capture_mtime_stays_non_attributable(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "9" * 32
+        started_at = "2026-09-29T01:00:00Z"
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "e" * 40,
+            "candidate_files": 1,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="e" * 40,
+            started_at=started_at,
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        final_metadata = {**started_metadata, "duration_seconds": 2, "exit_status": 0}
+        (capture / "metadata.json").write_text(json.dumps(final_metadata), encoding="utf-8")
+        exit_path = capture / "exit-status"
+        exit_path.write_text("0\n", encoding="utf-8")
+        (capture / "stdout").write_text(
+            json.dumps({"type": "complete", "status": "review_completed", "findings": 0,
+                        "reviewedFiles": []}) + "\n",
+            encoding="utf-8",
+        )
+        (capture / "stderr").write_text("", encoding="utf-8")
+        (capture / "review-duration-seconds").write_text("2\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+        os.utime(exit_path, (1_700_000_000, 1_700_000_000))
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["finished_at"], started_at)
         self.assertEqual(records.history(2885)["runs"], [])
 
     def test_incomplete_native_capture_metadata_mismatch_stays_started(self) -> None:

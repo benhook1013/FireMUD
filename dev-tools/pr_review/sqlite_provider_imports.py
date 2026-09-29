@@ -824,9 +824,14 @@ def _cli_headline(value: Any) -> str | None:
     """Extract a short headline from CLI instructions without storing the prompt."""
 
     if isinstance(value, str):
-        candidates = value.splitlines()
+        candidates = _cli_title_lines(value)
     elif isinstance(value, list):
-        candidates = [line for item in value if isinstance(item, str) for line in item.splitlines()]
+        candidates = [
+            line
+            for item in value
+            if isinstance(item, str)
+            for line in _cli_title_lines(item)
+        ]
     else:
         return None
     # CodeRabbit often prepends our safety reminder and a file/line locator to
@@ -844,6 +849,27 @@ def _cli_headline(value: Any) -> str | None:
     # CLI codegen instructions are full provider prompts. Store only a bounded
     # headline here; the redacted source artifact is archived separately.
     return headline[:180].rstrip()
+
+
+def _normalize_cli_title_text(value: str) -> str:
+    """Replace control characters so projected titles remain valid record text."""
+
+    return "".join(" " if ord(character) < 0x20 else character for character in value)
+
+
+def _cli_title_lines(value: str) -> list[str]:
+    """Split provider lines without treating non-newline controls as separators."""
+
+    return [_normalize_cli_title_text(line) for line in re.split(r"\r\n?|\n", value)]
+
+
+def _cli_finding_title(value: Any, fallback: str) -> str:
+    """Project one CLI finding title for runner and recovery persistence."""
+
+    title = _cli_headline(value) or ""
+    title, _ = sqlite_review_records._redact_archive_text(title)
+    title = title[:300].rstrip()
+    return title or fallback
 
 
 def _validate_counts(

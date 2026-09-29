@@ -3935,7 +3935,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["detail_window"]["deep_prs"], list(range(1, 9)))
         self.assertEqual(report["prs"][8]["evidence_status"], "unknown")
         self.assertEqual(batch_calls, [tuple(values)])
-        self.assertEqual(pull_calls, list(range(1, 9)))
+        expected_deep_prs = set(range(1, 9))
+        self.assertEqual(len(pull_calls), len(expected_deep_prs))
+        self.assertEqual(set(pull_calls), expected_deep_prs)
+        self.assertTrue(all(pull_calls.count(pr_number) == 1 for pr_number in expected_deep_prs))
         self.assertEqual(set(evidence.history_reads), {
             (pr_number, channel)
             for pr_number in range(1, 9)

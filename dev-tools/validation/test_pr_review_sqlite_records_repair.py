@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import io
 import json
 import sqlite3
 import sys
@@ -12,7 +14,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import evidence, hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
+from pr_review import cli, evidence, hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
 from pr_review.sqlite_records_repair import (
     SqliteRecordsRepairError,
     archive_incomplete_checkpoint,
@@ -726,6 +728,27 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             kinds = connection.execute("SELECT kind FROM imported_artifacts ORDER BY kind").fetchall()
         self.assertEqual(origin, ("trigger:999", 13))
         self.assertEqual([row[0] for row in kinds], ["hosted_comments", "metadata"])
+
+    def test_provider_import_rejects_empty_or_ambiguous_checkpoint_selection(self) -> None:
+        records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
+        arguments = [
+            "records", "import-provider", "--pr", str(PR), "--channel", "hosted",
+            "--checkpoint-id", "10", "--actor", "backfill-reviewer", "--scope", "broad",
+            "--repo", REPO, "--database", str(self.database),
+        ]
+        with (
+            patch.object(cli, "_records_store", return_value=records),
+            patch.object(cli.github, "infer_repo", return_value=REPO),
+            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints") as importer,
+            patch.object(cli, "_provider_checkpoints", side_effect=[([], {"empty": True}), ([object(), object()], {"ambiguous": True})]),
+        ):
+            for _ in range(2):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    status = cli.main(arguments)
+                self.assertEqual(status, 2)
+                self.assertIn("checkpoint ID must identify exactly one parsed checkpoint comment", errors.getvalue())
+        importer.assert_not_called()
 
 
 if __name__ == "__main__":
