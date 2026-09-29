@@ -17,10 +17,14 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
+import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
@@ -33,6 +37,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -441,6 +446,147 @@ class LoginCommandHandlerTest {
     assertEquals("shell-scope", shell.connectScopeId());
     assertEquals("shell-request", shell.connectRequestId());
     assertEquals(77L, instance.getOwnerAccountId());
+  }
+
+  @Test
+  void bareLoginForDifferentVerifiedSubjectClearsOldAccountBeforeReturningUnavailable() {
+    TextCommand loginCommand = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext accountA = staleGameplayContext(1L);
+    stubMutableSessionContext(accountA);
+    FirstPartyConnectContext verifiedAccountBContext =
+        new FirstPartyConnectContext(
+            99L,
+            33L,
+            "demo",
+            "production",
+            2L,
+            1L,
+            "scope-account-b",
+            "jti-account-b",
+            "request-account-b",
+            "gateway-account-b");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.of(verifiedAccountBContext));
+    GameInstance instance = buildInstance(2L, 33L, 77L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
+        .thenReturn(List.of(pointer("demo", "production", 33L, 2L, 1L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", loginCommand, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(savedContext.capture());
+    SessionContext accountBShell = savedContext.getValue();
+    assertEquals(33L, accountBShell.tenantId());
+    assertEquals(0L, accountBShell.accountId());
+    assertNull(accountBShell.loginName());
+    assertNull(accountBShell.jwt());
+    assertFalse(accountBShell.hasGameplayBinding());
+    assertEquals(2L, accountBShell.bootstrapGameInstanceId());
+    assertEquals("demo", accountBShell.worldSlug());
+    assertEquals("production", accountBShell.realmSlug());
+    assertEquals(1L, accountBShell.pointerVersion());
+    assertNull(accountBShell.playableStateScope());
+    assertEquals("scope-account-b", accountBShell.connectScopeId());
+    assertEquals("request-account-b", accountBShell.connectRequestId());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(accountA, "LOGIN_FAILED");
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+    assertEquals(Optional.of(verifiedAccountBContext), firstPartyConnectContextRegistry.find(1L));
+
+    PlayCommandHandlingResult playResult =
+        createPlayCommandHandler()
+            .handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertFalse(playResult.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", playResult.commandResult().errorCode());
+  }
+
+  @Test
+  void bareLoginForSameVerifiedSubjectPreservesRetryableSessionState() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext existing = staleGameplayContext(1L);
+    stubSessionContext(existing);
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    existing.accountId(),
+                    existing.tenantId(),
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-account-a",
+                    "jti-account-a",
+                    "request-account-a",
+                    "gateway-account-a")));
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(any(SessionContext.class), anyString());
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+    assertEquals(77L, existing.accountId());
+    assertEquals(AUTH_TOKEN, existing.jwt());
+    assertTrue(existing.hasGameplayBinding());
+    assertEquals("scope-stale", existing.connectScopeId());
+    assertEquals("req-stale", existing.connectRequestId());
+  }
+
+  @Test
+  void bareLoginForSameAccountInDifferentTenantClearsOldTenantBeforeReturningUnavailable() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext accountA = staleGameplayContext(1L);
+    stubMutableSessionContext(accountA);
+    FirstPartyConnectContext verifiedTenantBContext =
+        new FirstPartyConnectContext(
+            accountA.accountId(),
+            33L,
+            "demo",
+            "production",
+            2L,
+            1L,
+            "scope-tenant-b",
+            "jti-tenant-b",
+            "request-tenant-b",
+            "gateway-tenant-b");
+    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(verifiedTenantBContext));
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(buildInstance(2L, 33L, accountA.accountId())));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
+        .thenReturn(List.of(pointer("demo", "production", 33L, 2L, 1L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(savedContext.capture());
+    SessionContext tenantBShell = savedContext.getValue();
+    assertEquals(33L, tenantBShell.tenantId());
+    assertEquals(0L, tenantBShell.accountId());
+    assertNull(tenantBShell.jwt());
+    assertFalse(tenantBShell.hasGameplayBinding());
+    assertEquals(2L, tenantBShell.bootstrapGameInstanceId());
+    assertEquals("scope-tenant-b", tenantBShell.connectScopeId());
+    assertEquals("request-tenant-b", tenantBShell.connectRequestId());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(accountA, "LOGIN_FAILED");
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+    assertEquals(Optional.of(verifiedTenantBContext), firstPartyConnectContextRegistry.find(1L));
+
+    PlayCommandHandlingResult playResult =
+        createPlayCommandHandler()
+            .handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertFalse(playResult.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", playResult.commandResult().errorCode());
   }
 
   @Test
@@ -1407,6 +1553,42 @@ class LoginCommandHandlerTest {
     instance.setTenantId(tenantId);
     instance.setOwnerAccountId(ownerAccountId);
     return instance;
+  }
+
+  private void stubMutableSessionContext(SessionContext context) {
+    AtomicReference<SessionContext> persistedContext = new AtomicReference<>(context);
+    when(sessionContextService.findBySessionId(1L))
+        .thenAnswer(invocation -> Optional.ofNullable(persistedContext.get()));
+    when(sessionContextService.findByTenantAndSessionId(anyLong(), eq(1L)))
+        .thenAnswer(
+            invocation -> {
+              long requestedTenantId = invocation.getArgument(0);
+              return Optional.ofNullable(persistedContext.get())
+                  .filter(saved -> saved.tenantId() == requestedTenantId);
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              persistedContext.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(sessionContextService)
+        .save(any(SessionContext.class));
+  }
+
+  private PlayCommandHandler createPlayCommandHandler() {
+    return new PlayCommandHandler(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        GameplayWorldCatalog.forWorldViews(List.of()),
+        new GameLogicProperties(),
+        accountClient,
+        Mockito.mock(EntityManagementClient.class),
+        Mockito.mock(ModerationPolicyClient.class),
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        Mockito.mock(ScriptEventPublisher.class),
+        meterRegistry);
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {

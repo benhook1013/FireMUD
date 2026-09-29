@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -263,7 +264,39 @@ public final class LoginCommandHandler {
       return failure("CONNECT_SCOPE_MISMATCH", "Connect scope invalid");
     }
 
+    if (existingSession != null
+        && existingSession.accountId() > 0L
+        && (existingSession.accountId() != verifiedContext.accountId()
+            || existingSession.tenantId() != verifiedContext.tenantId())) {
+      clearPreviousSessionForVerifiedContext(numericSessionId, existingSession, verifiedContext);
+    }
     return failure(AUTH_UNAVAILABLE_CODE, "Authentication service unavailable");
+  }
+
+  private void clearPreviousSessionForVerifiedContext(
+      long sessionId, SessionContext existingSession, FirstPartyConnectContext verifiedContext) {
+    if (existingSession.hasGameplayBinding()) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(existingSession, "LOGIN_FAILED");
+    }
+    sessionContextService.save(
+        new SessionContext(
+            sessionId,
+            verifiedContext.tenantId(),
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            existingSession.localeTag(),
+            verifiedContext.gameInstanceId(),
+            verifiedContext.worldSlug(),
+            verifiedContext.realmSlug(),
+            verifiedContext.pointerVersion(),
+            null,
+            verifiedContext.connectScopeId(),
+            verifiedContext.connectRequestId()));
   }
 
   private void persistSessionContext(
