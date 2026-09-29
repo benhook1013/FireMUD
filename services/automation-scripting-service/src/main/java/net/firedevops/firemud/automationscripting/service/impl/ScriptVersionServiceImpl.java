@@ -19,10 +19,13 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
 
   @Override
   public void notifyUpdate(
-      String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
-    boolean newlyAdmitted =
-        commandService.notifyUpdate(tenantId, scriptPatchVersion, affectedScripts);
-    if (temporalOrchestrator.isPresent() && newlyAdmitted) {
+      String tenantId,
+      long baseVersionId,
+      String scriptPatchVersion,
+      List<String> affectedScripts) {
+    boolean readinessActive =
+        commandService.notifyUpdate(tenantId, baseVersionId, scriptPatchVersion, affectedScripts);
+    if (temporalOrchestrator.isPresent() && readinessActive) {
       temporalOrchestrator.get().startTracking(tenantId, scriptPatchVersion);
     }
   }

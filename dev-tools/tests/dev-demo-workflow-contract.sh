@@ -16,6 +16,8 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
+bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -103,16 +105,64 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
+# Extract a literal source range only when both delimiters occur exactly once
+# and the ending delimiter follows the start. The start line is included and
+# the ending line is excluded, matching the function bodies exercised below.
+extract_source_range() {
+  local source_path="$1"
+  local start_pattern="$2"
+  local end_pattern="$3"
+  awk -v start_pattern="$start_pattern" -v end_pattern="$end_pattern" '
+    {
+      source_lines[NR] = $0
+      if ($0 ~ start_pattern) {
+        start_count++
+        start_line = NR
+      }
+      if ($0 ~ end_pattern) {
+        end_count++
+        end_line = NR
+      }
+    }
+    END {
+      if (start_count != 1 || end_count != 1 || end_line <= start_line) {
+        printf "invalid source range in %s: start=%d end=%d\n", FILENAME, start_count, end_count > "/dev/stderr"
+        exit 2
+      }
+      for (line = start_line; line < end_line; line++) {
+        print source_lines[line]
+      }
+    }
+  ' "$source_path"
+}
+
+# Keep the extractor's fail-closed delimiter checks explicit: missing either
+# marker and reversed marker order must not produce a partial source snippet.
+range_fixture="$fixture_dir/source-range-fixture.sh"
+printf 'start\nbody\nend\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^missing$' '^end$' \
+  >"$fixture_dir/missing-start.out" 2>"$fixture_dir/missing-start.err"; then
+  echo "source range extraction accepted a missing start marker" >&2
+  exit 1
+fi
+if extract_source_range "$range_fixture" '^start$' '^missing$' \
+  >"$fixture_dir/missing-end.out" 2>"$fixture_dir/missing-end.err"; then
+  echo "source range extraction accepted a missing end marker" >&2
+  exit 1
+fi
+printf 'end\nbody\nstart\n' >"$range_fixture"
+if extract_source_range "$range_fixture" '^start$' '^end$' \
+  >"$fixture_dir/reversed-markers.out" 2>"$fixture_dir/reversed-markers.err"; then
+  echo "source range extraction accepted reversed markers" >&2
+  exit 1
+fi
+
 # Exercise the certificate workspace setup and EXIT cleanup directly. A caller
 # supplied root may contain unrelated files, so only the private child created
 # for this invocation may be removed.
 cert_workspace_setup="$fixture_dir/cert-workspace-setup.sh"
 {
-  awk '
-    /^provided_cert_dir=/ { capture = 1 }
-    /^workloads=\(/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^provided_cert_dir=' '^workloads=[(]'
   cat <<'EOF'
 printf 'generated certificate material\n' >"$cert_dir/generated.crt"
 printf '%s\n' "$cert_dir" >"$CERT_DIR_CAPTURE"
@@ -144,11 +194,7 @@ default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
 # caller so it cannot take the bootstrap generation/apply branch.
 secret_lookup_test="$fixture_dir/test-secret-exists.sh"
 {
-  awk '
-    /^secret_exists\(\)/ { capture = 1 }
-    /^read_secret_snapshot\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^secret_exists[(][)]' '^read_secret_snapshot[(][)]'
   cat <<'EOF'
 namespace=contract
 cert_dir="$OUTPUT_DIR"
@@ -221,11 +267,7 @@ done
 # dotted JSONPath keys, one read for all requested fields, and fail-closed errors.
 secret_snapshot_reader="$fixture_dir/read-secret-snapshot.sh"
 {
-  awk '
-    /^read_secret_snapshot\(\)/ { capture = 1 }
-    /^apply_secret\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^read_secret_snapshot[(][)]' '^apply_secret[(][)]'
   cat <<'EOF'
 namespace=contract
 lookup_mode="$1"
@@ -376,30 +418,14 @@ printf 'not a certificate\n' >"$certificate_fixture_dir/unparseable.crt"
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
-  awk '
-    /^assert_key_matches_certificate\(\)/ { capture = 1 }
-    /^ca_bundle_contains\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^assert_certificate_unexpired\(\)/ { capture = 1 }
-    /^validate_workload_certificate\(\)/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
-  awk '
-    /^validate_workload_certificate\(\)/ { capture = 1 }
-    /^shared_ca=/ { capture = 0 }
-    capture { print }
-  ' "$standalone_grpc_tls"
+  extract_source_range "$standalone_grpc_tls" '^assert_key_matches_certificate[(][)]' '^ca_bundle_contains[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]'
+  extract_source_range "$standalone_grpc_tls" '^validate_workload_certificate[(][)]' '^shared_ca='
 } >"$validator_source"
 echo "dev-demo certificate fixture: validator extracted" >&2
 
 expiry_helper_source="$certificate_fixture_dir/validate-certificate-expiry.sh"
-awk '
-  /^assert_certificate_unexpired\(\)/ { capture = 1 }
-  /^validate_workload_certificate\(\)/ { capture = 0 }
-  capture { print }
-' "$standalone_grpc_tls" >"$expiry_helper_source"
+extract_source_range "$standalone_grpc_tls" '^assert_certificate_unexpired[(][)]' '^validate_workload_certificate[(][)]' >"$expiry_helper_source"
 expiry_fixture_dir="$certificate_fixture_dir/expiry"
 mkdir -p "$expiry_fixture_dir/newcerts"
 : >"$expiry_fixture_dir/index.txt"
@@ -447,7 +473,7 @@ openssl ca -batch -config "$expiry_fixture_dir/openssl.cnf" \
 
 expect_expired_certificate() {
   local description="$1"
-  local rotation_secrets="$2"
+  local rotation_resources="$2"
   local expected_message="$3"
   local certificate="$4"
   local output
@@ -455,7 +481,7 @@ expect_expired_certificate() {
     {
       # shellcheck disable=SC1090 # The test extracts the exact expiry helper body.
       source "$expiry_helper_source"
-      assert_certificate_unexpired "$certificate" "$description" "$rotation_secrets"
+      assert_certificate_unexpired "$certificate" "$description" "$rotation_resources"
     } 2>&1
   )"; then
     echo "accepted expired certificate for ${description}" >&2
@@ -470,18 +496,18 @@ expect_expired_certificate() {
 
 expect_expired_certificate \
   'cert-manager CA projection in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-ca.crt"
 expect_expired_certificate \
   'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
-  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  'Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Secret/pr-42/firemud-grpc-tls Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 expect_expired_certificate \
   'cert-manager publication certificate in Secret pr-42/firemud-grpc-game-design-service' \
-  'pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  'Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Certificates and Secrets before rerunning: Certificate/pr-42/pr-42-grpc-game-design-service Secret/pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 python3 - "$standalone_grpc_tls" <<'PY'
 import sys
@@ -503,7 +529,7 @@ assert ca_expiry < leaf_verification
 assert leaf_expiry < leaf_verification
 assert shared_cert_parse < shared_cert_expiry < shared_key_match
 assert 'shared gRPC TLS client certificate in Secret ' in shared_branch
-assert 'shared_rotation_secrets' in shared_branch
+assert 'shared_rotation_resources' in shared_branch
 assert 'read_secret_file "$ca_secret" ca.key' not in source
 assert '--from-file=ca.key=' not in source
 assert 'openssl genrsa -out "$source_key"' not in source
@@ -645,6 +671,7 @@ import yaml
 workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, hosted_identity_workflow_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
+repository_root = workflow_path.parents[2]
 validator_spec = importlib.util.spec_from_file_location(
     "dev_demo_summary_validator_contract", validator_script_path
 )
@@ -811,6 +838,167 @@ with tempfile.NamedTemporaryFile() as destroy_output:
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
+workflow_deploy_run = deploy_by_name["Deploy dev-demo release"].get("run", "")
+staged_rollout_script = repository_root / "dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh"
+deploy_run = staged_rollout_script.read_text(encoding="utf-8")
+quiesced_upgrade = '--set "previewStack.services[${game_design_service_index}].replicaCount=0"'
+if workflow_deploy_run.count("\\\n") != 3:
+    raise SystemExit("dev-demo staged rollout arguments must retain Bash line continuations after YAML parsing")
+if (
+    "deploy-staged-dev-demo.sh" not in workflow_deploy_run
+    or "${{ needs.dev-demo-plan.outputs.namespace }}" not in workflow_deploy_run
+    or "${{ needs.dev-demo-plan.outputs.release_name }}" not in workflow_deploy_run
+    or "/tmp/dev-demo-values.yaml" not in workflow_deploy_run
+):
+    raise SystemExit("dev-demo must invoke the staged rollout script with namespace, release, and values path")
+if deploy_run.count("helm upgrade --install") != 2:
+    raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
+if deploy_run.count("game_design_service_index=") != 1 or "previewStack.services[3].replicaCount=0" in deploy_run:
+    raise SystemExit("dev-demo must derive the Game Design chart index from rendered values")
+resolver_start = 'game_design_service_index="$(python3 - "$values_file" <<\'PY\'\n'
+resolver_end = "\nPY\n)\""
+resolver_start_index = deploy_run.find(resolver_start)
+resolver_end_index = deploy_run.find(resolver_end, resolver_start_index)
+if resolver_start_index < 0 or resolver_end_index < 0:
+    raise SystemExit("dev-demo must use a bounded inline resolver for rendered Game Design values")
+resolver_python = deploy_run[
+    resolver_start_index + len(resolver_start) : resolver_end_index
+]
+with tempfile.TemporaryDirectory() as resolver_dir:
+    resolver_dir_path = Path(resolver_dir)
+    resolver_script = resolver_dir_path / "resolve-game-design-index.py"
+    resolver_script.write_text(resolver_python, encoding="utf-8")
+
+    def resolve_index(service_names):
+        values_path = resolver_dir_path / "values.yaml"
+        values_path.write_text(
+            yaml.safe_dump({"previewStack": {"services": [{"name": name} for name in service_names]}}),
+            encoding="utf-8",
+        )
+        return subprocess.run(
+            [sys.executable, str(resolver_script), str(values_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    reordered_index = resolve_index(
+        ["world-management-service", "game-design-service", "game-logic-service"]
+    )
+    if reordered_index.returncode != 0 or reordered_index.stdout.strip() != "1":
+        raise SystemExit("dev-demo Game Design index resolver must select the exact name after reordering")
+    for invalid_names, expected_count in (
+        (["world-management-service"], 0),
+        (["game-design-service", "game-design-service"], 2),
+    ):
+        invalid_index = resolve_index(invalid_names)
+        if invalid_index.returncode == 0 or f"found {expected_count}" not in invalid_index.stderr:
+            raise SystemExit("dev-demo Game Design index resolver must refuse missing or duplicate names")
+if not (
+    deploy_run.index(quiesced_upgrade) < deploy_run.rindex("helm upgrade --install")
+    and deploy_run.index("--wait", deploy_run.index(quiesced_upgrade))
+    < deploy_run.rindex("helm upgrade --install")
+):
+    raise SystemExit("dev-demo must wait for participants with Game Design at zero replicas before restoring it")
+first_helm = deploy_run.index("helm upgrade --install")
+second_helm = deploy_run.index("helm upgrade --install", first_helm + 1)
+if not first_helm < second_helm:
+    raise SystemExit("dev-demo must keep the participant-first and publication-restore Helm upgrades ordered")
+for required in (
+    'closed_selector="firemud-game-design-migration-quiesced"',
+    "trap leave_game_design_closed_on_failure EXIT",
+    "assert_no_reserved_selector_pods()",
+    "count_old_game_design_pods()",
+    "close_game_design_admission()",
+    'get service "$game_design_service"',
+    'if [[ -z "$service_json" ]]; then',
+    'get deployment "$game_design_service"',
+    '--ignore-not-found -o json',
+    'Game Design Service is absent but a Deployment remains',
+    'Game Design Service is absent but old Pods remain',
+    '(.spec.selector == {app: $service} or .spec.selector == {app: $selector})',
+    "admission_mutation_started=true",
+    'patch service "$game_design_service"',
+    '.spec.selector == {app: $selector}',
+    "get endpointslices.discovery.k8s.io",
+    'deployment/$game_design_service" --replicas=0',
+    '(.status.phase // "Unknown") != "Succeeded"',
+    '(.status.phase // "Unknown") != "Failed"',
+    'old_pod_count="$(count_old_game_design_pods "$pods_json")"',
+):
+    if required not in deploy_run or deploy_run.index(required) >= first_helm:
+        raise SystemExit(f"dev-demo must prove Game Design admission closure and drain before participants: {required}")
+if deploy_run.index("generation has passed Helm's readiness gate") >= second_helm:
+    raise SystemExit("dev-demo must restore Game Design only after the participant readiness gate")
+reclose_marker = "The participant chart reapplies the canonical Service selector"
+if not (
+    reclose_marker in deploy_run
+    and first_helm < deploy_run.index(reclose_marker) < second_helm
+):
+    raise SystemExit("dev-demo must re-close Game Design admission after the participant chart and before restore")
+if deploy_run.index("deploy_complete=true") <= second_helm:
+    raise SystemExit("dev-demo must keep Game Design admission fail-closed until the restore Service selector is verified")
+restore_readback = 'restored_service_json="$(kubectl -n "$runtime_namespace" get service "$game_design_service" -o json)"'
+if not (
+    second_helm < deploy_run.index(restore_readback) < deploy_run.index("deploy_complete=true")
+    and '.spec.selector == {app: $service}' in deploy_run[deploy_run.index(restore_readback):]
+):
+    raise SystemExit("dev-demo must verify the canonical Game Design selector after publication restore")
+if deploy_run.rindex("trap - EXIT") <= second_helm:
+    raise SystemExit("dev-demo must remove its Game Design failure trap only after publication restore verification")
+if "set -euo pipefail" not in deploy_run:
+    raise SystemExit("dev-demo staged rollout must stop before restoring Game Design after a failed participant rollout")
+hosted_values = yaml.safe_load(
+    (repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text(encoding="utf-8")
+)
+configured_services = hosted_values["previewStack"]["services"]
+game_design_indices = [
+    index
+    for index, service in enumerate(configured_services)
+    if isinstance(service, dict) and service.get("name") == "game-design-service"
+]
+if len(game_design_indices) != 1:
+    raise SystemExit("dev-demo fixture values must define exactly one Game Design chart entry")
+with tempfile.TemporaryDirectory() as temp_dir:
+    rendered_values_path = Path(temp_dir) / "dev-demo-values.yaml"
+    subprocess.run(
+        [
+            sys.executable,
+            str(repository_root / "dev-tools/hosted/dev-demo/render-dev-demo-values.py"),
+            str(repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml"),
+            str(rendered_values_path),
+            "dev",
+            "dev",
+            "dev.preview.firedevops.net",
+            "contract-test",
+            "32016",
+        ],
+        check=True,
+    )
+    quiesced_render = subprocess.run(
+        [
+            "helm",
+            "template",
+            "dev",
+            str(repository_root / "k8s/helm/firemud"),
+            "-f",
+            str(rendered_values_path),
+            "--set",
+            f"previewStack.services[{game_design_indices[0]}].replicaCount=0",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+quiesced_deployments = [
+    document
+    for document in yaml.safe_load_all(quiesced_render.stdout)
+    if isinstance(document, dict)
+    and document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+]
+if len(quiesced_deployments) != 1 or quiesced_deployments[0].get("spec", {}).get("replicas") != 0:
+    raise SystemExit("Game Design chart render must preserve explicit zero replicas during participant rollout")
 deploy_checkouts = [
     step
     for step in deploy_steps
@@ -820,6 +1008,8 @@ if len(deploy_checkouts) != 1:
     raise SystemExit("dev-demo deploy must define exactly one checkout")
 if deploy_checkouts[0].get("with", {}).get("ref") != "${{ needs.dev-demo-plan.outputs.head_sha }}":
     raise SystemExit("dev-demo deploy checkout must pin the planned head SHA")
+if deploy_checkouts[0].get("with", {}).get("fetch-depth") != 0:
+    raise SystemExit("dev-demo deploy must fetch full history for exact migration-range proof")
 if deploy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo deploy checkout must not persist credentials")
 if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-cluster":
@@ -841,6 +1031,7 @@ ordered = (
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
+    "Quiesce Account, Game Session, and Automation migration writers",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
     "Wait for dev-demo runtime rollouts",
@@ -853,6 +1044,38 @@ ordered = (
 positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
     raise SystemExit(f"dev-demo hosted-controller lifecycle order is invalid: {ordered}")
+
+standalone_grpc_setup = (
+    "Prepare dev-demo shared gRPC TLS secret",
+    "Ensure dev-demo standalone gRPC certificates",
+    "Ensure dev-demo gRPC TLS secret exists",
+)
+standalone_grpc_positions = [deploy_names.index(name) for name in standalone_grpc_setup]
+render_position = deploy_names.index("Validate dev-demo chart render")
+deploy_position = deploy_names.index("Deploy dev-demo release")
+if standalone_grpc_positions != sorted(standalone_grpc_positions) or any(
+    position >= render_position or position >= deploy_position
+    for position in standalone_grpc_positions
+):
+    raise SystemExit(
+        "dev-demo standalone gRPC leaf and trust Secrets must be prepared before rendering and Helm apply"
+    )
+for step_name, helper in (
+    (
+        "Prepare dev-demo shared gRPC TLS secret",
+        "ensure-grpc-tls-secret.sh --shared-only",
+    ),
+    (
+        "Ensure dev-demo standalone gRPC certificates",
+        "ensure-standalone-grpc-certificates.sh",
+    ),
+    (
+        "Ensure dev-demo gRPC TLS secret exists",
+        "ensure-grpc-tls-secret.sh",
+    ),
+):
+    if helper not in deploy_by_name[step_name].get("run", ""):
+        raise SystemExit(f"dev-demo {step_name} must invoke {helper}")
 
 identity_steps = (
     "Apply fixed dev-demo Active request",
@@ -1021,6 +1244,7 @@ if "Remove hosted identity requester kubeconfig" in deploy_by_name:
 
 expected_deploy_kubeconfigs = {
     "Verify cluster access": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Classify trusted V2 migration activation": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Reset dev-demo namespace for clean deploy": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Ensure dev-demo namespace exists": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Record exact dev-demo runtime target": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
@@ -1033,6 +1257,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1042,6 +1267,24 @@ expected_deploy_kubeconfigs = {
     "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
 }
+quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
+if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
+    raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
+if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
+    "Reset dev-demo namespace for clean deploy"
+].get("if", ""):
+    raise SystemExit("dev-demo must retain clean namespace reset for non-migration deploys")
+if "steps.v2-migration-mode.outputs.activation == 'true'" not in quiesce.get("if", ""):
+    raise SystemExit("dev-demo must quiesce only the trusted retained-database migration path")
+classifier = deploy_by_name["Classify trusted V2 migration activation"]
+if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") != 1:
+    raise SystemExit("dev-demo must derive migration activation from the trusted event range")
+if deploy_names.index("Classify trusted V2 migration activation") > deploy_names.index(
+    "Reset dev-demo namespace for clean deploy"
+):
+    raise SystemExit("migration status must be proven before any namespace mutation")
+if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
+    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1162,6 +1405,70 @@ expected_success_condition = (
 )
 if success_condition != expected_success_condition:
     raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
+
+game_design_warning = deploy_by_name[
+    "Warn about Game Design recovery after staged deploy failure"
+]
+expected_game_design_warning_condition = (
+    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'failure' }}"
+)
+if game_design_warning.get("if") != expected_game_design_warning_condition:
+    raise SystemExit(
+        "Game Design recovery warning must run after every failed staged deployment"
+    )
+if not (
+    deploy_names.index("Show dev-demo rollout diagnostics")
+    < deploy_names.index("Warn about Game Design recovery after staged deploy failure")
+    < deploy_names.index("Fail if dev-demo rollout did not complete")
+):
+    raise SystemExit(
+        "Game Design recovery warning must follow diagnostics and precede rollout failure"
+    )
+game_design_warning_run = game_design_warning.get("run", "")
+for required_warning in (
+    "may have left Game Design unavailable",
+    "scaled to zero",
+    "publication endpoints drained",
+    "Inspect and repair",
+    "Game Design Deployment, Pods, Service, and EndpointSlices",
+):
+    if required_warning not in game_design_warning_run:
+        raise SystemExit(
+            f"Game Design recovery warning must include: {required_warning}"
+        )
+
+quiesce_writers = deploy_by_name[
+    "Quiesce Account, Game Session, and Automation migration writers"
+]
+if quiesce_writers.get("id") != "quiesce-writers":
+    raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
+quiesced_writer_warning = deploy_by_name[
+    "Warn about migration writer recovery after quiesce or deploy failure"
+]
+expected_quiesced_writer_warning_condition = (
+    "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
+    "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.deploy-release.outcome == 'failure') }}"
+)
+if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
+    raise SystemExit(
+        "migration writer recovery warning must require activation and failed quiesce or Helm deploy"
+    )
+quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
+for required_warning in (
+    "Account, Game Session, and Automation writer Deployments may be partially quiesced",
+    "Inspect their current state before retrying",
+    "writer quiescence fails",
+    "Helm deploy fails partway through",
+    "a partial deployment may have re-enabled some writers",
+):
+    if required_warning not in quiesced_writer_warning_run:
+        raise SystemExit(
+            f"quiesced-writer warning must include: {required_warning}"
+        )
+if "all writer Deployments are quiesced" in quiesced_writer_warning_run:
+    raise SystemExit("quiesced-writer warning must allow partial deployment state")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
@@ -1904,21 +2211,8 @@ PY
 # command stubs. The static `if`/ordering assertions above establish which
 # block GitHub selects; these fixtures prove the selected blocks preserve the
 # required command order and mutation boundary.
-deploy_release_step="$fixture_dir/deploy-release-step.sh"
 record_deployed_head_step="$fixture_dir/record-deployed-head-step.sh"
-python3 - "$workflow" >"$deploy_release_step" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
-run = next(step["run"] for step in steps if step.get("name") == "Deploy dev-demo release")
-run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
-run = run.replace("${{ needs.dev-demo-plan.outputs.namespace }}", "dev")
-print(run)
-PY
+deploy_release_step="$ROOT_DIR/dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh"
 python3 - "$workflow" >"$record_deployed_head_step" <<'PY'
 import sys
 from pathlib import Path
@@ -1938,34 +2232,167 @@ PY
 
 deployment_stub_dir="$fixture_dir/deployment-evidence-stubs"
 mkdir -p "$deployment_stub_dir"
+deployment_values_path="$fixture_dir/deployment-values.yaml"
+printf 'previewStack:\n  services:\n    - name: world-management-service\n    - name: game-design-service\n    - name: game-logic-service\n' >"$deployment_values_path"
 cat >"$deployment_stub_dir/helm" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected=(
-  upgrade --install dev k8s/helm/firemud
-  -f /tmp/dev-demo-values.yaml
-  --namespace dev
-  --wait
-  --timeout 15m
-)
 actual=("$@")
+invocation="$(grep -c '^helm-start$' "${TEST_DEPLOYMENT_LOG:?}" || true)"
+if [[ "$invocation" == 0 ]]; then
+  expected=(
+    upgrade --install dev k8s/helm/firemud
+    -f "${TEST_RENDERED_VALUES_PATH:?}"
+    --set "previewStack.services[${TEST_GAME_DESIGN_INDEX:?}].replicaCount=0"
+    --namespace dev
+    --wait
+    --timeout 15m
+  )
+elif [[ "$invocation" == 1 ]]; then
+  expected=(
+    upgrade --install dev k8s/helm/firemud
+    -f "${TEST_RENDERED_VALUES_PATH:?}"
+    --namespace dev
+    --wait
+    --timeout 15m
+  )
+else
+  exit 1
+fi
 [[ $# -eq ${#expected[@]} ]]
 for index in "${!expected[@]}"; do
   [[ "${actual[$index]}" == "${expected[$index]}" ]]
 done
 printf 'helm-start\n' >>"${TEST_DEPLOYMENT_LOG:?}"
-if [[ "${TEST_HELM_RESULT:?}" == failure ]]; then
+if [[ ( "${TEST_HELM_RESULT:?}" == failure || "$TEST_HELM_RESULT" == first-install-failure ) && "$invocation" == 0 ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  if [[ "$TEST_HELM_RESULT" == first-install-failure ]]; then
+    : >"${TEST_DEPLOYMENT_STATE:?}/service-created"
+  fi
   printf 'helm-failure\n' >>"$TEST_DEPLOYMENT_LOG"
   exit 42
 fi
-[[ "$TEST_HELM_RESULT" == success ]]
+[[ "$TEST_HELM_RESULT" == success || "$TEST_HELM_RESULT" == quiescence-failure ||
+  "$TEST_HELM_RESULT" == first-install || "$TEST_HELM_RESULT" == terminal-pods ||
+  "$TEST_HELM_RESULT" == preclosed-service || "$TEST_HELM_RESULT" == restore-selector-quiesced ]]
+if [[ "$invocation" == 0 ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ]]; then
+    : >"${TEST_DEPLOYMENT_STATE:?}/service-created"
+  fi
+elif [[ "$TEST_HELM_RESULT" != restore-selector-quiesced ]]; then
+  rm -f "${TEST_DEPLOYMENT_STATE:?}/service-closed"
+fi
 printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
 SH
 cat >"$deployment_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1" == -n && "$3" == get && "$4" == service ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ]] &&
+    [[ ! -e "${TEST_DEPLOYMENT_STATE:?}/service-created" ]]; then
+    printf 'service-absent\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    exit 0
+  fi
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == partial-service ]]; then
+    if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+      printf 'service-closed-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+      printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
+      exit 0
+    fi
+    printf 'service-partial-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"unexpected"}}}\n'
+    exit 0
+  fi
+  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+    printf 'service-closed-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"firemud-game-design-migration-quiesced"}}}\n'
+  else
+    printf 'service-canonical-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Service","metadata":{"name":"game-design-service"},"spec":{"selector":{"app":"game-design-service"}}}\n'
+  fi
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == hpa ]]; then
+  printf 'hpa-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  printf '{"kind":"HorizontalPodAutoscalerList","items":[]}\n'
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == pods ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ]]; then
+    printf 'pods-leftover-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"other","image":"registry/game-design-service:old"}]}}]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == terminal-pods ]]; then
+    printf 'pods-terminal-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"other","image":"registry/game-design-service:old"}]},"status":{"phase":"Succeeded"}},{"metadata":{"labels":{"app":"game-design-service"}},"spec":{"containers":[{"name":"game-design-service","image":"game-design-service:old"}]},"status":{"phase":"Failed"}}]}\n'
+  elif [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  elif [[ -e "${TEST_DEPLOYMENT_STATE:?}/scaled" ]]; then
+    printf 'pods-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[]}\n'
+  else
+    printf 'pods-old-game-design\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"PodList","items":[{"metadata":{"labels":{"app":"game-design-service"}},"spec":{"containers":[{"name":"game-design-service","image":"game-design-service:old"}]}}]}\n'
+  fi
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == deployment ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install-failure ||
+    "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-pod ]]; then
+    printf 'deployment-absent\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    exit 0
+  fi
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == leftover-deployment ]]; then
+    printf 'deployment-leftover\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"Deployment","metadata":{"name":"game-design-service"},"spec":{"replicas":1}}\n'
+    exit 0
+  fi
+  printf 'deployment-zero-readback\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  printf '{"kind":"Deployment","metadata":{"name":"game-design-service"},"spec":{"replicas":0}}\n'
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == patch && "$4" == service ]]; then
+  [[ "$5" == game-design-service ]]
+  if [[ -e "${TEST_DEPLOYMENT_STATE:?}/service-closed" ]]; then
+    printf 'service-reclosed\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  else
+    printf 'service-closed\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  fi
+  : >"${TEST_DEPLOYMENT_STATE:?}/service-closed"
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == scale && "$4" == deployment/game-design-service ]]; then
+  [[ "$5" == --replicas=0 ]]
+  printf 'deployment-scaled-zero\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+  : >"${TEST_DEPLOYMENT_STATE:?}/scaled"
+  exit 0
+fi
+if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; then
+  if [[ "${TEST_DEPLOYMENT_SCENARIO:?}" == first-install ]]; then
+    printf 'endpoints-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"EndpointSliceList","items":[]}\n'
+  elif [[ "${TEST_HELM_RESULT:?}" == quiescence-failure ]]; then
+    printf 'endpoints-invalid\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"InvalidEndpointSliceList","items":[]}\n'
+  else
+    printf 'endpoints-empty\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+    printf '{"kind":"EndpointSliceList","items":[]}\n'
+  fi
+  exit 0
+fi
 [[ $# -eq 5 ]]
 [[ "$1" == annotate ]]
 [[ "$2" == namespace ]]
@@ -1982,8 +2409,15 @@ run_deployment_evidence_fixture() {
   local github_env="$fixture_dir/deployment-${scenario}.env"
   local head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   local deploy_status
+  local deploy_script="$deploy_release_step"
 
   : >"$deployment_log"
+  local deployment_state="$fixture_dir/deployment-${scenario}.state"
+  rm -rf "$deployment_state"
+  mkdir -p "$deployment_state"
+  if [[ "$scenario" == preclosed-service ]]; then
+    : >"$deployment_state/service-closed"
+  fi
   : >"$github_env"
   set +e
   (
@@ -1992,8 +2426,12 @@ run_deployment_evidence_fixture() {
       PATH="$deployment_stub_dir:$PATH" \
       GITHUB_ENV="$github_env" \
       TEST_DEPLOYMENT_LOG="$deployment_log" \
+      TEST_DEPLOYMENT_STATE="$deployment_state" \
+      TEST_DEPLOYMENT_SCENARIO="$scenario" \
+      TEST_RENDERED_VALUES_PATH="$deployment_values_path" \
+      TEST_GAME_DESIGN_INDEX=1 \
       TEST_HELM_RESULT="$scenario" \
-      bash "$deploy_release_step"
+      bash "$deploy_script" dev dev "$deployment_values_path"
   )
   deploy_status=$?
   set -e
@@ -2014,7 +2452,10 @@ run_deployment_evidence_fixture() {
   if [[ "$scenario" == failure ]]; then
     [[ "$deploy_status" -eq 42 ]]
     mapfile -t actual <"$deployment_log"
-    [[ "${actual[*]}" == "helm-start helm-failure" ]]
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-failure service-canonical-readback pods-empty service-closed service-closed-readback" ]] || {
+      printf 'failure fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
     if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
       echo "failed Helm attempt recorded deployed-head evidence" >&2
       exit 1
@@ -2022,14 +2463,96 @@ run_deployment_evidence_fixture() {
     return
   fi
 
-  [[ "$scenario" == success && "$deploy_status" -eq 0 ]]
+  if [[ "$scenario" == quiescence-failure ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-invalid service-closed-readback pods-old-game-design service-closed-readback" ]] || {
+      printf 'quiescence fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "uncertain Game Design quiescence recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ "$scenario" == restore-selector-quiesced ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-closed-readback service-closed-readback pods-empty service-closed-readback" ]] || {
+      printf 'restore-selector-quiesced fixture log: %s\n' "${actual[*]}" >&2
+      exit 1
+    }
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "quiesced Game Design selector after restore recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ "$scenario" == first-install-failure ]]; then
+    [[ "$deploy_status" -eq 42 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-failure service-canonical-readback pods-empty service-closed service-closed-readback" ]]
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "failed first-install Helm attempt recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ "$scenario" == first-install ]]; then
+    [[ "$deploy_status" -eq 0 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "service-absent pods-empty deployment-absent endpoints-empty hpa-empty deployment-absent pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+    return
+  fi
+
+  if [[ "$scenario" == leftover-deployment || "$scenario" == leftover-pod || "$scenario" == partial-service ]]; then
+    [[ "$deploy_status" -ne 0 ]]
+    mapfile -t actual <"$deployment_log"
+    case "$scenario" in
+      leftover-deployment)
+        [[ "${actual[*]}" == "service-absent pods-empty deployment-leftover endpoints-empty" ]]
+        ;;
+      leftover-pod)
+        [[ "${actual[*]}" == "service-absent pods-leftover-game-design deployment-absent endpoints-empty" ]]
+        ;;
+      partial-service)
+        [[ "${actual[*]}" == "service-partial-readback pods-old-game-design service-partial-readback pods-old-game-design service-closed service-closed-readback" ]]
+        ;;
+    esac
+    if grep -q '^helm-start$' "$deployment_log"; then
+      echo "partial Game Design state reached Helm deployment" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  [[ ( "$scenario" == success || "$scenario" == terminal-pods || "$scenario" == preclosed-service ) && "$deploy_status" -eq 0 ]]
   mapfile -t actual <"$deployment_log"
-  [[ "${actual[*]}" == "helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  if [[ "$scenario" == terminal-pods ]]; then
+    [[ "${actual[*]}" == "service-canonical-readback pods-terminal-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-terminal-game-design helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  elif [[ "$scenario" == preclosed-service ]]; then
+    [[ "${actual[*]}" == "service-closed-readback pods-old-game-design hpa-empty service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  else
+    [[ "${actual[*]}" == "service-canonical-readback pods-old-game-design hpa-empty service-closed service-closed-readback endpoints-empty deployment-zero-readback pods-old-game-design deployment-scaled-zero deployment-zero-readback pods-empty helm-start helm-success service-closed service-closed-readback helm-start helm-success service-canonical-readback kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  fi
   grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
 }
 
 run_deployment_evidence_fixture failure
+run_deployment_evidence_fixture quiescence-failure
+run_deployment_evidence_fixture first-install
+run_deployment_evidence_fixture first-install-failure
+run_deployment_evidence_fixture leftover-deployment
+run_deployment_evidence_fixture leftover-pod
+run_deployment_evidence_fixture partial-service
 run_deployment_evidence_fixture success
+run_deployment_evidence_fixture restore-selector-quiesced
+run_deployment_evidence_fixture terminal-pods
+run_deployment_evidence_fixture preclosed-service
 
 # Execute the Ready waiter against strict bounded Kubernetes fixtures so each
 # requested/deployed head component and the complete projection evidence are

@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError
+from pr_review.controller import ControllerError, StaleReviewTarget
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -73,6 +73,12 @@ class RuntimeTest(unittest.TestCase):
             "body": "Full review triggered. I am reviewing the pull request now.",
             "createdAt": "2026-09-24T00:00:00Z",
         }
+        provider_skip = {
+            "databaseId": 75,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review skipped: 121 files exceed the limit of 100.",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
         ambiguous_comment = {
             "databaseId": 73,
             "body": "**Actionable comments posted:** 1",
@@ -80,6 +86,7 @@ class RuntimeTest(unittest.TestCase):
         }
         self.assertEqual(LiveEvidence._public_response_state(review, "submittedAt", {}), "completed")
         self.assertEqual(LiveEvidence._public_response_state(active_comment, "createdAt", {}), "active")
+        self.assertEqual(LiveEvidence._public_response_state(provider_skip, "createdAt", {}), "failed")
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
 
@@ -127,6 +134,92 @@ class RuntimeTest(unittest.TestCase):
                 {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
             )
         self.assertIn("response has no preceding full-review trigger", audit["unmatched_responses"])
+
+    def test_stop_audit_keeps_old_unanchored_checkpoint_historical_but_holds_current_one(self) -> None:
+        old_head = "7" * 40
+
+        def run_audit(reviewed_head: str):
+            checkpoint = {
+                "databaseId": 12,
+                "author": {"login": "maintainer"},
+                "body": (
+                    f"Hosted: 5 found / 5 accepted · `{reviewed_head[:12]}` · 1 files\n"
+                    "<!-- firemud-hosted-review: 55 -->"
+                ),
+                "createdAt": "2026-09-24T00:02:00Z",
+                "updatedAt": "2026-09-24T00:02:00Z",
+            }
+            payload = self._payload([checkpoint], head=HEAD)
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            observer = LiveEvidence("owner/repo", live)
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                    allow_historical_unmatched=True,
+                )
+
+        old_audit = run_audit(old_head)
+        self.assertIn(
+            "a public Hosted checkpoint has no unique attributable trigger",
+            old_audit["historical_unmatched_responses"],
+        )
+        self.assertEqual(old_audit["unmatched_responses"], [])
+        self.assertEqual(old_audit["ambiguous_responses"], [])
+
+        current_audit = run_audit(HEAD)
+        self.assertIn(
+            "a public Hosted checkpoint has no unique attributable trigger",
+            current_audit["ambiguous_responses"],
+        )
+        self.assertEqual(current_audit["historical_unmatched_responses"], [])
+
+    def test_stop_audit_keeps_unmatched_old_response_historical_but_holds_current_response(self) -> None:
+        old_head = "7" * 40
+
+        def run_audit(reviewed_head: str):
+            review = {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\nActionable comments posted: 5",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-24T00:02:00Z",
+                "commit": {"oid": reviewed_head},
+            }
+            payload = self._payload(reviews=[review], head=HEAD)
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            observer = LiveEvidence("owner/repo", live)
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                    allow_historical_unmatched=True,
+                )
+
+        old_audit = run_audit(old_head)
+        self.assertIn("response has no preceding full-review trigger", old_audit["historical_unmatched_responses"])
+        self.assertEqual(old_audit["ambiguous_responses"], [])
+
+        current_audit = run_audit(HEAD)
+        self.assertIn("response has no preceding full-review trigger", current_audit["ambiguous_responses"])
 
     def test_retirement_audit_refreshes_cached_public_and_channel_history(self) -> None:
         stale_payload = self._payload()
@@ -204,6 +297,13 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": trigger_at,
             "url": "https://example.test/comments/10",
         }
+        unrelated_trigger = {
+            **trigger,
+            "databaseId": 20,
+            "createdAt": "2026-09-24T00:03:00Z",
+            "updatedAt": "2026-09-24T00:03:00Z",
+            "url": "https://example.test/comments/20",
+        }
         checkpoint = {
             "databaseId": 12,
             "author": {"login": "maintainer"},
@@ -222,13 +322,20 @@ class RuntimeTest(unittest.TestCase):
             "submittedAt": response_at,
             "commit": {"oid": HEAD},
         }
-        payload = self._payload([trigger, checkpoint], [review])
+        unrelated_response = {
+            "databaseId": 56,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished without an attributable head.",
+            "createdAt": "2026-09-24T00:04:00Z",
+            "updatedAt": "2026-09-24T00:04:00Z",
+        }
+        payload = self._payload([trigger, checkpoint, unrelated_trigger, unrelated_response], [review])
         pull = payload["data"]["repository"]["pullRequest"]
         pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         live = LiveGitHub("owner/repo")
         observer = LiveEvidence("owner/repo", live)
-        record = {"head_sha": HEAD}
+        record = self._trigger_record(created=trigger_at)
         state = SimpleNamespace(
             trigger_comment_id=10,
             trigger_created_at=trigger_at,
@@ -238,18 +345,49 @@ class RuntimeTest(unittest.TestCase):
             response_id=55,
             head_sha=HEAD,
         )
+        unrelated_record = {**self._trigger_record(created="2026-09-24T00:03:00Z")}
+        unrelated_record["trigger"]["id"] = 20
+        unrelated_state = SimpleNamespace(
+            trigger_comment_id=20,
+            trigger_created_at="2026-09-24T00:03:00Z",
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=56,
+            head_sha=HEAD,
+        )
+        records_by_path = {"trigger-10.json": record, "trigger-20.json": unrelated_record}
+        states_by_trigger = {10: state, 20: unrelated_state}
 
         def run_audit(selected_record=record, selected_state=state, selected_checkpoint=checkpoint):
             observer._payloads.clear()
-            selected_payload = self._payload([trigger, selected_checkpoint], [review])
+            selected_payload = self._payload(
+                [trigger, selected_checkpoint, unrelated_trigger, unrelated_response], [review]
+            )
             selected_pull = selected_payload["data"]["repository"]["pullRequest"]
             selected_pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
             with (
                 patch.object(github, "fetch_pull_request", return_value=selected_payload),
                 patch.object(live, "pull_request", return_value=snapshot),
-                patch.object(observer, "_complete_trigger_paths", return_value=["trigger-10.json"]),
-                patch.object(hosted, "load_trigger_record", return_value=selected_record),
-                patch.object(hosted, "trigger_state", return_value=selected_state),
+                patch.object(
+                    observer,
+                    "_complete_trigger_paths",
+                    return_value=["trigger-10.json", "trigger-20.json"],
+                ),
+                patch.object(
+                    hosted,
+                    "load_trigger_record",
+                    side_effect=lambda path, *_: selected_record
+                    if Path(path).name == "trigger-10.json"
+                    else records_by_path[Path(path).name],
+                ),
+                patch.object(
+                    hosted,
+                    "trigger_state",
+                    side_effect=lambda _repo, _pr, _payload, selected, _path: selected_state
+                    if selected["trigger"]["id"] == 10
+                    else states_by_trigger[selected["trigger"]["id"]],
+                ),
                 patch.object(observer, "history", return_value=[]),
             ):
                 return observer.legacy_transition_reauthorization_audit(
@@ -263,9 +401,11 @@ class RuntimeTest(unittest.TestCase):
             "a public Hosted checkpoint has no unique attributable trigger",
             accepted["unmatched_responses"],
         )
+        self.assertIn("unattributed trigger response", accepted["ambiguous_responses"])
+        self.assertIn("ambiguous", accepted["active_reservations"])
 
         invalid_cases = (
-            ({"head_sha": "d" * 40}, state, checkpoint),
+            ({**record, "head_sha": "d" * 40}, state, checkpoint),
             (record, SimpleNamespace(**{**state.__dict__, "terminal": False}), checkpoint),
             (record, state, {**checkpoint, "author": {"login": "different-user"}}),
         )
@@ -553,14 +693,14 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(evidence, "git_common_dir", return_value=common),
             ):
                 history = LiveEvidence("owner/repo", live).history(42, "cli")
-            self.assertEqual(len(history), 1)
-            self.assertTrue(history[0]["completed"])
-            self.assertTrue(history[0]["attributable"])
-            self.assertFalse(history[0]["anchored"])
-            self.assertEqual(history[0]["accepted"], 0)
+            completed = [item for item in history if item.get("completed") is True]
+            self.assertEqual(len(completed), 1)
+            self.assertTrue(completed[0]["attributable"])
+            self.assertFalse(completed[0]["anchored"])
+            self.assertEqual(completed[0]["accepted"], 0)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 100)
         target = ReviewTarget(
             snapshot,
             EffectiveParent("develop", BASE),
@@ -618,6 +758,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
             self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 101)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                self.assertRaisesRegex(ControllerError, "at most 100 changed files"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            self.assertFalse(path.exists())
 
     def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -715,6 +876,58 @@ class RuntimeTest(unittest.TestCase):
                     HostedRunner("owner/repo", live)(target, expect_pr=42)
                 self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
 
+    def test_hosted_post_boundary_detects_parent_advance_when_pr_snapshot_is_stale(self) -> None:
+        advanced_base = "9" * 40
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_calls = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                post_calls.append(args)
+                output = comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", side_effect=(BASE, BASE, advanced_base)),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "effective parent changed across the Hosted posting boundary"),
+            ):
+                HostedRunner("owner/repo", live)(selected, expect_pr=42)
+            record = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(record["status"], "posted_boundary_changed")
+        self.assertEqual(record["anchor"]["parent_head"], BASE)
+        self.assertEqual(record["trigger"]["id"], 123)
+        self.assertEqual(len(post_calls), 1)
+
     def test_hosted_request_floor_failure_leaves_no_reservation_or_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
@@ -749,12 +962,99 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(post_calls, [])
 
+    def test_hosted_runner_rejects_a_default_base_move_before_writing_or_posting(self) -> None:
+        advanced_base = "9" * 40
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update(
+            {
+                "number": 42,
+                "baseRefName": "develop",
+                "baseRefOid": advanced_base,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            calls = []
+
+            def subprocess_call(args, **kwargs):
+                calls.append(args)
+                if args == ["gh", "api", "user"]:
+                    return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+                raise AssertionError("stale target must not issue a Hosted POST")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=subprocess_call),
+                self.assertRaisesRegex(StaleReviewTarget, "base advanced"),
+            ):
+                HostedRunner("owner/repo", live)(selected, expect_pr=42)
+
+            self.assertFalse(path.exists())
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0], ["gh", "api", "user"])
+
+    def test_hosted_runner_reselects_when_base_moves_while_mergeability_is_unknown(self) -> None:
+        advanced_base = "9" * 40
+        selected_snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        selected = ReviewTarget(
+            selected_snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            default_base_front=True,
+            default_test_merge_base_sha=BASE,
+            default_test_merge_head_sha=HEAD,
+            default_test_merge_tree_sha="d" * 40,
+        )
+        current = PullRequestSnapshot(
+            42,
+            "OPEN",
+            "develop",
+            advanced_base,
+            HEAD,
+            "feature",
+            1,
+            mergeable="UNKNOWN",
+        )
+        live = LiveGitHub("owner/repo")
+        with (
+            patch.object(live, "pull_request", return_value=current),
+            patch("pr_review.runtime.subprocess.run") as run,
+            self.assertRaisesRegex(StaleReviewTarget, "base advanced"),
+        ):
+            HostedRunner("owner/repo", live)(selected, expect_pr=42)
+        run.assert_not_called()
+
     @staticmethod
     def _payload(comments=None, reviews=None, threads=None, *, head=HEAD):
         return {
             "data": {
                 "repository": {
                     "pullRequest": {
+                        "number": 42,
+                        "baseRefName": "develop",
+                        "baseRefOid": BASE,
                         "headRefOid": head,
                         "comments": {"nodes": comments or []},
                         "reviews": {"nodes": reviews or []},
@@ -789,6 +1089,23 @@ class RuntimeTest(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _bind_trigger(common: Path, payload: dict[str, Any], record: dict[str, Any]) -> None:
+        trigger = record["trigger"]
+        payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].insert(
+            0,
+            {
+                "databaseId": trigger["id"],
+                "author": {"login": "reviewer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": trigger["created_at"],
+                "url": trigger["url"],
+            },
+        )
+        path = hosted.default_trigger_record_path("owner/repo", 42, common)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+
     def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, current_head, "feature", changed_files)
         live = LiveGitHub("owner/repo")
@@ -798,6 +1115,116 @@ class RuntimeTest(unittest.TestCase):
             patch.object(evidence, "git_common_dir", return_value=common),
         ):
             return list(LiveEvidence("owner/repo", live).history(42, channel))
+
+    def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
+        valid = {
+            "databaseId": 90,
+            "body": (
+                "**Review scope changed:** reused PR scope was reset\n"
+                "<!-- firemud-review-scope-change -->"
+            ),
+            "createdAt": "2026-09-23T00:00:00Z",
+            "updatedAt": "2026-09-24T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        malformed = {
+            "databaseId": 91,
+            "body": "**Review scope changed:** missing the required hidden marker",
+            "createdAt": "2026-09-25T00:00:00Z",
+            "updatedAt": "2026-09-25T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        malformed_marker = {
+            "databaseId": 92,
+            "body": "<!-- firemud-review-scope-change -- >",
+            "createdAt": "2026-09-26T00:00:00Z",
+            "updatedAt": "2026-09-26T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        mid_body_marker = {
+            "databaseId": 94,
+            "body": "The marker is only mentioned here <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-27T00:00:00Z",
+            "updatedAt": "2026-09-27T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        indented_marker = {
+            "databaseId": 95,
+            "body": "**Review scope changed:** indentation is not accepted\n <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-28T00:00:00Z",
+            "updatedAt": "2026-09-28T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        indented_marker_only = {
+            "databaseId": 97,
+            "body": " <!-- firemud-review-scope-change -->",
+            "createdAt": "2026-09-28T12:00:00Z",
+            "updatedAt": "2026-09-28T12:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        coderabbit_marker = {
+            "databaseId": 96,
+            "body": (
+                "**Review scope changed:** bot-authored marker is ignored\n"
+                "<!-- firemud-review-scope-change -->"
+            ),
+            "createdAt": "2026-09-29T00:00:00Z",
+            "updatedAt": "2026-09-29T00:00:00Z",
+            "author": {"login": "coderabbitai[bot]"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(
+                Path(directory),
+                self._payload(
+                    [
+                        valid,
+                        malformed,
+                        malformed_marker,
+                        mid_body_marker,
+                        indented_marker,
+                        coderabbit_marker,
+                        indented_marker_only,
+                    ]
+                ),
+            )
+
+        markers = [item for item in history if item.get("scope_changed") is True]
+        self.assertEqual(len(markers), 3)
+        self.assertEqual([marker["comment_id"] for marker in markers], [90, 91, 95])
+        self.assertEqual(markers[0]["kind"], "scope_change")
+        self.assertFalse(markers[0]["scope_change_malformed"])
+        self.assertEqual(markers[0]["observed_at"], "2026-09-24T00:00:00Z")
+        self.assertEqual([marker["kind"] for marker in markers[1:]], ["scope_change_malformed"] * 2)
+        self.assertTrue(all(marker["scope_change_malformed"] for marker in markers[1:]))
+        for marker in markers:
+            self.assertFalse(marker["completed"])
+            self.assertFalse(marker["attributable"])
+            self.assertTrue(marker["non_counting"])
+            self.assertEqual((marker["accepted"], marker["raw"]), (0, 0))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
+
+    def test_empty_history_includes_complete_scope_timeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(Path(directory), self._payload([]))
+
+        self.assertEqual(len(history), 1)
+        self.assertTrue(history[0]["scope_timeline"])
+        self.assertTrue(history[0]["scope_timeline_complete"])
+        self.assertTrue(history[0]["non_counting"])
+
+    def test_history_skips_non_string_comment_bodies_during_scope_change_scan(self):
+        comment = {
+            "databaseId": 93,
+            "body": None,
+            "createdAt": "2026-09-26T00:00:00Z",
+            "updatedAt": "2026-09-26T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            history = self._history(Path(directory), self._payload([comment]))
+
+        self.assertFalse(any(item.get("scope_changed") is True for item in history))
+        self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
     def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -837,10 +1264,92 @@ class RuntimeTest(unittest.TestCase):
             unknown = self._history(common, self._payload([trigger, unknown_reply]))
             self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in unknown))
 
+    def test_review_stop_audit_excludes_only_proven_terminal_rate_limit_reservations(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        response_at = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        cooldown_until = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = self._trigger_record(created=trigger_at)
+        old_head = "7" * 40
+        record["head_sha"] = old_head
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="rate_limited",
+            terminal=True,
+            attributed=True,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=old_head,
+            cooldown_until=cooldown_until,
+            reason="CodeRabbit explicitly rate limited the request",
+        )
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        generic_audit = {
+            "complete": True,
+            "active_reservations": ["rate_limited", "review active"],
+            "unmatched_responses": [],
+            "historical_unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=state),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            audit = observer.review_stop_audit(42, anchor)
+
+        self.assertEqual(audit["active_reservations"], ["review active"])
+        self.assertEqual(audit["terminal_rate_limits"], [
+            {
+                "trigger_id": 10,
+                "response_id": 11,
+                "captured_head": old_head,
+                "cooldown_until": cooldown_until,
+                "terminal": True,
+                "attributable": True,
+            }
+        ])
+        self.assertIn("active Hosted reservation: review active", audit["blockers"])
+
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
-            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
-            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+            "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
         )
         now = datetime.now(timezone.utc).replace(microsecond=0)
         created = (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
@@ -937,7 +1446,7 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": checkpoint_at,
         }
 
-        def history_for(comments, reviews=None):
+        def history_for(comments, reviews=None, threads=None):
             with tempfile.TemporaryDirectory() as directory:
                 common = Path(directory)
                 record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -945,10 +1454,77 @@ class RuntimeTest(unittest.TestCase):
                 record_path.write_text(
                     json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
                 )
-                return self._history(common, self._payload(comments, reviews))
+                return self._history(common, self._payload(comments, reviews, threads))
 
         valid = history_for([trigger, summary, reply, checkpoint])
         self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in valid))
+
+        provider_summary = {
+            **summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 89.\n"
+                "Files not reviewed due to moderation or processing errors: 0.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "updatedAt": "2026-09-23T00:03:20Z",
+        }
+        edited_reply = {**reply, "updatedAt": "2026-09-23T00:03:30Z"}
+        edited_duration_checkpoint = {
+            **checkpoint,
+            "body": checkpoint["body"].replace("120s", "150s").replace(": 120 -->", ": 150 -->"),
+        }
+        provider_valid = history_for([trigger, provider_summary, edited_reply, edited_duration_checkpoint])
+        self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_valid))
+        provider_old_duration = history_for([trigger, provider_summary, edited_reply, checkpoint])
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_old_duration))
+
+        incomplete_provider_summary = {
+            **provider_summary,
+            "body": (
+                "0 actionable comments found.\n"
+                "Files selected: 89. Files reviewed: 61.\n"
+                "Files not reviewed due to moderation or processing errors: 28.\n"
+                "3 reported issues remain open.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+        }
+        stale_provider_summary = {**provider_summary, "updatedAt": trigger_at}
+        mismatched_provider_summary = {
+            **provider_summary,
+            "body": provider_summary["body"].replace(HEAD, "d" * 40),
+        }
+        for invalid_summary in (
+            incomplete_provider_summary,
+            stale_provider_summary,
+            mismatched_provider_summary,
+        ):
+            with self.subTest(provider_summary=invalid_summary["body"]):
+                rejected = history_for([trigger, invalid_summary, edited_reply, checkpoint])
+                self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in rejected))
+
+        inline_comment = {
+            "databaseId": 54,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A post-trigger inline finding.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        with_inline_output = history_for(
+            [trigger, provider_summary, edited_reply, checkpoint],
+            threads=[{"comments": {"nodes": [inline_comment]}}],
+        )
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_inline_output))
+
+        post_trigger_comment = {
+            "databaseId": 53,
+            "author": {"login": "coderabbitai"},
+            "body": "A post-trigger bot comment.",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        with_issue_output = history_for([trigger, provider_summary, post_trigger_comment, edited_reply, checkpoint])
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_issue_output))
 
         mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
         missing_summary = [trigger, reply, checkpoint]
@@ -979,7 +1555,7 @@ class RuntimeTest(unittest.TestCase):
 
         wrong_duration = {
             **checkpoint,
-            "body": checkpoint["body"].replace("120s", "121s").replace("seconds: 120", "seconds: 121"),
+            "body": checkpoint["body"].replace("2m 00s", "2m 01s").replace("seconds: 120", "seconds: 121"),
         }
         wrong_duration_history = history_for([trigger, summary, reply, wrong_duration])
         self.assertFalse(
@@ -1039,6 +1615,275 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(len(held), 1)
         self.assertTrue(held[0]["held"])
         self.assertFalse(held[0].get("completed", False))
+
+    def test_terminal_ambiguous_hosted_history_exposes_only_verified_immutable_identity(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        response_at = "2026-09-23T00:03:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=HEAD,
+            reason="finished response has no head-attributed summary",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
+            payload = self._payload([trigger, response])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        held = [item for item in history if item.get("terminal_ambiguous") is True]
+        self.assertEqual(len(held), 1)
+        self.assertTrue(held[0]["held"])
+        self.assertEqual(held[0]["trigger_id"], 10)
+        self.assertEqual(held[0]["response_id"], 11)
+        self.assertEqual(held[0]["captured_head"], HEAD)
+        self.assertRegex(held[0]["fingerprint"], r"^[0-9a-f]{64}$")
+
+        state.response_id = None
+        state.response_created_at = None
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
+            payload = self._payload([trigger, response])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                unverified = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+        self.assertFalse(any(item.get("terminal_ambiguous") is True for item in unverified))
+
+    def test_active_hosted_observation_exposes_its_durable_anchor(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=11,
+            state="active",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="CodeRabbit acknowledged that the full review is active",
+        )
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertEqual(observation["anchor"], record["anchor"])
+        self.assertEqual(observation["trigger_id"], 10)
+        self.assertEqual(observation["response_id"], 11)
+
+    def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        response_at = "2026-09-23T00:03:00Z"
+        second_trigger_at = "2026-09-23T00:04:00Z"
+        second_response_at = "2026-09-23T00:05:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        second_trigger = {
+            **trigger,
+            "databaseId": 20,
+            "createdAt": second_trigger_at,
+            "updatedAt": second_trigger_at,
+            "url": "https://example.test/comments/20",
+        }
+        second_response = {
+            **response,
+            "databaseId": 21,
+            "createdAt": second_response_at,
+            "updatedAt": second_response_at,
+        }
+        payload = self._payload([trigger, response, second_trigger, second_response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=11,
+            response_created_at=response_at,
+            head_sha=HEAD,
+            reason="finished response has no head-attributed summary",
+        )
+        second_record = self._trigger_record(created=second_trigger_at)
+        second_record["trigger"]["id"] = 20
+        second_state = SimpleNamespace(
+            trigger_comment_id=20,
+            trigger_created_at=second_trigger_at,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=21,
+            response_created_at=second_response_at,
+            head_sha=HEAD,
+            reason="second finished response has no head-attributed summary",
+        )
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        expected_audit = {
+            "complete": True,
+            "active_reservations": ["ambiguous", "ambiguous"],
+            "unmatched_responses": [],
+            "ambiguous_responses": ["unattributed trigger response", "unattributed trigger response"],
+            "unresolved_findings": [],
+        }
+
+        record_by_path = {
+            Path("trigger-10.json"): record,
+            Path("trigger-20.json"): second_record,
+        }
+        state_by_trigger = {10: state, 20: second_state}
+
+        def run_review_stop(selected_audit=expected_audit, pins=()):
+            observer._payloads.clear()
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit) as audit,
+                patch.object(
+                    observer,
+                    "_complete_trigger_paths",
+                    return_value=[Path("trigger-10.json"), Path("trigger-20.json")],
+                ),
+                patch.object(hosted, "load_trigger_record", side_effect=lambda path, *_: record_by_path[Path(path)]),
+                patch.object(
+                    hosted,
+                    "trigger_state",
+                    side_effect=lambda _repo, _pr, _payload, selected_record, _path: state_by_trigger[
+                        selected_record["trigger"]["id"]
+                    ],
+                ),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                result = observer.review_stop_audit(
+                    42,
+                    anchor,
+                    pins,
+                )
+                expected_anchor = {
+                    "child_head": HEAD,
+                    "live_base_ref": "develop",
+                    "live_base_tip": BASE,
+                }
+                audit.assert_called_once_with(
+                    42,
+                    (),
+                    expected_anchor,
+                    allow_historical_unmatched=True,
+                )
+                return result
+
+        observed = run_review_stop()
+        ambiguous = observed["ambiguous_terminal_responses"]
+        self.assertEqual(len(ambiguous), 2)
+        self.assertEqual([(item["trigger_id"], item["response_id"]) for item in ambiguous], [(10, 11), (20, 21)])
+        self.assertTrue(observed["blockers"])
+
+        retained = run_review_stop(
+            pins=tuple(item["fingerprint"] for item in ambiguous),
+        )
+        self.assertEqual(retained["retained_ambiguous"], ambiguous)
+        self.assertEqual(retained["active_reservations"], [])
+        self.assertEqual(retained["ambiguous_responses"], [])
+        self.assertEqual(retained["blockers"], [])
+
+        with self.assertRaisesRegex(ControllerError, "does not identify one current immutable response"):
+            run_review_stop(pins=("0" * 64,))
+
+        additional_ambiguity = {
+            **expected_audit,
+            "active_reservations": ["ambiguous", "ambiguous", "ambiguous"],
+            "ambiguous_responses": [
+                "unattributed trigger response",
+                "unattributed trigger response",
+                "unattributed trigger response",
+            ],
+        }
+        with self.assertRaisesRegex(ControllerError, "cannot be isolated"):
+            run_review_stop(
+                additional_ambiguity,
+                pins=tuple(item["fingerprint"] for item in ambiguous),
+            )
 
     def test_archived_completed_hosted_response_uses_exact_uncheckpointed_observation_fingerprint(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
@@ -1298,8 +2143,9 @@ class RuntimeTest(unittest.TestCase):
             record_path.parent.mkdir(parents=True)
             record_path.write_text(json.dumps(self._trigger_record(created="2026-09-23T00:01:00Z")), encoding="utf-8")
             history = self._history(common, payload)
-        self.assertEqual([item["accepted"] for item in history], [1])
-        self.assertEqual([item["checkpoint"] for item in history], ["12"])
+        completed = [item for item in history if item.get("completed") is True]
+        self.assertEqual([item["accepted"] for item in completed], [1])
+        self.assertEqual([item["checkpoint"] for item in completed], ["12"])
 
     def test_legacy_posting_record_in_any_current_location_holds_runner(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -1743,7 +2589,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(pending[0]["held"])
             self.assertIn("older head", pending[0]["reason"])
 
-    def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
+    def test_hosted_findings_and_provider_skip_hold_hosted_but_not_cli(self) -> None:
         comments = [
             {
                 "databaseId": 20,
@@ -1771,8 +2617,9 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
-            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=101)
-            cli_history = self._history(Path(directory), payload, "cli", changed_files=101)
+            self._bind_trigger(Path(directory), payload, self._trigger_record())
+            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=100)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=100)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -1787,8 +2634,8 @@ class RuntimeTest(unittest.TestCase):
         )
         self.assertFalse(any(item.get("checkpoint", "").startswith("review-threads:") for item in cli_history))
         self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
-        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
-        self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
 
     def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
         old_head = "d" * 40
@@ -1824,20 +2671,32 @@ class RuntimeTest(unittest.TestCase):
             stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
             stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=100)
+            self._bind_trigger(Path(directory), stale_payload, self._trigger_record(old_head))
+            stale_history = self._history(Path(directory), stale_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            self._bind_trigger(Path(directory), stale_over_ceiling_payload, self._trigger_record(old_head))
             stale_over_ceiling_history = self._history(
-                Path(directory), stale_over_ceiling_payload, "cli", changed_files=101
+                Path(directory), stale_over_ceiling_payload, "hosted", changed_files=121
             )
             self.assertFalse(any(item.get("over_ceiling") for item in stale_over_ceiling_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            current_history = self._history(Path(directory), current_payload, "cli", changed_files=101)
+            current_record = self._trigger_record(HEAD)
+            self._bind_trigger(Path(directory), current_payload, current_record)
+            for changed_files in (100, 101):
+                cli_history = self._history(
+                    Path(directory), current_payload, "cli", changed_files=changed_files
+                )
+                self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
+            within_ceiling_hosted = self._history(Path(directory), current_payload, "hosted", changed_files=100)
+            self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_hosted))
+
+            current_history = self._history(Path(directory), current_payload, "hosted", changed_files=121)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
             later_completion = {
@@ -1851,8 +2710,43 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
+            self._bind_trigger(Path(directory), completed_payload, current_record)
+            completed_history = self._history(Path(directory), completed_payload, "hosted", changed_files=121)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
+
+    def test_provider_ceiling_skip_is_hosted_only_and_ignores_docstring_skips(self) -> None:
+        provider_skip = {
+            "databaseId": 40,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+                "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+                "<details><summary>⚠️ Action not completed</summary>\n\n"
+                "Review skipped: 121 files exceed the limit of 100.\n\n</details>"
+            ),
+            "createdAt": "2026-09-23T00:04:00Z",
+        }
+        docstring_skip = {
+            **provider_skip,
+            "databaseId": 41,
+            "body": "Docstring Coverage: 31 skipped files over the file limit.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            provider_payload = self._payload([provider_skip])
+            self._bind_trigger(Path(directory), provider_payload, self._trigger_record())
+            hosted_history = self._history(Path(directory), provider_payload, "hosted", changed_files=121)
+            cli_history = self._history(
+                Path(directory), provider_payload, "cli", changed_files=121
+            )
+            docstring_payload = self._payload([docstring_skip])
+            self._bind_trigger(Path(directory), docstring_payload, self._trigger_record())
+            docstring_history = self._history(
+                Path(directory), docstring_payload, "hosted", changed_files=121
+            )
+
+        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
+        self.assertFalse(any(item.get("over_ceiling") for item in docstring_history))
 
     def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:
         first = {
@@ -1995,6 +2889,172 @@ class RuntimeTest(unittest.TestCase):
             ):
                 review_cli._dispatch(args)
             self.assertEqual(len(store.load().summary_dispositions), 1)
+
+    def test_routed_summary_disposition_accepts_exact_prior_head_after_live_head_advances(self) -> None:
+        live_head = "e" * 40
+        review = {
+            "databaseId": 77,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Duplicate comments (1)"
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[review], head=live_head)
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            controller = SimpleNamespace(repository="owner/repo", store=store)
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "routed",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "77",
+                    "--kind",
+                    "duplicate",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "observation belongs to the Automation child PR",
+                    "--target-pr",
+                    "2879",
+                    "--route-finding",
+                    "automation-base-observation",
+                    "--route-observation",
+                    "WorkItem base observation belongs to Automation",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "recorded")
+            state = store.load()
+            self.assertEqual(state.summary_dispositions[0].head, HEAD)
+            self.assertEqual(state.summary_dispositions[0].decision, "routed")
+            self.assertEqual(state.routes[0].target_pr, 2879)
+            self.assertEqual(state.routes[0].source_review, "summary:review:77")
+            first_route_id = state.routes[0].route_id
+
+            review["body"] = review["body"].replace("Duplicate comments (1)", "Duplicate comments (2)")
+            args.count = 2
+            args.route_finding = ["automation-base-observation", "new-follow-up-finding"]
+            args.route_observation = [
+                "same source finding, with a later observation",
+                "separate finding in the updated bucket",
+            ]
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                repeated, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(repeated["status"], "recorded")
+            state = store.load()
+            self.assertEqual([item.count for item in state.summary_dispositions], [1, 2])
+            self.assertEqual(state.routes[0].route_id, first_route_id)
+            self.assertEqual(
+                state.routes[0].source_finding,
+                "duplicate:ref:automation-base-observation",
+            )
+            self.assertEqual(len(state.routes[0].observations), 2)
+            state_before_idempotent_repeat = store.load()
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_idempotent_repeat)
+
+            state_before_conflict = store.load()
+            args.route_finding = ["automation-base-observation", "replacement-finding"]
+            args.route_observation = [
+                "would replace the source observation",
+                "replacement route must not orphan the original",
+            ]
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "retain its exact route IDs"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_conflict)
+
+            args.target_pr = 2880
+            args.route_finding = ["automation-base-observation", "new-follow-up-finding"]
+            args.route_observation = [
+                "same source finding, with a later observation",
+                "separate finding in the updated bucket",
+            ]
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "explicitly retargeted"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load(), state_before_conflict)
+            args.target_pr = 2879
+
+            # A wrong summary identity or head remains non-attributable.
+            args.summary_id = 78
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
+            ):
+                review_cli._dispatch(args)
+            args.summary_id = 77
+            args.head = "f" * 40
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
+            ):
+                review_cli._dispatch(args)
+
+            # The old-head exception applies only to routing, not adjudication.
+            rejected_args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "rejected",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "77",
+                    "--kind",
+                    "duplicate",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "not a source-lane finding",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "require the live PR head"),
+            ):
+                review_cli._dispatch(rejected_args)
+            self.assertEqual(len(store.load().summary_dispositions), 2)
 
     def test_accepted_fixed_summary_disposition_uses_hyphenated_cli_choice(self) -> None:
         corrected_head = "d" * 40

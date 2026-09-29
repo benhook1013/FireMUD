@@ -72,6 +72,7 @@ class TelnetServerTest {
             readyProbe(),
             gatewayClient());
     server.start();
+    assertTrue(server.isTlsMaterialHealthy());
     server.stop();
     assertTrue(true); // no exception means success
   }
@@ -98,6 +99,7 @@ class TelnetServerTest {
     }
 
     server.start();
+    assertTrue(server.isTlsMaterialHealthy());
     assertTrue(server.isRunning());
   }
 
@@ -332,6 +334,7 @@ class TelnetServerTest {
             readyProbe(),
             gatewayClient());
     server.start();
+    assertTrue(server.isTlsMaterialHealthy());
 
     SSLContext clientContext = tlsClientContext();
     try (SSLSocket existingConnection = connectTls(server, clientContext)) {
@@ -355,6 +358,7 @@ class TelnetServerTest {
 
       switchProjectedGeneration(mount, "..2026_09_24_00_00_02", "/certs/dev-cert.pem", null);
       assertEquals("FAILED", invokeWatcherReload(server));
+      assertFalse(server.isTlsMaterialHealthy());
       assertEquals(Status.OUT_OF_SERVICE, TlsCertificateWatcher.health().getStatus());
       assertTrue(registry.counter("tcpproxy.tls.misconfig").count() >= 1.0);
 
@@ -367,6 +371,7 @@ class TelnetServerTest {
       switchProjectedGeneration(
           mount, "..2026_09_24_00_00_03", "/certs/dev-cert.pem", "/certs/dev-key.pem");
       assertEquals("SUCCEEDED", invokeWatcherReload(server));
+      assertTrue(server.isTlsMaterialHealthy());
       assertEquals(Status.UP, TlsCertificateWatcher.health().getStatus());
       try (SSLSocket recoveredConnection = connectTls(server, clientContext)) {
         assertEquals(

@@ -1,11 +1,14 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -39,10 +42,10 @@ public class PublishAttemptRepository {
       DSL.field(DSL.name("failure_code"), String.class);
   private static final Field<String> FAILURE_MESSAGE =
       DSL.field(DSL.name("failure_message"), String.class);
-  private static final Field<LocalDateTime> CREATED_AT =
-      DSL.field(DSL.name("created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> COMPLETED_AT =
-      DSL.field(DSL.name("completed_at"), LocalDateTime.class);
+  private static final Field<Timestamp> CREATED_AT =
+      DSL.field(DSL.name("created_at"), Timestamp.class);
+  private static final Field<Timestamp> COMPLETED_AT =
+      DSL.field(DSL.name("completed_at"), Timestamp.class);
 
   private final DSLContext dsl;
 
@@ -76,20 +79,20 @@ public class PublishAttemptRepository {
     if (attemptId == null || requestDigest == null || requestDigest.isBlank()) {
       return Optional.empty();
     }
+    Condition fullVersionAttemptIdentity =
+        ID.eq(attemptId)
+            .and(TENANT_ID.eq(tenantId))
+            .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
+            .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
+            .and(VERSION_ID.eq(versionId))
+            .and(VERSION_NUMBER.eq(versionNumber));
     dsl.update(PUBLISH_ATTEMPT_TABLE)
         .set(REQUEST_DIGEST, requestDigest)
-        .where(
-            ID.eq(attemptId)
-                .and(TENANT_ID.eq(tenantId))
-                .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
-                .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
-                .and(VERSION_ID.eq(versionId))
-                .and(VERSION_NUMBER.eq(versionNumber))
-                .and(REQUEST_DIGEST.isNull()))
+        .where(fullVersionAttemptIdentity.and(REQUEST_DIGEST.isNull()))
         .execute();
     return Optional.ofNullable(
         dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
-            .where(ID.eq(attemptId))
+            .where(fullVersionAttemptIdentity)
             .limit(1)
             .fetchOne(this::toEntity));
   }
@@ -111,8 +114,8 @@ public class PublishAttemptRepository {
               .set(REQUEST_DIGEST, attempt.getRequestDigest())
               .set(FAILURE_CODE, attempt.getFailureCode())
               .set(FAILURE_MESSAGE, attempt.getFailureMessage())
-              .set(CREATED_AT, createdAt)
-              .set(COMPLETED_AT, attempt.getCompletedAt())
+              .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
+              .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
               .returning()
               .fetchOne();
       return toEntity(record);
@@ -129,8 +132,8 @@ public class PublishAttemptRepository {
         .set(REQUEST_DIGEST, attempt.getRequestDigest())
         .set(FAILURE_CODE, attempt.getFailureCode())
         .set(FAILURE_MESSAGE, attempt.getFailureMessage())
-        .set(CREATED_AT, createdAt)
-        .set(COMPLETED_AT, attempt.getCompletedAt())
+        .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
+        .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
         .where(ID.eq(attempt.getId()))
         .execute();
     return findByPublishWorkflowId(attempt.getPublishWorkflowId()).orElseThrow();
@@ -156,8 +159,8 @@ public class PublishAttemptRepository {
     attempt.setRequestDigest(record.get(REQUEST_DIGEST));
     attempt.setFailureCode(record.get(FAILURE_CODE));
     attempt.setFailureMessage(record.get(FAILURE_MESSAGE));
-    attempt.setCreatedAt(record.get(CREATED_AT));
-    attempt.setCompletedAt(record.get(COMPLETED_AT));
+    attempt.setCreatedAt(JooqPersistenceSupport.toLocalDateTime(record.get(CREATED_AT)));
+    attempt.setCompletedAt(JooqPersistenceSupport.toLocalDateTime(record.get(COMPLETED_AT)));
     return attempt;
   }
 }

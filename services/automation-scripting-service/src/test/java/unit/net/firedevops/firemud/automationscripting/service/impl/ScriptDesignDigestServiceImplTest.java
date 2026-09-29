@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
@@ -27,6 +28,7 @@ class ScriptDesignDigestServiceImplTest {
   void setUp() {
     MockitoAnnotations.openMocks(this);
     service = new ScriptDesignDigestServiceImpl(repository, bindingRepository, new ObjectMapper());
+    when(repository.findScriptPatchBaseVersionId("1", "patch-1")).thenReturn(Optional.of(1L));
   }
 
   @Test
@@ -35,6 +37,7 @@ class ScriptDesignDigestServiceImplTest {
     one.setTenantId(1L);
     one.setName("alpha");
     one.setScriptVersion("patch-1");
+    one.setBaseVersionId(1L);
     one.setDefinition("return 1");
     when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
         .thenReturn(List.of(one));
@@ -43,11 +46,11 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of());
 
-    var digest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var digest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
 
     assertEquals("patch-1", digest.scopeValue());
     assertEquals("script-patch:patch-1", digest.appliedCommitId());
-    assertEquals(4, digest.digestSchemaVersion());
+    assertEquals(5, digest.digestSchemaVersion());
   }
 
   @Test
@@ -75,16 +78,73 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
-    assertEquals(4, digest.digestSchemaVersion());
+    assertEquals(5, digest.digestSchemaVersion());
   }
 
   @Test
   void getDraftDesignDigestForScriptPatchRejectsZeroTenantIdBeforeLookups() {
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("0", "patch-1"));
+        () -> service.getDraftDesignDigestForScriptPatch("0", 1L, "patch-1"));
 
     verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsRequestedBaseDifferentFromRetainedOwnerBase() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("1", 2L, "patch-1"));
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedWhenOwnerBaseIsUnknown() {
+    when(repository.findScriptPatchBaseVersionId("1", "patch-1")).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedForMixedBaseScriptRows() {
+    ScriptDefinition first = new ScriptDefinition();
+    first.setName("alpha");
+    first.setScriptVersion("patch-1");
+    first.setBaseVersionId(1L);
+    first.setDefinition("return 1");
+    ScriptDefinition second = new ScriptDefinition();
+    second.setName("beta");
+    second.setScriptVersion("patch-1");
+    second.setBaseVersionId(2L);
+    second.setDefinition("return 2");
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
+  }
+
+  @Test
+  void getDraftDesignDigestFailsClosedForMixedBaseBindingRows() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setBaseVersionId(1L);
+    script.setDefinition("return 1");
+    ScriptEventBinding binding = binding("binding-1");
+    binding.setBaseVersionId(2L);
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1"));
   }
 
   @Test
@@ -93,10 +153,12 @@ class ScriptDesignDigestServiceImplTest {
     script.setTenantId(1L);
     script.setName("alpha");
     script.setScriptVersion("patch-1");
+    script.setBaseVersionId(1L);
     script.setDefinition("return 1");
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setTenantId(1L);
     binding.setScriptPatchVersion("patch-1");
+    binding.setBaseVersionId(1L);
     binding.setEventType("onCommand");
     binding.setEventSchemaVersion("v1");
     binding.setScriptId("script-1");
@@ -112,7 +174,7 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(binding));
 
-    var defaultMapperDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var defaultMapperDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
     var sortedMapperService =
         new ScriptDesignDigestServiceImpl(
             repository,
@@ -121,11 +183,12 @@ class ScriptDesignDigestServiceImplTest {
                 .rebuild()
                 .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
                 .build());
-    var sortedMapperDigest = sortedMapperService.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var sortedMapperDigest =
+        sortedMapperService.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
 
     assertEquals(defaultMapperDigest.contentDigest(), sortedMapperDigest.contentDigest());
-    assertEquals(4, defaultMapperDigest.digestSchemaVersion());
-    assertEquals(4, sortedMapperDigest.digestSchemaVersion());
+    assertEquals(5, defaultMapperDigest.digestSchemaVersion());
+    assertEquals(5, sortedMapperDigest.digestSchemaVersion());
   }
 
   @Test
@@ -134,6 +197,7 @@ class ScriptDesignDigestServiceImplTest {
     script.setTenantId(1L);
     script.setName("alpha");
     script.setScriptVersion("patch-1");
+    script.setBaseVersionId(1L);
     script.setDefinition("return 1");
     ScriptEventBinding first = binding("binding-1");
     ScriptEventBinding second = binding("binding-2");
@@ -145,8 +209,8 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(first), List.of(second));
 
-    var firstDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
-    var secondDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var firstDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
+    var secondDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
 
     assertEquals(firstDigest.digestSchemaVersion(), secondDigest.digestSchemaVersion());
     org.junit.jupiter.api.Assertions.assertNotEquals(
@@ -156,13 +220,17 @@ class ScriptDesignDigestServiceImplTest {
   @Test
   void getDraftDesignDigestForScriptPatchNormalizesNullStringFields() {
     ScriptDefinition nullScript = new ScriptDefinition();
+    nullScript.setBaseVersionId(1L);
     ScriptDefinition emptyScript = new ScriptDefinition();
+    emptyScript.setBaseVersionId(1L);
     emptyScript.setName("");
     emptyScript.setScriptVersion("");
     emptyScript.setDefinition("");
     ScriptEventBinding nullBinding = new ScriptEventBinding();
+    nullBinding.setBaseVersionId(1L);
     nullBinding.setPriorityTag(null);
     ScriptEventBinding emptyBinding = new ScriptEventBinding();
+    emptyBinding.setBaseVersionId(1L);
     emptyBinding.setScriptPatchVersion("");
     emptyBinding.setEventType("");
     emptyBinding.setEventSchemaVersion("");
@@ -179,8 +247,8 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(nullBinding), List.of(emptyBinding));
 
-    var nullDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
-    var emptyDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var nullDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
+    var emptyDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
 
     assertEquals(emptyDigest.contentDigest(), nullDigest.contentDigest());
   }
@@ -212,6 +280,7 @@ class ScriptDesignDigestServiceImplTest {
     script.setTenantId(1L);
     script.setName("alpha");
     script.setScriptVersion("patch-1");
+    script.setBaseVersionId(1L);
     script.setDefinition("return 1");
     ScriptEventBinding first = binding("binding-1");
     ScriptEventBinding second = binding("binding-2");
@@ -223,8 +292,8 @@ class ScriptDesignDigestServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(first, second), List.of(second, first));
 
-    var orderedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
-    var reversedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var orderedDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
+    var reversedDigest = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
 
     assertEquals(orderedDigest.contentDigest(), reversedDigest.contentDigest());
   }
@@ -233,6 +302,7 @@ class ScriptDesignDigestServiceImplTest {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setTenantId(1L);
     binding.setScriptPatchVersion("patch-1");
+    binding.setBaseVersionId(1L);
     binding.setEventType("onCommand");
     binding.setEventSchemaVersion("v1");
     binding.setScriptId("script-1");
@@ -250,6 +320,6 @@ class ScriptDesignDigestServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getDraftDesignDigestForScriptPatch("1", "patch-2"));
+        () -> service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-2"));
   }
 }

@@ -133,7 +133,23 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
                 .orElseThrow()
                 .getId())
         .isEqualTo(first.id());
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
     assertThat(bindingIds(name)).containsExactly("binding-a", "binding-b");
+  }
+
+  @Test
+  void scriptPatchBaseBindingIsImmutableAcrossRetries() {
+    transactionTemplate.executeWithoutResult(
+        status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 1L));
+
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.executeWithoutResult(
+                    status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 2L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+    assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
   }
 
   @Test
@@ -170,8 +186,8 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
       start.countDown();
       UpdateOutcome firstOutcome = first.get(30, TimeUnit.SECONDS);
       UpdateOutcome secondOutcome = second.get(30, TimeUnit.SECONDS);
-      assertThat(firstOutcome.succeeded()).isTrue();
-      assertThat(secondOutcome.succeeded()).isTrue();
+      assertUpdateSucceeded(firstOutcome, "first concurrent update");
+      assertUpdateSucceeded(secondOutcome, "second concurrent update");
     } finally {
       start.countDown();
       executor.shutdownNow();
@@ -241,12 +257,18 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         throw new IllegalStateException("definition concurrency test did not start");
       }
       updateInTransaction(request);
-      return new UpdateOutcome(true);
+      return new UpdateOutcome(true, null);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("definition concurrency test interrupted", exception);
     } catch (RuntimeException exception) {
-      return new UpdateOutcome(false);
+      return new UpdateOutcome(false, exception);
+    }
+  }
+
+  private void assertUpdateSucceeded(UpdateOutcome outcome, String updateName) {
+    if (!outcome.succeeded()) {
+      throw new AssertionError(updateName + " failed", outcome.failure());
     }
   }
 
@@ -261,7 +283,7 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
 
   private static ScriptDefinitionDto request(
       Long id, String name, String definition, List<ScriptDefinitionDto.EventBindingDto> bindings) {
-    return new ScriptDefinitionDto(id, TENANT_ID, name, VERSION, definition, bindings);
+    return new ScriptDefinitionDto(id, TENANT_ID, name, VERSION, 1L, definition, bindings);
   }
 
   private static ScriptDefinitionDto.EventBindingDto binding(
@@ -283,7 +305,7 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
     return dataSource;
   }
 
-  private record UpdateOutcome(boolean succeeded) {}
+  private record UpdateOutcome(boolean succeeded, RuntimeException failure) {}
 
   private static final class UpdateFailedException extends RuntimeException {
     private UpdateFailedException(SagaException cause) {

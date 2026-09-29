@@ -109,6 +109,7 @@ class ScriptWorkItemRepositoryTest {
     row.setFailureGeneration(3L);
     row.setAuthorityUnavailableSince(LocalDateTime.parse("2026-08-01T00:00:02"));
     row.setAuthorityUnavailableCount(2);
+    row.setAuthorityUnavailableRetryCount(2);
     row.setNextEligibleAt(LocalDateTime.parse("2026-08-01T00:00:03"));
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
@@ -143,6 +144,7 @@ class ScriptWorkItemRepositoryTest {
     item.setFailureGeneration(3L);
     item.setAuthorityUnavailableSince(Instant.parse("2026-08-01T00:00:02Z"));
     item.setAuthorityUnavailableCount(2);
+    item.setAuthorityUnavailableRetryCount(2);
     item.setNextEligibleAt(Instant.parse("2026-08-01T00:00:03Z"));
 
     ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
@@ -153,6 +155,7 @@ class ScriptWorkItemRepositoryTest {
     assertThat(saved.getAuthorityUnavailableSince())
         .isEqualTo(Instant.parse("2026-08-01T00:00:02Z"));
     assertThat(saved.getAuthorityUnavailableCount()).isEqualTo(2);
+    assertThat(saved.getAuthorityUnavailableRetryCount()).isEqualTo(2);
     assertThat(saved.getNextEligibleAt()).isEqualTo(Instant.parse("2026-08-01T00:00:03Z"));
     assertThat(insertSql)
         .hasValueSatisfying(
@@ -164,7 +167,59 @@ class ScriptWorkItemRepositoryTest {
                         "failure_generation",
                         "authority_unavailable_since",
                         "authority_unavailable_count",
+                        "authority_unavailable_retry_count",
                         "next_eligible_at"));
+  }
+
+  @Test
+  void broadClaimQueryFiltersByNextEligibilityTime() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByStatusOrderByCreatedAtAscIdAsc(
+        "PENDING_EVALUATION", Instant.parse("2026-08-01T00:00:00Z"), PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("status", "next_eligible_at", "<=", "order by", "created_at"));
+  }
+
+  @Test
+  void queuePointerClaimQueryFiltersByNextEligibilityTime() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        List.of(99L, 100L),
+        "PENDING_EVALUATION",
+        Instant.parse("2026-08-01T00:00:00Z"),
+        PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("\"id\" in", "status", "next_eligible_at", "<=", "order by"));
   }
 
   @Test
@@ -272,6 +327,19 @@ class ScriptWorkItemRepositoryTest {
                             assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
                                 .doesNotContain("cancel_reason")));
     assertThat(bindings.get()).contains("PENDING_EVALUATION", "DEAD_LETTERED", 4, 3L);
+  }
+
+  @Test
+  void insertRejectsPluginLifecycleFenceWithoutPluginIdentity() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .withMessage("plugin lifecycle evidence requires plugin identity");
   }
 
   @Test
@@ -739,6 +807,8 @@ class ScriptWorkItemRepositoryTest {
     record.setScriptPinEpoch(pinEpoch);
     record.setPluginActivationEpoch(0L);
     record.setLifecycleRevision(0L);
+    record.setAuthorityUnavailableRetryCount(0);
+    record.setNextEligibleAt(LocalDateTime.parse("2026-08-01T00:00:00"));
     record.setCreatedAt(LocalDateTime.parse("2026-08-01T00:00:00"));
     record.setUpdatedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
     record.setRowVersion(rowVersion);

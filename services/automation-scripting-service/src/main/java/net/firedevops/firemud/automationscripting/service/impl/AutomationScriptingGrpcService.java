@@ -69,31 +69,7 @@ public class AutomationScriptingGrpcService
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
-  private PublicationReadGuard publicationReadGuard;
-
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
-  public AutomationScriptingGrpcService(
-      PingService pingService,
-      ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
-      ScriptVersionService scriptVersionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService,
-      ScriptEventIngressService scriptEventIngressService,
-      ScriptWorkItemRepository workItemRepository,
-      NpcFormationService formationService,
-      MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.scriptService = scriptService;
-    this.scriptDesignDigestService = scriptDesignDigestService;
-    this.scriptVersionService = scriptVersionService;
-    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
-    this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
-    this.workItemRepository = Objects.requireNonNull(workItemRepository);
-    this.formationService = Objects.requireNonNull(formationService);
-    this.meterRegistry = meterRegistry;
-  }
+  private final PublicationReadGuard publicationReadGuard;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -110,44 +86,16 @@ public class AutomationScriptingGrpcService
       NpcFormationService formationService,
       MeterRegistry meterRegistry,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        scriptScheduleInstanceService,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
-  }
-
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
-  public AutomationScriptingGrpcService(
-      PingService pingService,
-      ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
-      ScriptVersionService scriptVersionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService,
-      ScriptEventIngressService scriptEventIngressService,
-      ScriptWorkItemRepository workItemRepository,
-      NpcFormationService formationService,
-      MeterRegistry meterRegistry,
-      PublicationReadGuard publicationReadGuard) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        scriptScheduleInstanceService,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
-    this.publicationReadGuard = publicationReadGuard;
+    this.pingService = pingService;
+    this.scriptService = scriptService;
+    this.scriptDesignDigestService = scriptDesignDigestService;
+    this.scriptVersionService = scriptVersionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
+    this.workItemRepository = Objects.requireNonNull(workItemRepository);
+    this.formationService = Objects.requireNonNull(formationService);
+    this.meterRegistry = meterRegistry;
+    this.publicationReadGuard = PublicationReadGuard.configured(workloadNamespace);
   }
 
   @Override
@@ -377,6 +325,7 @@ public class AutomationScriptingGrpcService
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
               request.getVersion(),
+              request.getBaseVersionId(),
               request.getDefinition(),
               request.getEventBindingsList().stream()
                   .map(
@@ -475,10 +424,19 @@ public class AutomationScriptingGrpcService
   private static PublicationDigestRequestBinding publicationBinding(
       GetDraftDesignDigestRequest request) {
     return switch (request.getScopeCase()) {
-      case VERSION_ID -> fullPublicationBinding(request);
-      case SCRIPT_PATCH_VERSION ->
-          PublicationDigestRequestBinding.patch(
+      case VERSION_ID ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
               request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+              request.getTenantId(),
+              request.getVersionId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getPublishRequestId());
@@ -492,26 +450,6 @@ public class AutomationScriptingGrpcService
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
-  }
-
-  private static PublicationDigestRequestBinding fullPublicationBinding(
-      GetDraftDesignDigestRequest request) {
-    if (!request.getBaseVersionId().isEmpty()) {
-      throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-    }
-    return PublicationDigestRequestBinding.full(
-        request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
   }
 
   @Override
@@ -559,7 +497,10 @@ public class AutomationScriptingGrpcService
         return;
       }
       scriptVersionService.notifyUpdate(
-          request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+          request.getTenantId(),
+          request.getBaseVersionId(),
+          request.getScriptPatchVersion(),
+          request.getAffectedScriptsList());
       response.setSuccess(true);
     } catch (IllegalArgumentException ex) {
       response

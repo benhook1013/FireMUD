@@ -12,10 +12,12 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
 import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SelectFieldOrAsterisk;
+import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
@@ -26,6 +28,14 @@ import org.springframework.stereotype.Repository;
 public class ScriptDefinitionRepository {
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
+  private static final Table<org.jooq.Record> SCRIPT_PATCH_BASE_BINDINGS =
+      DSL.table(DSL.name("script_patch_base_bindings"));
+  private static final Field<String> PATCH_BASE_TENANT_ID =
+      DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<String> PATCH_BASE_VERSION =
+      DSL.field(DSL.name("script_patch_version"), String.class);
+  private static final Field<Long> PATCH_BASE_VERSION_ID =
+      DSL.field(DSL.name("base_version_id"), Long.class);
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
@@ -74,6 +84,52 @@ public class ScriptDefinitionRepository {
         .fetch(this::toEntity);
   }
 
+  public Optional<Long> findScriptPatchBaseVersionId(String tenantId, String scriptPatchVersion) {
+    return dsl.select(PATCH_BASE_VERSION_ID)
+        .from(SCRIPT_PATCH_BASE_BINDINGS)
+        .where(PATCH_BASE_TENANT_ID.eq(tenantId).and(PATCH_BASE_VERSION.eq(scriptPatchVersion)))
+        .fetchOptional(PATCH_BASE_VERSION_ID);
+  }
+
+  /**
+   * Binds one authored script-patch identity to its exact base. A retry is accepted only when the
+   * owner-retained value is identical; this row is written with the script transaction.
+   */
+  public void bindScriptPatchBaseVersionId(
+      String tenantId, String scriptPatchVersion, long baseVersionId) {
+    if (baseVersionId <= 0L) {
+      throw new IllegalArgumentException("base_version_id must be positive");
+    }
+    dsl.insertInto(SCRIPT_PATCH_BASE_BINDINGS)
+        .columns(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION, PATCH_BASE_VERSION_ID)
+        .values(tenantId, scriptPatchVersion, baseVersionId)
+        .onConflict(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION)
+        .doNothing()
+        .execute();
+    Long retainedBaseVersionId =
+        findScriptPatchBaseVersionId(tenantId, scriptPatchVersion).orElse(null);
+    if (retainedBaseVersionId == null) {
+      throw new IllegalStateException("script_patch_base_binding_unavailable");
+    }
+    if (retainedBaseVersionId != baseVersionId) {
+      throw new IllegalArgumentException("script_patch_base_version_conflict");
+    }
+  }
+
+  public void requireExistingScriptPatchRowsMatchBase(
+      String tenantId, String scriptPatchVersion, long baseVersionId) {
+    List<ScriptDefinition> definitions =
+        findByTenantIdAndScriptVersionOrderByNameAsc(
+            RequestIdValidation.requirePositiveLong(tenantId, "tenantId"), scriptPatchVersion);
+    if (definitions.stream()
+        .anyMatch(
+            definition ->
+                definition.getBaseVersionId() == null
+                    || definition.getBaseVersionId() != baseVersionId)) {
+      throw new IllegalArgumentException("script_patch_base_version_conflict");
+    }
+  }
+
   public List<ScriptDefinition> findByTenantIdOrderByNameAscScriptVersionAsc(Long tenantId) {
     return dsl.selectFrom(SCRIPTS)
         .where(SCRIPTS.TENANT_ID.eq(tenantId))
@@ -110,6 +166,7 @@ public class ScriptDefinitionRepository {
                     .and(SCRIPTS.ROW_VERSION.eq(entity.getRowVersion()))
                     .and(SCRIPTS.TENANT_ID.eq(entity.getTenantId()))
                     .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
+                    .and(SCRIPTS.BASE_VERSION_ID.eq(entity.getBaseVersionId()))
                     .and(SCRIPTS.NAME.eq(entity.getName())))
             .execute();
     if (updated != 1) {
@@ -142,31 +199,41 @@ public class ScriptDefinitionRepository {
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPTS.fields());
     returningFields.add(INSERTED_ROW);
-    return dsl.insertInto(SCRIPTS)
-        .set(record)
-        .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
-        .doUpdate()
-        .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
-        .set(
-            SCRIPTS.ROW_VERSION,
-            DSL.when(
-                    SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
-                    SCRIPTS.ROW_VERSION.add(1))
-                .otherwise(SCRIPTS.ROW_VERSION))
-        .returningResult(returningFields)
-        .fetchOptional(
-            returned -> {
-              ScriptDefinition definition = toEntity(returned);
-              if (!sameIdentity(definition, entity)) {
-                throw new IllegalStateException(
-                    "script definition identity upsert returned an unexpected row");
-              }
-              return new SaveResult(definition, Boolean.TRUE.equals(returned.get(INSERTED_ROW)));
-            })
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "script definition identity upsert did not return a row"));
+    Optional<SaveResult> saved =
+        dsl.insertInto(SCRIPTS)
+            .set(record)
+            .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
+            .doUpdate()
+            .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
+            .set(
+                SCRIPTS.ROW_VERSION,
+                DSL.when(
+                        SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
+                        SCRIPTS.ROW_VERSION.add(1))
+                    .otherwise(SCRIPTS.ROW_VERSION))
+            .where(SCRIPTS.BASE_VERSION_ID.eq(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
+            .returningResult(returningFields)
+            .fetchOptional(
+                returned -> {
+                  ScriptDefinition definition = toEntity(returned);
+                  if (!sameIdentity(definition, entity)) {
+                    throw new IllegalStateException(
+                        "script definition identity upsert returned an unexpected row");
+                  }
+                  return new SaveResult(
+                      definition, Boolean.TRUE.equals(returned.get(INSERTED_ROW)));
+                });
+    if (saved.isPresent()) {
+      return saved.get();
+    }
+    ScriptDefinition stableIdentityRow =
+        findByTenantIdAndScriptVersionAndName(
+                entity.getTenantId(), entity.getScriptVersion(), entity.getName())
+            .orElse(null);
+    if (stableIdentityRow != null) {
+      throw identityConflict(stableIdentityRow, entity);
+    }
+    throw new IllegalStateException("script definition identity upsert did not return a row");
   }
 
   public List<ScriptDefinition> saveAll(Collection<ScriptDefinition> entities) {
@@ -193,6 +260,7 @@ public class ScriptDefinitionRepository {
   private static boolean sameIdentity(ScriptDefinition left, ScriptDefinition right) {
     return java.util.Objects.equals(left.getTenantId(), right.getTenantId())
         && java.util.Objects.equals(left.getScriptVersion(), right.getScriptVersion())
+        && java.util.Objects.equals(left.getBaseVersionId(), right.getBaseVersionId())
         && java.util.Objects.equals(left.getName(), right.getName());
   }
 
@@ -205,6 +273,8 @@ public class ScriptDefinitionRepository {
             + existing.getTenantId()
             + ", version="
             + existing.getScriptVersion()
+            + ", baseVersionId="
+            + existing.getBaseVersionId()
             + ", name="
             + existing.getName()
             + "), requested=(tenantId="
@@ -220,6 +290,7 @@ public class ScriptDefinitionRepository {
     record.setTenantId(entity.getTenantId());
     record.setName(entity.getName());
     record.setVersion(entity.getScriptVersion());
+    record.setBaseVersionId(entity.getBaseVersionId());
     record.setDefinition(entity.getDefinition());
     record.setRowVersion(entity.getRowVersion());
   }
@@ -230,6 +301,7 @@ public class ScriptDefinitionRepository {
     entity.setTenantId(record.get(SCRIPTS.TENANT_ID));
     entity.setName(record.get(SCRIPTS.NAME));
     entity.setScriptVersion(record.get(SCRIPTS.VERSION));
+    entity.setBaseVersionId(record.get(SCRIPTS.BASE_VERSION_ID));
     entity.setDefinition(record.get(SCRIPTS.DEFINITION));
     Integer rowVersion = record.get(SCRIPTS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);

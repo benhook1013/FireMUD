@@ -27,7 +27,7 @@ if [[ "${1:-}" == "--workload" ]]; then
     exit 1
   }
   case "$workload" in
-    account-service|game-session-service|game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
+    account-service|game-session-service|social-groups-service|game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
       ;;
     *)
       echo "unsupported gRPC workload identity: $workload" >&2
@@ -87,7 +87,10 @@ else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
-if [ -f "$CERT_DIR/dev-cert.pem" ] && [ -f "$CERT_DIR/dev-key.pem" ] && [ -f "$CERT_DIR/dev-ca.pem" ]; then
+if [ -f "$CERT_DIR/ca.crt" ] && [ -f "$CERT_DIR/ca.key" ] \
+  && [ -f "$CERT_DIR/client.crt" ] && [ -f "$CERT_DIR/client.key" ] \
+  && [ -f "$CERT_DIR/server.crt" ] && [ -f "$CERT_DIR/server.key" ] \
+  && [ -f "$CERT_DIR/dev-cert.pem" ] && [ -f "$CERT_DIR/dev-key.pem" ] && [ -f "$CERT_DIR/dev-ca.pem" ]; then
   echo "Dev certificates already exist in $CERT_DIR"
   exit 0
 fi
@@ -152,9 +155,11 @@ rm -f "$CERT_DIR"/*.csr "$CERT_DIR"/*.srl
 rm -f "$CERT_DIR/dev-cert.cnf"
 
 # Containers run as a non-root application user in CI and local Docker.
-# Make the generated development certificates world-readable so bind mounts
-# remain readable inside the container regardless of host UID/GID.
+# Keep the CA private key host-only. Runtime containers use the CA certificate
+# and leaf keys from the local-runtime projection prepared by ensure-dev-certs.
+# The shared client/server keys remain readable for non-root local containers.
 chmod 755 "$CERT_DIR"
-chmod 644 "$CERT_DIR"/*.crt "$CERT_DIR"/*.key "$CERT_DIR"/*.pem
+chmod 644 "$CERT_DIR"/*.crt "$CERT_DIR"/client.key "$CERT_DIR"/server.key "$CERT_DIR"/*.pem
+chmod 600 "$CERT_DIR/ca.key"
 
 echo "Certificates generated in $(cd "$CERT_DIR" && pwd)"

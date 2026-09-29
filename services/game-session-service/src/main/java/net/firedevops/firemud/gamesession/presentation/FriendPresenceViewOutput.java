@@ -28,6 +28,5 @@ public record FriendPresenceViewOutput(
       Long pointerVersion,
       String activityState,
       Long lastSeenAtEpochMs,
-      String recentDisposition,
       String visibilityPolicy) {}
 }

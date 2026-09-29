@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -165,12 +166,16 @@ class SessionResumptionFlowTest {
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(77L, 22L, "1"),
-                        invocation.getArgument(0)));
+            invocation -> {
+              var response =
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                          77L, 22L, "1")
+                      .toBuilder()
+                      .setEvaluatedAt(Instant.now().toString())
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(response, invocation.getArgument(0));
+            });
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -191,7 +196,7 @@ class SessionResumptionFlowTest {
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(entityManagementClient.listCharactersByAccount(
             Mockito.anyString(),
@@ -224,7 +229,6 @@ class SessionResumptionFlowTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService(),
             pointerAuthorityService,
@@ -455,13 +459,26 @@ class SessionResumptionFlowTest {
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .incomplete(
-                                77L, 22L, true, "ACTIVE", false, "2", "2026-03-30T00:01:00Z"),
-                        invocation.getArgument(0)));
+            invocation -> {
+              var response =
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                      77L, 22L, "2");
+              var deniedResponse =
+                  response.toBuilder()
+                      .setGameplayAdmissionAllowed(false)
+                      .setMembershipAuthorityGeneration("2")
+                      .setMembershipBaseline(
+                          response.getMembershipBaseline().toBuilder()
+                              .setMembershipAuthorityGeneration("2"))
+                      .setAuthorityTuple(
+                          response.getAuthorityTuple().toBuilder()
+                              .putMembershipAuthorityGeneration(
+                                  "00000000-0000-0000-0000-000000000022", "2"))
+                      .setEvaluatedAt(Instant.now().toString())
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(deniedResponse, invocation.getArgument(0));
+            });
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());

@@ -186,8 +186,55 @@ class FriendsCommandHandlerTest {
               assertThat(entry.displayName()).isEqualTo("Friend #77");
               assertThat(entry.lastSeenAtEpochMs())
                   .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
-              assertThat(entry.recentDisposition()).isEqualTo("LOGOUT");
             });
+    assertThat(
+            new TextPlayerOutputRenderer(
+                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
+                .render(result.outputs().getFirst()))
+        .contains("last seen 2026-04-11T06:15:30Z")
+        .doesNotContain("logged out", "replaced session", "connection lost", "LOGOUT");
+  }
+
+  @Test
+  void friendsOnlyPresenceDoesNotExposeDisconnectDispositionInText() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(1L, 41L))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .addFriends(
+                    FriendRosterEntry.newBuilder()
+                        .setFriendAccountId("77")
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder()
+                                .setFriendAccountId("77")
+                                .setOnline(false)
+                                .setLastSeenAtMs(
+                                    Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                                .setRecentDisposition(
+                                    FriendRecentPresenceDisposition
+                                        .FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER)
+                                .setVisibilityPolicy(
+                                    FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
+                                .build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, java.util.List.of(), "FRIENDS"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(
+            new TextPlayerOutputRenderer(
+                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
+                .render(result.outputs().getFirst()))
+        .contains("last seen 2026-04-11T06:15:30Z")
+        .doesNotContain("logged out", "replaced session", "connection lost", "TAKEOVER");
   }
 
   @Test
@@ -412,7 +459,6 @@ class FriendsCommandHandlerTest {
     assertThat(entry.pointerVersion()).isNull();
     assertThat(entry.activityState()).isNull();
     assertThat(entry.lastSeenAtEpochMs()).isNull();
-    assertThat(entry.recentDisposition()).isNull();
     assertThat(entry.visibilityPolicy()).isNull();
     assertThat(
             new TextPlayerOutputRenderer(

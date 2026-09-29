@@ -80,8 +80,11 @@ def _check_checkpoint(item: Any, index: int) -> dict[str, Any]:
     _timestamp(item["created_at"], f"checkpoint {index} created_at")
     raw = _nonnegative(item["raw_found"], f"checkpoint {index} raw_found")
     accepted = _nonnegative(item["accepted"], f"checkpoint {index} accepted")
-    if accepted > raw:
-        raise StatusError(f"checkpoint {index} accepted exceeds raw_found")
+    routed = item.get("routed")
+    if routed is not None:
+        routed = _nonnegative(routed, f"checkpoint {index} routed")
+    if accepted + (routed or 0) > raw:
+        raise StatusError(f"checkpoint {index} accepted plus routed exceeds raw_found")
     if item["comment_id"] is not None and (_nonnegative(item["comment_id"], f"checkpoint {index} comment_id") == 0):
         raise StatusError(f"checkpoint {index} comment_id must be positive")
     if item["reviewed_sha"] is not None:
@@ -538,13 +541,21 @@ def _loc_status(pr: Mapping[str, Any]) -> dict[str, Any]:
 
 def _counts(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     by_type: dict[str, dict[str, Any]] = {
-        kind: {"count": 0, "raw_found": 0, "accepted": 0} for kind in ("Hosted", "CLI")
+        kind: {"count": 0, "raw_found": 0, "accepted": 0, "routed": 0, "routed_complete": True}
+        for kind in ("Hosted", "CLI")
     }
     for item in checkpoints:
         bucket = by_type[item["type"]]
         bucket["count"] += 1
         bucket["raw_found"] += item["raw_found"]
         bucket["accepted"] += item["accepted"]
+        if item.get("routed") is None:
+            bucket["routed_complete"] = False
+        else:
+            bucket["routed"] += item["routed"]
+    for bucket in by_type.values():
+        if not bucket["routed_complete"]:
+            bucket["routed"] = None
     cli_streak = 0
     since = None
     last_accepted = None
@@ -1226,17 +1237,30 @@ def emit_text(report: Mapping[str, Any]) -> str:
     ) or "none"
     pending_names = ", ".join(item["name"] for item in report["ci"]["pending"]) or "none"
     failed_names = ", ".join(item["name"] for item in report["ci"]["failed"]) or "none"
+    finding_counts = report["checkpoint_counts"]["by_type"]
+    def count_triplet(kind: str) -> str:
+        value = finding_counts[kind]
+        routed = value["routed"] if value["routed"] is not None else "unknown"
+        return f"{value['raw_found']}/{value['accepted']}/{routed}"
+
     lines = [
         f"PR #{report['pr_number']} — {pr['title']}",
         f"head/base: {pr['headRefName']} {pr['headRefOid'][:12]} -> {pr['baseRefName']} {pr['baseRefOid'][:12]} · {pr['changedFiles']} files",
         f"state: draft={pr['isDraft']} · mergeable={pr['mergeable']} · mergeStateStatus={pr['mergeStateStatus']}",
         f"threads: current={report['threads']['current']} · outdated={report['threads']['outdated']} · total={report['threads']['total']}",
+        f"routes: incoming-open={len(report.get('incoming_routes', []))} · source-history={len(report.get('routes_out', []))}",
         f"review: decision={report['review_decision']['status']} · required={required.get('status')} ({required_contexts})",
+        f"findings found/accepted/routed: Hosted {count_triplet('Hosted')} · CLI {count_triplet('CLI')}",
         f"CI: aggregate={report['ci']['aggregate']['state']} · pending={len(report['ci']['pending'])} · failed={len(report['ci']['failed'])} · optional_failed={len(report['ci']['optional']['failed'])} · observed={report['ci']['observed']}",
         f"pending checks: {pending_names}",
         f"failed checks: {failed_names}",
         f"verdict: {report['verdict']}",
     ]
+    for route in report.get("incoming_routes", []):
+        source = f"PR #{route['source_pr']} {route['source_channel']} {route['source_review']} finding {route['source_finding']}"
+        observations = route.get("observations") or []
+        observation = observations[-1] if observations else ""
+        lines.append(f"incoming route: {route['route_id']} · {source} · {observation}")
     for reason in report["reasons"]:
         lines.append(f"reason: {reason}")
     return "\n".join(lines)

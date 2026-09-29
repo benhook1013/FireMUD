@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.NpcRepository;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 
@@ -64,7 +65,9 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                       Map.entry("id", item.getId()),
                                       Map.entry("name", item.getName()),
                                       Map.entry("description", value(item.getDescription())),
-                                      Map.entry("equipmentSlot", value(item.getEquipmentSlot())),
+                                      Map.entry(
+                                          "equipmentSlot",
+                                          normalizeOptionalKey(item.getEquipmentSlot())),
                                       Map.entry(
                                           "equipmentSlotGroupKey",
                                           normalizeOptionalKey(item.getEquipmentSlotGroupKey())),
@@ -76,7 +79,8 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                       Map.entry(
                                           "stackVariantKey", value(item.getStackVariantKey())),
                                       Map.entry(
-                                          "effectPayloadJson", value(item.getEffectPayloadJson()))))
+                                          "effectPayloadJson",
+                                          canonicalizeOptionalJson(item.getEffectPayloadJson()))))
                           .toList(),
                       "npcs",
                       npcRepository
@@ -137,6 +141,34 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
 
   private String normalizeOptionalKey(String value) {
     return value == null || value.isBlank() ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private String canonicalizeOptionalJson(String value) {
+    if (value == null || value.isBlank()) {
+      return "";
+    }
+    try {
+      return objectMapper.writeValueAsString(canonicalizeJsonNode(objectMapper.readTree(value)));
+    } catch (Exception ex) {
+      throw new IllegalStateException("effectPayloadJson is not valid JSON", ex);
+    }
+  }
+
+  private JsonNode canonicalizeJsonNode(JsonNode node) {
+    if (node == null || node.isNull() || node.isValueNode()) {
+      return node;
+    }
+    if (node.isObject()) {
+      var canonicalObject = objectMapper.createObjectNode();
+      node.properties().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .forEach(
+              entry -> canonicalObject.set(entry.getKey(), canonicalizeJsonNode(entry.getValue())));
+      return canonicalObject;
+    }
+    var canonicalArray = objectMapper.createArrayNode();
+    node.valueStream().map(this::canonicalizeJsonNode).forEach(canonicalArray::add);
+    return canonicalArray;
   }
 
   private String sha256(String value) {

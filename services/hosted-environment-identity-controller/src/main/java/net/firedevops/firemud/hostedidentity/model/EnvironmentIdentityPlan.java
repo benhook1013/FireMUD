@@ -2,6 +2,9 @@ package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 
 public record EnvironmentIdentityPlan(
@@ -35,6 +38,23 @@ public record EnvironmentIdentityPlan(
     grpcWorkloadIdentityCertificateNames = Map.copyOf(grpcWorkloadIdentityCertificateNames);
     grpcWorkloadIdentitySecretNames = Map.copyOf(grpcWorkloadIdentitySecretNames);
     grpcWorkloadIdentitySourceSecretNames = Map.copyOf(grpcWorkloadIdentitySourceSecretNames);
+
+    Set<String> expectedGrpcWorkloadIdentityRoles =
+        Stream.concat(
+                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                    .map(HostedIdentityContract::grpcPublicationRole),
+                Stream.of(
+                    HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+                    HostedIdentityContract.GRPC_GAME_SESSION_ROLE))
+            .collect(Collectors.toUnmodifiableSet());
+    if (!grpcWorkloadIdentityCertificateNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
+        || !grpcWorkloadIdentitySecretNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
+        || !grpcWorkloadIdentitySourceSecretNames
+            .keySet()
+            .equals(expectedGrpcWorkloadIdentityRoles)) {
+      throw new IllegalArgumentException(
+          "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
+    }
   }
 
   public String secretName(String role) {
@@ -54,6 +74,18 @@ public record EnvironmentIdentityPlan(
         throw new IllegalArgumentException("unsupported identity role: " + role);
       }
     };
+  }
+
+  public String sourceSecretName(String role) {
+    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
+      String sourceSecretName = grpcWorkloadIdentitySourceSecretNames.get(role);
+      if (sourceSecretName == null) {
+        throw new IllegalArgumentException(
+            "missing source Secret for gRPC workload identity role: " + role);
+      }
+      return sourceSecretName;
+    }
+    return secretName(role);
   }
 
   public String grpcPublicationCertificateName(String workload) {

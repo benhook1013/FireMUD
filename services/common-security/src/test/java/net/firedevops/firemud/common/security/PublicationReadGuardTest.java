@@ -177,6 +177,14 @@ class PublicationReadGuardTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void configuredFactoryFailsClosedForMissingOrMalformedNamespace() {
+    assertThat(PublicationReadGuard.configured(null)).isNull();
+    assertThat(PublicationReadGuard.configured(" ")).isNull();
+    assertThat(PublicationReadGuard.configured("bad/ns")).isNull();
+    assertThat(PublicationReadGuard.configured(TRUSTED_NAMESPACE)).isNotNull();
+  }
+
   private static void withPeer(Runnable action) {
     withPeer(GAME_DESIGN_PEER, action);
   }

@@ -83,6 +83,10 @@ grep -Fq 'one corrected-state zero-useful' design/developer-workflows/pr-lifecyc
   || fail 'lifecycle guidance does not define Hosted taper'
 grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define CLI taper'
+grep -Fq 'CLI rounds may span reviewed heads within one coherent PR lineage' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define cross-head CLI taper'
+grep -Fq 'completion persists on a proven descendant live head' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not preserve completed CLI taper on proven descendants'
 grep -Fq -- '--allow-unreconciled' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define provisional CLI semantics'
 
@@ -100,5 +104,12 @@ awk '
   END { exit !found }
 ' dev-tools/pr_review/cli.py \
   || fail 'public CLI does not register the allocation decision subcommand'
+allocation_help="$(python3 dev-tools/pr-review decide allocation --help)"
+grep -Eq -- '--checkpoint' <<<"$allocation_help" \
+  || fail 'allocation help does not expose an explicit review baseline checkpoint'
+grep -Eq -- '--max-additional-completed' <<<"$allocation_help" \
+  || fail 'allocation help does not expose a bounded completed-review cap'
+grep -Fq 'cap exhausted; findings pending' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not explain pending work at cap exhaustion'
 
 printf 'pr-review controller contract: passed\n'

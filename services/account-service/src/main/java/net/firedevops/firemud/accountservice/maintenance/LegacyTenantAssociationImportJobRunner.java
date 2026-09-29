@@ -9,10 +9,12 @@ import net.firedevops.firemud.accountservice.service.impl.LegacyTenantAssociatio
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import org.springframework.stereotype.Component;
 
 /** Opt-in Account owner import; ordinary service startup performs no legacy mapping. */
@@ -27,15 +29,23 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
 
   private final Environment environment;
   private final LegacyTenantAssociationImportService importService;
+  private final ObjectProvider<ScheduledAnnotationBeanPostProcessor> schedulingPostProcessor;
 
   public LegacyTenantAssociationImportJobRunner(
-      Environment environment, LegacyTenantAssociationImportService importService) {
+      Environment environment,
+      LegacyTenantAssociationImportService importService,
+      ObjectProvider<ScheduledAnnotationBeanPostProcessor> schedulingPostProcessor) {
     this.environment = environment;
     this.importService = importService;
+    this.schedulingPostProcessor = schedulingPostProcessor;
   }
 
   @Override
   public void run(ApplicationArguments args) throws Exception {
+    if (schedulingPostProcessor.getIfAvailable() != null) {
+      throw new IllegalStateException(
+          "Account tenant migration must not start with scheduling enabled");
+    }
     if (!"true".equals(System.getenv("FIREMUD_ACCOUNT_TENANT_MIGRATION_ENABLED"))
         || !"none".equalsIgnoreCase(required("spring.main.web-application-type"))
         || environment.getProperty("spring.grpc.server.enabled", Boolean.class, true)) {

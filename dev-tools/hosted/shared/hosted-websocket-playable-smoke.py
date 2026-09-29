@@ -265,6 +265,11 @@ def _discover_target(
         ):
             raise _fail(f"character {config.character!r} was not visible during bootstrap discovery", config)
         return connect_scope_id, config.character
+    if len(characters) > 1:
+        raise _fail(
+            "bootstrap character discovery returned multiple characters; configure an explicit character",
+            config,
+        )
     if not characters:
         return connect_scope_id, None
     first = characters[0]

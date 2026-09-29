@@ -6,6 +6,8 @@ metadata:
   name: automation-scripting-service
 spec:
   replicas: 2
+  # V2 relaxes producer-agnostic uniqueness; do not admit an old and new
+  # Automation binary at the same time.
   # V3 changes the persisted plugin lifecycle fence; executor generations
   # must not overlap across the migration boundary.
   strategy:

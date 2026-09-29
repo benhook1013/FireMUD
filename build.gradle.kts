@@ -13,7 +13,7 @@ buildscript {
     dependencies {
         // The Flyway Gradle plugin resolves database support from the buildscript classpath,
         // not from each service's runtime dependencies.
-        classpath("org.flywaydb:flyway-database-postgresql:13.7.0")
+        classpath("org.flywaydb:flyway-database-postgresql:13.8.0")
         classpath("org.postgresql:postgresql:42.7.13")
     }
 }
@@ -24,9 +24,9 @@ plugins {
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.flyway) apply false
-    id("com.diffplug.spotless") version "8.10.2"
+    id("com.diffplug.spotless") version "8.10.3"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.11"
+    id("com.github.spotbugs") version "6.5.12"
     jacoco
 }
 
@@ -48,7 +48,7 @@ java {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "14.1.0"
+val checkstyleToolVersion = "14.3.0"
 val spotbugsToolVersion = "4.10.4"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
@@ -511,7 +511,7 @@ tasks.register("buildDockerImagesSmoke") {
 }
 
 tasks.register<Exec>("generateDevCerts") {
-    commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
+    commandLine("bash", "dev-tools/certs/ensure-dev-certs.sh")
 }
 
 tasks.register<Exec>("ensureLocalComposeEnv") {
