@@ -1643,6 +1643,37 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void verifyEmailFailsClosedBeforeTokenConsumption() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<net.firedevops.firemud.account.v1.VerifyEmailResponse> ref =
+        new AtomicReference<>();
+    service.verifyEmail(
+        net.firedevops.firemud.account.v1.VerifyEmailRequest.newBuilder()
+            .setToken("verification-token")
+            .build(),
+        new StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse>() {
+          @Override
+          public void onNext(net.firedevops.firemud.account.v1.VerifyEmailResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void deleteAccountRequiresAdminRole() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
