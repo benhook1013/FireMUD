@@ -791,7 +791,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyLoginConsumesVerifiedConnectContext() throws Exception {
+  void websocketFirstPartyBareLoginFailsClosedWithoutPromotingBootstrapShell() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "1"))) {
@@ -804,36 +804,31 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    JsonNode loginSuccess = json(payloads.get(0));
+    JsonNode loginFailure = json(payloads.get(0));
     GameplayStructuredCommandAssertions.requireStructuredCommand(
-        loginSuccess, "LOGIN", "login", "META", "SESSION");
-    assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
+        loginFailure, "LOGIN", "login", "META", "SESSION");
+    assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(loginFailure.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
     assertThat(payloads)
         .anyMatch(
             payload ->
                 GameplayStructuredCommandAssertions.isStructuredCommand(
                         payload, "PLAY", "play", "META", "SESSION")
-                    && json(payload).path("accepted").asBoolean());
-    assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
-    verify(accountClient)
-        .getTenantMembershipForRuntime(
-            argThat(
-                playerContext ->
-                    "123".equals(playerContext.getAccountId())
-                        && "22".equals(playerContext.getTenantId())
-                        && !playerContext.getRequestId().isBlank()));
-    verify(accountClient)
-        .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
+                    && !json(payload).path("accepted").asBoolean()
+                    && "LOGIN_REQUIRED".equals(json(payload).path("errorCode").asText()));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L))
         .hasValueSatisfying(
             context -> {
+              assertThat(context.accountId()).isZero();
+              assertThat(context.gameInstanceId()).isZero();
+              assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);
-              assertThat(context.worldSlug()).isEqualTo("demo");
-              assertThat(context.realmSlug()).isEqualTo("production");
-              assertThat(context.pointerVersion()).isEqualTo(1L);
-              assertThat(context.connectScopeId()).isEqualTo("scope-1");
-              assertThat(context.connectRequestId()).isEqualTo("connect-req-1");
             });
+    verify(accountClient, never())
+        .getTenantMembershipForRuntime(
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
+    verify(commandService, never()).enqueue(eq("1"), eq("LOGIN"), eq(false));
   }
 
   @Test
@@ -884,9 +879,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "browse-1"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       client.send("REALMS demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "REALMS"), "structured REALMS result");
@@ -965,9 +958,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "who-1"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1030,9 +1021,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "2"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1092,9 +1081,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayWebSocketDriver.CloseEvent firstCloseEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "logout-1"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1111,9 +1098,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "logout-2"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1356,9 +1341,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     try (GameplayWebSocketDriver first =
         openFirstPartyDriver(
             "2", firstPartyClaims("demo", "production", "1", "1", "resume-before-cutover"))) {
-      first.send("LOGIN");
-      first.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(first);
       first.send("PLAY demo");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1385,9 +1368,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       throws Exception {
     try (GameplayWebSocketDriver first =
         openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "route-a"))) {
-      first.send("LOGIN");
-      first.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(first);
       first.send("PLAY demo");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1399,9 +1380,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver second =
         openFirstPartyDriver("2", firstPartyClaims("sandbox", "production", "2", "1", "route-b"))) {
-      second.send("LOGIN");
-      second.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(second);
       second.send("LOOK");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
@@ -1459,9 +1438,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "stale-play"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(client);
       bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
       client.send("PLAY demo");
       client.awaitMatching(
@@ -1490,9 +1467,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     try (GameplayWebSocketDriver first =
         openFirstPartyDriver(
             "2", firstPartyClaims("demo", "production", "1", "1", "scope-selector-a"))) {
-      first.send("LOGIN");
-      first.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(first);
       first.send("PLAY demo");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
@@ -1508,9 +1483,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       second.send("LOOK");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
-      second.send("LOGIN");
-      second.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      loginFirstPartyWithCredentials(second);
       payloads = second.responses();
     }
 
@@ -1583,6 +1556,19 @@ class GameSessionWebSocketHandlerIntegrationTest {
         transportSessionId,
         "testsecretkeytestsecretkeytest1234",
         connectClaims);
+  }
+
+  private void loginFirstPartyWithCredentials(GameplayWebSocketDriver client) throws Exception {
+    client.send("LOGIN demo@example.com swordfish");
+    client.awaitMatching(
+        payload -> isStructuredCommand(payload, "LOGIN"), "structured credential LOGIN result");
+    JsonNode login =
+        client.responses().stream()
+            .filter(payload -> isStructuredCommand(payload, "LOGIN"))
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .reduce((first, second) -> second)
+            .orElseThrow();
+    assertThat(login.path("accepted").asBoolean()).isTrue();
   }
 
   private java.util.Map<String, Object> firstPartyClaims(

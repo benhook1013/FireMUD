@@ -1071,9 +1071,18 @@ class CommunicationWebSocketCrossServiceTest {
     JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
     GameplayStructuredCommandAssertions.requireStructuredCommand(
         login, "LOGIN", "login", "META", "SESSION");
-    assertThat(login.path("accepted").asBoolean()).withFailMessage(login.toPrettyString()).isTrue();
+    assertThat(login.path("accepted").asBoolean()).isFalse();
+    assertThat(login.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
+
+    client.send("LOGIN emberline@example.com swordfish");
+    JsonNode credentialLogin = awaitStructuredCommand(client, 1, "LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        credentialLogin, "LOGIN", "login", "META", "SESSION");
+    assertThat(credentialLogin.path("accepted").asBoolean())
+        .withFailMessage(credentialLogin.toPrettyString())
+        .isTrue();
     client.send("PLAY demo");
-    JsonNode play = awaitStructuredCommand(client, 1, "PLAY");
+    JsonNode play = awaitStructuredCommand(client, 2, "PLAY");
     GameplayStructuredCommandAssertions.requireStructuredCommand(
         play, "PLAY", "play", "META", "SESSION");
     assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
