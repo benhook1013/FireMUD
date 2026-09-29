@@ -1,6 +1,12 @@
 """One header structure shared by both status-page renderers."""
 
 from html import escape
+from pathlib import Path
+
+
+_FLAME = (Path(__file__).parent / "assets" / "flame-ember.svg").read_text(encoding="utf-8").replace(
+    "<svg ", '<svg class="mast-icon" aria-hidden="true" focusable="false" ', 1
+)
 
 
 def render_mast(title: str, middle_html: str, middle_class: str,
@@ -14,7 +20,7 @@ def render_mast(title: str, middle_html: str, middle_class: str,
     )
     return (
         '<header class="mast"><div class="mast-inner">'
-        '<div class="mast-content"><img class="mast-icon" src="/flame-ember.svg" alt="">'
+        f'<div class="mast-content">{_FLAME}'
         f'<h1 class="brand">{escape(title)}</h1></div>'
         f'<div class="mast-middle {middle_class}">{middle_html}</div>'
         f'<nav class="repo-links">{navigation}</nav></div></header>'

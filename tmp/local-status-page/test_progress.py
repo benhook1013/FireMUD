@@ -40,7 +40,7 @@ class ProjectMapTest(unittest.TestCase):
         self.assertIn('Return points', result)
         self.assertIn('FireMUD Project Map', result)
         self.assertIn(render_progress.SHARED_CSS, result)
-        self.assertIn('class="mast-inner"><div class="mast-content"><img class="mast-icon"', result)
+        self.assertIn('class="mast-inner"><div class="mast-content"><svg class="mast-icon"', result)
         self.assertIn('class="mast-middle mast-meta"', result)
         self.assertIn('Programme notes checked <time class="relative-age"', result)
         self.assertIn('Page rendered <time class="relative-age"', result)
