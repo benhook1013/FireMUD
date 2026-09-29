@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -213,6 +214,12 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                   + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
                   + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
                   + "'event-utc-retry', 'test', 'MANUAL')");
+          Long workItemId =
+              transactionDsl
+                  .fetchOne(
+                      "select id from script_work_items where script_event_id = 'event-utc-retry'")
+                  .get("id", Long.class);
+          assertThat(workItemId).isNotNull();
           transactionDsl.execute(
               "update script_work_items "
                   + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
@@ -221,8 +228,11 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
           ScriptWorkItemRepository repository = new ScriptWorkItemRepository(transactionDsl);
           Instant futureEligibleAt = Instant.now().plusSeconds(86_400);
           assertThat(
-                  repository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
-                      "PENDING_EVALUATION", futureEligibleAt, PageRequest.of(0, 10)))
+                  repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+                      List.of(workItemId),
+                      "PENDING_EVALUATION",
+                      futureEligibleAt,
+                      PageRequest.of(0, 10)))
               .isEmpty();
 
           transactionDsl.execute(
@@ -231,8 +241,11 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                   + "- interval '1 minute' where script_event_id = 'event-utc-retry'");
 
           assertThat(
-                  repository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
-                      "PENDING_EVALUATION", futureEligibleAt, PageRequest.of(0, 10)))
+                  repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+                      List.of(workItemId),
+                      "PENDING_EVALUATION",
+                      futureEligibleAt,
+                      PageRequest.of(0, 10)))
               .hasSize(1);
         });
   }

@@ -283,10 +283,13 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   @Test
   void postgresBindingCompensationRestoresLogicalBindings() {
     String name = "script-binding-compensation-" + UUID.randomUUID();
+    String scriptPatchVersion = "patch-definition-" + UUID.randomUUID();
     ScriptDefinition originalDefinition = scriptDefinition(name, "{\"original\":true}");
+    originalDefinition.setScriptVersion(scriptPatchVersion);
     originalDefinition.setBaseVersionId(1L);
     ScriptDefinition savedDefinition = scriptDefinitionRepository.save(originalDefinition);
     ScriptEventBinding originalBinding = scriptBinding(name, "original-scope");
+    originalBinding.setScriptPatchVersion(scriptPatchVersion);
     originalBinding.setBaseVersionId(1L);
     ScriptEventBinding savedBinding = scriptEventBindingRepository.save(originalBinding);
     int originalDefinitionRowVersion = savedDefinition.getRowVersion();
@@ -300,7 +303,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             if (failForwardReplacement.getAndSet(false)) {
               bindingsObservedAfterDelete.set(
                   findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
-                      1L, "patch-definition", name));
+                      1L, scriptPatchVersion, name));
               throw new IllegalStateException("binding replacement failed");
             }
             return super.saveAll(entities);
@@ -319,7 +322,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             null,
             1L,
             name,
-            "patch-definition",
+            scriptPatchVersion,
             1L,
             "{\"replacement\":true}",
             List.of(
@@ -339,7 +342,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     List<ScriptEventBinding> restoredBindings =
         scriptEventBindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                1L, "patch-definition")
+                1L, scriptPatchVersion)
             .stream()
             .filter(binding -> name.equals(binding.getScriptId()))
             .toList();
@@ -353,7 +356,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     ScriptDefinition restoredDefinition =
         scriptDefinitionRepository
-            .findByTenantIdAndScriptVersionAndName(1L, "patch-definition", name)
+            .findByTenantIdAndScriptVersionAndName(1L, scriptPatchVersion, name)
             .orElseThrow();
     assertThat(restoredDefinition.getId()).isEqualTo(savedDefinition.getId());
     assertThat(restoredDefinition.getDefinition()).isEqualTo("{\"original\":true}");
