@@ -54,6 +54,22 @@ _COMMAND_TIMEOUT_SECONDS = 120
 _DEFAULT_RETENTION_COUNT = 30
 _GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
 _SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
+# Legacy route notes can name long Java test classes; keep this exception to
+# alphabetic PascalCase test names, after the explicit credential patterns run.
+_JAVA_TEST_IDENTIFIER = re.compile(r"(?:[A-Z][a-z]{2,}){4,}Test")
+# Record IDs are validated on write. Their long, hyphenated, human-readable
+# names can mention words such as "bearer" or "key" without containing a key.
+# Keep this exception limited to identifier fields; free text remains screened.
+_REVIEW_IDENTIFIER = re.compile(r"[a-z][a-z0-9]{0,23}(?:[-_][a-z0-9]{1,24}){3,}")
+_IDENTIFIER_TEXT_COLUMNS = {
+    "review_runs": {"run_id"},
+    "findings": {"finding_id", "source_finding_key"},
+    "finding_observations": {"run_id", "finding_id", "route_id"},
+    "routes": {"route_id", "finding_id"},
+    "route_target_history": {"route_id"},
+    "decisions": {"decision_id", "run_id", "finding_id", "route_id"},
+    "resolutions": {"resolution_id", "route_id"},
+}
 _EXPECTED_COLUMNS = {
     "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
     "review_state": ("singleton", "state_json"),
@@ -487,31 +503,34 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
             for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
                 if not isinstance(value, str):
                     continue
-                if column == "state_json":
+                if column in {"state_json", "import_payload_json"}:
                     try:
                         document = json.loads(value)
                     except json.JSONDecodeError as exc:
-                        raise BackupError("controller state JSON cannot be screened") from exc
-                    _screen_json_values(document)
-                elif _looks_secret(value):
+                        raise BackupError("persisted JSON cannot be screened") from exc
+                    identifier_keys = {"source_finding_key"} if column == "import_payload_json" else set()
+                    _screen_json_values(document, identifier_keys=identifier_keys)
+                elif _looks_secret(value, identifier=column in _IDENTIFIER_TEXT_COLUMNS.get(table, set())):
                     raise BackupError("database contains credential- or raw-secret-looking text")
 
 
-def _screen_json_values(value: object, key: str = "") -> None:
+def _screen_json_values(value: object, key: str = "", *, identifier_keys: set[str] | None = None) -> None:
     if isinstance(value, str):
-        if _looks_secret(value):
+        if _looks_secret(value, identifier=key in (identifier_keys or ())):
             raise BackupError("database contains credential- or raw-secret-looking text")
     elif isinstance(value, dict):
-        for nested_value in value.values():
-            _screen_json_values(nested_value)
+        for nested_key, nested_value in value.items():
+            _screen_json_values(nested_value, nested_key, identifier_keys=identifier_keys)
     elif isinstance(value, list):
         for nested_value in value:
-            _screen_json_values(nested_value)
+            _screen_json_values(nested_value, key, identifier_keys=identifier_keys)
 
 
-def _looks_secret(value: str) -> bool:
+def _looks_secret(value: str, *, identifier: bool = False) -> bool:
     if any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS):
         return True
+    if identifier and _REVIEW_IDENTIFIER.fullmatch(value):
+        return False
     return any(
         not _is_known_identifier(match.group())
         for match in _GENERIC_SECRET_PATTERN.finditer(value)
@@ -520,6 +539,8 @@ def _looks_secret(value: str) -> bool:
 
 def _is_known_identifier(token: str) -> bool:
     if _FULL_COMMIT_SHA.fullmatch(token):
+        return True
+    if _JAVA_TEST_IDENTIFIER.fullmatch(token):
         return True
     if not _LOW_ENTROPY_IDENTIFIER.fullmatch(token):
         return False

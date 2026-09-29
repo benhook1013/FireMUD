@@ -231,6 +231,32 @@ class SqliteBackupTest(unittest.TestCase):
             backup_database(self.database, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
 
+    def test_long_review_identifiers_survive_backup_and_restore(self) -> None:
+        key = "bearer-private-key-evidence-review-finding"
+        SqliteReviewRecords(self.database).record_run(
+            run_id="backup-identifier-regression-run",
+            source_pr=124,
+            channel="subagent",
+            reviewer="fixture reviewer",
+            findings=[FindingObservation(source_finding_key=key, title="Bounded finding")],
+        )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+            restored_path = self.root / "identifier-restored.sqlite3"
+            restore_remote_backup(receipt.filename, restored_path, **self._backup_arguments())
+
+        restored = SqliteReviewRecords(restored_path).history(124)
+        self.assertEqual(restored["findings"][0]["source_finding_key"], key)
+
+    def test_identifier_exception_does_not_exempt_free_text_or_credentials(self) -> None:
+        key = "bearer-private-key-evidence-review-finding"
+        self.assertFalse(sqlite_backup._looks_secret(key, identifier=True))
+        self.assertFalse(sqlite_backup._looks_secret("decision-2026-identifier-for-route-proof-12345", identifier=True))
+        self.assertTrue(sqlite_backup._looks_secret(key))
+        self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-secret-value", identifier=True))
+        self.assertTrue(sqlite_backup._looks_secret("Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA", identifier=True))
+
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
 
@@ -262,6 +288,7 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"reconciliation head {sha1} was checked"))
         self.assertFalse(sqlite_backup._looks_secret(f"review target {sha256} matched"))
         self.assertFalse(sqlite_backup._looks_secret(f"route proof names {code_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret("GameSessionOperatorControlPlaneServiceTest fallback fixture"))
 
     def test_secret_screen_matches_write_valid_segmented_identifiers(self) -> None:
         long_identifier = "review_v2_route-reconciliation_source-proof_identifier_with-many-segments"
@@ -274,6 +301,7 @@ class SqliteBackupTest(unittest.TestCase):
         high_entropy_token = "Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA"
 
         self.assertTrue(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
+        self.assertTrue(sqlite_backup._looks_secret("opaque value QrTzPabLmNuvWxyZabcDefGhiJklMnoPqrStuVwxYzTest"))
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-token-value"))
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
         self.assertTrue(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
