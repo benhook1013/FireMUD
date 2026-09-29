@@ -670,7 +670,13 @@ def archive_incomplete_checkpoint(
                 checkpoint, repo, pr_number, common,
                 validate_checkpoint_decisions=False, records=records,
             )
-        except evidence.EvidenceError:
+        except evidence.EvidenceError as exc:
+            metadata = {
+                "checkpoint": checkpoint.as_json(), "missing_reason": missing_reason,
+                "archive_scope": "exact-checkpoint-and-linked-review",
+                "capture_error": str(exc),
+            }
+            artifacts["metadata"] = _artifact_text(metadata)
             capture = None
         if capture is not None and capture.source_identity:
             directory = Path(capture.source_identity)

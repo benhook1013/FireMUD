@@ -195,6 +195,39 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         )
         self.assertTrue(replay["idempotent_replay"])
 
+    def test_failed_capture_archives_loader_diagnostic_without_review_credit(self) -> None:
+        run_id = "run.Malformed"
+        self.cli_capture(run_id)
+        (self.common / "coderabbit-review-logs" / run_id / "stdout").write_text(
+            "not-json\n", encoding="utf-8"
+        )
+        checkpoint = self.checkpoint("CLI", f"<!-- firemud-cli-run: {run_id} -->")
+
+        archived = archive_incomplete_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            missing_reason="capture could not be validated",
+            common=self.common,
+            dry_run=False,
+        )
+
+        self.assertEqual(archived["status"], "incomplete_archived")
+        history = self.records.history(PR)
+        self.assertEqual(history["runs"], [])
+        self.assertEqual(history["attempts"], [])
+        with sqlite3.connect(self.database) as connection:
+            metadata = connection.execute(
+                "SELECT content FROM historical_gap_artifacts WHERE checkpoint_id = ? AND kind = 'metadata'",
+                (checkpoint.comment_id,),
+            ).fetchone()
+        self.assertIsNotNone(metadata)
+        self.assertEqual(
+            json.loads(metadata[0])["capture_error"],
+            "linked capture stdout has invalid JSON at line 1",
+        )
+
     def test_historical_gap_rejects_a_changed_reason(self) -> None:
         checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
         archive_incomplete_checkpoint(
