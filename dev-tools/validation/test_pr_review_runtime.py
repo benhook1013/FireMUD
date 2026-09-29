@@ -3683,6 +3683,56 @@ class RuntimeTest(unittest.TestCase):
             self.assertIsNone(attempt["run_id"])
             self.assertIn("POST was confirmed not issued", attempt["diagnostic"])
 
+    def test_prepost_recovery_retries_after_sql_failure_without_replacing_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-retry-attempt"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = attempt_id
+            path.write_text(json.dumps(posting), encoding="utf-8")
+            args = self._prepost_recovery_args()
+            with (
+                patch.object(hosted, "_finish_recovered_attempt", side_effect=OSError("temporary SQL failure")),
+                self.assertRaisesRegex(OSError, "temporary SQL failure"),
+            ):
+                self._dispatch_prepost_recovery(path, args)
+            audit_path = next(path.parent.glob("prepost-abandoned-*.json"))
+            original_audit = audit_path.read_bytes()
+            self.assertTrue(path.exists())
+            self.assertEqual(records.attempt(attempt_id)["state"], "started")
+
+            result, status = self._dispatch_prepost_recovery(path, args)
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            self.assertEqual(audit_path.read_bytes(), original_audit)
+            self.assertEqual(records.attempt(attempt_id)["state"], "failed")
+
+    def test_confirmed_prepost_recovery_allows_optional_sql_start_to_be_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = "attempt-that-never-started"
+            path.write_text(json.dumps(posting), encoding="utf-8")
+
+            result, status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            self.assertEqual(records.attempt_history(42), [])
+
     def test_unconfirmed_prepost_recovery_keeps_the_linked_sqlite_attempt_started(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -3770,6 +3820,19 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(audit["status"], "abandoned_prepost")
             self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [path])
             self.assertNotIn(audit_paths[0], hosted.trigger_record_paths("owner/repo", 42, common))
+            original_audit = audit_paths[0].read_bytes()
+            conflicting = json.loads(original_audit)
+            conflicting["head_sha"] = "f" * 40
+            audit_paths[0].write_text(json.dumps(conflicting), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "audit conflicts"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertTrue(path.exists())
+            audit_paths[0].write_bytes(original_audit)
+            result, status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            self.assertEqual(audit_paths[0].read_bytes(), original_audit)
 
     def _posting_record(self, path: Path, *, actor="maintainer", include_identity=True) -> None:
         record = {

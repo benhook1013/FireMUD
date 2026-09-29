@@ -18,11 +18,11 @@ from typing import Any
 
 try:
     from .github import immutable_database_id, is_coderabbit_login, parse_repo
-    from .sqlite_review_records import SqliteReviewRecords
+    from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
     from .state import sqlite_state_path, state_path
 except ImportError:  # Loaded directly by repository validation tests.
     from github import immutable_database_id, is_coderabbit_login, parse_repo
-    from sqlite_review_records import SqliteReviewRecords
+    from sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
     from state import sqlite_state_path, state_path
 
 FULL_COMMAND = "@coderabbitai full review"
@@ -1216,9 +1216,6 @@ def recover_prepost_reservation(
         )
         archive_id = hashlib.sha256(reservation_key.encode("utf-8")).hexdigest()[:20]
         archive_path = record_path.with_name(f"prepost-abandoned-{archive_id}.json")
-        if archive_path.exists() or archive_path.is_symlink():
-            raise ValueError("pre-POST recovery audit path already exists; refusing to overwrite it")
-
         updated = {
             **record,
             "status": "abandoned_prepost",
@@ -1235,10 +1232,15 @@ def recover_prepost_reservation(
                 "live_comment_history": "complete_paginated_no_candidate",
             },
         }
-        # Persist a complete audit without replacing anything before removing
-        # the active hold. Any write/fsync failure leaves the reservation
-        # untouched; an unlink failure leaves it active alongside the audit.
-        _write_json_exclusive(archive_path, updated)
+        # A failed SQL transition or unlink may leave this immutable audit
+        # beside the still-active reservation. Reuse only its exact proof on
+        # retry; never replace it or accept a conflicting file at this path.
+        if archive_path.exists() or archive_path.is_symlink():
+            archived = _matching_prepost_audit(archive_path, record, updated)
+            audit_reason = archived["recovery"]["reason"]
+        else:
+            _write_json_exclusive(archive_path, updated)
+            audit_reason = reason.strip()
         current = load_trigger_reservation(record_path, repo, pr_number)
         if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
             raise ValueError("posting reservation changed before pre-POST archival")
@@ -1256,9 +1258,38 @@ def recover_prepost_reservation(
         "captured_head_sha": captured_head,
         "current_head_sha": current_head,
         "audit_path": str(archive_path),
-        "reason": reason.strip(),
+        "reason": audit_reason,
         "confirmed_not_posted": True,
     }
+
+
+def _matching_prepost_audit(path: Path, record: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    if path.is_symlink():
+        raise ValueError("pre-POST recovery audit path is a symbolic link")
+    info = path.stat(follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_size > 64 * 1024:
+        raise ValueError("pre-POST recovery audit path is not a bounded regular file")
+    try:
+        archived = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("existing pre-POST recovery audit is unreadable") from error
+    if not isinstance(archived, dict) or archived.get("status") != "abandoned_prepost":
+        raise ValueError("existing pre-POST recovery audit conflicts with the reservation")
+    archived_record = {key: value for key, value in archived.items() if key not in {"status", "recovery"}}
+    expected_record = {key: value for key, value in record.items() if key not in {"status", "recovery"}}
+    archived_recovery = archived.get("recovery")
+    expected_recovery = expected["recovery"]
+    if (
+        archived_record != expected_record
+        or not isinstance(archived_recovery, dict)
+        or {key: value for key, value in archived_recovery.items() if key not in {"at", "reason"}}
+        != {key: value for key, value in expected_recovery.items() if key not in {"at", "reason"}}
+        or parse_timestamp(archived_recovery.get("at")) is None
+        or not isinstance(archived_recovery.get("reason"), str)
+        or not archived_recovery["reason"]
+    ):
+        raise ValueError("existing pre-POST recovery audit conflicts with the reservation")
+    return archived
 
 
 def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dict[str, Any]) -> None:
@@ -1276,12 +1307,19 @@ def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dic
     database = sqlite_state_path(selected_state)
     try:
         database_stat = database.stat(follow_symlinks=False)
-    except FileNotFoundError as error:
-        raise ValueError("linked Hosted SQLite attempt database is unavailable during pre-POST recovery") from error
+    except FileNotFoundError:
+        # SQLite capture is optional at the POST boundary; the validated
+        # reservation and no-POST audit remain the recovery authority.
+        return
     if database.is_symlink() or not stat.S_ISREG(database_stat.st_mode):
         raise ValueError("linked Hosted SQLite attempt database is not a regular file")
     records = SqliteReviewRecords(database)
-    attempt = records.attempt(attempt_id)
+    try:
+        attempt = records.attempt(attempt_id)
+    except ReviewRecordsError as error:
+        if str(error) == "review attempt does not exist":
+            return
+        raise
     if (
         attempt["source_pr"] != pr_number
         or attempt["channel"] != "hosted"

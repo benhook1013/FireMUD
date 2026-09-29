@@ -1,4 +1,5 @@
 import dataclasses
+import hashlib
 import json
 import sqlite3
 import sys
@@ -84,7 +85,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             started_at="2026-09-29T01:00:00Z", metadata={"published_head": "a" * 40},
         )["idempotent_replay"])
         code_identifier = "ReviewCandidateImmutablePublicationBindingForExactHead" * 2
-        events = json.dumps({"type": "finding", "body": "token=ghp_" + "A" * 30, "symbol": code_identifier}) + "\n"
+        events = json.dumps({
+            "type": "finding",
+            "body": "token=ghp_" + "A" * 30,
+            "symbol": code_identifier,
+            "summary": "The complete non-secret review explanation remains available.",
+            "password": "p",
+            "api_key": "k1",
+            "nested": {"access_token": "t"},
+        }) + "\n"
         finish_args = {
             "state": "completed", "finished_at": "2026-09-29T01:01:00Z",
             "duration_seconds": 60, "exit_status": 0,
@@ -97,10 +106,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 "SELECT content, source_sha256, redactions FROM review_artifacts "
                 "WHERE attempt_id = 'run.archive-1' AND kind = 'cli_events'"
             ).fetchone()
-        self.assertNotIn("ghp_", archived[0])
-        self.assertIn(code_identifier, archived[0])
-        self.assertEqual(archived[2], 1)
-        self.assertEqual(len(archived[1]), 64)
+        archived_event = json.loads(archived[0])
+        self.assertEqual(archived_event["body"], "token=[redacted credential]")
+        self.assertEqual(archived_event["password"], "[redacted credential]")
+        self.assertEqual(archived_event["api_key"], "[redacted credential]")
+        self.assertEqual(archived_event["nested"]["access_token"], "[redacted credential]")
+        self.assertEqual(archived_event["symbol"], code_identifier)
+        self.assertEqual(archived_event["summary"], "The complete non-secret review explanation remains available.")
+        self.assertEqual(archived[2], 4)
+        self.assertEqual(archived[1], hashlib.sha256(events.encode("utf-8")).hexdigest())
         self.assertEqual(self.records.attempt_history(2890)[0]["state"], "completed")
         with self.assertRaisesRegex(ReviewRecordsError, "different content"):
             self.records.finish_attempt("run.archive-1", **{**finish_args, "duration_seconds": 61})

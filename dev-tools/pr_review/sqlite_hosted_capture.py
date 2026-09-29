@@ -992,7 +992,7 @@ def _findings_for_completed_result(
         try:
             observations.append(
                 FindingObservation(
-                    source_finding_key=f"hosted-trigger:{trigger['id']}:comment:{comment_id}",
+                    source_finding_key=f"hosted-comment:{comment_id}",
                     title=title,
                 )
             )
@@ -1001,7 +1001,7 @@ def _findings_for_completed_result(
             # uses a safe headline if the provider prose resembles a secret.
             observations.append(
                 FindingObservation(
-                    source_finding_key=f"hosted-trigger:{trigger['id']}:comment:{comment_id}",
+                    source_finding_key=f"hosted-comment:{comment_id}",
                     title=f"CodeRabbit review comment {comment_id}",
                 )
             )

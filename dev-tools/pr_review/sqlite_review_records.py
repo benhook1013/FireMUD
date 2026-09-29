@@ -91,6 +91,14 @@ _SECRET_PATTERNS = (
     re.compile(r"\b(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 )
+_SECRET_FIELD_SUFFIXES = (
+    "password", "passwd", "secret", "token", "credential", "credentials",
+    "apikey", "accesskey", "secretkey", "privatekey", "signingkey", "encryptionkey",
+    "accesstoken", "refreshtoken", "authtoken", "oauthtoken", "clientsecret",
+    "clienttoken", "githubtoken", "bearertoken", "sessiontoken", "idtoken",
+)
+_SECRET_FIELD_TRAILING_QUALIFIERS = ("value", "material", "hash", "raw", "plaintext", "encoded", "encrypted")
+_REDACTED_CREDENTIAL = "[redacted credential]"
 
 
 def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
@@ -106,6 +114,27 @@ def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = F
     if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
         raise ReviewRecordsError(f"{label} resembles credential or raw secret material")
     return value
+
+
+def _is_secret_field(key: str) -> bool:
+    """Return whether a JSON field name semantically identifies secret material."""
+
+    normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+    while normalized:
+        qualifier = next(
+            (candidate for candidate in _SECRET_FIELD_TRAILING_QUALIFIERS if normalized.endswith(candidate)),
+            None,
+        )
+        if qualifier is None:
+            break
+        normalized = normalized[:-len(qualifier)]
+    return any(normalized.endswith(suffix) for suffix in _SECRET_FIELD_SUFFIXES)
+
+
+def _has_secret_field_value(value: Any) -> bool:
+    if value is None or value == "" or value == _REDACTED_CREDENTIAL:
+        return False
+    return not isinstance(value, (dict, list, tuple)) or bool(value)
 
 
 def _safe_identifier(value: Any, label: str, *, maximum: int) -> str:
@@ -215,6 +244,10 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
             for key, child in item.items():
                 if not isinstance(key, str):
                     raise ReviewRecordsError("review artifact JSON keys must be strings")
+                if _is_secret_field(key) and _has_secret_field_value(child):
+                    output[key] = _REDACTED_CREDENTIAL
+                    total += 1
+                    continue
                 result, count = scrub(child)
                 output[key] = result
                 total += count

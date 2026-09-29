@@ -36,6 +36,8 @@ from pathlib import Path, PurePosixPath
 from .sqlite_review_records import (
     _SECRET_PATTERNS,
     SqliteReviewRecords,
+    _has_secret_field_value,
+    _is_secret_field,
 )
 from .sqlite_store import SqliteStateStore
 
@@ -130,6 +132,11 @@ _TEXT_COLUMNS = {
     ),
     "historical_gap_artifacts": ("repository", "kind", "content", "source_sha256"),
 }
+_JSON_COLUMNS = {
+    "state_json", "coverage_limits_json", "import_payload_json", "metadata_json", "checkpoint_json",
+}
+_ARTIFACT_TABLES = {"review_artifacts", "imported_artifacts", "historical_gap_artifacts"}
+_JSON_ARTIFACT_KINDS = {"cli_events", "hosted_review", "hosted_comments", "metadata"}
 
 
 class BackupError(RuntimeError):
@@ -543,10 +550,19 @@ def _require_allowlisted_schema(connection: sqlite3.Connection) -> None:
 def _screen_persisted_text(connection: sqlite3.Connection) -> None:
     for table, columns in _TEXT_COLUMNS.items():
         for column in columns:
+            if column == "content" and table in _ARTIFACT_TABLES:
+                for kind, value in connection.execute(f'SELECT "kind", "content" FROM "{table}"'):
+                    if not isinstance(kind, str) or not isinstance(value, str):
+                        continue
+                    if kind in _JSON_ARTIFACT_KINDS:
+                        _screen_json_artifact(kind, value)
+                    elif _looks_secret(value):
+                        raise BackupError("database contains credential- or raw-secret-looking text")
+                continue
             for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
                 if not isinstance(value, str):
                     continue
-                if column in {"state_json", "import_payload_json"}:
+                if column in _JSON_COLUMNS:
                     try:
                         document = json.loads(value)
                     except json.JSONDecodeError as exc:
@@ -559,11 +575,30 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
                     raise BackupError("database contains credential- or raw-secret-looking text")
 
 
+def _screen_json_artifact(kind: str, content: str) -> None:
+    try:
+        if kind == "cli_events":
+            documents = []
+            for line in content.splitlines():
+                if line.strip():
+                    document = json.loads(line)
+                    if not isinstance(document, dict):
+                        raise ValueError("CLI event is not an object")
+                    documents.append(document)
+        else:
+            documents = [json.loads(content)]
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise BackupError("persisted JSON artifact cannot be screened") from exc
+    _screen_json_values(documents)
+
+
 def _screen_import_payload(document: object) -> None:
     if not isinstance(document, dict):
         raise BackupError("review import payload is not an object")
     for key, value in document.items():
         if key != "findings" or not isinstance(value, list):
+            if isinstance(key, str) and _is_secret_field(key) and _has_secret_field_value(value):
+                raise BackupError("database contains an unredacted semantic secret field")
             _screen_json_values(value)
             continue
         for finding in value:
@@ -574,6 +609,12 @@ def _screen_import_payload(document: object) -> None:
                     if _looks_secret(finding_value, identifier=True):
                         raise BackupError("database contains credential- or raw-secret-looking text")
                 else:
+                    if (
+                        isinstance(finding_key, str)
+                        and _is_secret_field(finding_key)
+                        and _has_secret_field_value(finding_value)
+                    ):
+                        raise BackupError("database contains an unredacted semantic secret field")
                     _screen_json_values(finding_value)
 
 
@@ -582,7 +623,9 @@ def _screen_json_values(value: object) -> None:
         if _looks_secret(value):
             raise BackupError("database contains credential- or raw-secret-looking text")
     elif isinstance(value, dict):
-        for nested_value in value.values():
+        for key, nested_value in value.items():
+            if isinstance(key, str) and _is_secret_field(key) and _has_secret_field_value(nested_value):
+                raise BackupError("database contains an unredacted semantic secret field")
             _screen_json_values(nested_value)
     elif isinstance(value, list):
         for nested_value in value:

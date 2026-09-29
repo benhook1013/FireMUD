@@ -12,7 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import evidence, sqlite_provider_imports, sqlite_store
+from pr_review import evidence, hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
 from pr_review.sqlite_records_repair import (
     SqliteRecordsRepairError,
     archive_incomplete_checkpoint,
@@ -326,43 +326,114 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_repair_links_exact_automatically_recorded_hosted_attempt_without_duplicate(self) -> None:
         self.hosted_capture()
         attempt_id = "hosted-attempt.700"
-        self.records.start_attempt(
+        trigger_id = 999
+        started_at = "2026-09-27T11:57:30Z"
+        trigger_record = {
+            "schema_version": 1,
+            "status": "posted",
+            "repository": REPO,
+            "pr_number": PR,
+            "head_sha": HEAD,
+            "posting_started_at": "2026-09-27T11:58:00Z",
+            "trigger": {
+                "id": trigger_id,
+                "created_at": "2026-09-27T11:58:00Z",
+                "url": f"https://github.example/{REPO}/pull/{PR}#issuecomment-{trigger_id}",
+                "author_login": "maintainer",
+                "type": "full",
+                "command": hosted.FULL_COMMAND,
+            },
+            "sqlite_attempt_id": attempt_id,
+        }
+        sqlite_hosted_capture.start_hosted_attempt(
+            self.records,
             attempt_id=attempt_id,
             source_pr=PR,
-            channel="hosted",
             candidate_sha=HEAD,
-            started_at="2026-09-27T11:58:00Z",
+            started_at=started_at,
         )
-        self.records.complete_attempt_run(
-            attempt_id,
-            finish={
-                "state": "completed",
-                "finished_at": "2026-09-27T11:59:00Z",
-                "trigger_id": "999",
-                "provider_review_id": "700",
-                "checkpoint_id": "10",
-                "artifacts": {
-                    "hosted_review": "{}",
-                    "hosted_comments": "{}",
-                    "metadata": "{}",
-                },
-            },
-            run={
-                "run_id": attempt_id,
-                "source_pr": PR,
-                "channel": "hosted",
-                "findings": (
-                    FindingObservation(
-                        source_finding_key="hosted-comment:701",
-                        title="Hosted title only",
-                    ),
-                ),
-                "source_head": HEAD,
-                "reviewer": "coderabbitai[bot]",
-                "scope": "broad",
-                "started_at": "2026-09-27T11:59:00Z",
-                "finished_at": "2026-09-27T11:59:00Z",
-            },
+        checkpoint_body = (
+            f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
+            "<!-- firemud-hosted-review: 700 -->"
+        )
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": PR,
+                        "headRefOid": HEAD,
+                        "comments": {
+                            "nodes": [
+                                {
+                                    "databaseId": trigger_id,
+                                    "author": {"login": "maintainer"},
+                                    "body": hosted.FULL_COMMAND,
+                                    "createdAt": "2026-09-27T11:58:00Z",
+                                    "updatedAt": "2026-09-27T11:58:00Z",
+                                    "url": (
+                                        f"https://github.example/{REPO}/pull/{PR}"
+                                        f"#issuecomment-{trigger_id}"
+                                    ),
+                                },
+                                {
+                                    "databaseId": 10,
+                                    "author": {"login": "maintainer"},
+                                    "body": checkpoint_body,
+                                    "createdAt": "2026-09-27T12:00:00Z",
+                                    "updatedAt": "2026-09-27T12:00:00Z",
+                                },
+                            ]
+                        },
+                        "reviews": {
+                            "nodes": [
+                                {
+                                    "databaseId": 700,
+                                    "author": {"login": "coderabbitai[bot]"},
+                                    "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+                                    "state": "COMMENTED",
+                                    "submittedAt": "2026-09-27T11:59:00Z",
+                                    "commit": {"oid": HEAD},
+                                }
+                            ]
+                        },
+                        "reviewThreads": {
+                            "nodes": [
+                                {
+                                    "id": "PRRT_thread_1",
+                                    "isResolved": False,
+                                    "isOutdated": False,
+                                    "path": "src/example.py",
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "databaseId": 701,
+                                                "author": {"login": "coderabbitai[bot]"},
+                                                "body": "Use the checked value before dereferencing it.",
+                                                "createdAt": "2026-09-27T11:58:30Z",
+                                                "updatedAt": "2026-09-27T11:58:30Z",
+                                                "url": "https://github.example/owner/repo/pull/42#discussion_r701",
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                }
+            }
+        }
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=trigger_record,
+            payload=payload,
+        )
+        self.assertEqual(captured["state"], "completed", captured)
+        self.assertEqual(
+            self.records.history(PR)["findings"][0]["source_finding_key"],
+            "hosted-comment:701",
         )
         self.records.record_source_decision(
             attempt_id,

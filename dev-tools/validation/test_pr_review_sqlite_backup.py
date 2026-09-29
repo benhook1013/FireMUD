@@ -308,6 +308,45 @@ class SqliteBackupTest(unittest.TestCase):
             backup_database(self.database, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
 
+    def test_secret_named_json_artifact_fields_are_rejected_before_sftp(self) -> None:
+        cases = (
+            (
+                "review_artifacts", "attempt_id = ? AND kind = ?",
+                ("run.backupfixture", "cli_events"),
+            ),
+            (
+                "imported_artifacts", "run_id = ? AND kind = ?",
+                ("backup-provider-run", "cli_events"),
+            ),
+            (
+                "historical_gap_artifacts",
+                "repository = ? AND source_pr = ? AND checkpoint_id = ? AND kind = ?",
+                ("benhook1013/firemud", 124, 123457, "hosted_comments"),
+            ),
+        )
+        unredacted = json.dumps({"password": "short", "api_key": "tiny"})
+        for table, where, parameters in cases:
+            with self.subTest(table=table):
+                with sqlite3.connect(self.database) as connection:
+                    original = connection.execute(
+                        f'SELECT content FROM "{table}" WHERE {where}', parameters
+                    ).fetchone()[0]
+                    connection.execute(
+                        f'UPDATE "{table}" SET content = ? WHERE {where}',
+                        (unredacted, *parameters),
+                    )
+                (sftp_patch,) = self._transport_patches()
+                try:
+                    with sftp_patch, self.assertRaisesRegex(BackupError, "unredacted semantic secret field"):
+                        backup_database(self.database, **self._backup_arguments())
+                    self.assertEqual(self.sftp_batches, [])
+                finally:
+                    with sqlite3.connect(self.database) as connection:
+                        connection.execute(
+                            f'UPDATE "{table}" SET content = ? WHERE {where}',
+                            (original, *parameters),
+                        )
+
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
 

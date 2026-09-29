@@ -344,7 +344,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         run = self.records.history(PR)["runs"][0]
         self.assertFalse(run["finalized"])
         finding = self.records.history(PR)["findings"][0]
-        self.assertEqual(finding["source_finding_key"], "hosted-trigger:101:comment:202")
+        self.assertEqual(finding["source_finding_key"], "hosted-comment:202")
         self.assertEqual(finding["title"], "**Check the boundary before using this value.**")
 
         with sqlite3.connect(self.database) as connection:

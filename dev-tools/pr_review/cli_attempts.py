@@ -267,6 +267,25 @@ def _reconcile_successful_capture(records: Any, directory: Path) -> dict[str, An
     retry without creating a second source run.
     """
 
+    try:
+        metadata = _read_capture_json(directory / "metadata.json", MAX_METADATA_BYTES, "metadata")
+    except _UnrecordableCapture:
+        return None
+    marker_path = directory / "capture-complete"
+    marker_required = metadata.get("capture_completion_marker") == "capture-complete"
+    if marker_required:
+        try:
+            marker = _read_capture_text(marker_path, 128, "completion marker")
+        except _UnrecordableCapture:
+            return None
+        if marker != f"{directory.name}\n":
+            return None
+    elif type(metadata.get("exit_status")) is not int or type(metadata.get("duration_seconds")) is not int:
+        # Older writers had no completion marker. Their final metadata was
+        # written after exit-status and duration, so an initial metadata file
+        # must remain retryable while those writes are still in progress.
+        return None
+
     exit_path = directory / "exit-status"
     if exit_path.is_symlink() or not exit_path.is_file():
         return None

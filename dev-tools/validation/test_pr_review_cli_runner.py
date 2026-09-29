@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
-from pr_review import cli_attempts, evidence, hosted
+from pr_review import cli_attempts, cli_runner, evidence, hosted
 from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -456,19 +456,37 @@ class CliReviewRunnerTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             commands = FakeCommands(root, review_output=output)
+            interleaved_reports = []
+            atomic_json = cli_runner._atomic_json
+
+            def migrate_before_final_metadata(path, value):
+                if path.name == "metadata.json" and "duration_seconds" in value:
+                    report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
+                    interleaved_reports.append(report)
+                    self.assertEqual(records.attempt(value["run_id"])["state"], "started")
+                atomic_json(path, value)
+
             with (
                 patch.object(
                     records,
                     "complete_attempt_run",
                     side_effect=ReviewRecordsError("simulated archive failure"),
                 ),
+                patch("pr_review.cli_runner._atomic_json", side_effect=migrate_before_final_metadata),
                 self.assertRaisesRegex(ReviewRecordsError, "simulated archive failure"),
             ):
                 run_cli_review(
                     target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
                 )
 
+            self.assertEqual(len(interleaved_reports), 1)
+            self.assertEqual(interleaved_reports[0]["terminally_classified"], [])
+            self.assertEqual(interleaved_reports[0]["recovered"], [])
             run_id = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir()).name
+            self.assertEqual(
+                (root / ".git" / "firemud" / "pr-review" / "runs" / run_id / "capture-complete").read_text(),
+                f"{run_id}\n",
+            )
             self.assertEqual(records.attempt(run_id)["state"], "started")
             report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
             self.assertEqual(report["recovered"], [{"run_id": run_id, "pr": "42"}])
@@ -477,6 +495,42 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(attempt["state"], "completed")
             self.assertEqual(attempt["run_id"], run_id)
             self.assertEqual(records.history(42)["runs"][0]["counts"]["found"], 1)
+
+    def test_zero_exit_with_incomplete_json_is_a_failed_command_and_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output="not JSON\n", review_returncode=0),
+                records=records,
+            )
+
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual((result.capture_dir / "exit-status").read_text(), "0\n")
+            self.assertEqual(
+                json.loads((result.capture_dir / "metadata.json").read_text())["exit_status"],
+                0,
+            )
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request)
+                if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertEqual(attempt["exit_status"], 0)
+            self.assertEqual(
+                attempt["diagnostic"],
+                "CodeRabbit CLI did not return a complete JSON review",
+            )
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
 
     def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
         long_headline = " ".join(["Bearer x"] * 40)

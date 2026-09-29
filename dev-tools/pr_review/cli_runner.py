@@ -443,6 +443,38 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _write_capture_complete_marker(capture_dir: Path) -> None:
+    """Durably mark the capture after all provider output and metadata are written."""
+    for name in (
+        "stdout",
+        "stderr",
+        "exit-status",
+        "review-duration-seconds",
+        "metadata",
+        "metadata.json",
+    ):
+        descriptor = os.open(capture_dir / name, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    directory_descriptor = os.open(capture_dir, os.O_RDONLY | os.O_DIRECTORY)
+    temporary = capture_dir / f".capture-complete.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    marker = capture_dir / "capture-complete"
+    try:
+        os.fsync(directory_descriptor)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as marker_file:
+            marker_file.write(f"{capture_dir.name}\n".encode("ascii"))
+            marker_file.flush()
+            os.fsync(marker_file.fileno())
+        os.replace(temporary, marker)
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 def _common_dir(
     runner: CommandRunner,
     source_root: Path,
@@ -1017,6 +1049,7 @@ def run_cli_review(
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
                     "kind": "cli",
+                    "capture_completion_marker": "capture-complete",
                     "pull_request": target.snapshot.number,
                     "candidate_sha": candidate_sha,
                     "child_head_sha": candidate_sha,
@@ -1140,44 +1173,50 @@ def run_cli_review(
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                 metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
                 _atomic_json(capture_dir / "metadata.json", metadata)
-                provider_result_saved = True
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
+                _write_capture_complete_marker(capture_dir)
+                provider_result_saved = True
+                stdout = process.stdout or ""
+                stderr = process.stderr or ""
+                artifacts = {
+                    "cli_diagnostic": stderr,
+                    "metadata": json.dumps(metadata, sort_keys=True),
+                }
+                try:
+                    parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                except evidence.EvidenceError:
+                    result_state = (
+                        "rate_limited"
+                        if "rate limit exceeded" in stderr.casefold()
+                        else "failed"
+                    )
+                    artifacts["cli_raw_output"] = stdout
+                    diagnostic = (
+                        "CodeRabbit CLI was rate limited before a complete result"
+                        if result_state == "rate_limited"
+                        else "CodeRabbit CLI did not return a complete JSON review"
+                    )
+                else:
+                    result_state = (
+                        "completed"
+                        if process.returncode == 0
+                        else "rate_limited"
+                        if "rate limit exceeded" in stderr.casefold()
+                        else "failed"
+                    )
+                    artifacts["cli_events"] = stdout
+                    diagnostic = (
+                        ""
+                        if result_state == "completed"
+                        else "CodeRabbit CLI was rate limited"
+                        if result_state == "rate_limited"
+                        else "CodeRabbit CLI exited nonzero"
+                    )
+                command_exit_status = process.returncode
+                if result_state != "completed" and command_exit_status == 0:
+                    command_exit_status = 1
                 if records is not None:
-                    stdout = process.stdout or ""
-                    stderr = process.stderr or ""
-                    artifacts = {"cli_diagnostic": stderr,
-                                 "metadata": json.dumps(metadata, sort_keys=True)}
-                    try:
-                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
-                    except evidence.EvidenceError:
-                        result_state = (
-                            "rate_limited"
-                            if "rate limit exceeded" in stderr.casefold()
-                            else "failed"
-                        )
-                        artifacts["cli_raw_output"] = stdout
-                        diagnostic = (
-                            "CodeRabbit CLI was rate limited before a complete result"
-                            if result_state == "rate_limited"
-                            else "CodeRabbit CLI did not return a complete JSON review"
-                        )
-                    else:
-                        result_state = (
-                            "completed"
-                            if process.returncode == 0
-                            else "rate_limited"
-                            if "rate limit exceeded" in stderr.casefold()
-                            else "failed"
-                        )
-                        artifacts["cli_events"] = stdout
-                        diagnostic = (
-                            ""
-                            if result_state == "completed"
-                            else "CodeRabbit CLI was rate limited"
-                            if result_state == "rate_limited"
-                            else "CodeRabbit CLI exited nonzero"
-                        )
                     if result_state == "completed":
                         observations = []
                         for index, finding in enumerate(parsed_findings, 1):
@@ -1232,7 +1271,7 @@ def run_cli_review(
                     published_status=published_status,
                     provisional=allow_unreconciled,
                     duration_seconds=duration,
-                    exit_status=process.returncode,
+                    exit_status=command_exit_status,
                     capture_dir=capture_dir,
                 )
             finally:
