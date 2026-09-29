@@ -18,11 +18,11 @@ from typing import Any
 
 try:
     from .github import immutable_database_id, is_coderabbit_login, parse_repo
-    from .sqlite_review_records import AttemptNotFound, RecordsSchemaIncompatible, SqliteReviewRecords
+    from .sqlite_review_records import AttemptNotFound, SqliteReviewRecords
     from .state import sqlite_state_path, state_path
 except ImportError:  # Loaded directly by repository validation tests.
     from github import immutable_database_id, is_coderabbit_login, parse_repo
-    from sqlite_review_records import AttemptNotFound, RecordsSchemaIncompatible, SqliteReviewRecords
+    from sqlite_review_records import AttemptNotFound, SqliteReviewRecords
     from state import sqlite_state_path, state_path
 
 FULL_COMMAND = "@coderabbitai full review"
@@ -1326,7 +1326,7 @@ def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dic
     records = SqliteReviewRecords(database)
     try:
         attempt = records.attempt(attempt_id)
-    except (AttemptNotFound, RecordsSchemaIncompatible):
+    except AttemptNotFound:
         return
     if (
         attempt["source_pr"] != pr_number

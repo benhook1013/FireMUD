@@ -737,11 +737,14 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
 
             with sqlite3.connect(database) as connection:
-                title = connection.execute(
-                    "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
-                ).fetchone()[0]
+                title, detail = connection.execute(
+                    "SELECT title, detail FROM finding_observations WHERE run_id = ?", (result.run_id,)
+                ).fetchone()
             self.assertEqual(len(title), 300)
             self.assertNotIn("Bearer ", title)
+            self.assertLessEqual(len(detail), 1000)
+            self.assertNotIn("Bearer ", detail)
+            self.assertIn("[redacted credential]", detail)
 
     def test_control_characters_in_cli_headline_are_normalized_before_recording(self):
         output = (
@@ -775,10 +778,11 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
 
             with sqlite3.connect(database) as connection:
-                title = connection.execute(
-                    "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
-                ).fetchone()[0]
+                title, detail = connection.execute(
+                    "SELECT title, detail FROM finding_observations WHERE run_id = ?", (result.run_id,)
+                ).fetchone()
             self.assertEqual(title, "Keep the safer path.")
+            self.assertEqual(detail, "Keep the safer path.")
 
     def test_unrecordable_success_capture_is_terminally_non_counting(self):
         output = (

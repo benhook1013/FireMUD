@@ -1038,7 +1038,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
 
 
 class HostedEvidenceTests(unittest.TestCase):
-    def test_prepost_recovery_ignores_only_missing_attempts_and_incompatible_records_schemas(self):
+    def test_prepost_recovery_ignores_missing_attempts(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             selected_state = common / "firemud" / "pr-review-stack.json"
@@ -1048,26 +1048,8 @@ class HostedEvidenceTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             path = hosted.default_trigger_record_path(REPO, PR, common)
 
-            hosted._finish_recovered_attempt(
-                path, REPO, PR, {"sqlite_attempt_id": "unbootstrapped-attempt"}
-            )
-
             records.bootstrap()
             hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": "missing-attempt"})
-            for schema_version in (4, 5):
-                with sqlite3.connect(database) as connection:
-                    connection.execute(
-                        "UPDATE review_records_metadata SET records_schema_version = ? WHERE singleton = 1",
-                        (schema_version,),
-                    )
-                hosted._finish_recovered_attempt(
-                    path, REPO, PR, {"sqlite_attempt_id": f"attempt-on-v{schema_version}"}
-                )
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1"
-                )
-
             attempt_id = "malformed-hosted-metadata"
             records.start_attempt(
                 attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
@@ -1081,6 +1063,63 @@ class HostedEvidenceTests(unittest.TestCase):
                 hosted._finish_recovered_attempt(
                     path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
                 )
+
+    def test_prepost_recovery_preserves_reservation_for_incompatible_records_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            attempt_id = "schema-migration-required"
+            records.start_attempt(
+                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
+                )
+
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 30,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(
+                    sqlite_review_records.RecordsSchemaIncompatible,
+                    "unsupported review-records schema version 5",
+                ),
+            ):
+                hosted.recover_prepost_reservation(
+                    path,
+                    REPO,
+                    PR,
+                    HEAD,
+                    "operator verified no POST was issued",
+                    True,
+                    lambda: review_payload(),
+                )
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
 
     def test_prepost_recovery_rejects_mismatched_and_conflicting_attempts(self):
         with tempfile.TemporaryDirectory() as directory:
