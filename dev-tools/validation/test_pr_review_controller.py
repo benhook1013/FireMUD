@@ -749,10 +749,37 @@ class ControllerTests(unittest.TestCase):
         allocation = controller.status()["prs"][0]["allocations"]["hosted"]
         self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
         self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertTrue(allocation["reopens_taper"])
         self.assertEqual(allocation["minimum_additional_completed"], 1)
         self.assertEqual(allocation["maximum_additional_completed"], 1)
+        self.assertEqual(allocation["completed_count"], 0)
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "READY")
         self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
+        self.assertEqual(evidence[(1, "hosted")][0]["head"], HEAD_2)
+        active_review = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "active-hosted-review",
+            "active_review": True,
+        }
+        evidence[(1, "hosted")].append(active_review)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HELD")
+        evidence[(1, "hosted")].remove(active_review)
+
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                head=HEAD_3,
+                checkpoint="hosted-fresh-allocation-result",
+                channel="hosted",
+            )
+        )
+        completed = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(completed["status"], "CAP_TAPERED")
+        self.assertEqual(completed["completed_count"], 1)
+        self.assertTrue(completed["taper_complete"])
+        self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
     def test_bounded_hosted_judgment_override_requires_fresh_taper(self):
@@ -3860,6 +3887,38 @@ class ControllerTests(unittest.TestCase):
         })
         self.assertEqual(len(evidence.history_reads), 16)
 
+    def test_status_overview_expands_past_terminal_hosted_ambiguity(self):
+        values, heads = _stacked_prs(5)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        evidence[(1, "hosted")] = [
+            {
+                "pr": 1,
+                "head": values[1].head,
+                "checkpoint": "trigger:10",
+                "held": True,
+                "unstable": True,
+                "terminal_ambiguous": True,
+                "terminal": True,
+                "attributable": False,
+                "state": "ambiguous",
+                "trigger_id": 10,
+                "response_id": 11,
+                "fingerprint": "a" * 64,
+            }
+        ]
+        for pr_number in range(2, 5):
+            evidence[(pr_number, "hosted")] = [
+                self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            ]
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 5)
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "MISSING_EVIDENCE")
+
     def test_status_overview_grows_long_tail_target_window_in_batches(self):
         values, heads = _stacked_prs(80)
         evidence = CountingEvidence()
@@ -6216,6 +6275,84 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(allocated.target, 1)
         self.assertEqual(allocated.status, ReviewStatus.PARENT_MOVED)
+
+    def test_terminal_noncounting_hosted_reply_defers_only_its_pr(self):
+        controller = self.make(
+            {1: pr(1, HEAD_3), 2: pr(2, HEAD_2, "feature-1", HEAD_3)},
+            heads={"feature-1": HEAD_3, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        state = controller._state()
+        terminal = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "trigger:10",
+            "held": True,
+            "unstable": True,
+            "terminal_ambiguous": True,
+            "terminal": True,
+            "attributable": False,
+            "state": "ambiguous",
+            "trigger_id": 10,
+            "response_id": 11,
+            "fingerprint": "a" * 64,
+        }
+        result = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.COHERENT, 2: stack.ReconciliationStatus.COHERENT},
+        )
+        self.assertEqual(result.target, 2)
+        self.assertEqual(result.status, ReviewStatus.MISSING_EVIDENCE)
+
+        dry = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "hosted-dry-before-allocation",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+        }
+        allocated_gap = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [dry, terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.COHERENT, 2: stack.ReconciliationStatus.COHERENT},
+            allocation_reopen_prs={1},
+        )
+        self.assertEqual(allocated_gap.target, 2)
+        self.assertEqual(allocated_gap.status, ReviewStatus.MISSING_EVIDENCE)
+
+        unreconciled = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1, 2],
+            {1: [terminal], 2: []},
+            reconciliation_by_pr={1: stack.ReconciliationStatus.UNRECONCILED, 2: stack.ReconciliationStatus.COHERENT},
+        )
+        self.assertEqual(unreconciled.target, 1)
+        self.assertEqual(unreconciled.status, ReviewStatus.HELD)
+
+        no_later_target = select_review_target(
+            state, Channel.HOSTED, [1], {1: [terminal]}
+        )
+        self.assertEqual(no_later_target.target, 1)
+        self.assertEqual(no_later_target.status, ReviewStatus.HELD)
+
+        other_hold = {**terminal, "checkpoint": "trigger:12", "terminal_ambiguous": False}
+        held = select_review_target(
+            state, Channel.HOSTED, [1, 2], {1: [terminal, other_hold], 2: []}
+        )
+        self.assertEqual(held.target, 1)
+        self.assertEqual(held.status, ReviewStatus.HELD)
+
+        cli = select_review_target(state, Channel.CLI, [1, 2], {1: [], 2: []})
+        self.assertEqual(cli.target, 1)
 
     def test_anchorless_historical_evidence_is_readable_without_false_parent_movement(self):
         values = {1: pr(1, HEAD_1)}
