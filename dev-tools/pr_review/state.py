@@ -1270,6 +1270,7 @@ def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
     expected_values = {
         "sqlite_schema_version": status.get("schema_version"),
         "state_schema_version": status.get("data_model_version"),
+        "min_writer_build": status.get("min_writer_build"),
     }
     for key, expected_value in expected_values.items():
         marker_value = marker.get(key)
@@ -1279,17 +1280,6 @@ def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
             or marker_value != expected_value
         ):
             raise StateError("SQLite cutover marker does not match database metadata")
-    marker_min_writer = marker.get("min_writer_build")
-    database_min_writer = status.get("min_writer_build")
-    if (
-        isinstance(marker_min_writer, bool)
-        or not isinstance(marker_min_writer, int)
-        or marker_min_writer <= 0
-        or isinstance(database_min_writer, bool)
-        or not isinstance(database_min_writer, int)
-        or database_min_writer < marker_min_writer
-    ):
-        raise StateError("SQLite cutover marker does not match database metadata")
     if marker.get("sqlite_schema_version") != SQLITE_SCHEMA_VERSION:
         raise StateError("SQLite cutover marker has an unsupported schema version")
     return store, status
