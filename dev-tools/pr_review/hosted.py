@@ -1327,7 +1327,10 @@ def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dic
     try:
         attempt = records.attempt(attempt_id)
     except ReviewRecordsError as error:
-        if str(error) == "review attempt does not exist":
+        if str(error) in {
+            "review attempt does not exist",
+            "review-records schema is not bootstrapped; call bootstrap() explicitly",
+        }:
             return
         raise
     if (

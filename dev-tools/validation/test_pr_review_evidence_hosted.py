@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import ReviewResult
-from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 
 REPO = "owner/repo"
@@ -846,6 +846,28 @@ class GithubAndEvidenceTests(unittest.TestCase):
 
 
 class HostedEvidenceTests(unittest.TestCase):
+    def test_prepost_recovery_ignores_unbootstrapped_records_schema_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+
+            hosted._finish_recovered_attempt(
+                path, REPO, PR, {"sqlite_attempt_id": "unbootstrapped-attempt"}
+            )
+
+            with patch.object(
+                hosted.SqliteReviewRecords,
+                "attempt",
+                side_effect=ReviewRecordsError("review attempt has an incompatible state"),
+            ), self.assertRaisesRegex(ReviewRecordsError, "incompatible state"):
+                hosted._finish_recovered_attempt(
+                    path, REPO, PR, {"sqlite_attempt_id": "other-records-error"}
+                )
+
     def test_wrong_target_assertion_happens_before_request_preparation(self):
         with self.assertRaises(ValueError):
             hosted.prepare_full_trigger(PR, PR + 1)

@@ -223,11 +223,17 @@ class FakeCommands:
         self.merge_tree = merge_tree
         self.timeout_calls = []
         self.test_worktrees = set()
+        self.records = None
+        self.attempt_states_at_review_invocation = []
 
     def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
         self.calls.append((tuple(args), cwd))
         self.timeout_calls.append((tuple(args), timeout, text))
         if args[0] == "coderabbit":
+            if self.records is not None:
+                self.attempt_states_at_review_invocation = [
+                    attempt["state"] for attempt in self.records.attempt_history(42)
+                ]
             if self.timeout_review:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial \xff\n", stderr=b"timed out\n")
             with self.guard:
@@ -419,12 +425,14 @@ class CliReviewRunnerTests(unittest.TestCase):
                 '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
             )
             commands = FakeCommands(root, review_output=output)
+            commands.records = records
             result = run_cli_review(
                 target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
             )
             attempts = records.attempt_history(result.pull_request)
             self.assertEqual(len(attempts), 1)
             self.assertEqual(attempts[0]["attempt_id"], result.run_id)
+            self.assertEqual(commands.attempt_states_at_review_invocation, ["started"])
             self.assertEqual(attempts[0]["state"], "completed")
             with sqlite3.connect(database) as connection:
                 kinds = {row[0] for row in connection.execute(

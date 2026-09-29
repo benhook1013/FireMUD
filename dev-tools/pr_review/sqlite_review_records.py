@@ -670,42 +670,55 @@ class SqliteReviewRecords:
         if not isinstance(checkpoint_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", checkpoint_fingerprint):
             raise ReviewRecordsError("checkpoint fingerprint must be lowercase SHA-256")
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
-        with self._write_connection() as connection:
-            run = connection.execute(
-                "SELECT source_pr, channel, outcome, attributable FROM review_runs WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
-            if run != (source_pr, channel, "completed", 1):
-                raise ReviewRecordsError("provider origin must link a completed attributable matching run")
-            gap = connection.execute(
-                "SELECT channel, checkpoint_fingerprint FROM historical_provider_gaps "
-                "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
-                (repository, source_pr, checkpoint_id),
-            ).fetchone()
-            if gap is not None and gap != (channel, checkpoint_fingerprint):
-                raise ReviewRecordsError("provider origin conflicts with historical checkpoint evidence")
-            by_checkpoint = connection.execute(
-                "SELECT repository, source_pr, channel, provider_id, checkpoint_id, "
-                "checkpoint_fingerprint, run_id FROM provider_origins "
-                "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
-                (repository, source_pr, checkpoint_id),
-            ).fetchone()
-            by_provider = connection.execute(
-                "SELECT repository, source_pr, channel, provider_id, checkpoint_id, "
-                "checkpoint_fingerprint, run_id FROM provider_origins "
-                "WHERE repository = ? AND source_pr = ? AND channel = ? AND provider_id = ?",
-                (repository, source_pr, channel, provider_id),
-            ).fetchone()
-            expected = (repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id)
-            if by_checkpoint is not None or by_provider is not None:
-                if by_checkpoint != expected or by_provider != expected:
-                    raise ReviewRecordsError("provider origin conflicts with existing checkpoint or provider identity")
-                replay = True
-            else:
-                connection.execute(
-                    "INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected
+        try:
+            with self._write_connection() as connection:
+                run = connection.execute(
+                    "SELECT source_pr, channel, outcome, attributable FROM review_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run != (source_pr, channel, "completed", 1):
+                    raise ReviewRecordsError("provider origin must link a completed attributable matching run")
+                gap = connection.execute(
+                    "SELECT channel, checkpoint_fingerprint FROM historical_provider_gaps "
+                    "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
+                    (repository, source_pr, checkpoint_id),
+                ).fetchone()
+                if gap is not None and gap != (channel, checkpoint_fingerprint):
+                    raise ReviewRecordsError("provider origin conflicts with historical checkpoint evidence")
+                columns = (
+                    "repository, source_pr, channel, provider_id, checkpoint_id, "
+                    "checkpoint_fingerprint, run_id"
                 )
-                replay = False
+                by_checkpoint = connection.execute(
+                    f"SELECT {columns} FROM provider_origins "
+                    "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
+                    (repository, source_pr, checkpoint_id),
+                ).fetchone()
+                by_provider = connection.execute(
+                    f"SELECT {columns} FROM provider_origins "
+                    "WHERE repository = ? AND source_pr = ? AND channel = ? AND provider_id = ?",
+                    (repository, source_pr, channel, provider_id),
+                ).fetchone()
+                by_run = connection.execute(
+                    f"SELECT {columns} FROM provider_origins WHERE run_id = ?", (run_id,)
+                ).fetchone()
+                expected = (repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id)
+                existing = (by_checkpoint, by_provider, by_run)
+                if any(row is not None for row in existing):
+                    if any(row != expected for row in existing):
+                        raise ReviewRecordsError(
+                            "provider origin conflicts with existing checkpoint, provider, or run identity"
+                        )
+                    replay = True
+                else:
+                    connection.execute(
+                        "INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected
+                    )
+                    replay = False
+        except ReviewRecordsError:
+            raise
+        except sqlite3.Error as exc:
+            raise ReviewRecordsError("cannot link provider origin") from exc
         return {"run_id": run_id, "checkpoint_id": checkpoint_id, "provider_id": provider_id,
                 "idempotent_replay": replay}
 

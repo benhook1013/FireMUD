@@ -292,6 +292,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.records.link_provider_origin(**{**origin, "checkpoint_id": 123456790})
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
             self.records.link_provider_origin(**{**origin, "checkpoint_fingerprint": "b" * 64})
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            self.records.link_provider_origin(**{
+                **origin, "provider_id": "trigger:987654322", "checkpoint_id": 123456791,
+                "checkpoint_fingerprint": "c" * 64,
+            })
         artifact = {"hosted_comments": json.dumps({"reply": "Full review finished", "symbol": "X" * 60})}
         self.assertFalse(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
         self.assertTrue(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
@@ -302,6 +307,27 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.history(2893)["provider_origins"][0]["repository"],
                          "benhook1013/firemud")
         self.assertEqual(self.records.history(2893)["imported_artifacts"][0]["kind"], "hosted_comments")
+
+    def test_provider_origin_sqlite_failures_are_wrapped(self) -> None:
+        self.bootstrap()
+        self.records.import_completed_run(
+            run_id="provider-sql-error", source_pr=2893, channel="hosted",
+            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        with (
+            patch.object(
+                self.records,
+                "_write_connection",
+                side_effect=sqlite3.OperationalError("synthetic SQLite failure"),
+            ),
+            self.assertRaisesRegex(ReviewRecordsError, "cannot link provider origin"),
+        ):
+            self.records.link_provider_origin(
+                repository="BenHook1013/FireMUD", source_pr=2893, channel="hosted",
+                provider_id="trigger:987654323", checkpoint_id=123456792,
+                checkpoint_fingerprint="d" * 64, run_id="provider-sql-error",
+            )
 
     def test_historical_gap_preserves_evidence_without_run_and_can_be_superseded(self) -> None:
         self.bootstrap()
