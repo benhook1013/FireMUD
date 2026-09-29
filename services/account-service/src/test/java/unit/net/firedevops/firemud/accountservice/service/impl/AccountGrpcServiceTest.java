@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -60,7 +61,9 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
@@ -118,6 +121,20 @@ class AccountGrpcServiceTest {
       boolean membershipExists,
       List<OutboxCheckpointEntry> checkpoints,
       List<OutboxSourceEvidence> sourceEvidence) {
+    return runtimeMembershipSnapshot(
+        requestAccountId,
+        membershipExists,
+        checkpoints,
+        sourceEvidence,
+        membershipExists ? runtimeMembershipAuthorityEvent(Map.of()) : null);
+  }
+
+  private static RuntimeMembershipSnapshotDto runtimeMembershipSnapshot(
+      long requestAccountId,
+      boolean membershipExists,
+      List<OutboxCheckpointEntry> checkpoints,
+      List<OutboxSourceEvidence> sourceEvidence,
+      MembershipEvent sourceEvent) {
     return new RuntimeMembershipSnapshotDto(
         requestAccountId,
         20L,
@@ -141,7 +158,8 @@ class AccountGrpcServiceTest {
         "7",
         Instant.parse("2026-09-27T00:00:00Z"),
         checkpoints,
-        sourceEvidence);
+        sourceEvidence,
+        sourceEvent);
   }
 
   private static List<OutboxCheckpointEntry> runtimeMembershipCheckpoints(String sequence) {
@@ -155,12 +173,54 @@ class AccountGrpcServiceTest {
   }
 
   private static List<OutboxSourceEvidence> runtimeMembershipSourceEvidence() {
+    return runtimeMembershipSourceEvidence(runtimeMembershipAuthorityEvent(Map.of()));
+  }
+
+  private static List<OutboxSourceEvidence> runtimeMembershipSourceEvidence(MembershipEvent event) {
     return List.of(
         new OutboxSourceEvidence(
-            "account:auth-authority:v1:membership/" + ACCOUNT_UUID + "/" + TENANT_UUID,
-            "1",
-            "04ef66b4-c0ad-3d5b-b3b2-0e8510e72003",
-            "sha256:" + "a".repeat(64)));
+            event.outboxStreamKey(),
+            event.outboxSequence(),
+            event.eventId(),
+            event.eventDigest(),
+            event.canonicalJson()));
+  }
+
+  private static MembershipEvent runtimeMembershipAuthorityEvent(Map<String, ?> overrides) {
+    return runtimeMembershipAuthorityEvent(ACCOUNT_UUID, TENANT_UUID, overrides);
+  }
+
+  private static MembershipEvent runtimeMembershipAuthorityEvent(
+      String accountUuid, String tenantUuid, Map<String, ?> overrides) {
+    Map<String, Object> preimage = new LinkedHashMap<>();
+    String streamKey = "account:auth-authority:v1:membership/" + accountUuid + "/" + tenantUuid;
+    preimage.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+    preimage.put("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE);
+    preimage.put("eventId", "04ef66b4-c0ad-3d5b-b3b2-0e8510e72003");
+    preimage.put("requestId", "join-request-1");
+    preimage.put("outboxStreamKey", streamKey);
+    preimage.put("outboxSequence", "1");
+    preimage.put("sourceScope", "membership/" + accountUuid + "/" + tenantUuid);
+    preimage.put("accountId", accountUuid);
+    preimage.put("tenantId", tenantUuid);
+    preimage.put("membershipExists", true);
+    preimage.put("membershipLifecycleState", "ACTIVE");
+    preimage.put("membershipVersion", Map.of(tenantUuid, "2"));
+    preimage.put("membershipAuthorityGeneration", "1");
+    preimage.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration", "1",
+            "accountAuthorityGeneration", "1",
+            "tenantAuthorityGeneration", Map.of(tenantUuid, "1"),
+            "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
+            "privateRealmGrantVersions", List.of()));
+    preimage.put("issuanceFence", "7");
+    preimage.put("roles", List.of("player"));
+    preimage.put("gameplayAdmissionAllowed", true);
+    preimage.put("callerBoundAuthorityInvalidated", false);
+    preimage.putAll(overrides);
+    return MembershipAuthorityEventV1Codec.seal(preimage);
   }
 
   private static IssueDirectTextConnectScopeRequest validScopeRequest() {
@@ -1762,7 +1822,12 @@ class AccountGrpcServiceTest {
     assertEquals(1, response.getOutboxSourceEvidenceCount());
     assertEquals(
         "04ef66b4-c0ad-3d5b-b3b2-0e8510e72003", response.getOutboxSourceEvidence(0).getEventId());
-    assertEquals("sha256:" + "a".repeat(64), response.getOutboxSourceEvidence(0).getEventDigest());
+    assertEquals(
+        runtimeMembershipAuthorityEvent(Map.of()).eventDigest(),
+        response.getOutboxSourceEvidence(0).getEventDigest());
+    assertEquals(
+        runtimeMembershipAuthorityEvent(Map.of()).canonicalJson(),
+        response.getOutboxSourceEvidence(0).getCanonicalEventJson());
   }
 
   @Test
@@ -1811,9 +1876,6 @@ class AccountGrpcServiceTest {
             true,
             completeCheckpoints.subList(0, completeCheckpoints.size() - 1),
             runtimeMembershipSourceEvidence());
-    RuntimeMembershipSnapshotDto missingSourceEvidence =
-        runtimeMembershipSnapshot(10L, true, completeCheckpoints, List.of());
-
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -1821,9 +1883,86 @@ class AccountGrpcServiceTest {
                 validRuntimeMembershipContext(), missingCheckpoint));
     assertThrows(
         IllegalArgumentException.class,
+        () -> runtimeMembershipSnapshot(10L, true, completeCheckpoints, List.of()));
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsSourceEventContentThatDiffersFromSnapshot() {
+    MembershipEvent expected = runtimeMembershipAuthorityEvent(Map.of());
+    List<MembershipEvent> inconsistentEvents =
+        List.of(
+            runtimeMembershipAuthorityEvent(
+                Map.of("eventId", "04ef66b4-c0ad-3d5b-b3b2-0e8510e72004")),
+            runtimeMembershipAuthorityEvent(Map.of("requestId", "join-request-2")),
+            runtimeMembershipAuthorityEvent(Map.of("outboxSequence", "2")),
+            runtimeMembershipAuthorityEvent(
+                "04ef66b4-c0ad-3d5b-b3b2-0e8510e72004", TENANT_UUID, Map.of()),
+            runtimeMembershipAuthorityEvent(
+                ACCOUNT_UUID, "04ef66b4-c0ad-3d5b-b3b2-0e8510e72004", Map.of()),
+            runtimeMembershipAuthorityEvent(
+                Map.of("membershipLifecycleState", "INACTIVE", "gameplayAdmissionAllowed", false)),
+            runtimeMembershipAuthorityEvent(Map.of("membershipVersion", Map.of(TENANT_UUID, "3"))),
+            runtimeMembershipAuthorityEvent(
+                Map.of(
+                    "authorityTuple",
+                    Map.of(
+                        "issuerAuthGeneration", "2",
+                        "accountAuthorityGeneration", "1",
+                        "tenantAuthorityGeneration", Map.of(TENANT_UUID, "1"),
+                        "membershipAuthorityGeneration", Map.of(TENANT_UUID, "1"),
+                        "privateRealmGrantVersions", List.of()))),
+            runtimeMembershipAuthorityEvent(Map.of("issuanceFence", "8")),
+            runtimeMembershipAuthorityEvent(Map.of("roles", List.of("designer", "player"))),
+            runtimeMembershipAuthorityEvent(Map.of("gameplayAdmissionAllowed", false)));
+
+    for (MembershipEvent inconsistent : inconsistentEvents) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              runtimeMembershipSnapshot(
+                  10L,
+                  true,
+                  runtimeMembershipCheckpoints("1"),
+                  runtimeMembershipSourceEvidence(inconsistent),
+                  expected));
+    }
+  }
+
+  @Test
+  void runtimeOutboxSourceEvidenceRejectsChangedContentOrDigest() {
+    MembershipEvent event = runtimeMembershipAuthorityEvent(Map.of());
+    String changedContent =
+        event.canonicalJson().replace("\"issuanceFence\":\"7\"", "\"issuanceFence\":\"8\"");
+    String changedDigest =
+        event.canonicalJson().replace(event.eventDigest(), "sha256:" + "a".repeat(64));
+
+    assertThrows(
+        IllegalArgumentException.class,
         () ->
-            AccountGrpcService.encodeRuntimeMembershipCandidate(
-                validRuntimeMembershipContext(), missingSourceEvidence));
+            new OutboxSourceEvidence(
+                event.outboxStreamKey(),
+                event.outboxSequence(),
+                event.eventId(),
+                event.eventDigest(),
+                changedContent));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new OutboxSourceEvidence(
+                event.outboxStreamKey(),
+                event.outboxSequence(),
+                event.eventId(),
+                event.eventDigest(),
+                changedDigest));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new OutboxSourceEvidence(
+                event.outboxStreamKey(),
+                "2",
+                event.eventId(),
+                event.eventDigest(),
+                event.canonicalJson()));
   }
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {

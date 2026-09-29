@@ -219,6 +219,8 @@ message RuntimeOutboxSourceEvidence {
   string outbox_sequence = 2;
   string event_id = 3;
   string event_digest = 4;
+  // Exact canonical Account event bytes, carried separately from its two-field checkpoint.
+  string canonical_event_json = 5;
 }
 
 message GetRealmAccessGrantForRuntimeRequest {

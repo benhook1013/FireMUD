@@ -220,7 +220,8 @@ class NeverJoinedMembershipSnapshotTest {
                 STREAM_KEY,
                 "1",
                 "04ef66b4-c0ad-3d5b-b3b2-0e8510e72002",
-                "sha256:" + "a".repeat(64)));
+                positiveSourceEvent().eventDigest(),
+                positiveSourceEvent().canonicalJson()));
 
     assertThatThrownBy(
             () ->
@@ -287,5 +288,35 @@ class NeverJoinedMembershipSnapshotTest {
         List.of(),
         Optional.empty(),
         Optional.empty());
+  }
+
+  private static MembershipAuthorityEventV1Codec.MembershipEvent positiveSourceEvent() {
+    return MembershipAuthorityEventV1Codec.seal(
+        Map.ofEntries(
+            Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+            Map.entry("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE),
+            Map.entry("eventId", "04ef66b4-c0ad-3d5b-b3b2-0e8510e72002"),
+            Map.entry("requestId", "join-request-1"),
+            Map.entry("outboxStreamKey", STREAM_KEY),
+            Map.entry("outboxSequence", "1"),
+            Map.entry("sourceScope", "membership/" + ACCOUNT_ID + "/" + TENANT_ID),
+            Map.entry("accountId", ACCOUNT_ID),
+            Map.entry("tenantId", TENANT_ID),
+            Map.entry("membershipExists", true),
+            Map.entry("membershipLifecycleState", "ACTIVE"),
+            Map.entry("membershipVersion", Map.of(TENANT_ID, "2")),
+            Map.entry("membershipAuthorityGeneration", "1"),
+            Map.entry(
+                "authorityTuple",
+                Map.of(
+                    "issuerAuthGeneration", "1",
+                    "accountAuthorityGeneration", "1",
+                    "tenantAuthorityGeneration", Map.of(TENANT_ID, "1"),
+                    "membershipAuthorityGeneration", Map.of(TENANT_ID, "1"),
+                    "privateRealmGrantVersions", List.of())),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("roles", List.of("player")),
+            Map.entry("gameplayAdmissionAllowed", true),
+            Map.entry("callerBoundAuthorityInvalidated", false)));
   }
 }

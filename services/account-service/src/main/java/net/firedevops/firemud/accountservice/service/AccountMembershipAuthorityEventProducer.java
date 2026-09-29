@@ -336,7 +336,8 @@ public class AccountMembershipAuthorityEventProducer {
           positive.issuanceFence(),
           positive.evaluatedAt(),
           positive.outboxCheckpoints(),
-          positive.outboxSourceEvidence());
+          positive.outboxSourceEvidence(),
+          positive.authorityEvent());
     }
 
     NeverJoinedMembershipSnapshot absent =
@@ -357,7 +358,8 @@ public class AccountMembershipAuthorityEventProducer {
         absent.issuanceFence(),
         absent.evaluatedAt(),
         absent.outboxCheckpoints(),
-        absent.outboxSourceEvidence());
+        absent.outboxSourceEvidence(),
+        null);
   }
 
   /**
@@ -1143,7 +1145,8 @@ public class AccountMembershipAuthorityEventProducer {
         checkpoint.outboxStreamKey(),
         Long.toString(checkpoint.outboxSequence()),
         event.eventId(),
-        event.eventDigest());
+        event.eventDigest(),
+        new String(event.payload(), StandardCharsets.UTF_8));
   }
 
   private RoleSnapshot requireRoleSnapshot(Identity identity, AccountTenantMembership membership) {
@@ -1329,7 +1332,11 @@ public class AccountMembershipAuthorityEventProducer {
 
   /** Positive committed source-event identity kept outside the two-field checkpoint carrier. */
   public record OutboxSourceEvidence(
-      String outboxStreamKey, String outboxSequence, String eventId, String eventDigest) {
+      String outboxStreamKey,
+      String outboxSequence,
+      String eventId,
+      String eventDigest,
+      String canonicalEventJson) {
     public OutboxSourceEvidence {
       Objects.requireNonNull(outboxStreamKey, "authority outbox stream key is required");
       Objects.requireNonNull(outboxSequence, "authority outbox sequence is required");
@@ -1342,6 +1349,16 @@ public class AccountMembershipAuthorityEventProducer {
           || !eventDigest.matches("sha256:[0-9a-f]{64}")) {
         throw new IllegalArgumentException(
             "Account authority source event evidence is not canonical");
+      }
+      Objects.requireNonNull(canonicalEventJson, "canonical source event JSON is required");
+      MembershipEvent event = MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
+      if (!event.canonicalJson().equals(canonicalEventJson)
+          || !event.eventId().equals(eventId)
+          || !event.eventDigest().equals(eventDigest)
+          || !event.outboxStreamKey().equals(outboxStreamKey)
+          || !event.outboxSequence().equals(outboxSequence)) {
+        throw new IllegalArgumentException(
+            "Account authority source event JSON differs from its exact identity");
       }
     }
   }
@@ -1496,7 +1513,8 @@ public class AccountMembershipAuthorityEventProducer {
                   membershipStreamKey,
                   membershipSequence,
                   authorityEvent.eventId(),
-                  authorityEvent.eventDigest()));
+                  authorityEvent.eventDigest(),
+                  authorityEvent.canonicalJson()));
 
       if (!membershipExists
           || !"ACTIVE".equals(membershipLifecycleState)
@@ -1508,6 +1526,7 @@ public class AccountMembershipAuthorityEventProducer {
           || !membershipVersion.equals(authorityEvent.membershipVersion())
           || !membershipAuthorityGeneration.equals(authorityEvent.membershipAuthorityGeneration())
           || !roles.equals(authorityEvent.roles())
+          || gameplayAdmissionAllowed != authorityEvent.gameplayAdmissionAllowed()
           || !authorityTuple.equals(authorityEvent.authorityTuple())
           || !issuanceFence.equals(authorityEvent.issuanceFence())
           || !"1".equals(authorityTuple.issuerAuthGeneration())
