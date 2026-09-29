@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
+from pr_review import sqlite_review_records
 from pr_review.sqlite_review_records import (
     AttemptNotFound,
     FindingObservation,
@@ -88,6 +89,36 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         ):
             with self.subTest(kind=kind), self.assertRaisesRegex(ReviewRecordsError, "JSON"):
                 _archive_artifact(kind, content)
+
+    def test_archived_json_parse_recursion_is_wrapped_without_leaking_raw_error(self) -> None:
+        for kind, content, message in (
+            ("cli_events", "{}\n", "CLI events must be JSON objects, one per line"),
+            ("hosted_review", "{}", "hosted_review must be JSON"),
+        ):
+            with self.subTest(kind=kind), patch.object(
+                sqlite_review_records.json, "loads", side_effect=RecursionError("parse recursion")
+            ), self.assertRaisesRegex(ReviewRecordsError, f"^{message}$") as raised:
+                _archive_artifact(kind, content)
+            self.assertIsInstance(raised.exception.__cause__, RecursionError)
+
+    def test_archived_json_scrub_and_serialization_recursion_are_wrapped(self) -> None:
+        nested: object = {}
+        for _ in range(sys.getrecursionlimit() + 10):
+            nested = {"nested": nested}
+
+        with patch.object(sqlite_review_records.json, "loads", return_value=nested), self.assertRaisesRegex(
+            ReviewRecordsError, "^hosted_review JSON is too deeply nested$"
+        ) as scrub_raised:
+            _archive_artifact("hosted_review", "{}")
+        self.assertIsInstance(scrub_raised.exception.__cause__, RecursionError)
+
+        with patch.object(
+            sqlite_review_records, "_json", side_effect=RecursionError("serialization recursion")
+        ), self.assertRaisesRegex(
+            ReviewRecordsError, "^hosted_review JSON is too deeply nested$"
+        ) as serialization_raised:
+            _archive_artifact("hosted_review", "{}")
+        self.assertIsInstance(serialization_raised.exception.__cause__, RecursionError)
 
     def test_cli_event_archive_splits_only_on_ascii_newlines_and_accepts_crlf(self) -> None:
         first = {"type": "finding", "body": "before\u2028middle\u2029after"}

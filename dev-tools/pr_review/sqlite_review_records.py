@@ -251,12 +251,16 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
                     if not isinstance(event, dict):
                         raise ValueError("non-object event")
                     events.append(event)
+        except RecursionError as exc:
+            raise ReviewRecordsError("CLI events must be JSON objects, one per line") from exc
         except (ValueError, json.JSONDecodeError) as exc:
             raise ReviewRecordsError("CLI events must be JSON objects, one per line") from exc
         value: Any = events
     else:
         try:
             value = json.loads(content, parse_constant=_reject_json_constant)
+        except RecursionError as exc:
+            raise ReviewRecordsError(f"{kind} must be JSON") from exc
         except ValueError as exc:
             raise ReviewRecordsError(f"{kind} must be JSON") from exc
 
@@ -287,11 +291,14 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
             return output, total
         return item, 0
 
-    scrubbed, redactions = scrub(value)
-    if kind == "cli_events":
-        stored = "".join(_json(event) + "\n" for event in scrubbed)
-    else:
-        stored = _json(scrubbed)
+    try:
+        scrubbed, redactions = scrub(value)
+        if kind == "cli_events":
+            stored = "".join(_json(event) + "\n" for event in scrubbed)
+        else:
+            stored = _json(scrubbed)
+    except RecursionError as exc:
+        raise ReviewRecordsError(f"{kind} JSON is too deeply nested") from exc
     return stored, source_digest, redactions
 
 
