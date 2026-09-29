@@ -3433,8 +3433,17 @@ class ScriptWorkItemServiceImplTest {
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        "1", "", "", List.of("101", "102"), "", 0L, 0L, 1,
-                        "req-limit", "admin", "retry")))
+                        "1",
+                        "",
+                        "",
+                        List.of("101", "102"),
+                        "",
+                        0L,
+                        0L,
+                        1,
+                        "req-limit",
+                        "admin",
+                        "retry")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("replay_filters_require_preview");
     Mockito.verifyNoInteractions(workItemRepository, replayRepository);
@@ -3487,7 +3496,16 @@ class ScriptWorkItemServiceImplTest {
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        "1", "", "", List.of("102"), "", 0L, 0L, 0, "req-conflict", "admin",
+                        "1",
+                        "",
+                        "",
+                        List.of("102"),
+                        "",
+                        0L,
+                        0L,
+                        0,
+                        "req-conflict",
+                        "admin",
                         "retry")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different replay request");

@@ -141,9 +141,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
     assertThat(item.getAuthorityUnavailableSince()).isNotNull().isBetween(before, Instant.now());
-    assertThat(item.getNextEligibleAt())
-        .isNotNull()
-        .isAfterOrEqualTo(before.plusSeconds(30));
+    assertThat(item.getNextEligibleAt()).isNotNull().isAfterOrEqualTo(before.plusSeconds(30));
   }
 
   @Test

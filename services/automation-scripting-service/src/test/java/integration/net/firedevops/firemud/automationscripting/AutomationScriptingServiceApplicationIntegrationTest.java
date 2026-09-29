@@ -283,7 +283,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   @Test
   void postgresBindingCompensationRestoresLogicalBindings() {
     String name = "script-binding-compensation-" + UUID.randomUUID();
-    String scriptPatchVersion = "patch-definition-" + UUID.randomUUID();
+    String scriptPatchVersion =
+        "patch-" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
     ScriptDefinition originalDefinition = scriptDefinition(name, "{\"original\":true}");
     originalDefinition.setScriptVersion(scriptPatchVersion);
     originalDefinition.setBaseVersionId(1L);
