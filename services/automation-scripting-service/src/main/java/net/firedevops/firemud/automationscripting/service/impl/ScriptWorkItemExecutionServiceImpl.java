@@ -672,9 +672,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return null;
     }
     final GetGameInstanceRuntimeStateResponse runtime;
-    runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    try {
+      runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Game-session runtime authority read failed for script work item id={}",
+          workItem.getId(),
+          ex);
+      return "script_pin_authority_unavailable";
+    }
     String runtimeFailure =
         ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(workItem, runtime);
     if (runtimeFailure != null) {

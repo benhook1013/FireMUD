@@ -187,8 +187,12 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
-  void doesNotTreatUnexpectedGameSessionFailureAsAuthorityRetry() {
+  void requeuesUnexpectedGameSessionFailureWithBoundedAuthorityRetry() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     GameSessionControlPlaneClient gameSessionClient =
@@ -200,19 +204,36 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
 
     ScriptWorkItemExecutionService service =
-        fenceExecutionService(
+        new ScriptWorkItemExecutionServiceImpl(
             workItemService,
+            definitionRepository,
+            handoffService,
             workItemRepository,
             auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            null,
+            null,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
     assertThat(result.failedCount()).isEqualTo(1);
-    assertThat(item.getStatus()).isEqualTo("EVALUATING");
-    assertThat(item.getAuthorityUnavailableCount()).isZero();
-    verify(workItemRepository, Mockito.never()).save(Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getCancelReason()).isEqualTo("script_pin_authority_unavailable");
+    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
+    assertThat(item.getNextEligibleAt()).isNotNull();
+    verify(workItemRepository).save(item);
+    verify(definitionRepository, Mockito.never())
+        .findByTenantIdAndScriptVersionAndName(
+            Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
   }
 
   @Test

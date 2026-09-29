@@ -2031,9 +2031,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
             .setTenantId("1")
-            .setGameInstanceId("game-1")
             .addWorkItemIds("77")
-            .setLimit(10)
+            .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
@@ -2145,7 +2144,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
             .setTenantId("1")
-            .setGameInstanceId("game-1")
             .addWorkItemIds("77")
             .setControlPlaneRequestId("request-empty")
             .setActorPrincipal("1")
