@@ -154,6 +154,10 @@ public class EntityDigestBaselineMigrationService {
     if (version.getVersionState() == VersionLifecycleState.DRAFT) {
       throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
     }
+    Long versionStateEpoch = version.getVersionStateEpoch();
+    if (versionStateEpoch == null || versionStateEpoch < 1L) {
+      throw rejected("VERSION_STATE_EPOCH_MISSING", "version has no valid lifecycle state epoch");
+    }
 
     RecordedParticipantDigest current =
         baselineRepository
@@ -187,12 +191,19 @@ public class EntityDigestBaselineMigrationService {
     RecordedParticipantDigest replacement = replacementFor(current, observed);
     EntityDigestBaselineMigrationAudit audit = auditFor(current, observed, command, migrationTime);
     try {
-      writeService.commit(current, replacement, audit);
+      writeService.commit(current, replacement, audit, versionStateEpoch);
     } catch (EntityDigestBaselineMigrationWriteService.DraftVersionException draftAtCommit) {
       throw rejected(
           "VERSION_DRAFT",
           "version became DRAFT before the guarded migration write",
           draftAtCommit);
+    } catch (
+        EntityDigestBaselineMigrationWriteService.VersionStateEpochChangedException
+            epochChangedAtCommit) {
+      throw rejected(
+          "VERSION_STATE_EPOCH_CHANGED",
+          "version lifecycle changed while the Entity digest was being recomputed",
+          epochChangedAtCommit);
     } catch (RuntimeException uncertainWrite) {
       try {
         return readBackCommittedResult(

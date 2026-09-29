@@ -327,7 +327,10 @@ class EntityDigestBaselineMigrationIntegrationTest {
             firstCommand.workloadIdentity(),
             migrationTime);
 
-    assertThatThrownBy(() -> writeService.commit(expectedOld, replacement, duplicateAudit))
+    assertThatThrownBy(
+            () ->
+                writeService.commit(
+                    expectedOld, replacement, duplicateAudit, secondVersion.getVersionStateEpoch()))
         .isInstanceOf(RuntimeException.class);
 
     RecordedParticipantDigest readback =
