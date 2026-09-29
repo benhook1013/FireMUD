@@ -280,8 +280,8 @@ if ((shared_snapshot_status == 0)); then
     "${shared_rotation_resources[*]}" || exit 1
   assert_key_matches_certificate "$shared_cert" "$shared_key"
 else
-  # The legacy shared bundle is still required by the four remaining
-  # shared-leaf workloads. Generate it once, then preserve its leaf on every later run.
+  # The legacy shared bundle is still required by remaining shared-leaf workloads.
+  # Generate it once, then preserve its leaf on every later run.
   "$legacy_generator" "$cert_dir"
   for required_file in ca.crt client.crt client.key ca.key; do
     [[ -s "$cert_dir/$required_file" ]] || {
