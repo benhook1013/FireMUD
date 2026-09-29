@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -43,12 +44,17 @@ REVIEW_FINISHED_STATES = EXPLICIT_HUMAN_STOP_STATES | {"COMPLETE"}
 RECORDS_PREFLIGHT_TIMEOUT_SECONDS = 8
 RECORDS_HISTORY_TIMEOUT_SECONDS = 5
 MAX_RECORD_HISTORY_BYTES = 512_000
+MAX_RECORD_HISTORY_BATCH_PRS = 200
 MAX_RECORDS_PER_KIND = 100
 MAX_HISTORY_RECORDS = 1000
 MAX_RECORD_VALUE_LENGTH = 80
 MAX_RECORD_TEXT_LENGTH = 500
 MAX_REVIEW_ROUNDS = 100
 MAX_REVIEW_DETAIL_RECORD_HTML_CHARS = 250_000
+TIMING_STAGE_NAMES = frozenset({
+    "controller_status", "github_listing", "routed_enrichment", "merged_history",
+    "records_history", "html_render",
+})
 ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
 .activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }
 .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
@@ -74,6 +80,29 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
   .stack .round-pill { width: 100%; min-width: 0; padding-inline: .2rem; }
 }
 """
+
+
+class _TimedStage:
+    """Emit bounded timing metadata without including stage inputs or output."""
+
+    def __init__(self, name: str):
+        if name not in TIMING_STAGE_NAMES:
+            raise ValueError("unknown status-page timing stage")
+        self.name = name
+        self.started_at = 0.0
+
+    def __enter__(self):
+        self.started_at = time.monotonic()
+        return self
+
+    def __exit__(self, exception_type, _exception, _traceback):
+        elapsed = max(0.0, time.monotonic() - self.started_at)
+        outcome = "failed" if exception_type is not None else "ok"
+        print(
+            f"STATUS_PAGE_TIMING stage={self.name} elapsed_seconds={elapsed:.3f} outcome={outcome}",
+            file=sys.stderr,
+            flush=True,
+        )
 REFRESH_SCRIPT = """(() => {
   const form = document.querySelector('.refresh-form');
   if (!form) return;
@@ -809,7 +838,7 @@ def selected_review_front(data: dict, review: dict, github: dict) -> int | None:
 
 
 def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, dict]:
-    """Fetch records only after one read-only SQLite compatibility preflight."""
+    """Fetch all records in one command when available, preserving legacy fallback."""
     unavailable = {number: {"state": "unavailable", "reason": "Records history is unavailable"}
                    for number in prs}
     if tool is None or not prs:
@@ -836,7 +865,40 @@ def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, di
             and state.get("bootstrapped", True) is True):
         return unavailable
 
-    def fetch(number: int) -> tuple[int, dict]:
+    def snapshot(payload: object, number: int) -> dict:
+        if not isinstance(payload, dict) or payload.get("pr") != number:
+            raise ValueError("history record identity mismatch")
+        if len(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+            raise ValueError("history record oversized")
+        records = dict(payload)
+        for key in ("runs", "findings", "routes", "decisions"):
+            value = records.get(key)
+            if (not isinstance(value, list) or len(value) > MAX_HISTORY_RECORDS
+                    or any(not isinstance(record, dict) for record in value)):
+                raise ValueError("history records malformed or oversized")
+        cli_attempts = records.get("cli_attempts")
+        if cli_attempts is not None:
+            if (not isinstance(cli_attempts, dict) or type(cli_attempts.get("available")) is not bool
+                    or not isinstance(cli_attempts.get("attempts"), list)
+                    or len(cli_attempts["attempts"]) > 5
+                    or any(not isinstance(attempt, dict)
+                           or attempt.get("outcome") not in {"rate_limited", "provider_failed", "timed_out", "setup_failed"}
+                           or not isinstance(attempt.get("finished_at"), str)
+                           for attempt in cli_attempts["attempts"])):
+                raise ValueError("CLI attempt summary malformed")
+        has_history = any(records[key] for key in ("runs", "findings", "routes", "decisions"))
+        return {**records, "state": "available" if has_history else "empty"}
+
+    def parse_envelope(stdout: str, number: int) -> dict:
+        if len(stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+            raise ValueError("history response oversized")
+        document = json.loads(stdout)
+        if (not isinstance(document, dict) or type(document.get("api_version")) is not int
+                or document.get("api_version") != 1):
+            raise ValueError("history envelope mismatch")
+        return snapshot(document.get("result"), number)
+
+    def read_legacy(number: int) -> tuple[int, dict]:
         try:
             result = subprocess.run(
                 [sys.executable, str(tool), "records", "history", "--pr", str(number)],
@@ -848,43 +910,72 @@ def records_history_snapshots(tool: Path | None, prs: list[int]) -> dict[int, di
             )
         except (OSError, subprocess.SubprocessError):
             return number, {"state": "unavailable", "reason": "History read failed"}
-        if result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_RECORD_HISTORY_BYTES:
+        if result.returncode != 0:
             return number, {"state": "unavailable", "reason": "History read failed"}
         try:
-            document = json.loads(result.stdout)
-            payload = document["result"]
-            if (document.get("api_version") != 1 or not isinstance(payload, dict)
-                    or payload.get("pr") != number):
-                raise ValueError("history envelope mismatch")
-            records = {key: payload[key] for key in ("runs", "findings", "routes", "decisions")}
-            if any(not isinstance(value, list) or len(value) > MAX_HISTORY_RECORDS
-                   or any(not isinstance(record, dict) for record in value)
-                   for value in records.values()):
-                raise ValueError("history records malformed or oversized")
-            cli_attempts = payload.get("cli_attempts")
-            if cli_attempts is not None:
-                if (not isinstance(cli_attempts, dict) or type(cli_attempts.get("available")) is not bool
-                        or not isinstance(cli_attempts.get("attempts"), list)
-                        or len(cli_attempts["attempts"]) > 5
-                        or any(not isinstance(attempt, dict)
-                               or attempt.get("outcome") not in {"rate_limited", "provider_failed", "timed_out", "setup_failed"}
-                               or not isinstance(attempt.get("finished_at"), str)
-                               for attempt in cli_attempts["attempts"])):
-                    raise ValueError("CLI attempt summary malformed")
-                records["cli_attempts"] = cli_attempts
+            return number, parse_envelope(result.stdout, number)
         except (ValueError, TypeError, KeyError, AttributeError):
             return number, {"state": "unavailable", "reason": "History response is malformed"}
-        has_history = any(records[key] for key in ("runs", "findings", "routes", "decisions"))
-        state_name = "available" if has_history else "empty"
-        return number, {"state": state_name, **records}
 
-    snapshots: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
-        futures = [pool.submit(fetch, number) for number in prs]
-        for future in as_completed(futures):
-            number, snapshot = future.result()
-            snapshots[number] = snapshot
-    return snapshots
+    def legacy_snapshots() -> dict[int, dict]:
+        snapshots: dict[int, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
+            futures = [pool.submit(read_legacy, number) for number in prs]
+            for future in as_completed(futures):
+                number, selected = future.result()
+                snapshots[number] = selected
+        return snapshots
+
+    if len(prs) <= MAX_RECORD_HISTORY_BATCH_PRS:
+        command = [sys.executable, str(tool), "records", "history-batch"]
+        for number in prs:
+            command.extend(("--pr", str(number)))
+        try:
+            batch = subprocess.run(
+                command,
+                cwd=tool.parent.parent,
+                capture_output=True,
+                text=True,
+                timeout=min(120, max(RECORDS_HISTORY_TIMEOUT_SECONDS, RECORDS_HISTORY_TIMEOUT_SECONDS * len(prs))),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return unavailable
+        unsupported = (
+            batch.returncode != 0
+            and "argument records_command:" in batch.stderr
+            and "invalid choice: 'history-batch'" in batch.stderr
+        )
+        if unsupported:
+            return legacy_snapshots()
+        if batch.returncode != 0:
+            return unavailable
+        try:
+            maximum_batch_bytes = MAX_RECORD_HISTORY_BYTES * len(prs)
+            if len(batch.stdout.encode("utf-8")) > maximum_batch_bytes:
+                return unavailable
+            document = json.loads(batch.stdout)
+            result = document.get("result") if isinstance(document, dict) else None
+            by_pr = (
+                result.get("prs")
+                if isinstance(document, dict) and type(document.get("api_version")) is int
+                and document.get("api_version") == 1 and isinstance(result, dict)
+                else None
+            )
+            expected_keys = {str(number) for number in prs}
+            if not isinstance(by_pr, dict) or set(by_pr) != expected_keys:
+                raise ValueError("history batch did not return every requested PR")
+            snapshots = {}
+            for number in prs:
+                try:
+                    snapshots[number] = snapshot(by_pr[str(number)], number)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    snapshots[number] = {"state": "unavailable", "reason": "History response is malformed"}
+            return snapshots
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return unavailable
+
+    return legacy_snapshots()
 
 
 def _bounded_category(value: object, fallback: str = "Unspecified") -> str:
@@ -1144,6 +1235,34 @@ def render_record_sections(history: dict) -> str:
     )
 
 
+def render_review_attempts(history: dict) -> str:
+    """Show request attempts separately from completed review results."""
+
+    attempts = history.get("attempts", []) if isinstance(history, dict) else []
+    if not isinstance(attempts, list):
+        return ""
+    pending = [attempt for attempt in attempts if isinstance(attempt, dict)
+               and (attempt.get("state") != "completed" or not attempt.get("run_id"))]
+    if not pending:
+        return ""
+    rows = []
+    for attempt in reversed(pending[-20:]):
+        channel = _bounded_category(attempt.get("channel"))
+        state = _bounded_category(attempt.get("state"))
+        missing_run = attempt.get("state") == "completed" and not attempt.get("run_id")
+        label = "Completed, review record missing" if missing_run else state
+        when = _record_text(attempt.get("finished_at") or attempt.get("started_at"))
+        rows.append(f'<li><strong>{channel}: {safe(label)}</strong>'
+                    f'<span class="record-counts">{when}</span></li>')
+    warning = ('<p class="history-note">A completed attempt has no linked review record; '
+               'its findings and count need recovery.</p>'
+               if any(attempt.get("state") == "completed" and not attempt.get("run_id")
+                      for attempt in pending) else "")
+    return ('<section class="history-group"><h2>Review attempts</h2>'
+            '<p class="history-note">These attempts do not add review results.</p>'
+            f'{warning}<ul class="history-list">{"".join(rows)}</ul></section>')
+
+
 def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
                          history: dict | None = None) -> str:
     """Render a bounded static PR history page from structured records."""
@@ -1184,6 +1303,7 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
                 records_html = (f'<p class="history-note">Finding-by-finding records are stored for '
                                 f'{safe(" and ".join(coverage))}. The round cards above still show every '
                                 'completed review.</p>' + records_html)
+    records_html += render_review_attempts(history)
     timestamp = safe(now.isoformat())
     mast = render_mast(
         f'PR #{pr} Review History',
@@ -1802,7 +1922,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .queue-stage > .stack li.front .order {{ background: var(--fire); }}
 .queue-stage > .stack li.merged {{ background: var(--plum-wash); border-left: 0; box-shadow: none; }}
 .queue-stage > .stack li.merged .order {{ background: var(--plum); }}
-.pr-title-line {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .55rem; }}
+.pr-title-line {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .55rem; }} .pr-title-line > a {{ font-weight: 750; }}
 .pr-status-line {{ display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; margin-top: .25rem; }}
 .pr-status-line .sub {{ display: inline; margin-top: 0; }}
 .review-detail-link {{ display: inline-block; margin-top: .4rem; font-size: .78rem; font-weight: 700; }}
@@ -1842,56 +1962,71 @@ def main() -> None:
     if configured_tool is not None and (not isinstance(configured_tool, str) or not Path(configured_tool).is_absolute()):
         raise ValueError("review_tool must be an absolute path")
     review_tool = args.review_tool or (Path(configured_tool) if configured_tool else None)
-    review = review_snapshot(review_tool, front["number"], front["head"], now)
+    def fetch_review_status() -> dict:
+        with _TimedStage("controller_status"):
+            return review_snapshot(review_tool, front["number"], front["head"], now)
+
+    def fetch_github_listing() -> dict:
+        with _TimedStage("github_listing"):
+            return github_stages(now)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        review_future = pool.submit(fetch_review_status)
+        github_future = pool.submit(fetch_github_listing)
+        review = review_future.result()
+        github = github_future.result()
     if review_tool is not None and not review["available"] and args.output.exists():
         raise RuntimeError(f"review status unavailable; existing page preserved: {review['reason']}")
-    enrich_public_routed_counts(review_tool, review)
-    github = github_stages(now)
+    with _TimedStage("routed_enrichment"):
+        enrich_public_routed_counts(review_tool, review)
     if not github["available"] and args.output.exists():
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
-    enrich_merged_review_history(review_tool, review, github)
+    with _TimedStage("merged_history"):
+        enrich_merged_review_history(review_tool, review, github)
     now = datetime.now(timezone.utc)
     data = controller_stack(data, review, github, now)
     history_prs = [item["number"] for item in data["stack"]]
-    histories = records_history_snapshots(review_tool, history_prs)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    rendered = render(data, review, now, github, histories=histories)
-    history_rendered = render(data, review, now, github, history_only=True, histories=histories)
-    progress_rendered = render_project_map(now)
-    write_review_detail_pages(args.output.parent, data, review, now, histories)
-    for name in ASSET_FILES:
-        source = ROOT / "assets" / name
-        with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=".asset-", delete=False) as asset_temp:
-            asset_temp.write(source.read_bytes())
-            asset_temp_path = Path(asset_temp.name)
+    with _TimedStage("records_history"):
+        histories = records_history_snapshots(review_tool, history_prs)
+    with _TimedStage("html_render"):
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        rendered = render(data, review, now, github, histories=histories)
+        history_rendered = render(data, review, now, github, history_only=True, histories=histories)
+        progress_rendered = render_project_map(now)
+        write_review_detail_pages(args.output.parent, data, review, now, histories)
+        for name in ASSET_FILES:
+            source = ROOT / "assets" / name
+            with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=".asset-", delete=False) as asset_temp:
+                asset_temp.write(source.read_bytes())
+                asset_temp_path = Path(asset_temp.name)
+            try:
+                os.replace(asset_temp_path, args.output.parent / name)
+            finally:
+                asset_temp_path.unlink(missing_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".status-", delete=False) as temporary:
+            temporary.write(rendered)
+            temporary_path = Path(temporary.name)
         try:
-            os.replace(asset_temp_path, args.output.parent / name)
+            os.replace(temporary_path, args.output)
         finally:
-            asset_temp_path.unlink(missing_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".status-", delete=False) as temporary:
-        temporary.write(rendered)
-        temporary_path = Path(temporary.name)
-    try:
-        os.replace(temporary_path, args.output)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    progress_output = args.output.parent / "progress.html"
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".progress-", delete=False) as temporary:
-        temporary.write(progress_rendered)
-        progress_temporary = Path(temporary.name)
-    try:
-        os.replace(progress_temporary, progress_output)
-    finally:
-        progress_temporary.unlink(missing_ok=True)
-    history_output = args.output.parent / "queue-history.html"
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".queue-history-", delete=False) as temporary:
-        temporary.write(history_rendered)
-        history_temporary = Path(temporary.name)
-    try:
-        os.replace(history_temporary, history_output)
-    finally:
-        history_temporary.unlink(missing_ok=True)
-    print(args.output.resolve())
+            temporary_path.unlink(missing_ok=True)
+        progress_output = args.output.parent / "progress.html"
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".progress-", delete=False) as temporary:
+            temporary.write(progress_rendered)
+            progress_temporary = Path(temporary.name)
+        try:
+            os.replace(progress_temporary, progress_output)
+        finally:
+            progress_temporary.unlink(missing_ok=True)
+        history_output = args.output.parent / "queue-history.html"
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=args.output.parent, prefix=".queue-history-", delete=False) as temporary:
+            temporary.write(history_rendered)
+            history_temporary = Path(temporary.name)
+        try:
+            os.replace(history_temporary, history_output)
+        finally:
+            history_temporary.unlink(missing_ok=True)
+        print(args.output.resolve())
 
 
 if __name__ == "__main__":

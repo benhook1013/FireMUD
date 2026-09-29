@@ -275,6 +275,24 @@ class StatusPageTest(unittest.TestCase):
             "runs": [], "findings": [], "routes": [], "decisions": [],
         }))
 
+    def test_detail_flags_completed_attempt_without_review_record(self):
+        history = {
+            "state": "available", "runs": [], "findings": [], "routes": [], "decisions": [],
+            "attempts": [
+                {"channel": "hosted", "state": "completed", "run_id": None,
+                 "started_at": "2026-09-29T00:00:00Z", "finished_at": "2026-09-29T00:01:00Z"},
+                {"channel": "cli", "state": "rate_limited", "run_id": None,
+                 "started_at": "2026-09-29T00:02:00Z", "finished_at": "2026-09-29T00:03:00Z"},
+            ],
+        }
+        rendered = page.render_review_detail(
+            self.fixture(), page.review_snapshot(None, 42, HEAD, NOW), NOW, 42, history
+        )
+        self.assertIn("Completed, review record missing", rendered)
+        self.assertIn("its findings and count need recovery", rendered)
+        self.assertIn("rate limited", rendered)
+        self.assertIn("These attempts do not add review results", rendered)
+
     def test_route_status_summary_counts_all_routes(self):
         summary = page._route_status_summary([
             {"status": "open"}, {"status": "accepted_fixed"}, {"status": "accepted_fixed"},
@@ -416,8 +434,10 @@ class StatusPageTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, json.dumps({
                     "format": "sqlite", "compatible": True, "read_only": True,
                 }), "")
-            self.assertEqual([sys.executable, "/tmp/pr-review", "records", "history", "--pr", "42"], command)
-            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+            self.assertEqual([sys.executable, "/tmp/pr-review", "records", "history-batch", "--pr", "42"], command)
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "api_version": 1, "result": {"prs": {"42": payload["result"]}},
+            }), "")
 
         run.side_effect = fake_run
         snapshots = page.records_history_snapshots(Path("/tmp/pr-review"), [42])
@@ -425,6 +445,29 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual("empty", snapshots[42]["state"])
         self.assertEqual([], snapshots[42]["runs"])
         self.assertEqual([], snapshots[42]["cli_attempts"]["attempts"])
+
+    @patch.object(page.subprocess, "run")
+    def test_records_batch_falls_back_only_for_unsupported_command(self, run):
+        def fake_run(command, **_kwargs):
+            if command[2:5] == ["state", "status", "--json"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "format": "sqlite", "compatible": True, "read_only": True,
+                }), "")
+            if command[3] == "history-batch":
+                return subprocess.CompletedProcess(
+                    command, 2, "",
+                    "argument records_command: invalid choice: 'history-batch'",
+                )
+            self.assertEqual(command[3], "history")
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "api_version": 1, "result": {"pr": 42, "runs": [], "findings": [],
+                                              "routes": [], "decisions": []},
+            }), "")
+
+        run.side_effect = fake_run
+        snapshots = page.records_history_snapshots(Path("/tmp/pr-review"), [42])
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(snapshots[42]["state"], "empty")
 
     def test_failed_cli_attempt_is_visible_without_adding_a_review_pill(self):
         history = {"state": "available", "runs": [], "findings": [], "routes": [], "decisions": [],
@@ -1058,13 +1101,21 @@ vm.runInNewContext(process.argv[1], {
                 with self.assertRaisesRegex(RuntimeError, "existing page preserved"):
                     page.main()
             self.assertEqual("last good review snapshot", output.read_text(encoding="utf-8"))
-            github.assert_not_called()
+            snapshot.assert_called_once()
+            github.assert_called_once()
+            self.assertEqual({source, output}, set(Path(directory).iterdir()))
+
+            snapshot.reset_mock()
+            github.reset_mock()
             snapshot.return_value = {"available": True}
             github.return_value = {"available": False}
             with patch.object(sys, "argv", ["render.py", "--input", str(source), "--output", str(output)]):
                 with self.assertRaisesRegex(RuntimeError, "GitHub PR details unavailable"):
                     page.main()
             self.assertEqual("last good review snapshot", output.read_text(encoding="utf-8"))
+            snapshot.assert_called_once()
+            github.assert_called_once()
+            self.assertEqual({source, output}, set(Path(directory).iterdir()))
 
     def test_github_stage_and_review_eligibility_are_distinct(self):
         data = self.fixture()

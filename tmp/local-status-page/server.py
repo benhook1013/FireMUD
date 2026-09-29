@@ -7,6 +7,7 @@ import argparse
 import html
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
@@ -24,17 +25,53 @@ PUBLISH_SCRIPT = ROOT / "publish-hetzner.py"
 REFRESH_COOLDOWN_SECONDS = 15
 AUTO_REFRESH_INTERVAL_SECONDS = 30 * 60
 LOG = logging.getLogger(__name__)
+TIMING_LINE = re.compile(
+    r"^STATUS_PAGE_TIMING stage=([a-z_]+) elapsed_seconds=([0-9]{1,3}(?:\.[0-9]{1,3})?) outcome=(ok|failed)$"
+)
+RENDER_TIMING_STAGES = frozenset({
+    "controller_status", "github_listing", "routed_enrichment", "merged_history",
+    "records_history", "html_render",
+})
+
+
+def _log_timing(stage: str, elapsed: float, outcome: str) -> None:
+    LOG.info("status-page timing stage=%s elapsed_seconds=%.3f outcome=%s", stage, elapsed, outcome)
+
+
+def _log_render_stage_timings(stderr: str) -> None:
+    """Forward only fixed stage names and numeric durations from the renderer."""
+    for line in stderr.splitlines():
+        match = TIMING_LINE.fullmatch(line)
+        if match is None or match.group(1) not in RENDER_TIMING_STAGES:
+            continue
+        elapsed = float(match.group(2))
+        if elapsed <= 180:
+            _log_timing(f"render.{match.group(1)}", elapsed, match.group(3))
 
 
 def run_local_script(script: Path, timeout: int) -> None:
-    result = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
+    started_at = time.monotonic()
+    stage = (
+        "render_process" if script == RENDER_SCRIPT
+        else "publish_process" if script == PUBLISH_SCRIPT
+        else "local_script"
     )
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        _log_timing(stage, max(0.0, time.monotonic() - started_at), "failed")
+        raise
+    if script == RENDER_SCRIPT:
+        _log_render_stage_timings(result.stderr)
+    outcome = "ok" if result.returncode == 0 else "failed"
+    _log_timing(stage, max(0.0, time.monotonic() - started_at), outcome)
     if result.returncode:
         raise RuntimeError(f"{Path(script).name} exited {result.returncode}: {result.stderr[-1200:]}")
 
@@ -207,6 +244,7 @@ class StatusHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8877)
