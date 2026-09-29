@@ -5,6 +5,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
@@ -110,6 +112,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -120,7 +123,7 @@ class PlayCommandHandlerTest {
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1058,6 +1061,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1086,6 +1090,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(false)
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1126,6 +1131,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("INACTIVE")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(3L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1232,7 +1238,9 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
@@ -1368,6 +1376,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(5L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     PlayCommandHandlingResult result =
@@ -1399,6 +1408,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState(lifecycleState)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1429,6 +1439,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState(lifecycleState)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(membershipExists ? 3L : 5L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1455,6 +1466,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("INACTIVE")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(4L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
 
@@ -1485,6 +1497,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -1525,6 +1538,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -1533,7 +1547,9 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(false)
                 .setAllowPublicJoin(true)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1563,6 +1579,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -1571,7 +1588,9 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1602,7 +1621,9 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1627,6 +1648,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("MISSING")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -1635,7 +1657,9 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1666,6 +1690,7 @@ class PlayCommandHandlerTest {
                 .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("not-a-timestamp")
                 .build());
 
@@ -1685,6 +1710,71 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playWhenMembershipAuthorityGenerationIsMissingFailsClosed() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setMembershipLifecycleState("ACTIVE")
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verifyNoInteractions(entityManagementClient, sessionContextService);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"target", "version", "stale", "future", "malformed"})
+  void unsafeEntitlementSnapshotFailsClosed(String defect) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    String tenantId = "target".equals(defect) ? "23" : "22";
+    long entitlementVersion = "version".equals(defect) ? 0L : 1L;
+    String evaluatedAt =
+        switch (defect) {
+          case "stale" -> Instant.now().minus(16L, ChronoUnit.SECONDS).toString();
+          case "future" -> Instant.now().plus(1L, ChronoUnit.SECONDS).toString();
+          case "malformed" -> "not-a-timestamp";
+          default -> Instant.now().toString();
+        };
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId(tenantId)
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(entitlementVersion)
+                .setTenantBillingSequence(0L)
+                .setEvaluatedAt(evaluatedAt)
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    Mockito.verify(accountClient, never())
+        .getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient, sessionContextService);
+  }
+
+  @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -1696,7 +1786,7 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(5L)
                 .setTenantBillingSequence(5L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
