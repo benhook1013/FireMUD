@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
+import net.firedevops.firemud.gamesession.service.RuntimeVersionIdResolver;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
@@ -81,42 +82,55 @@ final class GameSessionOperatorControlPlaneService {
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     requireCoherentPinForRead(instance);
-    return GetPinnedScriptPatchVersionResponse.newBuilder()
-        .setPinnedScriptPatchVersion(
-            instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-        .setScriptPinEpoch(instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
-        .setPinnedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
-        .setPinnedBy(
-            instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
-        .setControlPlaneRequestId(
-            instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                ? ""
-                : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
-        .build();
+    var response =
+        GetPinnedScriptPatchVersionResponse.newBuilder()
+            .setPinnedScriptPatchVersion(
+                instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+            .setScriptPinEpoch(
+                instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
+            .setPinnedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
+            .setPinnedBy(
+                instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
+            .setControlPlaneRequestId(
+                instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedControlPlaneRequestId());
+    if (instance.getScriptPatchVersion() != null && !instance.getScriptPatchVersion().isBlank()) {
+      response.setPublication(
+          scriptPatchPublicationLink(
+              instance.getTenantId(),
+              instance.getScriptPatchVersion(),
+              instance.getScriptPatchBaseVersionId()));
+    }
+    return response.build();
   }
 
   GetGameSessionPinConvergenceResponse getGameSessionPinConvergence(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     requireCoherentPinForRead(instance);
-    return GetGameSessionPinConvergenceResponse.newBuilder()
-        .setTenantId(Long.toString(instance.getTenantId()))
-        .setGameInstanceId(Long.toString(instance.getId()))
-        .setObservedPinnedScriptPatchVersion(
-            instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-        .setObservedScriptPinEpoch(
-            instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
-        .setLastObservedControlPlaneRequestId(
-            instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                ? ""
-                : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
-        .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
-        .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
-        .build();
+    var response =
+        GetGameSessionPinConvergenceResponse.newBuilder()
+            .setTenantId(Long.toString(instance.getTenantId()))
+            .setGameInstanceId(Long.toString(instance.getId()))
+            .setObservedPinnedScriptPatchVersion(
+                instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+            .setObservedScriptPinEpoch(
+                instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
+            .setLastObservedControlPlaneRequestId(
+                instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedControlPlaneRequestId())
+            .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
+            .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()));
+    if (instance.getScriptPatchVersion() != null && !instance.getScriptPatchVersion().isBlank()) {
+      response.setPublication(
+          scriptPatchPublicationLink(
+              instance.getTenantId(),
+              instance.getScriptPatchVersion(),
+              instance.getScriptPatchBaseVersionId()));
+    }
+    return response.build();
   }
 
   SetPinnedScriptPatchVersionResponse setPinnedScriptPatchVersion(
@@ -131,9 +145,9 @@ final class GameSessionOperatorControlPlaneService {
         instance.getScriptPatchVersion(),
         instance.getScriptPinEpoch(),
         instance.getScriptPatchPinnedControlPlaneRequestId());
-    String validationError =
+    TargetPatchValidation validation =
         validateTargetPatch(tenantId, instance, request.getTargetScriptPatchVersion(), false);
-    if (validationError != null) {
+    if (validation.errorCode() != null) {
       return setPinResponse(
           recordPinFailure(
               tenantId,
@@ -144,7 +158,8 @@ final class GameSessionOperatorControlPlaneService {
               request.getActorPrincipal(),
               request.getReason(),
               expected,
-              validationError));
+              validation.validatedBaseVersionId(),
+              validation.errorCode()));
     }
     ScriptPinMutationResult result =
         gameInstanceRepository.applyScriptPin(
@@ -158,7 +173,8 @@ final class GameSessionOperatorControlPlaneService {
             canonicalExpectedPinKind(expected),
             expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
-                : null);
+                : null,
+            validation.validatedBaseVersionId());
     return setPinResponse(result);
   }
 
@@ -174,9 +190,9 @@ final class GameSessionOperatorControlPlaneService {
         instance.getScriptPatchVersion(),
         instance.getScriptPinEpoch(),
         instance.getScriptPatchPinnedControlPlaneRequestId());
-    String validationError =
+    TargetPatchValidation validation =
         validateTargetPatch(tenantId, instance, request.getTargetScriptPatchVersion(), true);
-    if (validationError != null) {
+    if (validation.errorCode() != null) {
       return rollbackPinResponse(
           recordPinFailure(
               tenantId,
@@ -187,7 +203,8 @@ final class GameSessionOperatorControlPlaneService {
               request.getActorPrincipal(),
               request.getReason(),
               expected,
-              validationError));
+              validation.validatedBaseVersionId(),
+              validation.errorCode()));
     }
     ScriptPinMutationResult result =
         gameInstanceRepository.applyScriptPin(
@@ -201,7 +218,8 @@ final class GameSessionOperatorControlPlaneService {
             canonicalExpectedPinKind(expected),
             expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
-                : null);
+                : null,
+            validation.validatedBaseVersionId());
     return rollbackPinResponse(result);
   }
 
@@ -401,7 +419,24 @@ final class GameSessionOperatorControlPlaneService {
       String actorPrincipal,
       String reason,
       ExpectedCurrentPin expected,
+      Long validatedBaseVersionId,
       String errorCode) {
+    if (validatedBaseVersionId != null) {
+      return gameInstanceRepository.recordScriptPinFailure(
+          tenantId,
+          gameInstanceId,
+          operationKind,
+          targetScriptPatchVersion,
+          controlPlaneRequestId,
+          actorPrincipal,
+          reason,
+          canonicalExpectedPinKind(expected),
+          expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
+              ? expected.getScriptPinEpoch()
+              : null,
+          validatedBaseVersionId,
+          errorCode);
+    }
     return gameInstanceRepository.recordScriptPinFailure(
         tenantId,
         gameInstanceId,
@@ -418,18 +453,24 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   /**
-   * Validates both owner authorities before the Game Session pin transaction. A null result is a
-   * valid target. The compatibility constructor does not provide the owner authority client, so pin
-   * mutations must fail closed when it is used.
+   * Validates both owner authorities before the Game Session pin transaction. Successful validation
+   * returns the exact positive base that must be committed with the pin. The compatibility
+   * constructor does not provide the owner authority client, so pin mutations must fail closed when
+   * it is used.
    */
-  private String validateTargetPatch(
+  private TargetPatchValidation validateTargetPatch(
       long tenantId, GameInstance instance, String targetScriptPatchVersion, boolean rollback) {
     if (rollback
         && targetScriptPatchVersion.equals(normalizePatch(instance.getScriptPatchVersion()))) {
-      return SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT);
     }
     if (automationScriptingControlPlaneClient == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
+    }
+
+    Long runtimeVersionId = RuntimeVersionIdResolver.resolve(instance);
+    if (runtimeVersionId == null) {
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
 
     GetPublishedScriptPatchVersionResponse publicationResponse;
@@ -437,36 +478,40 @@ final class GameSessionOperatorControlPlaneService {
       publicationResponse =
           gameDesignClient == null
               ? null
-              : gameDesignClient.getPublishedScriptPatchVersion(tenantId, targetScriptPatchVersion);
+              : gameDesignClient.getPublishedScriptPatchVersion(
+                  tenantId, targetScriptPatchVersion, runtimeVersionId);
     } catch (RuntimeException ex) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
     if (publicationResponse == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
     if (publicationResponse.hasError() && !publicationResponse.getError().getCode().isBlank()) {
       String code = publicationResponse.getError().getCode();
-      return switch (code) {
-        case "NOT_FOUND" -> SCRIPT_PATCH_NOT_PUBLISHED;
-        case "GAME_DESIGN_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-        default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-      };
+      return new TargetPatchValidation(
+          null,
+          switch (code) {
+            case "NOT_FOUND" -> SCRIPT_PATCH_NOT_PUBLISHED;
+            case "GAME_DESIGN_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+            default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+          });
     }
     if (!publicationResponse.hasScriptPatch()) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
     PublishedScriptPatchVersion published = publicationResponse.getScriptPatch();
     if (!Long.toString(tenantId).equals(published.getTenantId())) {
-      return SCRIPT_PATCH_TENANT_MISMATCH;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_TENANT_MISMATCH);
     }
     if (!targetScriptPatchVersion.equals(published.getScriptPatchVersion())
         || published.getVersionId() <= 0L
         || published.getBaseVersionId() <= 0L) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(null, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
+    Long publishedBaseVersionId = published.getBaseVersionId();
     if (published.getPublicationState()
         != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED) {
-      return SCRIPT_PATCH_NOT_PUBLISHED;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_NOT_PUBLISHED);
     }
 
     GetScriptPatchStatusResponse readiness;
@@ -475,51 +520,36 @@ final class GameSessionOperatorControlPlaneService {
           automationScriptingControlPlaneClient.getScriptPatchStatus(
               tenantId, targetScriptPatchVersion);
     } catch (RuntimeException ex) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
     if (readiness == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
     if (readiness.hasError() && !readiness.getError().getCode().isBlank()) {
       String code = readiness.getError().getCode();
-      return switch (code) {
-        case "NOT_FOUND" -> SCRIPT_PATCH_NOT_READY;
-        case "AUTOMATION_SCRIPTING_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-        default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-      };
+      return new TargetPatchValidation(
+          publishedBaseVersionId,
+          switch (code) {
+            case "NOT_FOUND" -> SCRIPT_PATCH_NOT_READY;
+            case "AUTOMATION_SCRIPTING_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+            default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+          });
     }
     if (readiness.getStatus() != ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY) {
-      return SCRIPT_PATCH_NOT_READY;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_NOT_READY);
     }
     if (readiness.getBaseVersionId() <= 0L
         || readiness.getBaseVersionId() != published.getBaseVersionId()) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_AUTHORITY_UNAVAILABLE);
     }
 
-    Long runtimeVersionId = runtimeVersionId(instance);
-    if (runtimeVersionId == null) {
-      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
-    }
     if (!runtimeVersionId.equals(published.getBaseVersionId())) {
-      return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
+      return new TargetPatchValidation(publishedBaseVersionId, SCRIPT_PATCH_BASE_VERSION_MISMATCH);
     }
-    return null;
+    return new TargetPatchValidation(publishedBaseVersionId, null);
   }
 
-  private Long runtimeVersionId(GameInstance instance) {
-    if (instance.getVersionId() != null) {
-      return instance.getVersionId() > 0L ? instance.getVersionId() : null;
-    }
-    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
-      return null;
-    }
-    try {
-      long parsed = Long.parseLong(instance.getRuntimeVersion());
-      return parsed > 0L ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
-  }
+  private record TargetPatchValidation(Long validatedBaseVersionId, String errorCode) {}
 
   private String normalizePatch(String value) {
     return value == null || value.isBlank() ? null : value;
@@ -551,31 +581,9 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
-    String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
-    GetPublishedScriptPatchVersionResponse response =
-        gameDesignClient == null
-            ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
-            : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
-    if (response.hasError() && !response.getError().getCode().isBlank()) {
-      return ScriptPatchPublicationLink.newBuilder()
-          .setScriptPatchVersion(normalizedScriptPatchVersion)
-          .setVersionId(0L)
-          .setBaseVersionId(0L)
-          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
-          .setLastChangedAtMs(0L)
-          .setLookupErrorCode(response.getError().getCode())
-          .setLookupErrorMessage(response.getError().getMessage())
-          .build();
-    }
-    return ScriptPatchPublicationLink.newBuilder()
-        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
-        .setVersionId(response.getScriptPatch().getVersionId())
-        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
-        .setPublicationState(response.getScriptPatch().getPublicationState())
-        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
-        .build();
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
+    return ScriptPatchPublicationLinkResolver.resolve(
+        gameDesignClient, tenantId, scriptPatchVersion, baseVersionId);
   }
 
   private long toEpochMillis(Instant instant) {

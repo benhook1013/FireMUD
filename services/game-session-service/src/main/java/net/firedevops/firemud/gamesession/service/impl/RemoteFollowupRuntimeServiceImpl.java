@@ -15,12 +15,14 @@ import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -62,6 +64,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
+  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RedisTemplate<String, Object> redisTemplate;
   private final Clock clock;
@@ -75,6 +78,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RedisTemplate<String, Object> redisTemplate,
       MeterRegistry meterRegistry) {
@@ -82,6 +86,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteCommandCoordinatorRepository,
         remoteFollowupRepository,
         remoteFollowupResultRepository,
+        gameInstanceRepository,
         gameplayCommandRepository,
         redisTemplate,
         meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
@@ -96,6 +101,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RedisTemplate<String, Object> redisTemplate,
       Counter remoteFollowupScheduledCounter,
@@ -106,6 +112,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
+    this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.redisTemplate = redisTemplate;
     this.remoteFollowupScheduledCounter = remoteFollowupScheduledCounter;
@@ -119,8 +126,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   @Transactional
   public ScheduleOutcome scheduleFollowup(ScheduleRequest request) {
     validateScheduleRequest(request);
+    validateSourcePin(request);
     Instant now = Instant.now(clock);
     GameplayCommand command = findScheduleSourceCommand(request);
+    validateSourceBase(request, command);
 
     Optional<RemoteCommandCoordinator> existingCoordinator =
         remoteCommandCoordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
@@ -597,7 +606,67 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.followupId(), "followup_id");
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");
+    ScriptPinTupleCoherence.requireCoherent(
+        blankToNull(request.scriptPatchVersion()),
+        request.scriptPinEpoch(),
+        request.scriptPinControlPlaneRequestId());
+    validateScriptPatchBase(request.scriptPatchVersion(), request.scriptPatchBaseVersionId());
     validateSchedulePayload(request);
+  }
+
+  private void validateSourcePin(ScheduleRequest request) {
+    String requestPatch = blankToNull(request.scriptPatchVersion());
+    if (requestPatch == null) {
+      return;
+    }
+    if (request.scriptPatchBaseVersionId() == null || request.scriptPatchBaseVersionId() <= 0L) {
+      throw new IllegalArgumentException(
+          "script_patch_base_version_id must be positive with the source script pin");
+    }
+
+    var sourceInstance =
+        gameInstanceRepository
+            .findByTenantIdAndGameInstanceIdForUpdate(
+                request.tenantId(), request.originGameInstanceId())
+            .orElseThrow(() -> new IllegalArgumentException("source game instance is unavailable"));
+    if (!requestPatch.equals(blankToNull(sourceInstance.getScriptPatchVersion()))
+        || !Objects.equals(request.scriptPinEpoch(), sourceInstance.getScriptPinEpoch())
+        || !Objects.equals(
+            request.scriptPinControlPlaneRequestId(),
+            sourceInstance.getScriptPatchPinnedControlPlaneRequestId())
+        || !Objects.equals(
+            request.scriptPatchBaseVersionId(), sourceInstance.getScriptPatchBaseVersionId())) {
+      throw new IllegalArgumentException(
+          "source script pin tuple does not match current owner state");
+    }
+  }
+
+  private static void validateSourceBase(ScheduleRequest request, GameplayCommand command) {
+    String requestPatch = blankToNull(request.scriptPatchVersion());
+    String commandPatch = command == null ? null : blankToNull(command.getScriptPatchVersion());
+    if (requestPatch == null && commandPatch != null) {
+      throw new IllegalArgumentException(
+          "script_patch_version is required with its admitted base version");
+    }
+    if (commandPatch != null
+        && (!requestPatch.equals(commandPatch)
+            || !Objects.equals(
+                request.scriptPatchBaseVersionId(), command.getScriptPatchBaseVersionId()))) {
+      throw new IllegalArgumentException(
+          "source script patch tuple does not match admitted command");
+    }
+  }
+
+  private static void validateScriptPatchBase(String scriptPatchVersion, Long baseVersionId) {
+    boolean hasPatch = blankToNull(scriptPatchVersion) != null;
+    if (hasPatch && (baseVersionId == null || baseVersionId <= 0L)) {
+      throw new IllegalArgumentException(
+          "script_patch_base_version_id must be positive when script_patch_version is present");
+    }
+    if (!hasPatch && baseVersionId != null) {
+      throw new IllegalArgumentException(
+          "script_patch_base_version_id requires script_patch_version");
+    }
   }
 
   private static void validateSchedulePayload(ScheduleRequest request) {
@@ -723,6 +792,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
+            existing.getScriptPatchBaseVersionId(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
@@ -770,6 +840,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
+            existing.getScriptPatchBaseVersionId(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
@@ -829,6 +900,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       String realmSlug,
       Long pointerVersion,
       String scriptPatchVersion,
+      Long scriptPatchBaseVersionId,
       String pluginId,
       String pluginVersionId,
       String automationDispatchId,
@@ -857,6 +929,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && sameLong(storedRoutingMetadata.pointerVersion(), requestRoutingMetadata.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
+        && sameLong(request.scriptPatchBaseVersionId(), scriptPatchBaseVersionId)
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
         && normalized(blankToNull(request.pluginVersionId())).equals(normalized(pluginVersionId))
         && normalized(blankToNull(request.automationDispatchId()))
@@ -1022,6 +1095,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getScriptPatchVersion() != null
                 ? coordinator.getScriptPatchVersion()
                 : followup == null ? null : followup.getScriptPatchVersion()));
+    result.setScriptPatchBaseVersionId(exactRemoteScriptPatchBase(coordinator, followup));
     result.setPluginId(
         blankToNull(
             coordinator != null && coordinator.getPluginId() != null
@@ -1056,6 +1130,23 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setObservedAt(now);
   }
 
+  private static Long exactRemoteScriptPatchBase(
+      RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    if (coordinator == null || followup == null) {
+      return null;
+    }
+    Long coordinatorBase = coordinator.getScriptPatchBaseVersionId();
+    if (coordinatorBase == null
+        || coordinatorBase <= 0L
+        || !coordinatorBase.equals(followup.getScriptPatchBaseVersionId())
+        || !Objects.equals(
+            normalized(coordinator.getScriptPatchVersion()),
+            normalized(followup.getScriptPatchVersion()))) {
+      return null;
+    }
+    return coordinatorBase;
+  }
+
   private static void applySchedulingMetadata(
       RemoteCommandCoordinator coordinator, ScheduleRequest request, GameplayCommand command) {
     RoutingMetadata routingMetadata =
@@ -1076,6 +1167,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
+    coordinator.setScriptPatchBaseVersionId(request.scriptPatchBaseVersionId());
     coordinator.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     coordinator.setPluginVersionId(
@@ -1113,6 +1205,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
+    followup.setScriptPatchBaseVersionId(request.scriptPatchBaseVersionId());
     followup.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     followup.setPluginVersionId(

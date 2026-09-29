@@ -67,6 +67,8 @@ For this tracker, [ADR 0112](../../architecture/decisions/adr-0112-typed-bounded
 
 Game Session is the durable owner of gameplay command, tick batch, tick effect, runtime ownership, remote coordinator, remote follow-up, and remote result records. PostgreSQL is the recovery and execution-truth store. Redis remains the fast coordination plane for locks, queues, pending state, wake-up hints, and scheduling cadence; Redis residue is never treated as the sole durable execution record.
 
+PR #2882 persists the exact admitted source script-patch base on remote coordinator, follow-up, and result rows and uses that retained value for point/list readback, including publication-link lookup. Retry/recovery behavior and complete source/target tuple proof remain open. No current `GameInstance.versionId` or `runtimeVersion` read is historical admission proof.
+
 The live queue and ownership boundary is still `(tenantId, gameInstanceId)`. The owner row and every current batch also carry an explicit `regionId`, currently bootstrapped from that game-instance boundary, so readers and replay do not infer scope from key names. Region-aware callers must provide the admitted `regionId` and may retain `gameInstanceId` for identity; disagreement, missing ownership, stale same-instance scope, and mismatched returned identity fail closed.
 
 ### Durable Command Ingress

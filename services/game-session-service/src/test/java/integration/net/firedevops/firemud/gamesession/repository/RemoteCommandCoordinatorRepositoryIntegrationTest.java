@@ -148,6 +148,36 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   }
 
   @Test
+  void exactScriptPatchBaseRoundTripsAndUpdatesAcrossRemoteProvenanceRows() {
+    Instant now = Instant.parse("2026-06-25T12:00:00Z");
+    RemoteCommandCoordinator coordinator = remoteCoordinator(now);
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPatchBaseVersionId(100L);
+    RemoteCommandCoordinator savedCoordinator = coordinatorRepository.save(coordinator);
+    assertThat(savedCoordinator.getScriptPatchBaseVersionId()).isEqualTo(100L);
+    savedCoordinator.setScriptPatchBaseVersionId(101L);
+    assertThat(coordinatorRepository.save(savedCoordinator).getScriptPatchBaseVersionId())
+        .isEqualTo(101L);
+
+    RemoteFollowup followup = remoteFollowup(now);
+    followup.setScriptPatchVersion("patch-1");
+    followup.setScriptPatchBaseVersionId(100L);
+    RemoteFollowup savedFollowup = followupRepository.save(followup);
+    assertThat(savedFollowup.getScriptPatchBaseVersionId()).isEqualTo(100L);
+    savedFollowup.setScriptPatchBaseVersionId(101L);
+    assertThat(followupRepository.save(savedFollowup).getScriptPatchBaseVersionId())
+        .isEqualTo(101L);
+
+    RemoteFollowupResult result = remoteResult("result-1", now, "REMOTE_APPLIED", null);
+    result.setScriptPatchVersion("patch-1");
+    result.setScriptPatchBaseVersionId(100L);
+    RemoteFollowupResult savedResult = resultRepository.save(result);
+    assertThat(savedResult.getScriptPatchBaseVersionId()).isEqualTo(100L);
+    savedResult.setScriptPatchBaseVersionId(101L);
+    assertThat(resultRepository.save(savedResult).getScriptPatchBaseVersionId()).isEqualTo(101L);
+  }
+
+  @Test
   void findForControlPlaneUsesIdTieBreakForLatestResultFilters() {
     Instant sharedObservedAt = Instant.parse("2026-06-25T12:00:00Z");
 

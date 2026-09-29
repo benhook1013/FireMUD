@@ -382,6 +382,9 @@ public class RemoteCommandCoordinatorRepository {
             .set(REMOTE_COMMAND_COORDINATOR.REALM_SLUG, entity.getRealmSlug())
             .set(REMOTE_COMMAND_COORDINATOR.POINTER_VERSION, entity.getPointerVersion())
             .set(REMOTE_COMMAND_COORDINATOR.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(
+                REMOTE_COMMAND_COORDINATOR.SCRIPT_PATCH_BASE_VERSION_ID,
+                entity.getScriptPatchBaseVersionId())
             .set(REMOTE_COMMAND_COORDINATOR.PLUGIN_ID, entity.getPluginId())
             .set(REMOTE_COMMAND_COORDINATOR.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(
@@ -514,6 +517,7 @@ public class RemoteCommandCoordinatorRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
@@ -548,6 +552,8 @@ public class RemoteCommandCoordinatorRepository {
     entity.setRealmSlug(record.get(REMOTE_COMMAND_COORDINATOR.REALM_SLUG));
     entity.setPointerVersion(record.get(REMOTE_COMMAND_COORDINATOR.POINTER_VERSION));
     entity.setScriptPatchVersion(record.get(REMOTE_COMMAND_COORDINATOR.SCRIPT_PATCH_VERSION));
+    entity.setScriptPatchBaseVersionId(
+        record.get(REMOTE_COMMAND_COORDINATOR.SCRIPT_PATCH_BASE_VERSION_ID));
     entity.setPluginId(record.get(REMOTE_COMMAND_COORDINATOR.PLUGIN_ID));
     entity.setPluginVersionId(record.get(REMOTE_COMMAND_COORDINATOR.PLUGIN_VERSION_ID));
     entity.setAutomationDispatchId(record.get(REMOTE_COMMAND_COORDINATOR.AUTOMATION_DISPATCH_ID));

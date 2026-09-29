@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,10 +22,12 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
@@ -40,6 +43,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   private RemoteCommandCoordinatorRepository coordinatorRepository;
   private RemoteFollowupRepository followupRepository;
   private RemoteFollowupResultRepository resultRepository;
+  private GameInstanceRepository gameInstanceRepository;
   private GameplayCommandRepository gameplayCommandRepository;
   private RedisTemplate<String, Object> redisTemplate;
   private org.springframework.data.redis.core.ValueOperations<String, Object> valueOperations;
@@ -51,6 +55,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinatorRepository = mock(RemoteCommandCoordinatorRepository.class);
     followupRepository = mock(RemoteFollowupRepository.class);
     resultRepository = mock(RemoteFollowupResultRepository.class);
+    gameInstanceRepository = mock(GameInstanceRepository.class);
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     redisTemplate = mock(RedisTemplate.class);
     valueOperations = mock(org.springframework.data.redis.core.ValueOperations.class);
@@ -59,12 +64,20 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(followupRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(resultRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(gameplayCommandRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    sourceGameInstance(
+                        (Long) invocation.getArgument(1), 100L, 3L, "pin-request-1")));
     meterRegistry = new SimpleMeterRegistry();
     service =
         new RemoteFollowupRuntimeServiceImpl(
             coordinatorRepository,
             followupRepository,
             resultRepository,
+            gameInstanceRepository,
             gameplayCommandRepository,
             redisTemplate,
             meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
@@ -107,6 +120,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "work-1".equals(coordinator.getAutomationWorkItemId())
                         && "script-1".equals(coordinator.getScriptId())
                         && "patch-1".equals(coordinator.getScriptPatchVersion())
+                        && Long.valueOf(100L).equals(coordinator.getScriptPatchBaseVersionId())
                         && "plugin-1".equals(coordinator.getPluginId())
                         && "plugin-v1".equals(coordinator.getPluginVersionId())
                         && "demo".equals(coordinator.getWorldSlug())
@@ -136,6 +150,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
                         && "patch-1".equals(followup.getScriptPatchVersion())
+                        && Long.valueOf(100L).equals(followup.getScriptPatchBaseVersionId())
                         && "plugin-1".equals(followup.getPluginId())
                         && "plugin-v1".equals(followup.getPluginVersionId())
                         && "demo".equals(followup.getWorldSlug())
@@ -143,6 +158,158 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && Long.valueOf(17L).equals(followup.getPointerVersion())));
     verify(valueOperations)
         .set("remote:{tenant:1:instance:8}:entity-9", "1", java.time.Duration.ofMillis(60_000L));
+  }
+
+  @Test
+  void scheduleFollowupRejectsPinnedPatchWithoutAnExactPositiveBase() {
+    for (Long scriptPatchBaseVersionId : new Long[] {null, 0L, -1L}) {
+      IllegalArgumentException error =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.scheduleFollowup(
+                      scheduleRequest(
+                          7L, 8L, 4L, 25L, "followup-1", "effect-1", scriptPatchBaseVersionId)));
+
+      assertEquals(
+          "script_patch_base_version_id must be positive when script_patch_version is present",
+          error.getMessage());
+    }
+
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandWithDifferentPatch() {
+    GameplayCommand command = gameplayCommand();
+    command.setScriptPatchVersion("patch-2");
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals("source script patch tuple does not match admitted command", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandWithDifferentPatchBase() {
+    GameplayCommand command = gameplayCommand();
+    command.setScriptPatchBaseVersionId(101L);
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals("source script patch tuple does not match admitted command", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourcePinTupleThatChangedSinceScriptAdmission() {
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.scheduleFollowup(scheduleRequestWithPinTuple(100L, 4L, "pin-request-1")));
+
+    assertEquals("source script pin tuple does not match current owner state", error.getMessage());
+    verify(gameInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(1L, 7L);
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceBaseThatDiffersFromCurrentPin() {
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.scheduleFollowup(scheduleRequestWithPinTuple(101L, 3L, "pin-request-1")));
+
+    assertEquals("source script pin tuple does not match current owner state", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourcePinControlPlaneRequestIdThatChanged() {
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(scheduleRequestWithPinTuple(100L, 3L, "old-pin-request")));
+
+    assertEquals("source script pin tuple does not match current owner state", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsHistoricalReplayAfterSourcePinMoves() {
+    GameInstance movedPin = sourceGameInstance(7L, 101L, 4L, "pin-request-2");
+    movedPin.setScriptPatchVersion("patch-2");
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.of(movedPin));
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(coordinator()));
+    when(followupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                1L, 8L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(followup()));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals("source script pin tuple does not match current owner state", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsUnavailableSourceOwnerForScriptPin() {
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals("source game instance is unavailable", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRetryRejectsChangedExactScriptPatchBase() {
+    RemoteCommandCoordinator existingCoordinator = coordinator();
+    RemoteFollowup existingFollowup = followup();
+    existingFollowup.setTargetEntityId("entity-9");
+    existingFollowup.setPayloadJson(
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}");
+    existingFollowup.setPayloadKind("enqueue_automation_command");
+    existingFollowup.setRequestedCommand("LOOK");
+    existingFollowup.setRequiresSoloTick(true);
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(existingCoordinator));
+    when(followupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                1L, 8L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(existingFollowup));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.of(sourceGameInstance(7L, 101L, 3L, "pin-request-1")));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    scheduleRequest(7L, 8L, 4L, 25L, "followup-1", "effect-1", 101L)));
+
+    assertEquals(
+        "command_id already maps to different remote followup metadata", error.getMessage());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
   }
 
   @Test
@@ -380,7 +547,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "TARGET_REGION_EXECUTED",
                 44L,
                 22L,
-                1700L));
+                1700L,
+                100L,
+                3L,
+                "pin-request-1"));
 
     assertTrue(outcome.coordinatorCreated());
     assertTrue(outcome.followupCreated());
@@ -450,7 +620,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "TARGET_REGION_EXECUTED",
                 44L,
                 22L,
-                1700L));
+                1700L,
+                100L,
+                3L,
+                "pin-request-1"));
 
     assertTrue(outcome.coordinatorCreated());
     assertTrue(outcome.followupCreated());
@@ -535,7 +708,10 @@ class RemoteFollowupRuntimeServiceImplTest {
             "TARGET_REGION_EXECUTED",
             44L,
             22L,
-            1700L);
+            1700L,
+            100L,
+            3L,
+            "pin-request-1");
 
     RemoteFollowupRuntimeService.ScheduleOutcome firstOutcome = service.scheduleFollowup(request);
     RemoteFollowupRuntimeService.ScheduleOutcome outcome = service.scheduleFollowup(request);
@@ -618,7 +794,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "TARGET_REGION_EXECUTED",
                 44L,
                 22L,
-                1700L));
+                1700L,
+                100L,
+                3L,
+                "pin-request-1"));
 
     assertFalse(outcome.coordinatorCreated());
     assertFalse(outcome.followupCreated());
@@ -1113,7 +1292,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("command_id already maps to a different coordinator_id", ex.getMessage());
     verify(followupRepository, never())
@@ -1237,7 +1419,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("effect_key already maps to a different remote execution scope", ex.getMessage());
   }
@@ -1247,6 +1432,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     RemoteCommandCoordinator existing = coordinator();
     when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(existing));
+    GameInstance currentSourcePin = sourceGameInstance(7L, 100L, 3L, "pin-request-1");
+    currentSourcePin.setScriptPatchVersion("patch-2");
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.of(currentSourcePin));
 
     IllegalArgumentException ex =
         assertThrows(
@@ -1288,7 +1477,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("command_id already maps to different remote followup metadata", ex.getMessage());
     verify(followupRepository, never())
@@ -1349,7 +1541,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("effect_key already maps to different remote followup metadata", ex.getMessage());
   }
@@ -1402,7 +1597,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "TARGET_REGION_EXECUTED",
                 44L,
                 22L,
-                1700L));
+                1700L,
+                100L,
+                3L,
+                "pin-request-1"));
 
     assertTrue(outcome.coordinatorCreated());
     assertTrue(outcome.followupCreated());
@@ -1490,7 +1688,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("payload_json kind does not match payload_kind", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1539,7 +1740,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("payload_json must be valid JSON", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1591,7 +1795,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "TARGET_REGION_EXECUTED",
                         44L,
                         22L,
-                        1700L)));
+                        1700L,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("target_region_epoch must be positive", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1643,7 +1850,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "TARGET_REGION_EXECUTED",
                         44L,
                         22L,
-                        1700L)));
+                        1700L,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("origin_region_epoch must be positive", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1695,7 +1905,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("trigger_script_event read_snapshot_token is required", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1744,7 +1957,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals("payload kind 'teleport' is not yet supported", ex.getMessage());
     verify(coordinatorRepository, never())
@@ -1796,7 +2012,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        100L,
+                        3L,
+                        "pin-request-1")));
 
     assertEquals(
         "payload command is required for kind 'enqueue_automation_command'", ex.getMessage());
@@ -1841,6 +2060,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "work-1".equals(result.getAutomationWorkItemId())
                         && "script-1".equals(result.getScriptId())
                         && "patch-1".equals(result.getScriptPatchVersion())
+                        && Long.valueOf(100L).equals(result.getScriptPatchBaseVersionId())
                         && "plugin-1".equals(result.getPluginId())
                         && "plugin-v1".equals(result.getPluginVersionId())
                         && "demo".equals(result.getWorldSlug())
@@ -3029,6 +3249,60 @@ class RemoteFollowupRuntimeServiceImplTest {
       long originDeadlineTickId,
       String followupId,
       String effectKey) {
+    return scheduleRequest(
+        originGameInstanceId,
+        targetGameInstanceId,
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
+        followupId,
+        effectKey,
+        100L);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
+      long originGameInstanceId,
+      long targetGameInstanceId,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId,
+      String followupId,
+      String effectKey,
+      Long scriptPatchBaseVersionId) {
+    return scheduleRequestWithPinTuple(
+        originGameInstanceId,
+        targetGameInstanceId,
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
+        followupId,
+        effectKey,
+        scriptPatchBaseVersionId,
+        3L,
+        "pin-request-1");
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithPinTuple(
+      Long scriptPatchBaseVersionId, Long scriptPinEpoch, String pinRequestId) {
+    return scheduleRequestWithPinTuple(
+        7L,
+        8L,
+        4L,
+        25L,
+        "followup-1",
+        "effect-1",
+        scriptPatchBaseVersionId,
+        scriptPinEpoch,
+        pinRequestId);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithPinTuple(
+      long originGameInstanceId,
+      long targetGameInstanceId,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId,
+      String followupId,
+      String effectKey,
+      Long scriptPatchBaseVersionId,
+      Long scriptPinEpoch,
+      String pinRequestId) {
     return new RemoteFollowupRuntimeService.ScheduleRequest(
         1L,
         "cmd-1",
@@ -3064,7 +3338,16 @@ class RemoteFollowupRuntimeServiceImplTest {
         "TARGET_REGION_EXECUTED",
         44L,
         22L,
-        1700L);
+        1700L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        scriptPatchBaseVersionId,
+        scriptPinEpoch,
+        pinRequestId);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest triggerScriptEventScheduleRequest() {
@@ -3103,7 +3386,28 @@ class RemoteFollowupRuntimeServiceImplTest {
         "TARGET_REGION_EXECUTED",
         44L,
         22L,
-        1700L);
+        1700L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        100L,
+        3L,
+        "pin-request-1");
+  }
+
+  private static GameInstance sourceGameInstance(
+      Long gameInstanceId, Long baseVersionId, Long pinEpoch, String pinRequestId) {
+    GameInstance instance = new GameInstance();
+    instance.setId(gameInstanceId);
+    instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchBaseVersionId(baseVersionId);
+    instance.setScriptPinEpoch(pinEpoch);
+    instance.setScriptPatchPinnedControlPlaneRequestId(pinRequestId);
+    return instance;
   }
 
   private static RemoteFollowupRuntimeService.ResultRequest resultRequest(String outcome) {
@@ -3150,6 +3454,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPatchBaseVersionId(100L);
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(NOW);
@@ -3198,6 +3503,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setAutomationWorkItemId("work-1");
     followup.setScriptId("script-1");
     followup.setScriptPatchVersion("patch-1");
+    followup.setScriptPatchBaseVersionId(100L);
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setCreatedAt(NOW);
@@ -3229,6 +3535,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setAutomationWorkItemId("work-1");
     command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
+    command.setScriptPatchBaseVersionId(100L);
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     return command;

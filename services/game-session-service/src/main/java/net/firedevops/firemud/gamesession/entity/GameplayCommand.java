@@ -58,5 +58,6 @@ public class GameplayCommand {
   private Long dueTickId;
   private Long admittedReleaseBundleId;
   private Long admittedVersionId;
+  private Long scriptPatchBaseVersionId;
   private String declaredEffectsJson;
 }
