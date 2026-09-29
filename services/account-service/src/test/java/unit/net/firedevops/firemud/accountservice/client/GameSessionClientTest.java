@@ -18,6 +18,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
@@ -67,6 +68,50 @@ class GameSessionClientTest {
             AuthenticationException.class, () -> client.getAdmissionPointer(7L, "demo", "live"));
 
     assertUnavailable(failure, cause);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void getAdmissionPointerMapsInternalApplicationFailureToUnavailable() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.getAdmissionPointer(any()))
+        .thenReturn(
+            GetAdmissionPointerResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("INTERNAL").setMessage("store failed"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    AuthenticationException failure =
+        assertThrows(
+            AuthenticationException.class, () -> client.getAdmissionPointer(7L, "demo", "live"));
+
+    assertThat(failure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(failure.getMessage())
+        .isEqualTo("Gameplay routing authority unavailable; retry later");
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void getAdmissionPointerPreservesInvalidArgumentAsDomainFailure() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.getAdmissionPointer(any()))
+        .thenReturn(
+            GetAdmissionPointerResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_ARGUMENT")
+                        .setMessage("Unknown gameplay realm selection"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    AuthenticationException failure =
+        assertThrows(
+            AuthenticationException.class, () -> client.getAdmissionPointer(7L, "demo", "missing"));
+
+    assertThat(failure.getCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(failure.getMessage())
+        .isEqualTo(
+            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 

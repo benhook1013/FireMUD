@@ -29,6 +29,8 @@ public class GameSessionClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final String ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE =
       "Gameplay routing authority unavailable; retry later";
+  private static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
+      "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry";
 
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
@@ -101,8 +103,18 @@ public class GameSessionClient
                       .setWorldSlug(worldSlug)
                       .build());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Admission pointer lookup failed: " + response.getError().getCode());
+        String code = response.getError().getCode();
+        if ("INTERNAL".equals(code)
+            || "UNAVAILABLE".equals(code)
+            || "DEADLINE_EXCEEDED".equals(code)) {
+          throw new AuthenticationException(
+              "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+        }
+        if ("INVALID_ARGUMENT".equals(code) || "NOT_FOUND".equals(code)) {
+          throw new AuthenticationException(
+              "ADMISSION_POINTER_UNAVAILABLE", ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+        }
+        throw new IllegalStateException("Admission pointer lookup failed: " + code);
       }
       return response.getAdmissionPointer();
     } catch (StatusRuntimeException ex) {
