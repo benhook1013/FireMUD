@@ -32,7 +32,8 @@ from . import evidence, hosted
 from . import github as github_api
 from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
-from .sqlite_provider_imports import _cli_finding_title
+from .sqlite_finding_text import _safe_finding_detail
+from .sqlite_provider_imports import _cli_detail, _cli_finding_title
 from .sqlite_review_records import (
     FindingObservation,
     ReviewRecordsError,
@@ -1248,6 +1249,7 @@ def run_cli_review(
                                 observations.append(FindingObservation(
                                     source_finding_key=f"cli-run:{run_id}:finding:{index}",
                                     title=title,
+                                    detail=_safe_finding_detail(_cli_detail(instructions)),
                                 ))
                             records.complete_attempt_run(
                                 run_id,

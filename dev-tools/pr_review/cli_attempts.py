@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence
-from .sqlite_provider_imports import _cli_finding_title
+from .sqlite_finding_text import _safe_finding_detail
+from .sqlite_provider_imports import _cli_detail, _cli_finding_title
 from .sqlite_review_records import (
     AttemptNotFound,
     FindingObservation,
@@ -701,6 +702,7 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
             observations.append(FindingObservation(
                 source_finding_key=f"cli-run:{run_id}:finding:{index}",
                 title=title,
+                detail=_safe_finding_detail(_cli_detail(finding.get("codegenInstructions"))),
             ))
         except ReviewRecordsError as error:
             raise _UnrecordableCapture("capture finding metadata is invalid") from error

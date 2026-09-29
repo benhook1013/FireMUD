@@ -649,6 +649,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["recovered"], [{"run_id": run_id, "pr": "2885"}])
         self.assertEqual(records.attempt(run_id)["state"], "completed")
         self.assertEqual(records.history(2885)["findings"][0]["title"], "Keep\u2028the\u2029line.")
+        self.assertEqual(records.history(2885)["findings"][0]["detail"], "Keep the line.")
 
     def test_reconciles_old_native_attempt_killed_without_terminal_file_as_failed(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
