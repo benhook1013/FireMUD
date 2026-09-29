@@ -540,27 +540,7 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendRosterSummaryView(FriendRosterSummaryViewOutput output) {
-    return "Friend roster summary:"
-        + "\nLinked: "
-        + output.totalCount()
-        + "\nOnline: "
-        + output.onlineCount()
-        + "\nOffline: "
-        + output.offlineCount()
-        + "\nRecent offline: "
-        + output.recentCount()
-        + "\nVisibility public: "
-        + output.publicCount()
-        + "\nVisibility friends-only: "
-        + output.friendsOnlyCount()
-        + "\nVisibility private: "
-        + output.privateCount()
-        + "\nScope shared: "
-        + output.sharedCount()
-        + "\nScope isolated: "
-        + output.isolatedCount()
-        + "\nScope unspecified: "
-        + output.unspecifiedScopeCount();
+    return "Friend roster summary:" + "\nLinked: " + output.totalCount();
   }
 
   private String renderFriendPresencePolicyView(FriendPresencePolicyViewOutput output) {

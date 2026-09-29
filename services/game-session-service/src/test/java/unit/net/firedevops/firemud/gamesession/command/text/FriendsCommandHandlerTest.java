@@ -329,66 +329,27 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
-  void friendsPrivateFiltersCanonicalRosterByVisibilityPolicy() {
+  void friendsRedactionSelectingFiltersFailClosedWithoutSocialQuery() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE))
-        .thenReturn(
-            ListFriendsResponse.newBuilder()
-                .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE)
-                .setTotalCount(2)
-                .setMatchCount(1)
-                .addFriends(
-                    FriendRosterEntry.newBuilder()
-                        .setOrdinal(2)
-                        .setFriendAccountId("88")
-                        .setPresence(
-                            FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("88")
-                                .setOnline(true)
-                                .setCharacterName("Secret")
-                                .setVisibilityPolicy(
-                                    net.firedevops.firemud.socialgroups.v1
-                                        .FriendPresenceVisibilityPolicy
-                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE)
-                                .build())
-                        .build())
-                .build());
+    for (String filter : java.util.List.of("OFFLINE", "PRIVATE", "UNSPECIFIED_SCOPE")) {
+      TextCommandInterpretationResult result =
+          handler.handle(
+              new TextCommand(
+                  TextCommandType.FRIENDS, java.util.List.of(filter), "FRIENDS " + filter),
+              GAMEPLAY_CONTEXT);
 
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("PRIVATE"), "FRIENDS PRIVATE"),
-            GAMEPLAY_CONTEXT);
-
-    FriendPresenceViewOutput view =
-        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
-    assertThat(view.filter()).isEqualTo("PRIVATE");
-    assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isEqualTo(1);
-    assertThat(view.friends())
-        .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.ordinal()).isEqualTo(2);
-              assertThat(entry.friendAccountId()).isEqualTo(88L);
-              assertThat(entry.online()).isNull();
-              assertThat(entry.characterName()).isNull();
-              assertThat(entry.displayName()).isEqualTo("Friend #88");
-              assertThat(entry.visibilityPolicy()).isNull();
-            });
-    assertThat(
-            new TextPlayerOutputRenderer(
-                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
-                .render(result.outputs().getFirst()))
-        .contains("Friends PRIVATE [1/2]:")
-        .contains("presence unavailable")
-        .doesNotContain("Secret");
-    Mockito.verify(socialGroupsClient)
-        .listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE);
+      assertThat(result.commandResult().accepted()).isFalse();
+      assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_PRESENCE_UNAVAILABLE");
+      assertThat(result.outputs())
+          .singleElement()
+          .extracting(PlayerOutput::text)
+          .isEqualTo("ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable");
+    }
+    Mockito.verifyNoInteractions(socialGroupsClient);
   }
 
   @Test
@@ -615,31 +576,17 @@ class FriendsCommandHandlerTest {
     FriendRosterSummaryViewOutput view =
         (FriendRosterSummaryViewOutput) result.outputs().getFirst().payload();
     assertThat(view.totalCount()).isEqualTo(4);
-    assertThat(view.onlineCount()).isEqualTo(1);
-    assertThat(view.offlineCount()).isEqualTo(3);
-    assertThat(view.recentCount()).isEqualTo(2);
-    assertThat(view.publicCount()).isEqualTo(1);
-    assertThat(view.friendsOnlyCount()).isEqualTo(2);
-    assertThat(view.privateCount()).isEqualTo(5);
-    assertThat(view.sharedCount()).isEqualTo(2);
-    assertThat(view.isolatedCount()).isEqualTo(1);
-    assertThat(view.unspecifiedScopeCount()).isEqualTo(1);
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Friend roster summary:")
         .contains("Linked: 4")
-        .contains("Online: 1")
-        .contains("Offline: 3")
-        .contains("Recent offline: 2")
-        .contains("Visibility public: 1")
-        .contains("Visibility friends-only: 2")
-        .contains("Visibility private: 5")
-        .doesNotContain("hidden")
-        .doesNotContain("Visibility unspecified")
-        .contains("Scope shared: 2")
-        .contains("Scope isolated: 1");
+        .doesNotContain("Online:")
+        .doesNotContain("Offline:")
+        .doesNotContain("Recent offline:")
+        .doesNotContain("Visibility")
+        .doesNotContain("Scope");
     Mockito.verify(socialGroupsClient).getFriendRosterSummary(1L, 41L);
   }
 
@@ -1364,7 +1311,7 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .extracting(PlayerOutput::text)
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|SHARED|ISOLATED|UNSPECIFIED_SCOPE]");
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
 
@@ -1386,7 +1333,7 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs().getFirst().text())
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|SHARED|ISOLATED|UNSPECIFIED_SCOPE]")
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]")
         .doesNotContain("HIDDEN_STAFF");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
@@ -1410,7 +1357,7 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs().getFirst().text())
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|SHARED|ISOLATED|UNSPECIFIED_SCOPE]")
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]")
         .doesNotContain("UNSPECIFIED_VISIBILITY");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }

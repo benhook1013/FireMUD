@@ -106,6 +106,9 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleList(
       SessionContext context, FriendListFilter filter, String rawCommandText) {
+    if (!isPlayerSafeFilter(filter)) {
+      return friendFilterUnavailable();
+    }
     ListFriendsResponse response =
         filter == FriendListFilter.ALL
             ? socialGroupsClient.listFriends(context.tenantId(), context.accountId())
@@ -132,6 +135,19 @@ public class FriendsCommandHandler {
     publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
+  }
+
+  private TextCommandInterpretationResult friendFilterUnavailable() {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable"),
+        List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable")));
+  }
+
+  private boolean isPlayerSafeFilter(FriendListFilter filter) {
+    return switch (filter) {
+      case OFFLINE, PRIVATE, UNSPECIFIED_SCOPE -> false;
+      default -> true;
+    };
   }
 
   private TextCommandInterpretationResult handleAdd(
@@ -265,19 +281,7 @@ public class FriendsCommandHandler {
         CommandEnqueueResult.success(),
         List.of(
             PlayerOutput.view(
-                new FriendRosterSummaryViewOutput(
-                    response.getSummary().getTotalCount(),
-                    response.getSummary().getOnlineCount(),
-                    response.getSummary().getOfflineCount(),
-                    response.getSummary().getRecentCount(),
-                    response.getSummary().getPublicCount(),
-                    response.getSummary().getFriendsOnlyCount(),
-                    response.getSummary().getPrivateCount()
-                        + response.getSummary().getHiddenStaffCount()
-                        + response.getSummary().getUnspecifiedVisibilityCount(),
-                    response.getSummary().getSharedCount(),
-                    response.getSummary().getIsolatedCount(),
-                    response.getSummary().getUnspecifiedScopeCount()))));
+                new FriendRosterSummaryViewOutput(response.getSummary().getTotalCount()))));
   }
 
   private TextCommandInterpretationResult handleVisibilityView(
@@ -588,7 +592,7 @@ public class FriendsCommandHandler {
               "INVALID",
               FriendListFilter.ALL,
               null,
-              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|SHARED|ISOLATED|UNSPECIFIED_SCOPE]");
+              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]");
     };
   }
 
