@@ -40,4 +40,8 @@ EOF
 tail -n +2 "$OUT_DIR/$(basename "$TEMP_FILE")" >> "$OUT_DIR/grpc-api.md"
 rm "$OUT_DIR/$(basename "$TEMP_FILE")"
 
+# Keep generated output stable and diff-hygienic across protoc-gen-doc versions.
+sed -i 's/[[:space:]]*$//' "$OUT_DIR/grpc-api.md"
+sed -i '${/^$/d;}' "$OUT_DIR/grpc-api.md"
+
 echo "Generated gRPC docs in $OUT_DIR"
