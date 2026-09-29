@@ -194,6 +194,48 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(comments_archive["review_threads"], [])
         self.assertEqual(json.loads(artifacts["metadata"])["response_id"], 102)
 
+    def test_completed_review_rolls_back_attempt_when_run_write_fails(self) -> None:
+        reply = {
+            "databaseId": 102,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-29T01:01:00Z",
+            "updatedAt": "2026-09-29T01:04:00Z",
+            "url": "https://github.example/owner/repo/pull/42#issuecomment-102",
+        }
+        summary = {
+            "databaseId": 103,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {HEAD[:12]} and {HEAD}."
+            ),
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+        }
+        payload = self.payload(comments=[self.trigger_comment(), reply, summary])
+        args = {
+            "attempt_id": self.attempt_id,
+            "repo": REPO,
+            "source_pr": PR,
+            "trigger_record": self.trigger_record(),
+            "payload": payload,
+            "observed_at": "2026-09-29T01:05:00Z",
+        }
+        with (
+            patch.object(self.records, "record_run", side_effect=RuntimeError("injected run failure")),
+            self.assertRaisesRegex(RuntimeError, "injected run failure"),
+        ):
+            sqlite_hosted_capture.record_hosted_terminal_result(self.records, **args)
+        self.assertEqual(self.records.attempt(self.attempt_id)["state"], "started")
+        self.assertEqual(self.records.history(PR)["runs"], [])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM review_artifacts").fetchone()[0], 0)
+
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(self.records, **args)
+        self.assertEqual(captured["state"], "completed")
+        self.assertEqual(self.records.attempt(self.attempt_id)["run_id"], self.attempt_id)
+
     def test_completed_review_records_its_attributed_inline_finding(self) -> None:
         review = {
             "databaseId": 201,
@@ -624,10 +666,72 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
             fetch.assert_not_called()
             self.assertEqual(len(report["errors"]), 1)
-            self.assertIn("no linked source run", report["errors"][0]["error"])
+            self.assertIn("lacks exact archived evidence", report["errors"][0]["error"])
             self.assertEqual(records.attempt(attempt_id)["state"], "completed")
             self.assertIsNone(records.attempt(attempt_id)["run_id"])
             self.assertEqual(records.history(PR)["runs"], [])
+
+    def test_sync_recovers_partial_completed_attempt_from_its_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory) / "git-common"
+            records = self.new_records(Path(directory) / "controller.sqlite3")
+            attempt_id = "hosted-sync-recover"
+            started_at = "2026-09-29T00:59:00Z"
+            record = self.trigger_record(
+                trigger_id=951, created_at="2026-09-29T01:00:00Z",
+                posting_started_at=started_at, attempt_id=attempt_id,
+            )
+            self.write_trigger_record(common, record)
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=PR, candidate_sha=HEAD,
+                started_at=started_at, metadata={"repository": REPO},
+            )
+            reply = {
+                "databaseId": 952, "author": {"login": "coderabbitai"},
+                "body": "Full review finished.",
+                "createdAt": "2026-09-29T01:01:00Z",
+                "updatedAt": "2026-09-29T01:05:00Z",
+                "url": "https://github.example/owner/repo/pull/42#issuecomment-952",
+            }
+            summary = {
+                "databaseId": 953, "author": {"login": "coderabbitai[bot]"},
+                "body": (
+                    "No actionable comments were generated in the recent review.\n"
+                    f"Reviewing files that changed from the base of the PR and between {HEAD[:12]} and {HEAD}."
+                ),
+                "createdAt": "2026-09-29T01:02:00Z",
+                "updatedAt": "2026-09-29T01:02:00Z",
+            }
+            comments = [self.trigger_comment(trigger_id=951), reply, summary]
+            metadata = {
+                "state": "completed", "terminal": True, "attributable": True,
+                "reason": "", "repository": REPO, "pull_request": PR,
+                "head_sha": HEAD, "trigger_id": 951, "response_id": 952,
+                "observed_at": "2026-09-29T01:05:00Z",
+            }
+            records.finish_attempt(
+                attempt_id, state="completed", finished_at="2026-09-29T01:05:00Z",
+                trigger_id="951", provider_review_id="952",
+                artifacts={
+                    "hosted_review": json.dumps([]),
+                    "hosted_comments": json.dumps({"comments": comments, "review_threads": []}),
+                    "metadata": json.dumps(metadata),
+                },
+            )
+
+            with patch.object(
+                sqlite_hosted_capture.github, "fetch_pull_request",
+                side_effect=AssertionError("archived recovery does not need live GitHub"),
+            ) as fetch:
+                report = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+            fetch.assert_not_called()
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(len(report["synced"]), 1)
+            self.assertTrue(report["synced"][0]["recovered_from_archive"])
+            self.assertEqual(records.attempt(attempt_id)["run_id"], attempt_id)
+            self.assertEqual(records.history(PR)["runs"][0]["counts"]["found"], 0)
 
     def test_incomplete_github_page_is_refused_without_finishing_attempt(self) -> None:
         payload = self.payload(comments=[self.trigger_comment()])

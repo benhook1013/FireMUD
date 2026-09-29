@@ -838,6 +838,7 @@ def run_cli_review(
     capture_dir = capture_root / run_id
     attempt_started = False
     attempt_finished = False
+    provider_result_saved = False
     attempt_started_at: str | None = None
     candidate_worktree: Path | None = None
     # Keep review anchors out of branch listings: this temporary ref is an
@@ -1138,6 +1139,7 @@ def run_cli_review(
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                 metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
                 _atomic_json(capture_dir / "metadata.json", metadata)
+                provider_result_saved = True
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
                 if records is not None:
@@ -1175,12 +1177,6 @@ def run_cli_review(
                             if result_state == "rate_limited"
                             else "CodeRabbit CLI exited nonzero"
                         )
-                    records.finish_attempt(
-                        run_id, state=result_state, duration_seconds=duration,
-                        exit_status=process.returncode, diagnostic=diagnostic,
-                        artifacts=artifacts,
-                    )
-                    attempt_finished = True
                     if result_state == "completed":
                         observations = []
                         for index, finding in enumerate(parsed_findings, 1):
@@ -1197,16 +1193,35 @@ def run_cli_review(
                                 source_finding_key=f"cli-run:{run_id}:finding:{index}",
                                 title=title or f"CodeRabbit CLI finding {index}",
                             ))
-                        records.record_run(
-                            run_id=run_id, source_pr=target.snapshot.number, channel="cli",
-                            findings=observations, source_head=candidate_sha,
-                            reviewer="CodeRabbit CLI", scope="broad",
-                            started_at=attempt_started_at,
-                            finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        records.complete_attempt_run(
+                            run_id,
+                            finish={
+                                "state": result_state,
+                                "duration_seconds": duration,
+                                "exit_status": process.returncode,
+                                "diagnostic": diagnostic,
+                                "artifacts": artifacts,
+                            },
+                            run={
+                                "run_id": run_id,
+                                "source_pr": target.snapshot.number,
+                                "channel": "cli",
+                                "findings": observations,
+                                "source_head": candidate_sha,
+                                "reviewer": "CodeRabbit CLI",
+                                "scope": "broad",
+                                "started_at": attempt_started_at,
+                                "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            },
+                            finalize_empty=not observations,
                         )
-                        records.link_attempt_run(run_id, run_id)
-                        if not observations:
-                            records.finalize_run(run_id)
+                    else:
+                        records.finish_attempt(
+                            run_id, state=result_state, duration_seconds=duration,
+                            exit_status=process.returncode, diagnostic=diagnostic,
+                            artifacts=artifacts,
+                        )
+                    attempt_finished = True
                 return ReviewResult(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
@@ -1239,7 +1254,7 @@ def run_cli_review(
         except Exception as error:
             if capture_dir.exists():
                 (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
-            if records is not None and attempt_started and not attempt_finished:
+            if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
                 try:
                     records.finish_attempt(
                         run_id, state="failed", diagnostic="CLI setup or capture failed",

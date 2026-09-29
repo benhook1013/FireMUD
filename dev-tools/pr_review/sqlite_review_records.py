@@ -381,6 +381,7 @@ class SqliteReviewRecords:
         checkpoint_id: str | None = None,
         diagnostic: str = "",
         artifacts: Mapping[str, str] | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Finish an attempt and archive its evidence in one transaction."""
 
@@ -402,7 +403,8 @@ class SqliteReviewRecords:
             kind: _archive_artifact(kind, content)
             for kind, content in (artifacts or {}).items()
         }
-        with self._write_connection() as connection:
+        with (self._write_connection() if _connection is None
+              else contextlib.nullcontext(_connection)) as connection:
             existing = connection.execute(
                 "SELECT state, finished_at, duration_seconds, exit_status, trigger_id, provider_review_id, "
                 "checkpoint_id, diagnostic FROM review_attempts WHERE attempt_id = ?",
@@ -488,12 +490,28 @@ class SqliteReviewRecords:
             "metadata": metadata,
         }
 
-    def link_attempt_run(self, attempt_id: str, run_id: str) -> None:
+    def attempt_artifacts(self, attempt_id: str) -> dict[str, str]:
+        """Read private archived evidence for exact recovery, outside ordinary history."""
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            self._require_compatible(connection)
+            rows = connection.execute(
+                "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchall()
+        return {kind: content for kind, content in rows}
+
+    def link_attempt_run(
+        self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None
+    ) -> None:
         """Bind one completed, attributable source run to its exact attempt."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
-        with self._write_connection() as connection:
+        with (self._write_connection() if _connection is None
+              else contextlib.nullcontext(_connection)) as connection:
             attempt = connection.execute(
                 "SELECT source_pr, channel, state, run_id FROM review_attempts WHERE attempt_id = ?",
                 (attempt_id,),
@@ -508,6 +526,80 @@ class SqliteReviewRecords:
             connection.execute(
                 "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id)
             )
+
+    def complete_attempt_run(
+        self,
+        attempt_id: str,
+        *,
+        finish: Mapping[str, Any],
+        run: Mapping[str, Any],
+        finalize_empty: bool = False,
+    ) -> dict[str, Any]:
+        """Commit a completed attempt, its source run and their link together.
+
+        A provider completion must never become terminal without its counted
+        source run. Validation failures roll the entire transition back so a
+        later exact replay can retry it.
+        """
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        if run.get("run_id") != attempt_id:
+            raise ReviewRecordsError("completed attempt must use its exact ID as the source run ID")
+        if finish.get("state") != "completed" or run.get("outcome", "completed") != "completed":
+            raise ReviewRecordsError("atomic completion requires a completed attempt and run")
+        findings = run.get("findings")
+        if finalize_empty and findings:
+            raise ReviewRecordsError("only a zero-finding run may be finalized on completion")
+        with self._write_connection() as connection:
+            finished = self.finish_attempt(attempt_id, _connection=connection, **finish)
+            recorded = self.record_run(_connection=connection, **run)
+            self.link_attempt_run(attempt_id, attempt_id, _connection=connection)
+            if finalize_empty:
+                self.finalize_run(
+                    attempt_id, finalized_at=run.get("finished_at"), _connection=connection
+                )
+        return {"attempt": finished, "run": recorded}
+
+    def recover_completed_attempt_run(
+        self,
+        attempt_id: str,
+        *,
+        run: Mapping[str, Any],
+        finalize_empty: bool = False,
+    ) -> dict[str, Any]:
+        """Atomically link a pre-v6 terminal attempt to its exact recovered run."""
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        if run.get("run_id") != attempt_id:
+            raise ReviewRecordsError("recovered source run must use the exact attempt ID")
+        if run.get("channel") != "hosted" or run.get("outcome", "completed") != "completed":
+            raise ReviewRecordsError("only a completed Hosted source run can be recovered")
+        findings = run.get("findings")
+        if finalize_empty and findings:
+            raise ReviewRecordsError("only a zero-finding run may be finalized on recovery")
+        with self._write_connection() as connection:
+            attempt = connection.execute(
+                "SELECT source_pr, channel, candidate_sha, state, run_id, trigger_id, "
+                "provider_review_id FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone()
+            if (
+                attempt is None or attempt[1] != "hosted" or attempt[3] != "completed"
+                or attempt[4] is not None or attempt[5] is None or attempt[6] is None
+                or attempt[0] != run.get("source_pr") or attempt[2] != run.get("source_head")
+            ):
+                raise ReviewRecordsError("completed Hosted attempt is not recoverable by this run")
+            archived = {
+                row[0] for row in connection.execute(
+                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
+                )
+            }
+            if not {"hosted_review", "hosted_comments", "metadata"} <= archived:
+                raise ReviewRecordsError("completed Hosted attempt lacks its archived evidence")
+            recorded = self.record_run(_connection=connection, **run)
+            self.link_attempt_run(attempt_id, attempt_id, _connection=connection)
+            if finalize_empty:
+                self.finalize_run(attempt_id, finalized_at=run.get("finished_at"), _connection=connection)
+        return recorded
 
     def link_provider_origin(
         self,
@@ -813,6 +905,7 @@ class SqliteReviewRecords:
         coverage_limits: Sequence[str] = (),
         started_at: str | None = None,
         finished_at: str | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Persist one immutable source run and its findings atomically."""
 
@@ -888,7 +981,8 @@ class SqliteReviewRecords:
             "routed_count": sum(item.disposition == "routed" for item in observations),
         }
         try:
-            with self._write_connection() as connection:
+            with (self._write_connection() if _connection is None
+                  else contextlib.nullcontext(_connection)) as connection:
                 existing = connection.execute(
                     "SELECT source_pr, channel, import_payload_json, found_count, accepted_count, "
                     "routed_count, finalized FROM review_runs WHERE run_id = ?",
@@ -1457,13 +1551,17 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot import completed SQLite review run") from exc
 
-    def finalize_run(self, run_id: str, *, finalized_at: str | None = None) -> dict[str, Any]:
+    def finalize_run(
+        self, run_id: str, *, finalized_at: str | None = None,
+        _connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         """Freeze the source counts after every finding has a source disposition."""
 
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         finalized_at = _timestamp(finalized_at, "finalized_at")
         try:
-            with self._write_connection() as connection:
+            with (self._write_connection() if _connection is None
+                  else contextlib.nullcontext(_connection)) as connection:
                 run = connection.execute(
                     "SELECT finalized, finalized_at FROM review_runs WHERE run_id = ?", (run_id,)
                 ).fetchone()
@@ -1737,11 +1835,14 @@ class SqliteReviewRecords:
                      "state": row[3], "started_at": row[4], "finished_at": row[5],
                      "duration_seconds": row[6], "exit_status": row[7], "trigger_id": row[8],
                      "provider_review_id": row[9], "checkpoint_id": row[10], "run_id": row[11],
-                     "diagnostic": row[12]}
+                     "diagnostic": row[12],
+                     "origin": json.loads(row[13]).get("origin"),
+                     "legacy_outcome": json.loads(row[13]).get("legacy_outcome")}
                     for row in connection.execute(
                         "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                         "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
-                        "diagnostic FROM review_attempts WHERE source_pr = ? ORDER BY started_at, attempt_id",
+                        "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
+                        "ORDER BY started_at, attempt_id",
                         (pr,),
                     )
                 ]
@@ -1793,10 +1894,9 @@ class SqliteReviewRecords:
                 ]
                 historical_gap_artifacts = [
                     {"repository": row[0], "source_pr": row[1], "checkpoint_id": row[2],
-                     "kind": row[3], "content": row[4], "source_sha256": row[5],
-                     "redactions": row[6]}
+                     "kind": row[3], "source_sha256": row[4], "redactions": row[5]}
                     for row in connection.execute(
-                        "SELECT repository, source_pr, checkpoint_id, kind, content, "
+                        "SELECT repository, source_pr, checkpoint_id, kind, "
                         "source_sha256, redactions FROM historical_gap_artifacts "
                         "WHERE source_pr = ? ORDER BY checkpoint_id, kind", (pr,)
                     )
@@ -1844,23 +1944,34 @@ class SqliteReviewRecords:
         except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
             raise ReviewRecordsError("cannot read SQLite review history batch") from exc
 
-    def open_routes(
+    def list_routes(
         self,
         *,
+        status: str = "open",
         target_pr: int | None = None,
+        source_pr: int | None = None,
+        unassigned: bool = False,
         include_legacy_routes: bool = False,
     ) -> list[dict[str, Any]]:
-        """Read open incoming and unassigned routes without filtering merged sources.
+        """Read routed findings by status and source/target PR.
 
-        With ``target_pr``, only routes currently incoming to that PR are
-        returned. Without it, both assigned incoming routes and unassigned
-        routes are returned, each marked with its assignment state. Legacy
-        controller routes join the result only when ``include_legacy_routes``
-        is true.
+        ``status`` is ``open`` (the default), ``resolved`` (accepted-fixed or
+        rejected), or ``all``. Target and source PR filters may be combined;
+        ``unassigned`` selects routes without a target and may be combined
+        with a source PR. Legacy controller routes join the result only when
+        ``include_legacy_routes`` is true.
         """
 
+        if not isinstance(status, str) or status not in {"open", "resolved", "all"}:
+            raise ReviewRecordsError("route status must be open, resolved, or all")
         if target_pr is not None:
             target_pr = _positive_pr(target_pr, "target PR")
+        if source_pr is not None:
+            source_pr = _positive_pr(source_pr, "source PR")
+        if not isinstance(unassigned, bool):
+            raise ReviewRecordsError("unassigned must be boolean")
+        if target_pr is not None and unassigned:
+            raise ReviewRecordsError("target PR and unassigned filters cannot be combined")
         if not isinstance(include_legacy_routes, bool):
             raise ReviewRecordsError("include_legacy_routes must be boolean")
         try:
@@ -1871,27 +1982,38 @@ class SqliteReviewRecords:
                 if include_legacy_routes:
                     # Read every shadow row before filtering. A legacy route
                     # with the same stable ID may have moved or reached a
-                    # terminal status since the SQLite import; deduplication
-                    # must see the authoritative legacy record first.
+                    # different status since the SQLite import; deduplication
+                    # must see the authoritative legacy record before any
+                    # status or assignment filters are applied.
+                    rows = connection.execute(
+                        "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
+                        "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
+                        "routes.updated_at FROM routes JOIN findings USING (finding_id) "
+                        "ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id"
+                    )
+                else:
+                    conditions = []
+                    parameters: list[Any] = []
+                    if status == "open":
+                        conditions.append("routes.status = 'open'")
+                    elif status == "resolved":
+                        conditions.append("routes.status IN ('accepted_fixed', 'rejected')")
+                    if target_pr is not None:
+                        conditions.append("routes.target_pr = ?")
+                        parameters.append(target_pr)
+                    if source_pr is not None:
+                        conditions.append("routes.source_pr = ?")
+                        parameters.append(source_pr)
+                    if unassigned:
+                        conditions.append("routes.target_pr IS NULL")
+                    where = " WHERE " + " AND ".join(conditions) if conditions else ""
                     rows = connection.execute(
                         "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
                         "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
                         "routes.updated_at FROM routes JOIN findings USING (finding_id)"
-                    )
-                elif target_pr is None:
-                    rows = connection.execute(
-                        "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-                        "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
-                        "routes.updated_at FROM routes JOIN findings USING (finding_id) "
-                        "WHERE routes.status = 'open' ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id"
-                    )
-                else:
-                    rows = connection.execute(
-                        "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-                        "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
-                        "routes.updated_at FROM routes JOIN findings USING (finding_id) "
-                        "WHERE routes.status = 'open' AND routes.target_pr = ? ORDER BY routes.source_pr, routes.route_id",
-                        (target_pr,),
+                        + where
+                        + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id",
+                        parameters,
                     )
                 routes = [
                     {
@@ -1916,17 +2038,37 @@ class SqliteReviewRecords:
                         if route.status in {"open", "accepted_fixed", "rejected"}
                     )
                 routes = self._deduplicate_routes(routes)
-                if include_legacy_routes:
-                    routes = [
-                        route
-                        for route in routes
-                        if route["status"] == "open" and (target_pr is None or route["target_pr"] == target_pr)
-                    ]
-                return routes
+                if status == "open":
+                    routes = [route for route in routes if route["status"] == "open"]
+                elif status == "resolved":
+                    routes = [route for route in routes if route["status"] in {"accepted_fixed", "rejected"}]
+                if target_pr is not None:
+                    routes = [route for route in routes if route["target_pr"] == target_pr]
+                if source_pr is not None:
+                    routes = [route for route in routes if route["source_pr"] == source_pr]
+                if unassigned:
+                    routes = [route for route in routes if route["target_pr"] is None]
+                return sorted(
+                    routes,
+                    key=lambda route: (route["target_pr"] or 0, route["source_pr"], route["route_id"]),
+                )
         except ReviewRecordsError:
             raise
         except (OSError, sqlite3.DatabaseError) as exc:
-            raise ReviewRecordsError("cannot read open SQLite review routes") from exc
+            raise ReviewRecordsError("cannot read SQLite review routes") from exc
+
+    def open_routes(
+        self,
+        *,
+        target_pr: int | None = None,
+        include_legacy_routes: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Read open incoming and unassigned routes for existing callers."""
+
+        return self.list_routes(
+            target_pr=target_pr,
+            include_legacy_routes=include_legacy_routes,
+        )
 
     def _routes_for_pr(self, connection: sqlite3.Connection, pr: int) -> list[dict[str, Any]]:
         rows = connection.execute(

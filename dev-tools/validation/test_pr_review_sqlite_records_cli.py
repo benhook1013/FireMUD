@@ -98,6 +98,50 @@ class ReviewRecordsCliTest(unittest.TestCase):
                               "--database", str(self.database))
         self.assertNotEqual(code, 0)
 
+    def test_route_cli_lists_open_by_default_and_filters_source_and_status(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        for source_pr, key, target_pr in (
+            (2700, "cli-open-target", 2879),
+            (2701, "cli-open-unassigned", None),
+            (2702, "cli-resolved", 2879),
+        ):
+            records.record_run(
+                run_id=f"cli-route-{source_pr}",
+                source_pr=source_pr,
+                channel="manual",
+                findings=(FindingObservation(key, key, "routed", target_pr=target_pr),),
+            )
+        resolved = records.list_routes(source_pr=2702)[0]
+        records.record_resolution(
+            resolved["route_id"],
+            resolution_id="cli-route-resolution",
+            resolution_pr=2879,
+            outcome="rejected",
+            actor="owner",
+            proof_or_reason="not an actionable finding",
+        )
+
+        code, default_listing = self.invoke("routes", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            {route["source_pr"] for route in default_listing["result"]["routes"]},
+            {2700, 2701},
+        )
+        code, resolved_listing = self.invoke(
+            "routes", "--status", "resolved", "--database", str(self.database)
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [(route["source_pr"], route["status"]) for route in resolved_listing["result"]["routes"]],
+            [(2702, "rejected")],
+        )
+        code, source_listing = self.invoke(
+            "routes", "--status", "all", "--source-pr", "2702", "--database", str(self.database)
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual([route["source_pr"] for route in source_listing["result"]["routes"]], [2702])
+
     def test_history_exposes_only_sqlite_failed_cli_attempt_without_counting_result(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         root = self.database.parent / "pr-review" / "runs"
@@ -129,6 +173,87 @@ class ReviewRecordsCliTest(unittest.TestCase):
         code, after = self.invoke("history", "--pr", "2879", "--database", str(self.database))
         self.assertEqual(code, 0)
         self.assertEqual(after["result"]["cli_attempts"], attempts)
+
+    def test_records_migrate_durably_imports_legacy_failed_cli_attempts(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "7" * 32
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(
+            json.dumps({"run_id": run_id, "pull_request": 2881, "candidate_sha": "a" * 40}),
+            encoding="utf-8",
+        )
+        (capture / "exit-status").write_text("1\n", encoding="utf-8")
+        (capture / "stderr").write_text("Rate limit exceeded; private provider details", encoding="utf-8")
+
+        code, migrated = self.invoke("migrate", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        reconciliation = migrated["result"]["legacy_cli_attempts"]
+        self.assertEqual(reconciliation["imported"], [{"run_id": run_id, "pr": "2881"}])
+        self.assertEqual(reconciliation["already_imported"], [])
+        self.assertEqual(reconciliation["conflicts"], [])
+        self.assertNotIn("private provider details", str(migrated))
+
+        records = SqliteReviewRecords(self.database)
+        history = records.history(2881)
+        self.assertEqual(history["runs"], [])
+        self.assertEqual(len(history["attempts"]), 1)
+        self.assertEqual(history["attempts"][0]["state"], "rate_limited")
+        self.assertEqual(history["attempts"][0]["attempt_id"], run_id)
+        imported = records.attempt(run_id)
+        self.assertEqual(imported["metadata"]["origin"], "legacy_private_capture")
+        self.assertEqual(imported["metadata"]["legacy_outcome"], "rate_limited")
+        self.assertEqual(len(imported["metadata"]["source_fingerprint"]), 64)
+
+        code, replayed = self.invoke("migrate", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(replayed["result"]["legacy_cli_attempts"]["imported"], [])
+        self.assertEqual(
+            replayed["result"]["legacy_cli_attempts"]["already_imported"],
+            [{"run_id": run_id, "pr": "2881"}],
+        )
+
+        code, single = self.invoke("history", "--pr", "2881", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        attempt = single["result"]["cli_attempts"]["attempts"][0]
+        self.assertEqual(attempt["run_id"], run_id)
+        self.assertEqual(attempt["outcome"], "rate_limited")
+        self.assertEqual(attempt["origin"], "legacy_private_capture")
+        self.assertNotIn("private provider details", str(single))
+
+        code, batch = self.invoke(
+            "history-batch", "--pr", "2881", "--pr", "2882", "--database", str(self.database)
+        )
+        self.assertEqual(code, 0)
+        batch_attempts = batch["result"]["prs"]["2881"]["cli_attempts"]["attempts"]
+        self.assertEqual(batch_attempts[0]["origin"], "legacy_private_capture")
+        self.assertEqual(batch["result"]["prs"]["2882"]["cli_attempts"]["attempts"], [])
+
+    def test_legacy_failed_cli_reimport_reports_changed_source_fingerprint(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "8" * 32
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(json.dumps({"pull_request": 2883}), encoding="utf-8")
+        (capture / "exit-status").write_text("1\n", encoding="utf-8")
+        (capture / "stderr").write_text("Rate limit exceeded", encoding="utf-8")
+
+        _, first = self.invoke("migrate", "--database", str(self.database))
+        self.assertEqual(first["result"]["legacy_cli_attempts"]["imported"][0]["run_id"], run_id)
+        (capture / "stderr").write_text("Provider rejected the request", encoding="utf-8")
+
+        code, replay = self.invoke("migrate", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        report = replay["result"]["legacy_cli_attempts"]
+        self.assertEqual(report["imported"], [])
+        self.assertEqual(report["already_imported"], [])
+        self.assertEqual(report["conflicts"], [{
+            "run_id": run_id,
+            "reason": "attempt identity or source fingerprint conflicts",
+        }])
+        history = SqliteReviewRecords(self.database).history(2883)
+        self.assertEqual(len(history["attempts"]), 1)
+        self.assertEqual(history["attempts"][0]["state"], "rate_limited")
 
     def test_failed_cli_attempt_reads_only_bounded_stderr_prefix_for_rate_limit_classification(self) -> None:
         root = self.database.parent / "pr-review" / "runs"
@@ -727,6 +852,21 @@ class ReviewRecordsCliTest(unittest.TestCase):
         remaining = after_decision["result"]["routes"]
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["origin"], "review_records")
+        _, resolved_routes = self.invoke(
+            "routes", "--status", "resolved", "--source-pr", "2600", "--database", str(database)
+        )
+        resolved_items = resolved_routes["result"]["routes"]
+        self.assertEqual([item["route_id"] for item in resolved_items], [incoming.route_id])
+        self.assertEqual(resolved_items[0]["origin"], "legacy_controller")
+        self.assertEqual(resolved_items[0]["status"], "accepted_fixed")
+        _, all_target_routes = self.invoke(
+            "routes", "--status", "all", "--target-pr", "2879", "--database", str(database)
+        )
+        all_target_items = all_target_routes["result"]["routes"]
+        self.assertEqual(
+            {item["route_id"] for item in all_target_items},
+            {incoming.route_id, structured_target["route_id"]},
+        )
         _, closed_history = self.invoke("history", "--pr", "2600", "--database", str(database))
         closed_route = closed_history["result"]["routes"][0]
         self.assertEqual(closed_route["route_id"], incoming.route_id)
@@ -885,6 +1025,24 @@ class ReviewRecordsCliTest(unittest.TestCase):
             decision="accepted-fixed",
             proof="verified fix in the receiving owner",
         )
+
+        _, open_old_target = self.invoke("routes", "--target-pr", "2879", "--database", str(database))
+        self.assertEqual(open_old_target["result"]["routes"], [])
+        _, resolved_old_target = self.invoke(
+            "routes", "--status", "resolved", "--target-pr", "2879", "--database", str(database)
+        )
+        self.assertEqual(
+            [route["route_id"] for route in resolved_old_target["result"]["routes"]], [resolved.route_id]
+        )
+        self.assertEqual(resolved_old_target["result"]["routes"][0]["origin"], "legacy_controller")
+        _, retargeted_routes = self.invoke(
+            "routes", "--status", "all", "--target-pr", "2880", "--source-pr", "2600",
+            "--database", str(database),
+        )
+        self.assertEqual(
+            [route["route_id"] for route in retargeted_routes["result"]["routes"]], [retargeted.route_id]
+        )
+        self.assertEqual(retargeted_routes["result"]["routes"][0]["origin"], "legacy_controller")
 
         cutover_state_path = Path(self.temporary_directory.name) / "cutover-shadow-state"
         cutover_state_path.mkdir()

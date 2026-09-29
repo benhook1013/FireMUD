@@ -217,7 +217,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(history["historical_gaps"][0]["checkpoint"], gap["checkpoint"])
         self.assertEqual(history["historical_gaps"][0]["missing_reason"], gap["missing_reason"])
         self.assertIsNone(history["historical_gaps"][0]["superseded_by_run_id"])
-        self.assertNotIn("Bearer", history["historical_gap_artifacts"][0]["content"])
+        self.assertNotIn("content", history["historical_gap_artifacts"][0])
+        self.assertEqual(history["historical_gap_artifacts"][0]["kind"], "hosted_comments")
         self.assertEqual(history["historical_gap_artifacts"][0]["redactions"], 1)
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
             self.records.record_historical_gap(**{**gap, "missing_reason": "Different reason"})
@@ -738,6 +739,59 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         assigned_history = self.records.history(2879)
         self.assertEqual(len(assigned_history["routes"]), 2)
         self.assertEqual(len(assigned_history["routes"][1]["target_history"]), 2)
+
+    def test_route_listing_filters_status_source_target_and_assignment(self) -> None:
+        self.bootstrap()
+        routes = (
+            (2700, "active-target", 2879),
+            (2701, "resolved-target", 2879),
+            (2702, "unassigned", None),
+            (2703, "other-target", 2880),
+        )
+        for source_pr, key, target_pr in routes:
+            self.records.record_run(
+                run_id=f"route-list-{source_pr}",
+                source_pr=source_pr,
+                channel="manual",
+                findings=(self.observation(key, "routed", target_pr=target_pr),),
+            )
+
+        resolved_route = self.records.list_routes(source_pr=2701)[0]
+        self.records.record_resolution(
+            resolved_route["route_id"],
+            resolution_id="route-list-resolution",
+            resolution_pr=2879,
+            outcome="accepted_fixed",
+            actor="owner",
+            proof_or_reason="verified fix",
+        )
+
+        self.assertEqual(len(self.records.list_routes()), 3)
+        self.assertEqual(
+            [route["status"] for route in self.records.list_routes(status="resolved")],
+            ["accepted_fixed"],
+        )
+        self.assertEqual(len(self.records.list_routes(status="all")), 4)
+        self.assertEqual(
+            {route["source_pr"] for route in self.records.list_routes(target_pr=2879, status="all")},
+            {2700, 2701},
+        )
+        self.assertEqual(
+            [route["source_pr"] for route in self.records.list_routes(source_pr=2701, status="resolved")],
+            [2701],
+        )
+        self.assertEqual(
+            [route["source_pr"] for route in self.records.list_routes(source_pr=2703, target_pr=2880)],
+            [2703],
+        )
+        self.assertEqual(
+            [route["source_pr"] for route in self.records.list_routes(unassigned=True)],
+            [2702],
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "route status"):
+            self.records.list_routes(status="pending")
+        with self.assertRaisesRegex(ReviewRecordsError, "cannot be combined"):
+            self.records.list_routes(target_pr=2879, unassigned=True)
 
     def test_legacy_controller_route_rejects_sqlite_target_writes(self) -> None:
         self.bootstrap()

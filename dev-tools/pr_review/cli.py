@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, github, hosted, sqlite_hosted_capture, sqlite_records_repair, stack
+from . import acceptance, cli_attempts, github, hosted, sqlite_hosted_capture, sqlite_records_repair, stack
 from . import evidence as evidence_module
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot
@@ -126,7 +126,7 @@ def _parser() -> argparse.ArgumentParser:
     bootstrap = record_commands.add_parser("bootstrap", help="explicitly create the review-records schema")
     records_database(bootstrap)
     migrate_records = record_commands.add_parser(
-        "migrate", help="atomically upgrade v4 review records and fence older writers"
+        "migrate", help="upgrade review records and import legacy failed CLI attempts"
     )
     records_database(migrate_records)
 
@@ -141,11 +141,13 @@ def _parser() -> argparse.ArgumentParser:
     records_database(history_batch)
 
     incoming = record_commands.add_parser(
-        "routes", help="show open structured and migrated controller routes"
+        "routes", help="list structured and migrated controller routes"
     )
-    incoming_query = incoming.add_mutually_exclusive_group(required=True)
+    incoming_query = incoming.add_mutually_exclusive_group()
     incoming_query.add_argument("--target-pr", type=_positive_int)
     incoming_query.add_argument("--unassigned", action="store_true")
+    incoming.add_argument("--source-pr", type=_positive_int)
+    incoming.add_argument("--status", choices=("open", "resolved", "all"), default="open")
     records_database(incoming)
 
     import_run = record_commands.add_parser(
@@ -749,25 +751,34 @@ def _subagent_findings(
 
 
 def _failed_cli_attempts_from_history(history: dict[str, Any]) -> dict[str, Any]:
-    """Project non-counting CLI failures from the same SQLite snapshot as runs."""
+    """Project bounded non-counting CLI failures from structured history."""
 
     outcomes = {
         "rate_limited": "rate_limited",
         "timed_out": "timed_out",
         "failed": "provider_failed",
     }
-    attempts = [
-        {
-            "run_id": attempt["attempt_id"],
-            "finished_at": attempt["finished_at"],
-            "outcome": outcomes[attempt["state"]],
-        }
-        for attempt in history["attempts"]
+    candidates = [
+        attempt for attempt in history["attempts"]
         if attempt["channel"] == "cli"
         and attempt["state"] in outcomes
         and isinstance(attempt["finished_at"], str)
     ]
-    attempts.sort(key=lambda item: (item["finished_at"], item["run_id"]), reverse=True)
+    candidates.sort(key=lambda attempt: (attempt["finished_at"], attempt["attempt_id"]), reverse=True)
+    attempts = []
+    for attempt in candidates[:5]:
+        outcome = attempt.get("legacy_outcome") or outcomes[attempt["state"]]
+        if outcome not in {"rate_limited", "timed_out", "provider_failed", "setup_failed"}:
+            outcome = outcomes[attempt["state"]]
+        origin = attempt.get("origin")
+        if origin not in {"legacy_private_capture", "sqlite_records"}:
+            origin = "sqlite_records"
+        attempts.append({
+            "run_id": attempt["attempt_id"],
+            "finished_at": attempt["finished_at"],
+            "outcome": outcome,
+            "origin": origin,
+        })
     return {"available": True, "attempts": attempts[:5]}
 
 
@@ -780,7 +791,11 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         return {"api_version": 1, "result": {"status": "bootstrapped"}}, 0
     if args.records_command == "migrate":
         store.migrate()
-        return {"api_version": 1, "result": {"status": "migrated"}}, 0
+        legacy_attempts = cli_attempts.reconcile_legacy_failed_attempts(store, store.path)
+        return {
+            "api_version": 1,
+            "result": {"status": "migrated", "legacy_cli_attempts": legacy_attempts},
+        }, 0
     if args.records_command == "history":
         history = store.history(args.pr, include_legacy_routes=True)
         history["cli_attempts"] = _failed_cli_attempts_from_history(history)
@@ -794,12 +809,13 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             histories[str(pr)] = history
         return {"api_version": 1, "result": {"prs": histories}}, 0
     if args.records_command == "routes":
-        routes = store.open_routes(
-            target_pr=args.target_pr if args.target_pr is not None else None,
+        routes = store.list_routes(
+            status=args.status,
+            target_pr=args.target_pr,
+            source_pr=args.source_pr,
+            unassigned=args.unassigned,
             include_legacy_routes=True,
         )
-        if args.unassigned:
-            routes = [route for route in routes if route["assignment"] == "unassigned"]
         return {"api_version": 1, "result": {"routes": routes}}, 0
     if args.records_command == "import-run":
         run, findings, decisions = _load_records_import(args.input)

@@ -72,6 +72,10 @@ def record_hosted_terminal_result(
 
     record = _validate_trigger_record(repo, source_pr, trigger_record)
     attempt = _matching_attempt(records, attempt_id, source_pr, record["head_sha"])
+    if attempt["state"] == "completed" and attempt["run_id"] is None:
+        return _recover_archived_completed_attempt(
+            records, attempt_id, repo, source_pr, record, current_record_path
+        )
     pull_request = _complete_pull_request(payload, source_pr)
     try:
         result = hosted.trigger_state(repo, source_pr, payload, record, current_record_path)
@@ -185,36 +189,40 @@ def record_hosted_terminal_result(
         ),
         "metadata": _json(capture_metadata),
     }
-    finished = records.finish_attempt(
-        attempt_id,
-        state=attempt_state,
-        finished_at=finish_time,
-        duration_seconds=result.duration_seconds,
-        trigger_id=str(trigger["id"]),
-        provider_review_id=provider_response_id,
-        checkpoint_id=checkpoint_id,
-        diagnostic="" if completed else result.reason,
-        artifacts=artifacts,
-    )
-
+    finish_fields = {
+        "state": attempt_state,
+        "finished_at": finish_time,
+        "duration_seconds": result.duration_seconds,
+        "trigger_id": str(trigger["id"]),
+        "provider_review_id": provider_response_id,
+        "checkpoint_id": checkpoint_id,
+        "diagnostic": "" if completed else result.reason,
+        "artifacts": artifacts,
+    }
     run_result: dict[str, Any] | None = None
     if completed:
-        run_result = records.record_run(
-            run_id=attempt_id,
-            source_pr=source_pr,
-            channel="hosted",
-            findings=findings,
-            outcome="completed",
-            attributable=True,
-            source_head=record["head_sha"],
-            reviewer=_reviewer_name(response_review, response_comment),
-            scope="broad",
-            started_at=trigger["created_at"],
-            finished_at=finish_time,
+        completion = records.complete_attempt_run(
+            attempt_id,
+            finish=finish_fields,
+            run={
+                "run_id": attempt_id,
+                "source_pr": source_pr,
+                "channel": "hosted",
+                "findings": findings,
+                "outcome": "completed",
+                "attributable": True,
+                "source_head": record["head_sha"],
+                "reviewer": _reviewer_name(response_review, response_comment),
+                "scope": "broad",
+                "started_at": trigger["created_at"],
+                "finished_at": finish_time,
+            },
+            finalize_empty=not findings,
         )
-        records.link_attempt_run(attempt_id, attempt_id)
-        if not findings:
-            records.finalize_run(attempt_id, finalized_at=finish_time)
+        finished = completion["attempt"]
+        run_result = completion["run"]
+    else:
+        finished = records.finish_attempt(attempt_id, **finish_fields)
 
     return {
         "attempt_id": attempt_id,
@@ -226,6 +234,105 @@ def record_hosted_terminal_result(
         "counts": run_result["counts"] if run_result is not None else None,
         "idempotent_replay": bool(finished["idempotent_replay"])
         and (run_result is None or bool(run_result["idempotent_replay"])),
+    }
+
+
+def _recover_archived_completed_attempt(
+    records: SqliteReviewRecords,
+    attempt_id: str,
+    repo: str,
+    source_pr: int,
+    record: dict[str, Any],
+    current_record_path: Path | None,
+) -> dict[str, Any]:
+    """Recover an old partial completion from its immutable stored snapshot."""
+
+    attempt = records.attempt(attempt_id)
+    attempt_row = next(
+        item for item in records.attempt_history(source_pr) if item["attempt_id"] == attempt_id
+    )
+    archive = records.attempt_artifacts(attempt_id)
+    if not {"hosted_review", "hosted_comments", "metadata"} <= archive.keys():
+        raise HostedCaptureError("completed Hosted attempt lacks exact archived evidence for recovery")
+    try:
+        reviews = json.loads(archive["hosted_review"])
+        comments = json.loads(archive["hosted_comments"])
+        metadata = json.loads(archive["metadata"])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HostedCaptureError("completed Hosted attempt has malformed archived evidence") from exc
+    if (
+        not isinstance(metadata, dict) or metadata.get("state") != "completed"
+        or metadata.get("attributable") is not True
+        or metadata.get("repository") != repo
+        or metadata.get("pull_request") != source_pr
+        or metadata.get("head_sha") != record["head_sha"]
+        or str(metadata.get("trigger_id")) != str(record["trigger"]["id"])
+        or str(metadata.get("response_id")) != attempt_row["provider_review_id"]
+        or attempt_row["trigger_id"] != str(record["trigger"]["id"])
+        or not isinstance(reviews, list) or not isinstance(comments, dict)
+        or not isinstance(comments.get("comments"), list)
+        or not isinstance(comments.get("review_threads"), list)
+    ):
+        raise HostedCaptureError("completed Hosted archive conflicts with its immutable request identity")
+    archived_payload = {
+        "data": {"repository": {"pullRequest": {
+            "number": source_pr,
+            "headRefOid": record["head_sha"],
+            "reviews": {"nodes": reviews},
+            "comments": {"nodes": comments["comments"]},
+            "reviewThreads": {"nodes": comments["review_threads"]},
+        }}}
+    }
+    pull_request = _complete_pull_request(archived_payload, source_pr)
+    try:
+        result = hosted.trigger_state(
+            repo, source_pr, archived_payload, record, current_record_path
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HostedCaptureError(f"archived Hosted attribution failed: {exc}") from exc
+    if (
+        result.state != "completed" or result.attributed is not True
+        or str(result.response_id) != attempt_row["provider_review_id"]
+    ):
+        raise HostedCaptureError("archived Hosted result does not prove the stored completion")
+    finished_at = attempt_row["finished_at"]
+    if not isinstance(finished_at, str) or not finished_at:
+        raise HostedCaptureError("completed Hosted attempt lacks its terminal timestamp")
+    _event_at, response_review, response_comment = _terminal_event(
+        result, pull_request, observed_at=finished_at
+    )
+    findings = _findings_for_completed_result(
+        result, pull_request, record,
+        response_review=response_review, response_comment=response_comment,
+        finished_at=finished_at,
+    )
+    recorded = records.recover_completed_attempt_run(
+        attempt_id,
+        run={
+            "run_id": attempt_id,
+            "source_pr": source_pr,
+            "channel": "hosted",
+            "findings": findings,
+            "outcome": "completed",
+            "attributable": True,
+            "source_head": attempt["candidate_sha"],
+            "reviewer": _reviewer_name(response_review, response_comment),
+            "scope": "broad",
+            "started_at": record["trigger"]["created_at"],
+            "finished_at": finished_at,
+        },
+        finalize_empty=not findings,
+    )
+    return {
+        "attempt_id": attempt_id,
+        "state": "completed",
+        "terminal": True,
+        "attributable": True,
+        "response_id": result.response_id,
+        "run_id": attempt_id,
+        "counts": recorded["counts"],
+        "idempotent_replay": False,
+        "recovered_from_archive": True,
     }
 
 
@@ -379,7 +486,16 @@ def sync_hosted_pending(
                 attempt_state = attempt["state"]
                 if attempt_state == "completed":
                     if attempt["run_id"] is None:
-                        raise HostedCaptureError("completed Hosted attempt has no linked source run")
+                        recovered = _recover_archived_completed_attempt(
+                            records, attempt_id, repo, pr, record, path
+                        )
+                        add(
+                            "synced", pr, path, attempt_id=attempt_id,
+                            trigger_id=trigger_id, state="completed",
+                            run_id=recovered["run_id"], counts=recovered["counts"],
+                            recovered_from_archive=True,
+                        )
+                        continue
                     if attempt["trigger_id"] != trigger_id:
                         raise HostedCaptureError("completed Hosted attempt has a different trigger ID")
                     add(
