@@ -741,7 +741,10 @@ class CliReviewRunnerTests(unittest.TestCase):
         output = (
             json.dumps({
                 "type": "finding",
-                "codegenInstructions": "Review comment at @src/Representative.java:1\nKeep\u0000 the\u0001 safer path.",
+                "codegenInstructions": (
+                    "Review comment at @src/Representative.java:1\n"
+                    "Keep\u0000 the \u001b[31msafer\u001b[0m path."
+                ),
             })
             + "\n"
             + json.dumps({
@@ -769,7 +772,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 title = connection.execute(
                     "SELECT title FROM finding_observations WHERE run_id = ?", (result.run_id,)
                 ).fetchone()[0]
-            self.assertEqual(title, "Keep  the  safer path.")
+            self.assertEqual(title, "Keep the safer path.")
 
     def test_unrecordable_success_capture_is_terminally_non_counting(self):
         output = (

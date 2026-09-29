@@ -4075,6 +4075,34 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["prs"][0]["merged"], True)
         self.assertEqual(report["prs"][1]["channels"]["hosted"], "HUMAN_STOPPED")
 
+    def test_status_overview_skips_closed_unmerged_prs_but_retains_historical_rows(self):
+        values, heads = _stacked_prs(5)
+        values[1] = dataclasses.replace(values[1], state="CLOSED")
+        evidence = CountingEvidence()
+        scanned = []
+
+        def active_targets(numbers, identities):
+            scanned.extend(numbers)
+            return set()
+
+        evidence.active_review_targets = active_targets
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 2)
+        self.assertEqual(scanned, [2, 3, 4, 5])
+        self.assertEqual(report["detail_window"]["deep_prs"], [2, 3, 4, 5])
+        self.assertEqual(report["detail_window"]["active_targets"], [])
+        self.assertEqual(report["prs"][0]["state"], "CLOSED")
+        self.assertFalse(report["prs"][0]["merged"])
+        self.assertEqual(report["prs"][0]["detail_level"], "identity_only")
+        self.assertNotIn(1, {pr_number for pr_number, _ in evidence.history_reads})
+        self.assertTrue(all(pr_number in {2, 3, 4, 5} for pr_number, _ in evidence.history_reads))
+
     def test_status_overview_distinguishes_blocked_no_target_and_unknown_provider_state(self):
         values, heads = _stacked_prs(2)
         blocked_evidence = CountingEvidence({

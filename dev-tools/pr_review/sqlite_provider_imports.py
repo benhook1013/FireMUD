@@ -793,26 +793,19 @@ def _hosted_findings(
 def _cli_findings(capture: evidence.CaptureData) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for index, finding in enumerate(capture.findings, 1):
-        title = _cli_headline(finding.get("codegenInstructions"))
-        if title is None:
+        instructions = finding.get("codegenInstructions")
+        title = _cli_finding_title(instructions, "")
+        if not title:
             raise ProviderImportError(f"CLI finding {index} has no bounded title")
         if len(title) > 300:
             raise ProviderImportError(f"CLI finding {index} headline exceeds the SQLite title limit")
         # The existing decision file addresses findings by this 1-based event
         # ordinal; retain that canonical identity instead of hashing content.
-        instructions = finding.get("codegenInstructions")
-        full_text = (
-            instructions
-            if isinstance(instructions, str)
-            else "\n".join(item for item in instructions if isinstance(item, str))
-            if isinstance(instructions, list)
-            else ""
-        )
         result.append(
             {
                 "key": f"cli-run:{capture.metadata['run_id']}:finding:{index}",
                 "title": title,
-                "detail": _safe_finding_detail(full_text),
+                "detail": _safe_finding_detail(_cli_detail(instructions)),
             }
         )
     if capture.unlinked_decisions:
@@ -823,26 +816,13 @@ def _cli_findings(capture: evidence.CaptureData) -> list[dict[str, Any]]:
 def _cli_headline(value: Any) -> str | None:
     """Extract a short headline from CLI instructions without storing the prompt."""
 
-    if isinstance(value, str):
-        candidates = _cli_title_lines(value)
-    elif isinstance(value, list):
-        candidates = [
-            line
-            for item in value
-            if isinstance(item, str)
-            for line in _cli_title_lines(item)
-        ]
-    else:
-        return None
+    candidates, has_locator = _cli_lines_after_locator(value)
     # CodeRabbit often prepends our safety reminder and a file/line locator to
     # its actual finding. Those are poor worklist titles, especially for a
     # routed finding that a different PR owner needs to triage.
-    headline = None
-    for index, line in enumerate(candidates):
-        if line.strip().startswith("Review comment at @"):
-            headline = next((item.strip() for item in candidates[index + 1:] if item.strip()), None)
-            break
-    if headline is None:
+    if has_locator:
+        headline = next((item.strip() for item in candidates if item.strip()), None)
+    else:
         headline = next((line.strip() for line in candidates if line.strip()), None)
     if headline is None:
         return None
@@ -854,7 +834,15 @@ def _cli_headline(value: Any) -> str | None:
 def _normalize_cli_title_text(value: str) -> str:
     """Replace control characters so projected titles remain valid record text."""
 
-    return "".join(" " if ord(character) < 0x20 else character for character in value)
+    value = re.sub(
+        r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])",
+        "",
+        value,
+    )
+    return "".join(
+        " " if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F else character
+        for character in value
+    )
 
 
 def _cli_title_lines(value: str) -> list[str]:
@@ -863,11 +851,41 @@ def _cli_title_lines(value: str) -> list[str]:
     return [_normalize_cli_title_text(line) for line in re.split(r"\r\n?|\n", value)]
 
 
+def _cli_instruction_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(item for item in value if isinstance(item, str))
+    return ""
+
+
+def _cli_lines_after_locator(value: Any) -> tuple[list[str], bool]:
+    """Return normalized instruction lines after a provider locator, if present."""
+
+    candidates = _cli_title_lines(_cli_instruction_text(value))
+    for index, line in enumerate(candidates):
+        if line.strip().startswith("Review comment at @"):
+            return candidates[index + 1:], True
+    return candidates, False
+
+
+def _cli_detail(value: Any) -> str:
+    """Drop the safety preamble when a CLI finding has a file/line locator."""
+
+    candidates, has_locator = _cli_lines_after_locator(value)
+    if has_locator:
+        return "\n".join(candidates)
+    return _cli_instruction_text(value)
+
+
 def _cli_finding_title(value: Any, fallback: str) -> str:
     """Project one CLI finding title for runner and recovery persistence."""
 
     title = _cli_headline(value) or ""
+    title = _normalize_cli_title_text(title)
+    title = re.sub(r"[ \t\r\n\f\v]+", " ", title).strip()
     title, _ = sqlite_review_records._redact_archive_text(title)
+    title = re.sub(r"[ \t\r\n\f\v]+", " ", title).strip()
     title = title[:300].rstrip()
     return title or fallback
 

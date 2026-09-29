@@ -24,6 +24,7 @@ from pr_review import (
     sqlite_store,
 )
 from pr_review.sqlite_records_repair import (
+    MissingHistoricalEvidenceError,
     SqliteRecordsRepairError,
     archive_incomplete_checkpoint,
     repair_provider_checkpoints,
@@ -215,6 +216,23 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             dry_run=False,
         )
         self.assertTrue(replay["idempotent_replay"])
+
+    def test_missing_capture_uses_explicit_missing_evidence_repair_error(self) -> None:
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
+
+        with self.assertRaises(MissingHistoricalEvidenceError) as raised:
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                dry_run=True,
+            )
+
+        self.assertEqual(raised.exception.code, "missing_historical_evidence")
+        self.assertEqual(self.records.history(PR)["historical_gaps"], [])
 
     def test_failed_capture_archives_loader_diagnostic_without_review_credit(self) -> None:
         run_id = "run.Malformed"

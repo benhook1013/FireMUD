@@ -908,7 +908,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                     items.append({"checkpoint_id": checkpoint.comment_id, "status": outcome["status"],
                                   "items": outcome["items"],
                                   **({"error": outcome["error"]} if outcome.get("error") else {})})
-                except sqlite_records_repair.SqliteRecordsRepairError as exc:
+                except sqlite_records_repair.MissingHistoricalEvidenceError as exc:
                     try:
                         gap = sqlite_records_repair.archive_incomplete_checkpoint(
                             store, repo=repo, pr_number=args.pr, checkpoint=checkpoint,
@@ -923,6 +923,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                         items.append({"checkpoint_id": checkpoint.comment_id,
                                       "status": "incomplete", "missing_evidence": str(exc),
                                       "gap": gap})
+                except sqlite_records_repair.SqliteRecordsRepairError as exc:
+                    items.append({"checkpoint_id": checkpoint.comment_id,
+                                  "status": "unavailable", "error": str(exc)})
             partial = any(item["status"] in {"unavailable", "incomplete", "partial"} for item in items)
             return {"api_version": 1, "result": {
                 "status": "partial" if partial else "complete" if args.apply else "preview",

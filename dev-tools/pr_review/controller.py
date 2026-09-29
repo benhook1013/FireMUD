@@ -4721,7 +4721,7 @@ class ReviewController:
         # comments and reservations on them cannot be active review targets.
         # Deep-reading those records on every display refresh is expensive;
         # request admission still performs its own fresh repository-wide check.
-        open_prs = tuple(pr for pr in state.ordered_prs if not batch_live[pr].merged)
+        open_prs = tuple(pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN")
         active_targets = {
             allocation.pr
             for allocation in state.allocations.values()
@@ -4750,11 +4750,11 @@ class ReviewController:
 
         first_four = []
         for pr in state.ordered_prs:
-            if not batch_live[pr].merged:
+            if batch_live[pr].state == "OPEN":
                 first_four.append(pr)
                 if len(first_four) == 4:
                     break
-        candidate_prs = [pr for pr in state.ordered_prs if not batch_live[pr].merged]
+        candidate_prs = [pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN"]
         target_prs = set(first_four) | active_targets
         target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
         deep_prs = target_prs.intersection(state.ordered_prs)
@@ -4772,13 +4772,13 @@ class ReviewController:
             scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
             target_scan_prs: list[int] = []
             for pr in state.ordered_prs:
-                if batch_live[pr].merged:
+                if batch_live[pr].state != "OPEN":
                     continue
                 if pr not in deep_prs:
                     break
                 target_scan_prs.append(pr)
             target_scan_complete = all(
-                batch_live[pr].merged or pr in deep_prs for pr in state.ordered_prs
+                batch_live[pr].state != "OPEN" or pr in deep_prs for pr in state.ordered_prs
             )
             try:
                 # Deep PR metadata and complete review snapshots are independent
@@ -4849,7 +4849,7 @@ class ReviewController:
                 relevant_refs: set[str] = set()
                 for pr in state.ordered_prs:
                     item = batch_live[pr]
-                    if item.merged:
+                    if item.state != "OPEN":
                         continue
                     relevant_refs.add(item.base_ref)
                     if item.head_ref:
@@ -4861,7 +4861,7 @@ class ReviewController:
                 }
                 for pr in state.ordered_prs:
                     item = batch_live[pr]
-                    if item.merged:
+                    if item.state != "OPEN":
                         continue
                     if item.base_ref in changed_refs or item.head_ref in changed_refs:
                         remote_affected.add(pr)
@@ -4916,7 +4916,7 @@ class ReviewController:
                 for pr in target_scan_prs
                 if pr in mismatch
                 or (
-                    not batch_live[pr].merged
+                    batch_live[pr].state == "OPEN"
                     and (
                         batch_live[pr].base_ref != links[pr].parent_ref
                         or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
@@ -4936,7 +4936,7 @@ class ReviewController:
             parent = links[pr]
             detailed = deep_by_pr.get(pr) if pr in deep_prs else None
             batch_topology_moved = (
-                not item.merged
+                item.state == "OPEN"
                 and (item.base_ref != parent.parent_ref or item.base_tip.casefold() != parent.parent_head.casefold())
             )
             saved_identity_moved = self._saved_identity_moved(state, pr, item, parent)
@@ -5009,7 +5009,7 @@ class ReviewController:
                 "unmerged_limit": max(4, len(target_scan_prs)),
                 "batch_status": "complete",
                 "deep_prs": [
-                    pr for pr in state.ordered_prs if pr in deep_prs and not batch_live[pr].merged
+                    pr for pr in state.ordered_prs if pr in deep_prs and batch_live[pr].state == "OPEN"
                 ] if deep_error is None else [],
                 "tail_evidence": "not fetched; identity-only rows are informational and never indicate completion",
                 "active_targets": sorted(active_targets),

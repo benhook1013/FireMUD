@@ -617,7 +617,10 @@ def sync_hosted_pending(
                 bucket = "ambiguous" if result["state"] in {"ambiguous", "unattributed"} else "pending"
                 entry["reason"] = result.get("reason")
                 report[bucket].append(entry)
-            elif result["state"] in {"ambiguous", "unattributed", "retired", "timed_out"}:
+            elif (
+                result["state"] in {"ambiguous", "unattributed", "retired", "timed_out"}
+                or (result["state"] == "completed" and result.get("attributable") is not True)
+            ):
                 report["ambiguous"].append(entry)
             else:
                 entry["idempotent_replay"] = result.get("idempotent_replay", False)

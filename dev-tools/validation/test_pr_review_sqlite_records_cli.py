@@ -1302,12 +1302,17 @@ class ReviewRecordsCliTest(unittest.TestCase):
         with (
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.sqlite_hosted_capture, "sync_hosted_pending",
-                         return_value={"synced": 1, "pending": 0, "errors": []}) as sync,
+                         return_value={
+                             "synced": [{"pr": 2893}],
+                             "pending": [],
+                             "ambiguous": [{"pr": 2893}],
+                             "errors": [],
+                         }) as sync,
             patch.object(cli.github, "fetch_pull_request", side_effect=AssertionError("sync helper owns evidence")),
         ):
             code, result = self.invoke("sync-hosted", "--pr", "2893", "--database", str(self.database))
         self.assertEqual(code, 0)
-        self.assertEqual(result["result"]["synced"], 1)
+        self.assertEqual(len(result["result"]["synced"]), 1)
         self.assertEqual(sync.call_args.kwargs["repo"], "owner/repo")
         self.assertEqual(sync.call_args.kwargs["pr_number"], 2893)
 
@@ -1328,7 +1333,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload),
             patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
-                         side_effect=cli.sqlite_records_repair.SqliteRecordsRepairError("old decisions missing")),
+                         side_effect=cli.sqlite_records_repair.MissingHistoricalEvidenceError("old decisions missing")),
             patch.object(cli.sqlite_records_repair, "archive_incomplete_checkpoint",
                          return_value={"status": "incomplete_preview", "checkpoint_id": 123}) as gap,
             contextlib.redirect_stdout(output),
@@ -1343,6 +1348,51 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["items"][0]["status"], "incomplete")
         self.assertEqual(result["items"][0]["missing_evidence"], "old decisions missing")
         self.assertTrue(gap.call_args.kwargs["dry_run"])
+
+    def test_repair_all_reports_transient_or_conflicting_error_without_archiving_gap(self) -> None:
+        checkpoint = {
+            "databaseId": 123,
+            "body": "Hosted: 1 found / 1 accepted / 0 routed · abcdef0",
+            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "author": {"login": "ben"},
+        }
+        payload = {"data": {"repository": {"pullRequest": {
+            "number": 2828, "comments": {"nodes": [checkpoint]},
+        }}}}
+        records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
+        for error in (
+            "provider origin-link API is unavailable",
+            "matching provider attempt conflicts with captured finding or decision evidence",
+        ):
+            for apply in (False, True):
+                with self.subTest(error=error, apply=apply):
+                    output = io.StringIO()
+                    arguments = [
+                        "records", "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
+                        "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+                    ]
+                    if apply:
+                        arguments.append("--apply")
+                    with (
+                        patch.object(cli, "_records_store", return_value=records),
+                        patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+                        patch.object(cli.github, "fetch_pull_request", return_value=payload),
+                        patch.object(
+                            cli.sqlite_records_repair,
+                            "repair_provider_checkpoints",
+                            side_effect=cli.sqlite_records_repair.SqliteRecordsRepairError(error),
+                        ),
+                        patch.object(cli.sqlite_records_repair, "archive_incomplete_checkpoint") as gap,
+                        contextlib.redirect_stdout(output),
+                    ):
+                        status = cli.main(arguments)
+                    self.assertEqual(status, 2)
+                    result = json.loads(output.getvalue())["result"]
+                    self.assertEqual(result["status"], "partial")
+                    self.assertEqual(result["items"][0]["status"], "unavailable")
+                    self.assertEqual(result["items"][0]["error"], error)
+                    self.assertNotIn("gap", result["items"][0])
+                    gap.assert_not_called()
 
 
     def test_provider_import_requires_explicit_schema_bootstrap_before_reading_provider_state(self) -> None:

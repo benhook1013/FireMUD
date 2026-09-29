@@ -37,6 +37,14 @@ _PROVIDER_ID = re.compile(r"^(?:review|trigger|run):[A-Za-z0-9._-]{1,80}$")
 class SqliteRecordsRepairError(ValueError):
     """Raised when source evidence or its attribution is not safe to repair."""
 
+    code = "unavailable"
+
+
+class MissingHistoricalEvidenceError(SqliteRecordsRepairError):
+    """Raised when the linked historical capture is genuinely absent."""
+
+    code = "missing_historical_evidence"
+
 
 def _partial_diagnostic(exc: OSError | sqlite3.DatabaseError) -> str:
     detail = str(exc).strip()
@@ -381,6 +389,8 @@ def _import_one(
             imported["idempotent_replay"] = True
         else:
             imported = import_checkpoint(records)
+    except evidence.CaptureUnavailable as exc:
+        raise MissingHistoricalEvidenceError(str(exc)) from exc
     except (sqlite_provider_imports.ProviderImportError, ReviewRecordsError, evidence.EvidenceError) as exc:
         raise SqliteRecordsRepairError(str(exc)) from exc
     if not isinstance(imported, dict) or not isinstance(imported.get("run_id"), str):
@@ -834,4 +844,9 @@ def archive_incomplete_checkpoint(
     return {"status": "incomplete_archived", "dry_run": False, **applied}
 
 
-__all__ = ["SqliteRecordsRepairError", "archive_incomplete_checkpoint", "repair_provider_checkpoints"]
+__all__ = [
+    "MissingHistoricalEvidenceError",
+    "SqliteRecordsRepairError",
+    "archive_incomplete_checkpoint",
+    "repair_provider_checkpoints",
+]

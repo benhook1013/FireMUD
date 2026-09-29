@@ -823,6 +823,88 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             self.assertEqual(second["synced"][0]["state"], "failed")
             self.assertTrue(second["synced"][0]["idempotent_replay"])
 
+    def test_sync_buckets_completed_unattributed_as_ambiguous_on_first_and_repeat(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory) / "git-common"
+            records = self.new_records(Path(directory) / "controller.sqlite3")
+            attempt_id = "hosted-sync-unattributed-completed"
+            trigger_at = "2026-09-29T01:00:00Z"
+            response_at = "2026-09-29T01:02:00Z"
+            trigger_record = self.trigger_record(
+                trigger_id=703,
+                created_at=trigger_at,
+                posting_started_at="2026-09-29T00:59:00Z",
+                attempt_id=attempt_id,
+            )
+            self.write_trigger_record(common, trigger_record)
+            response = {
+                "databaseId": 704,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Full review finished.",
+                "createdAt": response_at,
+                "updatedAt": response_at,
+            }
+            payload = self.payload(
+                comments=[
+                    self.trigger_comment(trigger_id=703, created_at=trigger_at),
+                    response,
+                ]
+            )
+            terminal = hosted.TriggerState(
+                "completed",
+                True,
+                False,
+                REPO,
+                PR,
+                HEAD,
+                HEAD,
+                703,
+                trigger_at,
+                trigger_record["trigger"]["url"],
+                "full",
+                704,
+                response_at,
+                None,
+                None,
+                "completed Hosted response is not attributable",
+                duration_seconds=120,
+            )
+
+            with (
+                patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch,
+                patch.object(sqlite_hosted_capture.hosted, "trigger_state", return_value=terminal),
+            ):
+                first = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+
+            fetch.assert_called_once_with(REPO, PR)
+            self.assertEqual(len(first["synced"]), 0)
+            self.assertEqual(len(first["ambiguous"]), 1)
+            self.assertEqual(first["ambiguous"][0]["state"], "completed")
+            self.assertEqual(len(first["pending"]), 0)
+            self.assertEqual(len(first["errors"]), 0)
+            self.assertEqual(records.attempt(attempt_id)["state"], "ambiguous")
+            self.assertIsNone(records.attempt(attempt_id)["run_id"])
+            self.assertEqual(records.history(PR)["runs"], [])
+
+            with patch.object(
+                sqlite_hosted_capture.github,
+                "fetch_pull_request",
+                side_effect=AssertionError("ambiguous replay must not refetch GitHub"),
+            ) as replay_fetch:
+                second = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+
+            replay_fetch.assert_not_called()
+            self.assertEqual(len(second["synced"]), 0)
+            self.assertEqual(len(second["ambiguous"]), 1)
+            self.assertEqual(second["ambiguous"][0]["state"], "ambiguous")
+            self.assertEqual(len(second["pending"]), 0)
+            self.assertEqual(len(second["errors"]), 0)
+            self.assertEqual(records.history(PR)["runs"], [])
+
     def test_sync_isolates_bad_records_and_reuses_one_payload_per_pr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory) / "git-common"
