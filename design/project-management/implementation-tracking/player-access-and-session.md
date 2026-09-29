@@ -184,7 +184,7 @@ The focused admission proofs cover fresh acceptance, same-IP replacement reserva
 
 Account authority proof covers account-first tenantless bootstrap authentication and account-scoped session state, the current membership seam, Account-owned non-public realm grant denial, cross-tenant membership enforcement, and the contained export/deletion/recovery boundaries. `DeleteAccount` now denies before account or financial-row mutation rather than relying on a partial active-subscription guard. Explicit `JOIN`/`Join & Play` and its bounded readback worker are local, while PostgreSQL lost-acknowledgement/concurrency, the connect-token membership-authority-generation reread, and canonical tenant-role, lifecycle-state, and authority-generation follow-through remain partial or unproved.
 
-- **Validation record:** Required current documentation, contract, settings-generation, allocation, ADR, and `git diff --check` gates are recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). Runtime proof is not applicable to this documentation-only change.
+- **Validation record:** The earlier documentation-only gates are recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). Current Unit 1B work changes Account/Game Session runtime behavior and tests, so its focused validation and runtime-proof limits are recorded with the owning PRs; Docker-backed and live paths must not be inferred from earlier documentation checks.
 
 ## Active Gaps
 
