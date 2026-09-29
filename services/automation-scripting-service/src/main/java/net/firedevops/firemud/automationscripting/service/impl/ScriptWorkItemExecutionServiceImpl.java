@@ -10,11 +10,13 @@ import java.sql.SQLTransientException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
@@ -41,6 +43,7 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse
 import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -54,6 +57,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
   private static final String STAGE_ADMISSION = "ADMISSION";
@@ -410,12 +414,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   @Override
   public ExecutionBatchResult processPendingWorkItems(int maxItems) {
+    if (transactionTemplate != null) {
+      return processPendingWorkItemsWithTransactionalClaims(maxItems);
+    }
+
+    // Compatibility constructors used by focused unit tests do not have a transaction manager.
+    // Keep their existing batch-claim shape; the production constructor always supplies one.
     List<ScriptWorkItem> claimed = claimWorkItems(maxItems);
     int completedCount = 0;
     int failedCount = 0;
     for (ScriptWorkItem workItem : claimed) {
       try {
-        if (processOneWorkItemInTransaction(workItem)) {
+        if (processClaimedWorkItem(workItem)) {
           completedCount++;
         } else {
           failedCount++;
@@ -434,14 +444,106 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return new ExecutionBatchResult(claimed.size(), completedCount, failedCount);
   }
 
-  /** Keeps each durable work-item transition and its remote calls in its own transaction. */
-  private boolean processOneWorkItemInTransaction(ScriptWorkItem workItem) {
-    if (transactionTemplate == null) {
-      // Focused unit-test constructors intentionally have no transaction manager.
-      return processClaimedWorkItem(workItem);
+  /** Commits each candidate claim before processing it in a separate transaction. */
+  private ExecutionBatchResult processPendingWorkItemsWithTransactionalClaims(int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
     }
-    Boolean result = transactionTemplate.execute(status -> processClaimedWorkItem(workItem));
-    return Boolean.TRUE.equals(result);
+
+    List<ScriptWorkItem> indexedCandidates = findIndexedCandidates(maxItems);
+    Set<Long> attemptedWorkItemIds = new HashSet<>();
+    BatchCounts counts = new BatchCounts();
+    processCandidates(indexedCandidates, maxItems, attemptedWorkItemIds, counts);
+
+    if (counts.claimedCount < maxItems) {
+      int scanLimit =
+          (int) Math.min(Integer.MAX_VALUE, (long) maxItems + attemptedWorkItemIds.size());
+      List<ScriptWorkItem> fallbackCandidates =
+          workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+              STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, scanLimit));
+      processCandidates(fallbackCandidates, maxItems, attemptedWorkItemIds, counts);
+    }
+
+    return new ExecutionBatchResult(counts.claimedCount, counts.completedCount, counts.failedCount);
+  }
+
+  private List<ScriptWorkItem> findIndexedCandidates(int maxItems) {
+    if (automationQueueService == null) {
+      return List.of();
+    }
+
+    List<AutomationQueueWorkItemPointer> pointers;
+    try {
+      pointers =
+          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+    } catch (RuntimeException ex) {
+      LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
+      meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
+      return List.of();
+    }
+    List<Long> workItemIds =
+        pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).distinct().toList();
+    if (workItemIds.isEmpty()) {
+      return List.of();
+    }
+    return workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        workItemIds, STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, maxItems));
+  }
+
+  private void processCandidates(
+      List<ScriptWorkItem> candidates,
+      int maxItems,
+      Set<Long> attemptedWorkItemIds,
+      BatchCounts counts) {
+    for (ScriptWorkItem candidate : candidates) {
+      if (counts.claimedCount >= maxItems) {
+        return;
+      }
+      Long workItemId = candidate.getId();
+      if (workItemId == null || !attemptedWorkItemIds.add(workItemId)) {
+        continue;
+      }
+
+      WorkItemAttempt attempt = claimThenProcessWorkItem(workItemId);
+      if (!attempt.claimed()) {
+        continue;
+      }
+      counts.claimedCount++;
+      if (attempt.failure() != null) {
+        // Claim and processing use separate transactions, so a processing rollback cannot erase
+        // the durable EVALUATING claim. Without an owner/recovery contract, leave it unresolved.
+        LOGGER.error(
+            "Unexpected exception processing claimed script work item id={}; leaving unresolved",
+            workItemId,
+            attempt.failure());
+        counts.failedCount++;
+      } else if (attempt.completed()) {
+        counts.completedCount++;
+      } else {
+        counts.failedCount++;
+      }
+    }
+  }
+
+  private WorkItemAttempt claimThenProcessWorkItem(long workItemId) {
+    List<ScriptWorkItem> claimed =
+        transactionTemplate.execute(
+            status -> workItemService.claimPendingForEvaluation(List.of(workItemId), 1));
+    if (claimed == null || claimed.isEmpty()) {
+      return WorkItemAttempt.notClaimed();
+    }
+
+    // TransactionTemplate commits the claim before returning. A worker stop here can leave an
+    // EVALUATING row without a processing attempt; that recovery gap is intentionally unresolved.
+    ScriptWorkItem workItem = claimed.getFirst();
+    try {
+      Boolean completed = transactionTemplate.execute(status -> processClaimedWorkItem(workItem));
+      return WorkItemAttempt.claimed(Boolean.TRUE.equals(completed));
+    } catch (RuntimeException ex) {
+      // Catch outside execute: an inner REQUIRED service may mark the shared transaction
+      // rollback-only and throw UnexpectedRollbackException only during execute's commit.
+      return WorkItemAttempt.failedAfterClaim(ex);
+    }
   }
 
   private List<ScriptWorkItem> claimWorkItems(int maxItems) {
@@ -1455,6 +1557,26 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
     workItem.setAuthorityUnavailableRetryCount(0);
     return null;
+  }
+
+  private static final class BatchCounts {
+    private int claimedCount;
+    private int completedCount;
+    private int failedCount;
+  }
+
+  private record WorkItemAttempt(boolean claimed, boolean completed, RuntimeException failure) {
+    private static WorkItemAttempt notClaimed() {
+      return new WorkItemAttempt(false, false, null);
+    }
+
+    private static WorkItemAttempt claimed(boolean completed) {
+      return new WorkItemAttempt(true, completed, null);
+    }
+
+    private static WorkItemAttempt failedAfterClaim(RuntimeException failure) {
+      return new WorkItemAttempt(true, false, failure);
+    }
   }
 
   private record PluginFenceValidation(String reason, boolean retryable) {}

@@ -401,15 +401,10 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void replayRetainsOriginalFailureEvidenceWithoutRewritingAudit() {
+  void rejectsPostEvaluationReplayWhileRetainingOriginalFailureEvidence() {
     ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(95L));
     item.setCancelReason("GAME_SESSION_UNAVAILABLE");
     item.setFailureGeneration(2L);
-    ScriptWorkItem claimed = withRoutingBundle(replayableRuntimeWorkItem(95L));
-    claimed.setStatus("PENDING_EVALUATION");
-    claimed.setCancelReason("GAME_SESSION_UNAVAILABLE");
-    claimed.setFailureGeneration(2L);
-
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setFinalStage("TICK_HANDOFF");
     audit.setFinalOutcome("authority_unavailable_exhausted");
@@ -419,14 +414,6 @@ class ScriptWorkItemServiceImplTest {
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     when(workItemRepository.findById(95L)).thenReturn(Optional.of(item));
-    when(workItemRepository.claimDeadLetterForReplay(
-            Mockito.eq(95L),
-            Mockito.eq("1"),
-            Mockito.eq(item.getRowVersion()),
-            Mockito.eq(2L),
-            Mockito.any(Instant.class)))
-        .thenReturn(Optional.of(claimed));
-
     ScriptDeadLetterReplayRepository replayRepository =
         Mockito.mock(ScriptDeadLetterReplayRepository.class);
     when(replayRepository.insertOrGet(
@@ -442,7 +429,7 @@ class ScriptWorkItemServiceImplTest {
                     7L, invocation.getArgument(2), "RUNNING", 0L, 0L));
     when(replayRepository.findResults(7L)).thenReturn(List.of());
     when(replayRepository.complete(
-            Mockito.eq(7L), Mockito.eq(1L), Mockito.eq(0L), Mockito.any(Instant.class)))
+            Mockito.eq(7L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
         .thenReturn(true);
     java.util.concurrent.atomic.AtomicReference<String> originalStage =
         new java.util.concurrent.atomic.AtomicReference<>();
@@ -512,14 +499,28 @@ class ScriptWorkItemServiceImplTest {
             new ScriptWorkItemService.ReplayDeadLettersCommand(
                 "1", "", "", List.of("95"), "", 0L, 0L, 0, "req-95", "admin", "retry"));
 
-    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> {
+              assertThat(replay.outcome()).isEqualTo("rejected");
+              assertThat(replay.rejectionReason()).isEqualTo("stage_evidence_unavailable");
+            });
     assertThat(originalStage).hasValue("TICK_HANDOFF");
     assertThat(originalReason).hasValue("GAME_SESSION_UNAVAILABLE");
     assertThat(item.getCancelReason()).isEqualTo("GAME_SESSION_UNAVAILABLE");
-    assertThat(claimed.getCancelReason()).isEqualTo("GAME_SESSION_UNAVAILABLE");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalReason()).isEqualTo("GAME_SESSION_UNAVAILABLE");
     verify(auditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
+    verify(workItemRepository, never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
   }
 
   @Test

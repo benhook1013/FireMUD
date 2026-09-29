@@ -340,11 +340,12 @@ public class ScriptWorkItemRepository {
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
       String status, Instant eligibleAt, Pageable pageable) {
+    Condition eligibility =
+        "PENDING_EVALUATION".equals(status)
+            ? retryEligibilityCondition(eligibleAt)
+            : SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt));
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS
-            .STATUS
-            .eq(status)
-            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
+        SCRIPT_WORK_ITEMS.STATUS.eq(status).and(eligibility),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -380,12 +381,12 @@ public class ScriptWorkItemRepository {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
+    Condition eligibility =
+        "PENDING_EVALUATION".equals(status)
+            ? retryEligibilityCondition(eligibleAt)
+            : SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt));
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS
-            .ID
-            .in(ids)
-            .and(SCRIPT_WORK_ITEMS.STATUS.eq(status))
-            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
+        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)).and(eligibility),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());

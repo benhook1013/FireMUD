@@ -11,8 +11,12 @@ import java.sql.SQLTransientConnectionException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
@@ -50,6 +54,11 @@ import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
@@ -921,6 +930,166 @@ class ScriptWorkItemExecutionServiceImplTest {
     Mockito.verifyNoInteractions(handoffService);
     verify(workItemService).claimPendingForEvaluation(List.of(99L), 10);
     verify(workItemService).claimPendingForEvaluation(9);
+  }
+
+  @Test
+  void commitsEachClaimBeforeProcessingAndLeavesItUnresolvedAfterProcessingRollback() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
+    TransactionStatus transactionStatus = Mockito.mock(TransactionStatus.class);
+    AtomicBoolean transactionActive = new AtomicBoolean();
+    AtomicInteger currentTransactionId = new AtomicInteger();
+    AtomicInteger nextTransactionId = new AtomicInteger();
+    List<Integer> claimTransactionIds = new ArrayList<>();
+    List<Integer> evaluationTransactionIds = new ArrayList<>();
+    Map<Long, String> committedStatuses = new HashMap<>();
+    AtomicBoolean remoteEffectAccepted = new AtomicBoolean();
+
+    ScriptWorkItem indexed = workItem();
+    indexed.setStatus("PENDING_EVALUATION");
+    ScriptWorkItem fallback = workItem();
+    fallback.setId(100L);
+    fallback.setScriptId("script-2");
+    fallback.setScriptEventId("event-2");
+    fallback.setStatus("PENDING_EVALUATION");
+
+    when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(transactionActive.compareAndSet(false, true)).isTrue();
+              currentTransactionId.set(nextTransactionId.incrementAndGet());
+              return transactionStatus;
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              int committedTransactionId = currentTransactionId.get();
+              assertThat(transactionActive.compareAndSet(true, false)).isTrue();
+              currentTransactionId.set(0);
+              if (committedTransactionId == 2) {
+                throw new UnexpectedRollbackException("simulated rollback-only processing tx");
+              }
+              if (committedTransactionId == 1) {
+                committedStatuses.put(indexed.getId(), indexed.getStatus());
+              } else if (committedTransactionId == 3) {
+                committedStatuses.put(fallback.getId(), fallback.getStatus());
+              } else if (committedTransactionId == 4) {
+                committedStatuses.put(fallback.getId(), fallback.getStatus());
+              }
+              return null;
+            })
+        .when(transactionManager)
+        .commit(transactionStatus);
+    when(automationQueueService.drainIndexedWorkItemPointers(4, 2))
+        .thenReturn(List.of(new AutomationQueueWorkItemPointer(1, 99L, "7", "patch-1", "event-1")));
+    when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq(List.of(99L)),
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenReturn(List.of(indexed));
+    when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(transactionActive).isFalse();
+              // The indexed row was already attempted even though its processing transaction
+              // rolled back. Filter it from this invocation while its sibling remains eligible.
+              return List.of(indexed, fallback);
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive).isTrue();
+              claimTransactionIds.add(currentTransactionId.get());
+              ScriptWorkItem candidate =
+                  invocation.<List<Long>>getArgument(0).contains(99L) ? indexed : fallback;
+              if (!"PENDING_EVALUATION".equals(candidate.getStatus())) {
+                return List.of();
+              }
+              candidate.setStatus("EVALUATING");
+              return List.of(candidate);
+            })
+        .when(workItemService)
+        .claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1));
+    Mockito.doAnswer(
+            invocation -> {
+              assertThat(transactionActive).isTrue();
+              evaluationTransactionIds.add(currentTransactionId.get());
+              return Optional.of(scriptDefinitionForWorkItem(invocation.getArgument(2)));
+            })
+        .when(definitionRepository)
+        .findByTenantIdAndScriptVersionAndName(
+            Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(handoffService.handoff(Mockito.eq(indexed), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(transactionActive).isTrue();
+              remoteEffectAccepted.set(true);
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  true, "ACCEPTED", "command-1", "", "", "");
+            });
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(auditRepository.findByWorkItemId(100L)).thenReturn(Optional.of(new ScriptEventAudit()));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            automationQueueService,
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            rolloutProjectionService,
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            null,
+            null,
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class),
+            transactionManager);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(2);
+
+    assertThat(result.claimedCount()).isEqualTo(2);
+    assertThat(result.completedCount()).isEqualTo(1);
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(claimTransactionIds).containsExactly(1, 3);
+    assertThat(evaluationTransactionIds).containsExactly(2, 4);
+    assertThat(nextTransactionId).hasValue(4);
+    assertThat(remoteEffectAccepted).isTrue();
+    assertThat(committedStatuses)
+        .containsEntry(indexed.getId(), "EVALUATING")
+        .containsEntry(fallback.getId(), "HANDED_OFF");
+    assertThat(fallback.getStatus()).isEqualTo("HANDED_OFF");
+    verify(workItemService, Mockito.times(1)).claimPendingForEvaluation(List.of(99L), 1);
+    verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(indexed), Mockito.any());
+  }
+
+  private static ScriptDefinition scriptDefinitionForWorkItem(String scriptId) {
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition(
+        "script-1".equals(scriptId)
+            ? "{\"emitCommands\":[{\"commandText\":\"LOOK\",\"targetEntityId\":\"entity-2\"}]}"
+            : "{\"emitCommands\":[]}");
+    return definition;
   }
 
   @Test

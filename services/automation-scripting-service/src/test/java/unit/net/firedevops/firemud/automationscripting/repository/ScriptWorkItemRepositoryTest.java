@@ -192,7 +192,8 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             statement ->
                 assertThat(statement)
-                    .contains("status", "next_eligible_at", "<=", "order by", "created_at"));
+                    .contains(
+                        "status", "next_eligible_at", "is null", "<=", "order by", "created_at"));
   }
 
   @Test
@@ -219,7 +220,8 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             statement ->
                 assertThat(statement)
-                    .contains("\"id\" in", "status", "next_eligible_at", "<=", "order by"));
+                    .contains(
+                        "\"id\" in", "status", "next_eligible_at", "is null", "<=", "order by"));
   }
 
   @Test

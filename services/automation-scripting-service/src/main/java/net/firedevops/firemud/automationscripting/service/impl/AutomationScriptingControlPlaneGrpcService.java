@@ -427,6 +427,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         ReplayDeadLetteredWorkItemsResponse.getDefaultInstance();
     try {
       requireAdminRole();
+      requireReplayActor(request);
       response = patchControlPlaneService.replayDeadLetteredWorkItems(request);
     } catch (IllegalArgumentException ex) {
       response =
@@ -637,6 +638,21 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static void requireAdminRole() {
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static void requireReplayActor(ReplayDeadLetteredWorkItemsRequest request) {
+    String authenticatedAccountId = SessionContext.getAccountId();
+    if (authenticatedAccountId == null || authenticatedAccountId.isBlank()) {
+      throw new IllegalArgumentException("authenticated account is required for replay");
+    }
+
+    String actorPrincipal = request.getActorPrincipal();
+    if (actorPrincipal.isBlank()) {
+      throw new IllegalArgumentException("actorPrincipal is required for replay");
+    }
+    if (!authenticatedAccountId.equals(actorPrincipal)) {
+      throw new IllegalArgumentException("actorPrincipal must match the authenticated account");
+    }
   }
 
   private static void requireInternalServiceOrAdmin() {

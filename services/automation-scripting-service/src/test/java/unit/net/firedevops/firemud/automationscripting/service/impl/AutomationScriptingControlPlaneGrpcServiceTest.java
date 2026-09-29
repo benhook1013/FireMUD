@@ -2034,6 +2034,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setGameInstanceId("game-1")
             .addWorkItemIds("77")
             .setLimit(10)
+            .setActorPrincipal("1")
             .setReason("retry")
             .build(),
         observer(ref));
@@ -2056,6 +2057,78 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void rejectsReplayWithBlankActorPrincipalBeforeCallingWorkItemService() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setActorPrincipal("  ")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
+  }
+
+  @Test
+  void rejectsReplayWithSpoofedActorPrincipalBeforeCallingWorkItemService() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setActorPrincipal("another-account")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
+  }
+
+  @Test
+  void rejectsReplayWithoutAuthenticatedAccountBeforeCallingWorkItemService() {
+    SessionContext.setContext(null, List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setActorPrincipal("1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
+  }
+
+  @Test
   void mapsEmptyReplayResultListWithoutFabricatingItems() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -2075,6 +2148,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setGameInstanceId("game-1")
             .addWorkItemIds("77")
             .setControlPlaneRequestId("request-empty")
+            .setActorPrincipal("1")
             .setReason("retry")
             .build(),
         observer(ref));

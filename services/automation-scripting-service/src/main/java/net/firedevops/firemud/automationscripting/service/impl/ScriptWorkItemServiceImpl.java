@@ -691,6 +691,27 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             now);
         continue;
       }
+      if (!"ADMISSION".equals(originalFailure.stage())
+          && !"DSL_EVAL".equals(originalFailure.stage())) {
+        // The current work-item row has no committed evaluated-output/child ledger. A handoff
+        // failure may have accepted earlier siblings, so re-entering the DSL would invent new
+        // output rather than resume the original children. Keep this generation dead-lettered.
+        results.add(
+            new ReplayItemResult(
+                requestedId,
+                "rejected",
+                "stage_evidence_unavailable",
+                item.getFailureGeneration()));
+        persistReplayResult(
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            "stage_evidence_unavailable",
+            item,
+            originalFailure,
+            now);
+        continue;
+      }
       Optional<ScriptWorkItem> claimed =
           workItemRepository.claimDeadLetterForReplay(
               item.getId(),
