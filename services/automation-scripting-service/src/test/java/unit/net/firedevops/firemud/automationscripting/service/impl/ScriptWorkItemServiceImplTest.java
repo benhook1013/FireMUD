@@ -2974,6 +2974,12 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay ->
+                assertThat(replay.rejectionReason())
+                    .isEqualTo("script_pin_authority_collaborator_unavailable"));
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
     verify(pluginRuntimeStateService, Mockito.never()).getStatus("1", "game-1", "plugin-1");
   }
@@ -3401,10 +3407,46 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void replayRejectsPreviewLimitBeforeMutationWhenRequestIdIsReusedWithChangedLimit() {
+  void replayRejectsPositivePreviewLimitWithoutPreviewToken() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptDeadLetterReplayRepository replayRepository =
         Mockito.mock(ScriptDeadLetterReplayRepository.class);
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            replayRepository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
+
+    assertThatThrownBy(
+            () ->
+                service.replayDeadLetters(
+                    new ScriptWorkItemService.ReplayDeadLettersCommand(
+                        "1", "", "", List.of("101", "102"), "", 0L, 0L, 1,
+                        "req-limit", "admin", "retry")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("replay_filters_require_preview");
+    Mockito.verifyNoInteractions(workItemRepository, replayRepository);
+  }
+
+  @Test
+  void replayRejectsChangedRequestInputForReusedRequestId() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptDeadLetterReplayRepository replayRepository =
+        Mockito.mock(ScriptDeadLetterReplayRepository.class);
+    java.util.concurrent.atomic.AtomicReference<String> storedFingerprint =
+        new java.util.concurrent.atomic.AtomicReference<>();
     when(replayRepository.insertOrGet(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -3413,9 +3455,11 @@ class ScriptWorkItemServiceImplTest {
             Mockito.anyString(),
             Mockito.any(Instant.class)))
         .thenAnswer(
-            invocation ->
-                new ScriptDeadLetterReplayRepository.ReplayRequest(
-                    1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
+            invocation -> {
+              storedFingerprint.compareAndSet(null, invocation.getArgument(2));
+              return new ScriptDeadLetterReplayRepository.ReplayRequest(
+                  1L, storedFingerprint.get(), "RUNNING", 0L, 0L);
+            });
     when(replayRepository.findResults(1L)).thenReturn(List.of());
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
@@ -3434,30 +3478,21 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(GameSessionControlPlaneClient.class),
             new SimpleMeterRegistry(),
             Mockito.mock(ScriptDefinitionRepository.class));
-    List<String> workItemIds = List.of("101", "102");
 
     service.replayDeadLetters(
         new ScriptWorkItemService.ReplayDeadLettersCommand(
-            "1", "", "", workItemIds, "", 0L, 0L, 0, "req-limit", "admin", "retry"));
+            "1", "", "", List.of("101"), "", 0L, 0L, 0, "req-conflict", "admin", "retry"));
 
     assertThatThrownBy(
             () ->
                 service.replayDeadLetters(
                     new ScriptWorkItemService.ReplayDeadLettersCommand(
-                        "1", "", "", workItemIds, "", 0L, 0L, 1, "req-limit", "admin", "retry")))
+                        "1", "", "", List.of("102"), "", 0L, 0L, 0, "req-conflict", "admin",
+                        "retry")))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("replay_filters_require_preview");
+        .hasMessage("control_plane_request_id already records a different replay request");
     verify(workItemRepository).findById(101L);
-    verify(workItemRepository).findById(102L);
-    verify(workItemRepository, never()).save(Mockito.any());
-    verify(replayRepository)
-        .insertOrGet(
-            Mockito.anyString(),
-            Mockito.eq("req-limit"),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.any(Instant.class));
+    verify(workItemRepository, never()).findById(102L);
   }
 
   @Test

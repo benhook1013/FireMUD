@@ -170,7 +170,10 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
     HttpRequest request =
         HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/factions/1/reputation?tenantId=1&characterId=2&gameInstanceId=GI-1&playableStateScope=NOPE&delta=1"))
             .header("Authorization", "Bearer " + token)
             .GET()
             .build();
@@ -281,8 +284,10 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void postgresBindingCompensationRestoresLogicalBindings() {
     String name = "script-binding-compensation-" + UUID.randomUUID();
     ScriptDefinition originalDefinition = scriptDefinition(name, "{\"original\":true}");
+    originalDefinition.setBaseVersionId(1L);
     ScriptDefinition savedDefinition = scriptDefinitionRepository.save(originalDefinition);
     ScriptEventBinding originalBinding = scriptBinding(name, "original-scope");
+    originalBinding.setBaseVersionId(1L);
     ScriptEventBinding savedBinding = scriptEventBindingRepository.save(originalBinding);
     int originalDefinitionRowVersion = savedDefinition.getRowVersion();
     AtomicReference<List<ScriptEventBinding>> bindingsObservedAfterDelete = new AtomicReference<>();

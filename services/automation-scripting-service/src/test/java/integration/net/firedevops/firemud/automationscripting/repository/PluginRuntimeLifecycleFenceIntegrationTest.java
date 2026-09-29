@@ -22,6 +22,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -195,6 +196,44 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                           + "from script_work_items where script_event_id = 'event-utc-default'",
                       Boolean.class))
               .isEqualTo(Boolean.TRUE);
+        });
+  }
+
+  @Test
+  void retryEligibilityUsesUtcWhenSessionTimezoneIsNonUtc() {
+    dsl.transaction(
+        configuration -> {
+          DSLContext transactionDsl = DSL.using(configuration);
+          transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+          transactionDsl.execute(
+              "insert into script_work_items "
+                  + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+                  + "plugin_id, plugin_version_id, event_type, event_schema_version, "
+                  + "script_patch_version, script_event_id, source_service, trigger_mode) "
+                  + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
+                  + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
+                  + "'event-utc-retry', 'test', 'MANUAL')");
+          transactionDsl.execute(
+              "update script_work_items "
+                  + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+                  + "+ interval '1 hour' where script_event_id = 'event-utc-retry'");
+
+          ScriptWorkItemRepository repository = new ScriptWorkItemRepository(transactionDsl);
+          Instant futureEligibleAt = Instant.now().plusSeconds(86_400);
+          assertThat(
+                  repository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+                      "PENDING_EVALUATION", futureEligibleAt, PageRequest.of(0, 10)))
+              .isEmpty();
+
+          transactionDsl.execute(
+              "update script_work_items "
+                  + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+                  + "- interval '1 minute' where script_event_id = 'event-utc-retry'");
+
+          assertThat(
+                  repository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+                      "PENDING_EVALUATION", futureEligibleAt, PageRequest.of(0, 10)))
+              .hasSize(1);
         });
   }
 

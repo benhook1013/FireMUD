@@ -46,8 +46,8 @@ public class ScriptWorkItemRepository {
       "script_pin_control_plane_request_id conflicts with existing identity";
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
-  private static final Field<LocalDateTime> CURRENT_TIMESTAMP =
-      field("CURRENT_TIMESTAMP", LocalDateTime.class);
+  private static final Field<LocalDateTime> CURRENT_UTC_TIMESTAMP =
+      field("pg_catalog.timezone('UTC', CURRENT_TIMESTAMP)", LocalDateTime.class);
   private static final Field<OffsetDateTime> CURRENT_OFFSET_TIMESTAMP =
       field("CURRENT_TIMESTAMP", OffsetDateTime.class);
   private static final Field<OffsetDateTime> HANDOFF_RETENTION_HOLD_UNTIL =
@@ -1012,7 +1012,7 @@ public class ScriptWorkItemRepository {
         .or(
             SCRIPT_WORK_ITEMS
                 .NEXT_ELIGIBLE_AT
-                .le(CURRENT_TIMESTAMP)
+                .le(CURRENT_UTC_TIMESTAMP)
                 .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(eligibleAtLocal)));
   }
 

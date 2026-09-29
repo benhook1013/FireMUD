@@ -523,6 +523,64 @@ jobs:
               return `${identity.sourceEvent}:${identity.baseRef}@${identity.baseSha}...${identity.headSha}#${identity.mergeSha}`;
             }
 
+            async function findMatchingRuntimeImagesRun(sourceEvent, expectedDisplayTitle, identity) {
+              const workflowRunQuery = {
+                owner,
+                repo,
+                workflow_id: "runtime-images.yml",
+                event: sourceEvent,
+                per_page: 100,
+              };
+              if (sourceEvent === "pull_request") {
+                workflowRunQuery.head_sha = identity.headSha;
+              } else {
+                const pullRequestCreatedAt = context.payload.pull_request.created_at;
+                if (
+                  typeof pullRequestCreatedAt !== "string" ||
+                  Number.isNaN(Date.parse(pullRequestCreatedAt))
+                ) {
+                  throw new Error("current pull request creation timestamp is unavailable");
+                }
+                workflowRunQuery.created = `${pullRequestCreatedAt}..*`;
+              }
+              let matching = null;
+              await withTransientGitHubRetry(
+                "runtime-images workflow lookup",
+                async () => {
+                  workflowRunPages: for await (const response of github.paginate.iterator(
+                    github.rest.actions.listWorkflowRuns,
+                    workflowRunQuery
+                  )) {
+                    const runs = response.data ?? [];
+                    for (const run of runs) {
+                      if (
+                        run.event !== sourceEvent ||
+                        (sourceEvent === "pull_request" && run.head_sha !== identity.headSha) ||
+                        run.display_title !== expectedDisplayTitle
+                      ) {
+                        continue;
+                      }
+                      if (sourceEvent === "pull_request") {
+                        const pullRequests = run.pull_requests ?? [];
+                        if (
+                          pullRequests.length > 0 &&
+                          !pullRequests.some((pullRequest) =>
+                            String(pullRequest.number) === prNumber &&
+                            pullRequest.head?.sha === identity.headSha
+                          )
+                        ) {
+                          continue;
+                        }
+                      }
+                      matching = run;
+                      break workflowRunPages;
+                    }
+                  }
+                }
+              );
+              return matching;
+            }
+
             async function resolveCurrentIdentity(label) {
               let currentPullRequest;
               try {
@@ -669,60 +727,33 @@ jobs:
                 `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
                 `merge-${currentIdentity.mergeSha} mode-required`;
-              const workflowRunQuery = {
-                owner,
-                repo,
-                workflow_id: "runtime-images.yml",
-                event: currentIdentity.sourceEvent,
-                per_page: 100,
-              };
-              if (currentIdentity.sourceEvent === "pull_request") {
-                workflowRunQuery.head_sha = currentIdentity.headSha;
-              } else {
-                const pullRequestCreatedAt = context.payload.pull_request.created_at;
-                if (
-                  typeof pullRequestCreatedAt !== "string" ||
-                  Number.isNaN(Date.parse(pullRequestCreatedAt))
-                ) {
-                  throw new Error("current pull request creation timestamp is unavailable");
-                }
-                workflowRunQuery.created = `${pullRequestCreatedAt}..*`;
-              }
-              let matching = null;
-              await withTransientGitHubRetry(
-                "runtime-images workflow lookup",
-                async () => {
-                  workflowRunPages: for await (const response of github.paginate.iterator(
-                    github.rest.actions.listWorkflowRuns,
-                    workflowRunQuery
-                  )) {
-                    const runs = response.data ?? [];
-                    for (const run of runs) {
-                      if (
-                        run.event !== currentIdentity.sourceEvent ||
-                        (currentIdentity.sourceEvent === "pull_request" && run.head_sha !== currentIdentity.headSha) ||
-                        run.display_title !== expectedDisplayTitle
-                      ) {
-                        continue;
-                      }
-                      if (currentIdentity.sourceEvent === "pull_request") {
-                        const pullRequests = run.pull_requests ?? [];
-                        if (
-                          pullRequests.length > 0 &&
-                          !pullRequests.some((pullRequest) =>
-                            String(pullRequest.number) === prNumber &&
-                            pullRequest.head?.sha === currentIdentity.headSha
-                          )
-                        ) {
-                          continue;
-                        }
-                      }
-                      matching = run;
-                      break workflowRunPages;
-                    }
-                  }
-                }
+              let matching = await findMatchingRuntimeImagesRun(
+                currentIdentity.sourceEvent,
+                expectedDisplayTitle,
+                currentIdentity
               );
+              if (
+                currentIdentity.sourceEvent === "pull_request" &&
+                matching?.status === "completed" &&
+                matching.conclusion === "cancelled"
+              ) {
+                const replacement = await findMatchingRuntimeImagesRun(
+                  "repository_dispatch",
+                  expectedDisplayTitle,
+                  currentIdentity
+                );
+                if (!replacement) {
+                  core.info(
+                    `Exact pull_request runtime-images run ${matching.id} was cancelled; waiting for an exact repository_dispatch replacement.`
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue;
+                }
+                core.info(
+                  `Exact pull_request runtime-images run ${matching.id} was cancelled; checking exact repository_dispatch replacement ${replacement.id}.`
+                );
+                matching = replacement;
+              }
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {

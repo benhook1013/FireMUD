@@ -591,7 +591,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       plugin =
           pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
               workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
-    } catch (DataAccessException ex) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       if (isRepositoryUnavailable(ex)) {
         return REASON_AUTHORITY_UNAVAILABLE;
       }
@@ -732,7 +732,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     String handoffFenceFailure = validateCurrentExecutionFences(workItem);
     if (handoffFenceFailure != null) {
       if (isTerminalFenceFailure(handoffFenceFailure)) {
-        cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", handoffFenceFailure, now);
+        cancel(workItem, STAGE_DSL_EVAL, "stale_execution_fenced", handoffFenceFailure, now);
       } else {
         requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, now);
       }
@@ -859,7 +859,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
   }
 
-  private static boolean isRepositoryUnavailable(DataAccessException exception) {
+  private static boolean isRepositoryUnavailable(Throwable exception) {
     Throwable cause = exception;
     while (cause != null) {
       if (cause instanceof SQLTransientException
@@ -894,6 +894,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           "routing_bundle_changed",
           "script_pin_epoch_mismatch",
           "script_pin_epoch_unavailable",
+          "script_pin_owner_request_unavailable",
+          "script_pin_owner_request_mismatch",
           "runtime_scope_missing",
           "runtime_scope_changed",
           "plugin_disabled",

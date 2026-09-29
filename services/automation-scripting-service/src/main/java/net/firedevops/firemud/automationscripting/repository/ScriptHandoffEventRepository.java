@@ -452,7 +452,6 @@ public class ScriptHandoffEventRepository {
     record.setBindingId(entity.getBindingId());
     record.setPluginId(blankToEmpty(entity.getPluginId()));
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
-    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
     record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setWorkItemId(entity.getWorkItemId());
