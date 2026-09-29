@@ -68,6 +68,8 @@ class ScriptPinOperationRepositoryIntegrationTest {
         .set(GAME_INSTANCES.ID, 7L)
         .set(GAME_INSTANCES.TENANT_ID, 1L)
         .set(GAME_INSTANCES.RUNTIME_VERSION, "runtime-1")
+        // VERSION_ID is the runtime version; SCRIPT_PATCH_BASE_VERSION_ID remains
+        // null in this test.
         .set(GAME_INSTANCES.VERSION_ID, 100L)
         .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, "patch-1")
         .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, 1L)

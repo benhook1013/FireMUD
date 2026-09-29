@@ -29,7 +29,7 @@ ALTER TABLE remote_command_coordinator
     ADD COLUMN script_patch_base_version_id bigint;
 
 ALTER TABLE remote_command_coordinator
-    ADD CONSTRAINT ck_remote_command_coordinator_script_patch_base_version_positive CHECK (
+    ADD CONSTRAINT ck_remote_cmd_coord_script_patch_base_version_positive CHECK (
         script_patch_base_version_id IS NULL
         OR (
             script_patch_base_version_id > 0

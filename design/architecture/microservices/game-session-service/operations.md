@@ -10,6 +10,10 @@ Target state commits a successful exact script pin, its resulting monotonic epoc
 
 Current script-transition observability is narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet provide complete `scriptPinEpoch` coverage across logs, traces, and control-plane reads. See the [Game Session implementation status](./README.md#implementation-status) and [runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
+### Base-provenance admission cutover
+
+Before deploying the new Game Session admission validation, Automation must already send a positive `script_patch_base_version_id` with every local instance-bound script command handoff. Migrations V3 and V4 add the provenance columns but leave legacy pinned and gameplay-command rows with an unknown base (`NULL`); Game Session must not backfill that history from mutable runtime state. An affected active pin may be repaired only by an explicitly authorized repin through the normal `expectedCurrentPin=EXPECT_EPOCH(scriptPinEpoch)` path, after the target publication and readiness checks succeed. Do not perform an automatic or blind repin. During the cutover, monitor `STALE_TIMELINE` and `INVALID_ARGUMENT` responses, keep script admission fail-closed when provenance is missing or inconsistent, and keep ordinary gameplay admission and ticks available.
+
 ## Readiness and Liveness
 
 - `liveness` is local-only and indicates that the process is alive and not wedged.
