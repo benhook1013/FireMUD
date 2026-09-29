@@ -611,7 +611,12 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
-          return resultFromJoinOperation(operation, true);
+          try {
+            return joinTransactionTemplate.execute(
+                transactionStatus -> replayTerminalJoin(operation, callerBinding, retained));
+          } catch (RuntimeException policyCheckFailure) {
+            return joinRetryFailure(retained, "AUTH_UNAVAILABLE");
+          }
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
@@ -630,7 +635,7 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return resultFromJoinOperation(operation, true);
+      return replayTerminalJoin(operation, callerBinding, scope);
     }
 
     if (isConnectScopeExpired(scope)) {
@@ -774,6 +779,51 @@ public class AccountServiceImpl implements AccountService {
 
   private JoinPublicProductionResult pendingJoinFailure(
       VerifiedJoinScope scope, String outcomeCode) {
+    return joinRetryFailure(scope, outcomeCode);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoin(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    if (isConnectScopeExpired(scope)) {
+      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
+    }
+
+    JoinEvaluation evaluation;
+    try {
+      evaluation = evaluateJoin(scope);
+    } catch (RuntimeException ex) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+    if (evaluation.failureCode() != null) {
+      if (isRetryableJoinAuthorityFailure(evaluation)) {
+        return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+      }
+      return joinRetryFailure(scope, evaluation.failureCode());
+    }
+    if (!"AVAILABLE".equals(evaluation.authorityAvailability())
+        || evaluation.allowPublicJoin() == null
+        || evaluation.entitlementVersion() == null) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+
+    String currentRequestDigest =
+        AccountJoinDigest.request(
+            scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
+    if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
+        || operation.requestDigest() == null
+        || operation.allowPublicJoin() == null
+        || !operation.allowPublicJoin().equals(evaluation.allowPublicJoin())
+        || operation.entitlementVersion() == null
+        || !operation.entitlementVersion().equals(evaluation.entitlementVersion())
+        || !operation.requestDigest().equals(currentRequestDigest)
+        || ("COMMITTED".equals(operation.status())
+            && (!evaluation.gameplayAvailable() || !evaluation.allowPublicJoin()))) {
+      return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
+    }
+    return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
     return new JoinPublicProductionResult(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
   }
