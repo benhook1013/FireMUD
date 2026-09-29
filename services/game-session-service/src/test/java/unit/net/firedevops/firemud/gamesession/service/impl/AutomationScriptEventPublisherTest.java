@@ -191,7 +191,7 @@ class AutomationScriptEventPublisherTest {
     assertThat(
             meterRegistry
                 .get("game_session_script_event_publish_skips_total")
-                .tag("reason", "partial_tuple")
+                .tag("reason", "missing_base")
                 .counter()
                 .count())
         .isEqualTo(1.0);

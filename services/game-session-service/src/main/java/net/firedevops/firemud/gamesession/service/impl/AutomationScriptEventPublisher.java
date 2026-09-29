@@ -434,7 +434,16 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     boolean hasEpoch = scriptPinEpoch > 0L;
     boolean hasOwnerRequest = StringUtils.hasText(scriptPinControlPlaneRequestId);
     if (!(hasPatch && hasBase && hasEpoch && hasOwnerRequest)) {
-      if (hasPatch || hasBase || hasEpoch || hasOwnerRequest) {
+      if (hasPatch && !hasBase && hasEpoch && hasOwnerRequest) {
+        meterRegistry
+            .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "missing_base")
+            .increment();
+        LOG.debug(
+            "Skipping script event publish because legacy pin provenance has no positive base version tenantId={} gameInstanceId={} characterId={}",
+            tenantId,
+            gameInstanceId,
+            entityId);
+      } else if (hasPatch || hasBase || hasEpoch || hasOwnerRequest) {
         meterRegistry
             .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "partial_tuple")
             .increment();
