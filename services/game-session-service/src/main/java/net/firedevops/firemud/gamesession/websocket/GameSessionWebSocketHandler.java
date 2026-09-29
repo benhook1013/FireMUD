@@ -180,7 +180,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
-    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
+    TextCommand command = parser.parse(message.getPayload());
+    try (CombinedLoggingContext ignored =
+        command.type() == TextCommandType.LOGOUT
+            ? openRuntimeLoggingContext(session)
+            : openLoggingContext(session)) {
       String sessionId = resolveTransportSessionId(session);
       if (!StringUtils.hasText(sessionId)) {
         session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
@@ -188,15 +192,31 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         return;
       }
       boolean requiresSoloTick = parseSoloTick(session);
-      TextCommand command = parser.parse(message.getPayload());
       if (command.type() == TextCommandType.NOOP) {
         return;
       }
-      ensureBootstrapSessionContextIfMissing(session, sessionId);
+      if (command.type() != TextCommandType.LOGOUT) {
+        ensureBootstrapSessionContextIfMissing(session, sessionId);
+      }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
           interpretation.resolvedCommand() == null ? command : interpretation.resolvedCommand();
+      if (command.type() == TextCommandType.LOGOUT) {
+        // No authentication normalization, bootstrap, prompt, locale write, or retained
+        // output read may accompany this fail-closed response.
+        sendProtocolMessage(
+            session,
+            outputProjector.projectCommandResponse(
+                session,
+                resolvedCommand,
+                interpretation,
+                interpretation.outputs(),
+                resolveLocaleTag(session),
+                settingsResolver.presentation(null),
+                null));
+        return;
+      }
       recordGameplayActivity(sessionId, interpretation);
       Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(session, sessionId);
       PresentationProperties effectivePresentation =
@@ -229,7 +249,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           outputs,
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
-      maybeReplayScreenBufferAndRefreshLook(
+      maybeRenderFreshReconnectLook(
           session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     }
@@ -457,7 +477,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                     replayEntries));
   }
 
-  private void maybeReplayScreenBufferAndRefreshLook(
+  private void maybeRenderFreshReconnectLook(
       WebSocketSession session,
       String sessionId,
       TextCommand command,
@@ -477,14 +497,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         .ifPresent(
             context -> {
               try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
-                Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-                    screenBufferService.get(
-                        context.tenantId(), context.gameInstanceId(), context.characterId());
-                if (maybeBuffer.isEmpty()) {
-                  return;
-                }
-                maybeBuffer.ifPresent(
-                    buffer -> sendReplayEntries(session, buffer, "screen buffer"));
+                // Private semantic replay stays closed until the durable resume-context
+                // generation and termination evidence required by ADR 0134 is available.
+                // A connect context or reconnect recommendation alone does not authorize
+                // reading retained private output. Fresh current state remains available.
                 String localeTag = resolveLocaleTag(session, sessionId);
                 PresentationProperties effectivePresentation =
                     settingsResolver.presentation(context);
@@ -617,6 +633,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             .map(GameplayLoggingContext::from)
             .orElseGet(GameplayLoggingContext::empty);
     return new CombinedLoggingContext(runtimeContext, gameplayContext);
+  }
+
+  private CombinedLoggingContext openRuntimeLoggingContext(WebSocketSession session) {
+    String correlationId = resolveTransportSessionId(session);
+    if (!StringUtils.hasText(correlationId)) {
+      correlationId = session.getId();
+    }
+    return new CombinedLoggingContext(
+        RuntimeLoggingContext.open(runtimeIdentity, correlationId), GameplayLoggingContext.empty());
   }
 
   private record CombinedLoggingContext(

@@ -140,7 +140,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
       case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
           "Account authority unavailable. Retry JOIN shortly.";
       case "ENTITLEMENT_UNAVAILABLE" ->
-          "Join policy could not be checked. Use REALMS and JOIN to start a new attempt later.";
+          "Join policy could not be checked. Retry the same JOIN while its realm scope is valid.";
       case "LOGIN_REQUIRED" -> "Log in before joining a world.";
       default -> "The selected world could not be joined.";
     };

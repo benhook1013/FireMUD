@@ -353,6 +353,10 @@ class WorldsTextCommandDispatchHandlerTest {
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
+                .setOutcomeCode("ENTITLEMENT_UNAVAILABLE")
+                .build(),
+            JoinPublicProductionMembershipResponse.newBuilder()
+                .setSuccess(false)
                 .setOutcomeCode("AUTH_UNAVAILABLE")
                 .build(),
             JoinPublicProductionMembershipResponse.newBuilder()
@@ -383,10 +387,26 @@ class WorldsTextCommandDispatchHandlerTest {
                 new TextCommand(TextCommandType.JOIN, List.of("demo-world"), "JOIN demo-world"),
                 false,
                 Optional.of(context)));
+    TextCommandInterpretationResult finalJoinResult =
+        scopedHandler.handle(
+            new TextCommandDispatchRequest(
+                "7",
+                new TextCommand(TextCommandType.JOIN, List.of("demo-world"), "JOIN demo-world"),
+                false,
+                Optional.of(context)));
 
     assertThat(realmsResult.commandResult().accepted()).isTrue();
     assertThat(firstJoinResult.commandResult().accepted()).isFalse();
-    assertThat(retryJoinResult.commandResult().accepted()).isTrue();
+    assertThat(firstJoinResult.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(firstJoinResult.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isEqualTo(
+            new net.firedevops.firemud.gamesession.presentation.ErrorOutput(
+                "ENTITLEMENT_UNAVAILABLE",
+                "Join policy could not be checked. Retry the same JOIN while its realm scope is valid."));
+    assertThat(retryJoinResult.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(finalJoinResult.commandResult().accepted()).isTrue();
     assertThat(realmsResult.outputs())
         .singleElement()
         .extracting(output -> output.payload())
@@ -413,7 +433,7 @@ class WorldsTextCommandDispatchHandlerTest {
         org.mockito.ArgumentCaptor.forClass(String.class);
     org.mockito.ArgumentCaptor<String> requestIdCaptor =
         org.mockito.ArgumentCaptor.forClass(String.class);
-    Mockito.verify(accountClient, Mockito.times(2))
+    Mockito.verify(accountClient, Mockito.times(3))
         .joinPublicProductionMembership(
             joinContextCaptor.capture(), scopeIdCaptor.capture(), requestIdCaptor.capture());
     List<net.firedevops.firemud.shared.v1.PlayerExecutionContext> joinContexts =
@@ -423,7 +443,9 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(scopeIds.getFirst()).isEqualTo("opaque-account-scope");
     assertThat(requestIds.getFirst()).isNotBlank();
     assertThat(requestIds.getLast()).isEqualTo(requestIds.getFirst());
+    assertThat(requestIds.get(1)).isEqualTo(requestIds.getFirst());
     assertThat(scopeIds.getLast()).isEqualTo(scopeIds.getFirst());
+    assertThat(scopeIds.get(1)).isEqualTo(scopeIds.getFirst());
     assertThat(joinContexts.getFirst().getRequestId()).isEqualTo(requestIds.getFirst());
     assertThat(joinContexts.getFirst().getAccountId()).isEqualTo("41");
     assertThat(joinContexts.getFirst().getSessionId()).isEqualTo("7");

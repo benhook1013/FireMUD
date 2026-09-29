@@ -22,6 +22,8 @@ import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -1371,6 +1373,57 @@ class WorldsCommandHandlerTest {
     Mockito.verifyNoInteractions(accountClient);
   }
 
+  @Test
+  void crossTenantWorldSlugCollisionCannotHideTenantWidePublicRealmAmbiguity() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    List<GameplayAdmissionPointerSnapshot> initialPointers =
+        List.of(authorityPointer("demo", "production", 22L, 1L, true));
+    AtomicReference<List<GameplayAdmissionPointerSnapshot>> pointerSnapshot =
+        new AtomicReference<>(initialPointers);
+    Mockito.when(authorityService.listPointers()).thenAnswer(invocation -> pointerSnapshot.get());
+
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope-a")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog,
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+
+    pointerSnapshot.set(
+        List.of(
+            authorityPointer("demo", "production", 22L, 1L, true),
+            authorityPointer("DEMO", "production", 33L, 2L, true),
+            authorityPointer("other", "production", 22L, 3L, true)));
+
+    assertThat(catalog.publicProductionRealmCardinality(22L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
+    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
+    Mockito.clearInvocations(accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "other"))
+        .isEqualTo(
+            WorldsCommandHandler.RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(
+            WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient);
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
   private WorldsCommandHandler authenticatedHandler(
       GameplayCatalogProperties properties, AccountClient accountClient) {
     return new WorldsCommandHandler(
@@ -1378,6 +1431,30 @@ class WorldsCommandHandlerTest {
         entityManagementClient,
         accountClient,
         DirectTextConnectScopeSessionStore.inMemoryForTest());
+  }
+
+  private GameplayAdmissionPointerSnapshot authorityPointer(
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      boolean publicProduction) {
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldSlug,
+        realmSlug,
+        realmSlug,
+        tenantId,
+        gameInstanceId,
+        1L,
+        true,
+        publicProduction,
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        1L,
+        UUID.randomUUID(),
+        UUID.randomUUID());
   }
 
   private GameplayCatalogProperties publicProductionProperties() {

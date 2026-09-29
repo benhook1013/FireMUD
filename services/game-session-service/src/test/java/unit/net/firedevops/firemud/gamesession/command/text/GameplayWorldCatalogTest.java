@@ -38,14 +38,17 @@ class GameplayWorldCatalogTest {
         .thenReturn(
             List.of(
                 pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
-                pointer("DEMO", "Other Demo", "preview", "Preview Realm", 2L, 21L, 8L),
-                pointer("other", "Other World", "production", "Other Live", 2L, 22L, 9L)));
+                pointer("DEMO", "Other Demo", "production", "Other Live", 2L, 21L, 8L),
+                pointer("other", "Other World", "production", "Other Live", 1L, 22L, 9L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThat(catalog.visibleWorlds())
         .extracting(GameplayWorldCatalog.WorldView::slug)
         .containsExactly("other");
     assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.publicProductionRealmCardinality(1L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
+    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
   }
 
   @Test
