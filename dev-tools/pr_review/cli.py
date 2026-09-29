@@ -122,6 +122,10 @@ def _parser() -> argparse.ArgumentParser:
 
     bootstrap = record_commands.add_parser("bootstrap", help="explicitly create the review-records schema")
     records_database(bootstrap)
+    migrate_records = record_commands.add_parser(
+        "migrate", help="atomically upgrade v4 review records and fence older writers"
+    )
+    records_database(migrate_records)
 
     history = record_commands.add_parser("history", help="show source and incoming route history for one PR")
     history.add_argument("--pr", required=True, type=_positive_int)
@@ -170,6 +174,28 @@ def _parser() -> argparse.ArgumentParser:
     source_finalize.add_argument("--run-id", required=True)
     source_finalize.add_argument("--finalized-at")
     records_database(source_finalize)
+
+    cli_decisions = record_commands.add_parser(
+        "cli-decision", help="record one captured CLI finding decision without a TSV file"
+    )
+    cli_decisions.add_argument("--run-id", required=True)
+    cli_decisions.add_argument("--finding", required=True, type=_positive_int)
+    cli_decisions.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
+    cli_decisions.add_argument("--actor", required=True)
+    cli_decisions.add_argument("--reason", required=True)
+    cli_decisions.add_argument("--target-pr", type=_positive_int)
+    records_database(cli_decisions)
+    cli_correction = record_commands.add_parser(
+        "cli-correct", help="append an audited correction to one exact CLI source decision"
+    )
+    cli_correction.add_argument("--run-id", required=True)
+    cli_correction.add_argument("--finding", required=True, type=_positive_int)
+    cli_correction.add_argument("--supersedes-id", required=True)
+    cli_correction.add_argument("--correction-id", required=True)
+    cli_correction.add_argument("--decision", required=True, choices=("accepted", "rejected"))
+    cli_correction.add_argument("--actor", required=True)
+    cli_correction.add_argument("--reason", required=True)
+    records_database(cli_correction)
 
     route_commands = record_commands.add_parser("route", help="record receiving-owner route outcomes")
     route_subcommands = route_commands.add_subparsers(dest="record_route_command", required=True)
@@ -603,6 +629,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "bootstrap":
         store.bootstrap()
         return {"api_version": 1, "result": {"status": "bootstrapped"}}, 0
+    if args.records_command == "migrate":
+        store.migrate()
+        return {"api_version": 1, "result": {"status": "migrated"}}, 0
     if args.records_command == "history":
         return {"api_version": 1, "result": store.history(args.pr, include_legacy_routes=True)}, 0
     if args.records_command == "routes":
@@ -688,6 +717,22 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 target_pr=args.target_pr,
                 decided_at=args.decided_at,
             )
+        return {"api_version": 1, "result": result}, 0
+    if args.records_command == "cli-decision":
+        key = f"cli-run:{args.run_id}:finding:{args.finding}"
+        digest = hashlib.sha256(f"{args.run_id}\0{key}".encode()).hexdigest()
+        result = store.record_source_decision(
+            args.run_id, key,
+            decision_id=f"cli-{digest}", decision=args.decision,
+            actor=args.actor, reason=args.reason, target_pr=args.target_pr,
+        )
+        return {"api_version": 1, "result": result}, 0
+    if args.records_command == "cli-correct":
+        result = store.correct_source_decision(
+            args.run_id, f"cli-run:{args.run_id}:finding:{args.finding}",
+            supersedes_id=args.supersedes_id, correction_id=args.correction_id,
+            decision=args.decision, actor=args.actor, reason=args.reason,
+        )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "route":
         if args.record_route_command == "decide":

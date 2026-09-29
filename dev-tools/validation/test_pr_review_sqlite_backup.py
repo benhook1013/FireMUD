@@ -67,11 +67,24 @@ class SqliteBackupTest(unittest.TestCase):
                 )
             ],
         )
+        records.start_attempt(
+            attempt_id="run.backupfixture", source_pr=123, channel="cli",
+            candidate_sha="a" * 40, started_at="2026-09-29T01:00:00Z",
+        )
+        records.finish_attempt(
+            "run.backupfixture", state="completed", finished_at="2026-09-29T01:01:00Z",
+            artifacts={"cli_events": '{"type":"complete","status":"review_completed"}\n'},
+        )
 
     def _assert_fixture_records(self, path: Path) -> None:
         history = SqliteReviewRecords(path).history(123)
         self.assertEqual([run["run_id"] for run in history["runs"]], ["backup-fixture-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
+        self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
+        with sqlite3.connect(path) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"
+            ).fetchone()[0], 1)
 
     def _fake_sftp(self, remote: object, binary: str, batch: str) -> str:
         self.assertEqual(binary, "sftp")
@@ -249,19 +262,19 @@ class SqliteBackupTest(unittest.TestCase):
         restored = SqliteReviewRecords(restored_path).history(124)
         self.assertEqual(restored["findings"][0]["source_finding_key"], key)
 
-    def test_identifier_exception_does_not_exempt_free_text_or_credentials(self) -> None:
+    def test_screen_preserves_review_identifiers_and_detects_explicit_credentials(self) -> None:
         key = "bearer-private-key-evidence-review-finding"
         self.assertFalse(sqlite_backup._looks_secret(key, identifier=True))
         self.assertFalse(sqlite_backup._looks_secret("decision-2026-identifier-for-route-proof-12345", identifier=True))
-        self.assertTrue(sqlite_backup._looks_secret(key))
+        self.assertFalse(sqlite_backup._looks_secret(key))
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-secret-value", identifier=True))
-        self.assertTrue(sqlite_backup._looks_secret("Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA", identifier=True))
+        self.assertFalse(sqlite_backup._looks_secret("Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA", identifier=True))
 
-    def test_import_payload_identifier_exception_is_limited_to_finding_key(self) -> None:
+    def test_import_payload_explicit_credentials_are_rejected(self) -> None:
         with sqlite3.connect(self.database) as connection:
             connection.execute(
                 "UPDATE review_runs SET import_payload_json = ?",
-                (json.dumps({"findings": [{"detail": {"source_finding_key": "bearer-private-key-evidence-review-finding"}}]}),),
+                (json.dumps({"findings": [{"detail": "Bearer synthetic-secret-value"}]}),),
             )
         (sftp_patch,) = self._transport_patches()
         with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
@@ -308,14 +321,14 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"identifier {long_identifier}"))
         self.assertFalse(sqlite_backup._looks_secret(f"identifier {very_long_identifier}"))
 
-    def test_secret_screen_still_rejects_unknown_tokens_and_credentials(self) -> None:
+    def test_secret_screen_preserves_opaque_review_text_and_detects_credentials(self) -> None:
         high_entropy_token = "Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA"
 
-        self.assertTrue(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
-        self.assertTrue(sqlite_backup._looks_secret("opaque value QrTzPabLmNuvWxyZabcDefGhiJklMnoPqrStuVwxYzTest"))
+        self.assertFalse(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
+        self.assertFalse(sqlite_backup._looks_secret("opaque value QrTzPabLmNuvWxyZabcDefGhiJklMnoPqrStuVwxYzTest"))
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-token-value"))
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
-        self.assertTrue(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
+        self.assertFalse(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
 
     def test_restore_rejects_integral_database_with_invalid_controller_state(self) -> None:
         malformed = self.root / "malformed-state.sqlite3"

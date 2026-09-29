@@ -34,8 +34,6 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from .sqlite_review_records import (
-    _FULL_COMMIT_SHA,
-    _LOW_ENTROPY_IDENTIFIER,
     _SECRET_PATTERNS,
     SqliteReviewRecords,
 )
@@ -52,24 +50,7 @@ _HOST = re.compile(
 _REMOTE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
 _COMMAND_TIMEOUT_SECONDS = 120
 _DEFAULT_RETENTION_COUNT = 30
-_GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
-_SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
-# Legacy route notes can name long Java test classes; keep this exception to
-# alphabetic PascalCase test names, after the explicit credential patterns run.
-_JAVA_TEST_IDENTIFIER = re.compile(r"(?:[A-Z][a-z]{2,}){4,}Test")
-# Record IDs are validated on write. Their long, hyphenated, human-readable
-# names can mention words such as "bearer" or "key" without containing a key.
-# Keep this exception limited to identifier fields; free text remains screened.
-_REVIEW_IDENTIFIER = re.compile(r"[a-z][a-z0-9]{0,23}(?:[-_][a-z0-9]{1,24}){3,}")
-_IDENTIFIER_TEXT_COLUMNS = {
-    "review_runs": {"run_id"},
-    "findings": {"finding_id", "source_finding_key"},
-    "finding_observations": {"run_id", "finding_id", "route_id"},
-    "routes": {"route_id", "finding_id"},
-    "route_target_history": {"route_id"},
-    "decisions": {"decision_id", "run_id", "finding_id", "route_id"},
-    "resolutions": {"resolution_id", "route_id"},
-}
+_SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS
 _EXPECTED_COLUMNS = {
     "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
     "review_state": ("singleton", "state_json"),
@@ -98,8 +79,21 @@ _EXPECTED_COLUMNS = {
     "resolutions": (
         "resolution_id", "route_id", "resolution_pr", "outcome", "actor", "proof_or_reason", "resolved_at",
     ),
+    "review_attempts": (
+        "attempt_id", "source_pr", "channel", "candidate_sha", "state", "started_at", "finished_at",
+        "duration_seconds", "exit_status", "trigger_id", "provider_review_id", "checkpoint_id",
+        "run_id", "diagnostic", "metadata_json",
+    ),
+    "review_artifacts": ("attempt_id", "kind", "content", "source_sha256", "redactions"),
+    "source_decision_corrections": (
+        "sequence", "correction_id", "supersedes_id", "run_id", "finding_id", "decision",
+        "target_pr", "actor", "reason", "decided_at",
+    ),
 }
-_EXPECTED_INDEXES = {"review_runs_source_pr_idx", "routes_target_status_idx"}
+_EXPECTED_INDEXES = {
+    "review_runs_source_pr_idx", "routes_target_status_idx", "review_attempts_pr_idx",
+    "source_corrections_finding_idx",
+}
 _TEXT_COLUMNS = {
     "controller_metadata": (),
     "review_state": ("state_json",),
@@ -111,6 +105,11 @@ _TEXT_COLUMNS = {
     "route_target_history": ("route_id", "changed_at", "actor", "reason"),
     "decisions": ("decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision", "actor", "reason", "decided_at"),
     "resolutions": ("resolution_id", "route_id", "outcome", "actor", "proof_or_reason", "resolved_at"),
+    "review_attempts": ("attempt_id", "channel", "candidate_sha", "state", "started_at", "finished_at", "trigger_id", "provider_review_id", "checkpoint_id", "run_id", "diagnostic", "metadata_json"),
+    "review_artifacts": ("attempt_id", "kind", "content", "source_sha256"),
+    "source_decision_corrections": (
+        "correction_id", "supersedes_id", "run_id", "finding_id", "decision", "actor", "reason", "decided_at",
+    ),
 }
 
 
@@ -440,7 +439,8 @@ def _validate_database(path: Path, label: str) -> None:
             prs = {
                 int(row[0])
                 for row in connection.execute(
-                    "SELECT source_pr FROM review_runs UNION SELECT decision_pr FROM decisions "
+                    "SELECT source_pr FROM review_runs UNION SELECT source_pr FROM review_attempts "
+                    "UNION SELECT decision_pr FROM decisions "
                     "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
                     "UNION SELECT resolution_pr FROM resolutions"
                 )
@@ -458,10 +458,18 @@ def _validate_database(path: Path, label: str) -> None:
                     connection.execute(
                         "SELECT COUNT(*) FROM routes WHERE source_pr = ? OR target_pr = ?", (pr, pr)
                     ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM review_attempts WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM source_decision_corrections c "
+                        "JOIN review_runs r USING (run_id) WHERE r.source_pr = ?", (pr,)
+                    ).fetchone()[0],
                 )
             actual = (
                 len(history["runs"]), len(history["findings"]),
-                len(history["decisions"]), len(history["routes"]),
+                len(history["decisions"]), len(history["routes"]), len(history["attempts"]),
+                len(history["corrections"]),
             )
             if actual != expected:
                 raise BackupError("indexed review-history readback does not match persisted record counts")
@@ -512,7 +520,7 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
                         _screen_import_payload(document)
                     else:
                         _screen_json_values(document)
-                elif _looks_secret(value, identifier=column in _IDENTIFIER_TEXT_COLUMNS.get(table, set())):
+                elif _looks_secret(value):
                     raise BackupError("database contains credential- or raw-secret-looking text")
 
 
@@ -547,27 +555,8 @@ def _screen_json_values(value: object) -> None:
 
 
 def _looks_secret(value: str, *, identifier: bool = False) -> bool:
-    if any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS):
-        return True
-    if identifier and _REVIEW_IDENTIFIER.fullmatch(value):
-        return False
-    return any(
-        not _is_known_identifier(match.group())
-        for match in _GENERIC_SECRET_PATTERN.finditer(value)
-    )
-
-
-def _is_known_identifier(token: str) -> bool:
-    if _FULL_COMMIT_SHA.fullmatch(token):
-        return True
-    if _JAVA_TEST_IDENTIFIER.fullmatch(token):
-        return True
-    if not _LOW_ENTROPY_IDENTIFIER.fullmatch(token):
-        return False
-    words = re.split(r"[_-]", token)
-    return not set(words) & {
-        "access", "aws", "bearer", "credential", "github", "key", "password", "private", "secret", "token"
-    }
+    del identifier  # Kept for older callers; explicit credential patterns apply to all text.
+    return any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS)
 
 
 def _require_integrity(connection: sqlite3.Connection, label: str) -> None:

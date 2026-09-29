@@ -23,6 +23,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -30,6 +31,12 @@ from . import evidence, hosted
 from . import github as github_api
 from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
+from .sqlite_review_records import (
+    FindingObservation,
+    ReviewRecordsError,
+    SqliteReviewRecords,
+    _redact_archive_text,
+)
 
 
 class ReviewRunnerError(RuntimeError):
@@ -789,6 +796,7 @@ def run_cli_review(
     git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
     review_timeout_seconds: float = CODERABBIT_TIMEOUT_SECONDS,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
+    records: SqliteReviewRecords | None = None,
 ) -> ReviewResult:
     """Run one isolated committed CLI review for an already-selected target.
 
@@ -828,6 +836,9 @@ def run_cli_review(
     # private metadata, not in the human-facing marker.
     run_id = f"run.{uuid.uuid4().hex}"
     capture_dir = capture_root / run_id
+    attempt_started = False
+    attempt_finished = False
+    attempt_started_at: str | None = None
     candidate_worktree: Path | None = None
     # Keep review anchors out of branch listings: this temporary ref is an
     # implementation detail of the review run, not a user-visible branch.
@@ -1049,6 +1060,17 @@ def run_cli_review(
                 )
                 os.chmod(capture_dir / "metadata", 0o600)
                 _atomic_json(capture_dir / "metadata.json", metadata)
+                if records is not None:
+                    attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    records.start_attempt(
+                        attempt_id=run_id,
+                        source_pr=target.snapshot.number,
+                        channel="cli",
+                        candidate_sha=candidate_sha,
+                        started_at=attempt_started_at,
+                        metadata=metadata,
+                    )
+                    attempt_started = True
                 # Hosted posting and CLI preflight share request.lock. Release it
                 # only after the candidate and durable capture are pinned; the
                 # repository-wide CLI lock remains held through provider execution.
@@ -1094,6 +1116,15 @@ def run_cli_review(
                     _atomic_json(capture_dir / "metadata.json", metadata)
                     with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                         legacy_file.write(f"review_duration_seconds={duration}\n")
+                    if records is not None:
+                        records.finish_attempt(
+                            run_id, state="timed_out",
+                            duration_seconds=duration,
+                            diagnostic="CodeRabbit CLI timed out before a complete result",
+                            artifacts={"cli_raw_output": stdout, "cli_diagnostic": stderr,
+                                       "metadata": json.dumps(metadata, sort_keys=True)},
+                        )
+                        attempt_finished = True
                     raise ReviewRunnerError(
                         f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
                     ) from error
@@ -1109,6 +1140,53 @@ def run_cli_review(
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
+                if records is not None:
+                    stdout = process.stdout or ""
+                    stderr = process.stderr or ""
+                    artifacts = {"cli_diagnostic": stderr,
+                                 "metadata": json.dumps(metadata, sort_keys=True)}
+                    try:
+                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                    except evidence.EvidenceError:
+                        result_state = "failed"
+                        artifacts["cli_raw_output"] = stdout
+                        diagnostic = "CodeRabbit CLI did not return a complete JSON review"
+                    else:
+                        result_state = "completed" if process.returncode == 0 else "failed"
+                        artifacts["cli_events"] = stdout
+                        diagnostic = "" if process.returncode == 0 else "CodeRabbit CLI exited nonzero"
+                    records.finish_attempt(
+                        run_id, state=result_state, duration_seconds=duration,
+                        exit_status=process.returncode, diagnostic=diagnostic,
+                        artifacts=artifacts,
+                    )
+                    attempt_finished = True
+                    if result_state == "completed":
+                        observations = []
+                        for index, finding in enumerate(parsed_findings, 1):
+                            instructions = finding.get("codegenInstructions")
+                            parts = (
+                                instructions.splitlines() if isinstance(instructions, str)
+                                else [line for item in instructions if isinstance(item, str)
+                                      for line in item.splitlines()]
+                                if isinstance(instructions, list) else []
+                            )
+                            title = next((part.strip() for part in parts if part.strip()), "")[:180]
+                            title, _ = _redact_archive_text(title)
+                            observations.append(FindingObservation(
+                                source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                                title=title or f"CodeRabbit CLI finding {index}",
+                            ))
+                        records.record_run(
+                            run_id=run_id, source_pr=target.snapshot.number, channel="cli",
+                            findings=observations, source_head=candidate_sha,
+                            reviewer="CodeRabbit CLI", scope="broad",
+                            started_at=attempt_started_at,
+                            finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        )
+                        records.link_attempt_run(run_id, run_id)
+                        if not observations:
+                            records.finalize_run(run_id)
                 return ReviewResult(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
@@ -1141,6 +1219,16 @@ def run_cli_review(
         except Exception as error:
             if capture_dir.exists():
                 (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
+            if records is not None and attempt_started and not attempt_finished:
+                try:
+                    records.finish_attempt(
+                        run_id, state="failed", diagnostic="CLI setup or capture failed",
+                        artifacts={"cli_diagnostic": str(error)},
+                    )
+                except (ReviewRecordsError, OSError) as archive_error:
+                    # Keep the original provider failure while surfacing the
+                    # separate archive failure to the caller.
+                    error.add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             if hosted_lock_handle is not None:

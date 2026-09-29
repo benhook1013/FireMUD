@@ -619,6 +619,24 @@ def _load_cli_capture(
         artifact_duration = _read_capture_text(duration_path, "review duration").strip()
         if int(recorded_duration) != checkpoint.duration_seconds or artifact_duration != recorded_duration:
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
+    # New runs are adjudicated in SQLite. Historical captures retain their
+    # existing TSV evidence until the one-time backfill proves each record.
+    from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+    from .state import sqlite_state_path, state_path
+
+    selected_state = state_path(common)
+    if selected_state.is_dir():
+        try:
+            sql_decisions = SqliteReviewRecords(sqlite_state_path(selected_state)).cli_source_decisions(
+                checkpoint.run_id
+            )
+        except ReviewRecordsError as exc:
+            raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
+        if sql_decisions is not None:
+            capture = CaptureData(metadata, findings, sql_decisions, [], True, str(run_dir.resolve()))
+            if validate_checkpoint_decisions:
+                _validate_cli_checkpoint_decisions(checkpoint, capture)
+            return capture
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is None:
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)

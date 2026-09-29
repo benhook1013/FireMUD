@@ -2,6 +2,7 @@ import dataclasses
 import fcntl
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,8 @@ from pr_review.cli_runner import (
     target_from_resolver,
 )
 from pr_review.patch_identity import patch_diff_args
+from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_store import SqliteStateStore
 
 BASE = "a" * 40
 PARENT = BASE
@@ -398,6 +401,33 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_sqlite_attempt_is_written_before_provider_and_completed_with_json_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = (
+                '{"type":"start","reviewType":"full"}\n'
+                '{"type":"complete","status":"review_completed",'
+                '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+            )
+            commands = FakeCommands(root, review_output=output)
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+            )
+            attempts = records.attempt_history(result.pull_request)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["attempt_id"], result.run_id)
+            self.assertEqual(attempts[0]["state"], "completed")
+            with sqlite3.connect(database) as connection:
+                kinds = {row[0] for row in connection.execute(
+                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)
+                )}
+            self.assertEqual(kinds, {"cli_events", "cli_diagnostic", "metadata"})
+
     def test_cli_review_accepts_111_changed_files(self):
         files = [f"src/File{index}.java" for index in range(111)]
         with tempfile.TemporaryDirectory() as directory:

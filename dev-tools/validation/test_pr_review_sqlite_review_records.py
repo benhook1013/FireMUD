@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import sqlite3
 import sys
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import FindingRoute
 
 
@@ -58,6 +59,98 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 ).fetchone()
             )
 
+    def test_attempt_archives_complete_json_events_and_redacts_credentials(self) -> None:
+        self.bootstrap()
+        start = self.records.start_attempt(
+            attempt_id="run.archive-1", source_pr=2890, channel="cli", candidate_sha="a" * 40,
+            started_at="2026-09-29T01:00:00Z", metadata={"published_head": "a" * 40},
+        )
+        self.assertFalse(start["idempotent_replay"])
+        self.assertTrue(self.records.start_attempt(
+            attempt_id="run.archive-1", source_pr=2890, channel="cli", candidate_sha="a" * 40,
+            started_at="2026-09-29T01:00:00Z", metadata={"published_head": "a" * 40},
+        )["idempotent_replay"])
+        code_identifier = "ReviewCandidateImmutablePublicationBindingForExactHead" * 2
+        events = json.dumps({"type": "finding", "body": "token=ghp_" + "A" * 30, "symbol": code_identifier}) + "\n"
+        finish_args = {
+            "state": "completed", "finished_at": "2026-09-29T01:01:00Z",
+            "duration_seconds": 60, "exit_status": 0,
+            "artifacts": {"cli_events": events, "cli_diagnostic": "provider connected"},
+        }
+        self.assertFalse(self.records.finish_attempt("run.archive-1", **finish_args)["idempotent_replay"])
+        self.assertTrue(self.records.finish_attempt("run.archive-1", **finish_args)["idempotent_replay"])
+        with sqlite3.connect(self.database) as connection:
+            archived = connection.execute(
+                "SELECT content, source_sha256, redactions FROM review_artifacts "
+                "WHERE attempt_id = 'run.archive-1' AND kind = 'cli_events'"
+            ).fetchone()
+        self.assertNotIn("ghp_", archived[0])
+        self.assertIn(code_identifier, archived[0])
+        self.assertEqual(archived[2], 1)
+        self.assertEqual(len(archived[1]), 64)
+        self.assertEqual(self.records.attempt_history(2890)[0]["state"], "completed")
+        with self.assertRaisesRegex(ReviewRecordsError, "different content"):
+            self.records.finish_attempt("run.archive-1", **{**finish_args, "duration_seconds": 61})
+
+    def test_v4_upgrade_is_atomic_and_fences_older_writers(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DROP TABLE review_artifacts")
+            connection.execute("DROP TABLE review_attempts")
+            connection.execute("DROP TABLE source_decision_corrections")
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 4, min_writer_build = 2")
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
+        old_writer = SqliteStateStore(self.database, writer_build=2)
+        self.assertEqual(old_writer.status()["min_writer_build"], 2)
+        self.records.migrate()
+        self.records.migrate()
+        self.assertEqual(SqliteStateStore(self.database).status()["min_writer_build"], WRITER_BUILD)
+        with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
+            old_writer.update(lambda state: state)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT records_schema_version FROM review_records_metadata"
+            ).fetchone()[0], 5)
+
+    def test_cli_decision_correction_is_append_only_and_exact_prior(self) -> None:
+        self.bootstrap()
+        self.records.start_attempt(
+            attempt_id="run.correction", source_pr=2890, channel="cli",
+            started_at="2026-09-29T01:00:00Z",
+        )
+        self.records.finish_attempt(
+            "run.correction", state="completed", finished_at="2026-09-29T01:01:00Z",
+        )
+        key = "cli-run:run.correction:finding:1"
+        self.records.record_run(
+            run_id="run.correction", source_pr=2890, channel="cli",
+            findings=(self.observation(key),),
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        self.records.link_attempt_run("run.correction", "run.correction")
+        self.records.record_source_decision(
+            "run.correction", key, decision_id="original-decision", decision="rejected",
+            actor="reviewer", reason="initial reading",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "latest exact decision"):
+            self.records.correct_source_decision(
+                "run.correction", key, supersedes_id="wrong", correction_id="fix-1",
+                decision="accepted", actor="reviewer", reason="corrected reading",
+            )
+        corrected = self.records.correct_source_decision(
+            "run.correction", key, supersedes_id="original-decision", correction_id="fix-1",
+            decision="accepted", actor="reviewer", reason="corrected reading",
+        )
+        self.assertEqual(corrected["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        self.assertEqual(self.records.cli_source_decisions("run.correction"), {1: ("accepted", "corrected reading")})
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT COUNT(*) FROM decisions WHERE run_id = 'run.correction'"
+            ).fetchone()[0], 1)
+            self.assertEqual(connection.execute(
+                "SELECT supersedes_id FROM source_decision_corrections"
+            ).fetchone()[0], "original-decision")
+
     def test_duplicate_source_identity_in_one_run_is_rejected_atomically(self) -> None:
         self.bootstrap()
         with self.assertRaisesRegex(ReviewRecordsError, "same stable finding"):
@@ -97,7 +190,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
             FindingObservation("safe-key", "title", detail="token=ghp_" + "A" * 30)
 
-    def test_bounded_free_text_accepts_only_exact_full_commit_shas_among_long_tokens(self) -> None:
+    def test_review_text_preserves_code_identifiers_and_redacts_recognizable_credentials(self) -> None:
         sha1 = "a" * 40
         sha256 = "b" * 64
         observation = FindingObservation(
@@ -116,18 +209,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(identifiers.title, "test_v2_long_snake_case_identifier_for_review_context")
         self.assertEqual(identifiers.detail, "hyphenated-review-context-identifier-with-many-parts")
 
-        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
-            FindingObservation("token-context", "Z" * 40)
-        with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
-            FindingObservation("mixed-case-token", "AbCdEf0123456789" * 3)
-        for key, value in (
-            ("prefixed-sha", f"prefix_{sha1}"),
-            ("suffixed-sha", f"{sha256}_suffix"),
-            ("provider-token", f"ghp_{sha1}"),
-        ):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                ReviewRecordsError, "credential or raw secret"
-            ):
+        self.assertEqual(FindingObservation("token-context", "Z" * 40).title, "Z" * 40)
+        self.assertEqual(FindingObservation("mixed-case-token", "AbCdEf0123456789" * 3).title,
+                         "AbCdEf0123456789" * 3)
+        for key, value in (("provider-token", f"ghp_{sha1}"),
+                           ("jwt-token", "eyJabcdefgh.eyJabcdefgh.eyJabcdefgh")):
+            with self.subTest(value=value), self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
                 FindingObservation(key, value)
 
     def test_routed_source_finding_cannot_be_changed_into_an_orphan_route(self) -> None:
@@ -147,7 +234,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             actor="reviewer",
             reason="owned by another change",
         )
-        with self.assertRaisesRegex(ReviewRecordsError, "cannot be withdrawn"):
+        with self.assertRaisesRegex(ReviewRecordsError, "already decided"):
             self.records.record_source_decision(
                 "manual-route-run",
                 "route-key",

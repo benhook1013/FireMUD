@@ -18,6 +18,7 @@ from . import evidence, github, hosted
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
+from .sqlite_review_records import SqliteReviewRecords
 from .state import (
     ControllerStateStore,
     StateError,
@@ -25,6 +26,7 @@ from .state import (
     SummaryFindingDisposition,
     adjudicate_summary_findings,
     observation_fingerprint,
+    sqlite_state_path,
 )
 
 _PLAN_CEILING_PATTERN = re.compile(
@@ -2032,9 +2034,10 @@ def default_controller(repo: str | None = None) -> ReviewController:
     observations = LiveEvidence(selected, live, store)
     git_provider = DefaultGitProvider()
     hosted_runner = HostedRunner(selected, live)
+    records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
 
     def cli_adapter(target: ReviewTarget, **kwargs: Any) -> Any:
-        return run_cli_review(target, github=live, **kwargs)
+        return run_cli_review(target, github=live, records=records, **kwargs)
 
     return ReviewController(
         store=store,
