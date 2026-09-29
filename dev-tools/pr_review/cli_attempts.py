@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -91,6 +92,67 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
 
 
 def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, Any]:
+    """Reconcile captures while excluding an active CLI review process."""
+
+    root = database.parent / "pr-review" / "runs"
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return {
+            "available": True,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
+        }
+    except OSError:
+        return {
+            "available": False,
+            "reason": "legacy CLI capture directory could not be inspected",
+            "imported": [], "already_imported": [], "recovered": [],
+            "terminally_classified": [], "conflicts": [], "skipped": 0,
+        }
+
+    lock_path = database.parent / "pr-review" / "cli.lock"
+    try:
+        lock_path.touch(mode=0o600, exist_ok=True)
+        lock_handle = lock_path.open("r+")
+    except OSError:
+        return {
+            "available": False,
+            "reason": "CLI review lock could not be opened or acquired",
+            "imported": [], "already_imported": [], "recovered": [],
+            "terminally_classified": [], "conflicts": [], "skipped": 0,
+        }
+    acquired = False
+    try:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "available": False,
+                "reason": "a CLI review is active; legacy captures were not reconciled",
+                "imported": [], "already_imported": [], "recovered": [],
+                "terminally_classified": [], "conflicts": [], "skipped": 0,
+            }
+        except OSError:
+            return {
+                "available": False,
+                "reason": "CLI review lock could not be opened or acquired",
+                "imported": [], "already_imported": [], "recovered": [],
+                "terminally_classified": [], "conflicts": [], "skipped": 0,
+            }
+        acquired = True
+        return _reconcile_legacy_failed_attempts_locked(records, database)
+    finally:
+        if acquired:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+
+def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> dict[str, Any]:
     """Reconcile legacy CLI captures, preserving each exact run identity.
 
     Failed captures are imported as non-counting attempts. A successful capture

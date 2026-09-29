@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 import fcntl
 import hashlib
@@ -481,14 +482,15 @@ class CliReviewRunnerTests(unittest.TestCase):
                     side_effect=ReviewRecordsError("simulated archive failure"),
                 ),
                 patch("pr_review.cli_runner._atomic_json", side_effect=migrate_before_final_metadata),
-                self.assertRaisesRegex(ReviewRecordsError, "simulated archive failure"),
             ):
-                run_cli_review(
+                result = run_cli_review(
                     target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
                 )
 
+            self.assertIn("was not saved", result.warning)
             self.assertEqual(len(interleaved_reports), 1)
-            self.assertEqual(interleaved_reports[0]["terminally_classified"], [])
+            self.assertFalse(interleaved_reports[0]["available"])
+            self.assertIn("CLI review is active", interleaved_reports[0]["reason"])
             self.assertEqual(interleaved_reports[0]["recovered"], [])
             run_id = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir()).name
             self.assertEqual(
@@ -535,6 +537,52 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
                 self.assertTrue((result.capture_dir / "capture-complete").is_file())
                 self.assertEqual(records.attempt_history(42), [])
+
+    def test_provider_result_survives_sqlite_completion_failures(self):
+        cases = (
+            ("finding validation", "finding"),
+            ("completed attempt archival", "complete"),
+            ("failed attempt archival", "finish"),
+        )
+        for _label, failure_kind in cases:
+            with self.subTest(failure_kind=failure_kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                SqliteStateStore(database).update(lambda state: state)
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                if failure_kind == "finish":
+                    output = "provider returned no complete result\n"
+                    returncode = 1
+                else:
+                    output = (
+                        '{"type":"finding","codegenInstructions":"Review comment at '
+                        '@src/Representative.java:1\\nKeep the safer path."}\n'
+                        '{"type":"complete","status":"review_completed",'
+                        '"findings":1,"reviewedFiles":["src/Representative.java"]}\n'
+                    )
+                    returncode = 0
+                commands = FakeCommands(root, review_output=output, review_returncode=returncode)
+                failure = ReviewRecordsError("injected SQLite completion failure")
+                with contextlib.ExitStack() as stack:
+                    if failure_kind == "finding":
+                        stack.enter_context(patch.object(cli_runner, "FindingObservation", side_effect=failure))
+                    elif failure_kind == "complete":
+                        stack.enter_context(patch.object(records, "complete_attempt_run", side_effect=failure))
+                    else:
+                        stack.enter_context(patch.object(records, "finish_attempt", side_effect=failure))
+                    result = run_cli_review(
+                        target(), github=FakeGitHub(), source_root=root,
+                        runner=commands, records=records,
+                    )
+
+                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+                self.assertEqual(result.exit_status, returncode)
+                self.assertIn("was not saved", result.warning)
+                self.assertTrue((result.capture_dir / "capture-complete").is_file())
+                self.assertEqual(records.attempt(result.run_id)["state"], "started")
 
     def test_zero_exit_with_incomplete_json_is_a_failed_command_and_attempt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -625,17 +673,15 @@ class CliReviewRunnerTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             commands = FakeCommands(root, review_output=output)
-            with (
-                patch.object(
-                    records,
-                    "complete_attempt_run",
-                    side_effect=ReviewRecordsError("simulated archive failure"),
-                ),
-                self.assertRaisesRegex(ReviewRecordsError, "simulated archive failure"),
+            with patch.object(
+                records,
+                "complete_attempt_run",
+                side_effect=ReviewRecordsError("simulated archive failure"),
             ):
-                run_cli_review(
+                result = run_cli_review(
                     target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
                 )
+            self.assertIn("was not saved", result.warning)
             capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
             run_id = capture_dir.name
             capture_dir.joinpath("stdout").write_text("not JSON\n", encoding="utf-8")

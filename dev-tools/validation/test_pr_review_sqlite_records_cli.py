@@ -1,4 +1,5 @@
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -39,6 +40,25 @@ class ReviewRecordsCliTest(unittest.TestCase):
         if result == 0:
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
+
+    def test_cli_attempt_reconciliation_refuses_while_runner_lock_is_held(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        capture_root = self.database.parent / "pr-review" / "runs"
+        capture_root.mkdir(parents=True)
+        lock_path = self.database.parent / "pr-review" / "cli.lock"
+        lock_path.touch(mode=0o600)
+
+        with lock_path.open("r+") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                with patch.object(records, "attempt", side_effect=AssertionError("SQL reconciliation ran")):
+                    result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertFalse(result["available"])
+        self.assertIn("CLI review is active", result["reason"])
 
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

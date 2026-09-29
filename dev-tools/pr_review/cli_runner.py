@@ -17,6 +17,7 @@ import fcntl
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -217,9 +218,10 @@ class ReviewResult:
     duration_seconds: int
     exit_status: int
     capture_dir: Path
+    warning: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "run_id": self.run_id,
             "pull_request": self.pull_request,
             "candidate_sha": self.candidate_sha,
@@ -236,6 +238,9 @@ class ReviewResult:
             "checkpoint_marker": f"<!-- firemud-cli-run: {self.run_id} -->",
             "duration_marker": f"<!-- firemud-review-duration-seconds: {self.duration_seconds} -->",
         }
+        if self.warning:
+            result["warning"] = self.warning
+        return result
 
 
 def _git(
@@ -1222,50 +1227,56 @@ def run_cli_review(
                 command_exit_status = process.returncode
                 if result_state != "completed" and command_exit_status == 0:
                     command_exit_status = 1
+                records_warning = None
                 if records is not None:
-                    if result_state == "completed":
-                        observations = []
-                        for index, finding in enumerate(parsed_findings, 1):
-                            instructions = finding.get("codegenInstructions")
-                            title = _cli_headline(instructions) or ""
-                            title, _ = _redact_archive_text(title)
-                            # Redaction can expand a short provider headline (for
-                            # example, several credential-shaped tokens).  Keep
-                            # the value within FindingObservation's SQL limit.
-                            title = title[:300].rstrip()
-                            observations.append(FindingObservation(
-                                source_finding_key=f"cli-run:{run_id}:finding:{index}",
-                                title=title or f"CodeRabbit CLI finding {index}",
-                            ))
-                        records.complete_attempt_run(
-                            run_id,
-                            finish={
-                                "state": result_state,
-                                "duration_seconds": duration,
-                                "exit_status": process.returncode,
-                                "diagnostic": diagnostic,
-                                "artifacts": artifacts,
-                            },
-                            run={
-                                "run_id": run_id,
-                                "source_pr": target.snapshot.number,
-                                "channel": "cli",
-                                "findings": observations,
-                                "source_head": candidate_sha,
-                                "reviewer": "CodeRabbit CLI",
-                                "scope": "broad",
-                                "started_at": attempt_started_at,
-                                "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            },
-                            finalize_empty=not observations,
+                    try:
+                        if result_state == "completed":
+                            observations = []
+                            for index, finding in enumerate(parsed_findings, 1):
+                                instructions = finding.get("codegenInstructions")
+                                title = _cli_headline(instructions) or ""
+                                title, _ = _redact_archive_text(title)
+                                # Redaction can expand a short provider headline (for
+                                # example, several credential-shaped tokens).  Keep
+                                # the value within FindingObservation's SQL limit.
+                                title = title[:300].rstrip()
+                                observations.append(FindingObservation(
+                                    source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                                    title=title or f"CodeRabbit CLI finding {index}",
+                                ))
+                            records.complete_attempt_run(
+                                run_id,
+                                finish={
+                                    "state": result_state,
+                                    "duration_seconds": duration,
+                                    "exit_status": process.returncode,
+                                    "diagnostic": diagnostic,
+                                    "artifacts": artifacts,
+                                },
+                                run={
+                                    "run_id": run_id,
+                                    "source_pr": target.snapshot.number,
+                                    "channel": "cli",
+                                    "findings": observations,
+                                    "source_head": candidate_sha,
+                                    "reviewer": "CodeRabbit CLI",
+                                    "scope": "broad",
+                                    "started_at": attempt_started_at,
+                                    "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                },
+                                finalize_empty=not observations,
+                            )
+                        else:
+                            records.finish_attempt(
+                                run_id, state=result_state, duration_seconds=duration,
+                                exit_status=process.returncode, diagnostic=diagnostic,
+                                artifacts=artifacts,
+                            )
+                        attempt_finished = True
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                        records_warning = (
+                            "SQLite review record was not saved; the durable CLI capture remains available for recovery"
                         )
-                    else:
-                        records.finish_attempt(
-                            run_id, state=result_state, duration_seconds=duration,
-                            exit_status=process.returncode, diagnostic=diagnostic,
-                            artifacts=artifacts,
-                        )
-                    attempt_finished = True
                 return ReviewResult(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
@@ -1279,6 +1290,7 @@ def run_cli_review(
                     duration_seconds=duration,
                     exit_status=command_exit_status,
                     capture_dir=capture_dir,
+                    warning=records_warning,
                 )
             finally:
                 if candidate_worktree is not None:
