@@ -732,6 +732,64 @@ class ScriptWorkItemServiceImplTest {
     }
   }
 
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "DSL_EVAL, definition_invalid, definition_invalid",
+    "DSL_EVAL, sandbox_error, sandbox_error",
+    "ADMISSION, unknown_outcome, unknown_reason",
+    "ADMISSION, infrastructure_error, definition_invalid",
+    "ADMISSION, , authority_unavailable",
+    "ADMISSION, infrastructure_error, "
+  })
+  void rejectsReplayUnlessPersistedFailureClassIsKnownRetryable(
+      String stage, String outcome, String reason) {
+    ReplayQueueFixture fixture = replayQueueFixture(103L, stage, outcome, reason);
+    if (reason == null || reason.isEmpty()) {
+      fixture.workItem().setCancelReason("authority_unavailable");
+    }
+
+    ScriptWorkItemService.ReplayResult result = replay(fixture.service(), 103L);
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> {
+              assertThat(replay.outcome()).isEqualTo("rejected");
+              assertThat(replay.rejectionReason()).isEqualTo("stage_evidence_unavailable");
+            });
+    assertThat(fixture.workItem().getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(fixture.workItemRepository(), Mockito.never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "ADMISSION, authority_unavailable_exhausted, authority_unavailable_exhausted",
+    "DSL_EVAL, infrastructure_error, authority_unavailable"
+  })
+  void replaysOnlyPersistedRetryableFailureClasses(String stage, String outcome, String reason) {
+    ReplayQueueFixture fixture = replayQueueFixture(104L, stage, outcome, reason);
+
+    ScriptWorkItemService.ReplayResult result = replay(fixture.service(), 104L);
+
+    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.rejectedCount()).isZero();
+    verify(fixture.workItemRepository())
+        .claimDeadLetterForReplay(
+            Mockito.eq(104L),
+            Mockito.eq("1"),
+            Mockito.anyInt(),
+            Mockito.eq(1L),
+            Mockito.any(Instant.class));
+  }
+
   @Test
   void replayDoesNotPublishQueuePointerWhenTransactionRollsBack() {
     ReplayQueueFixture fixture = replayQueueFixture(102L);
@@ -3863,12 +3921,18 @@ class ScriptWorkItemServiceImplTest {
   }
 
   private static ReplayQueueFixture replayQueueFixture(long id) {
+    return replayQueueFixture(id, "ADMISSION", "infrastructure_error", "authority_unavailable");
+  }
+
+  private static ReplayQueueFixture replayQueueFixture(
+      long id, String stage, String outcome, String reason) {
     ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(id));
-    item.setCancelReason("authority_unavailable");
+    item.setCancelReason(reason);
     item.setFailureGeneration(1L);
     ScriptEventAudit audit = new ScriptEventAudit();
-    audit.setFinalStage("ADMISSION");
-    audit.setFinalReason("authority_unavailable");
+    audit.setFinalStage(stage);
+    audit.setFinalOutcome(outcome);
+    audit.setFinalReason(reason);
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     when(workItemRepository.findByIdForUpdate(id)).thenReturn(Optional.of(item));
@@ -3911,7 +3975,7 @@ class ScriptWorkItemServiceImplTest {
             new SimpleMeterRegistry(),
             Mockito.mock(ScriptDefinitionRepository.class),
             automationQueueService);
-    return new ReplayQueueFixture(item, automationQueueService, service);
+    return new ReplayQueueFixture(item, workItemRepository, automationQueueService, service);
   }
 
   private static ScriptPatchPinProjectionService replayPinProjectionService() {
@@ -3995,6 +4059,7 @@ class ScriptWorkItemServiceImplTest {
     item.setFailureGeneration(1L);
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("infrastructure_error");
     audit.setFinalReason("authority_unavailable");
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -4050,6 +4115,7 @@ class ScriptWorkItemServiceImplTest {
 
   private record ReplayQueueFixture(
       ScriptWorkItem workItem,
+      ScriptWorkItemRepository workItemRepository,
       AutomationQueueService automationQueueService,
       ScriptWorkItemServiceImpl service) {}
 

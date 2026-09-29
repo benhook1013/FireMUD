@@ -714,11 +714,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             now);
         continue;
       }
-      if (!originalFailure.isComplete()) {
-        // A dead-letter row without both immutable failure dimensions cannot be safely replayed:
-        // accepting it would lose the original stage/reason as soon as later execution updates
-        // the mutable work item or audit row. Keep the row untouched and persist only the bounded
-        // rejection receipt.
+      if (!originalFailure.isRetryableForEvaluationReplay()) {
+        // Only persisted failure classes known to be retryable may re-enter the DSL. A missing,
+        // unknown, contradictory, or deterministic logical outcome stays dead-lettered; accepting
+        // it would lose the original outcome as later execution updates the mutable audit row.
         results.add(
             new ReplayItemResult(
                 requestedId,
@@ -1427,14 +1426,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                       || auditReason.equals(workItemReason);
               return new OriginalFailureEvidence(
                   blankToEmpty(audit.getFinalStage()),
-                  firstNonBlank(auditReason, workItemReason),
+                  auditReason,
+                  blankToEmpty(audit.getFinalOutcome()),
                   consistent);
             })
-        .orElse(new OriginalFailureEvidence("", workItemReason, true));
-  }
-
-  private static String firstNonBlank(String preferred, String fallback) {
-    return preferred != null && !preferred.isBlank() ? preferred : blankToEmpty(fallback);
+        .orElse(new OriginalFailureEvidence("", workItemReason, "", true));
   }
 
   private ReplayResult replayResultFromDurable(
@@ -1534,16 +1530,27 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
 
-  private record OriginalFailureEvidence(String stage, String reason, boolean consistent) {
-    private static final OriginalFailureEvidence EMPTY = new OriginalFailureEvidence("", "", true);
+  private record OriginalFailureEvidence(
+      String stage, String reason, String outcome, boolean consistent) {
+    private static final OriginalFailureEvidence EMPTY =
+        new OriginalFailureEvidence("", "", "", true);
 
     private OriginalFailureEvidence {
       stage = blankToEmpty(stage);
       reason = blankToEmpty(reason);
+      outcome = blankToEmpty(outcome);
     }
 
-    private boolean isComplete() {
-      return consistent && !stage.isBlank() && !reason.isBlank();
+    private boolean isRetryableForEvaluationReplay() {
+      if (!consistent || stage.isBlank() || reason.isBlank() || outcome.isBlank()) {
+        return false;
+      }
+      return ("ADMISSION".equals(stage)
+              && "authority_unavailable_exhausted".equals(outcome)
+              && "authority_unavailable_exhausted".equals(reason))
+          || (("ADMISSION".equals(stage) || "DSL_EVAL".equals(stage))
+              && "infrastructure_error".equals(outcome)
+              && "authority_unavailable".equals(reason));
     }
   }
 
