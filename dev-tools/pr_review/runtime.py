@@ -128,6 +128,11 @@ class LiveEvidence:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
         return self._payloads[pr]
 
+    def prefetch_payload(self, pr: int) -> None:
+        """Warm one independent PR snapshot for a read-only queue overview."""
+
+        self._payload(pr)
+
     @staticmethod
     def _request_lock_is_held(path: Path) -> bool:
         """Check an existing request lock without creating or changing a file."""
@@ -1462,6 +1467,10 @@ class LiveEvidence:
         emitted_cli_sources: set[tuple[str, str]] = set()
         emitted_hosted_review_ids: set[int] = set()
         emitted_hosted_response_ids: set[int] = set()
+        cli_common: Path | None = None
+        cli_records: Any = None
+        if channel == "cli":
+            cli_common, cli_records = evidence.resolve_cli_capture_context()
         for checkpoint in checkpoints:
             if checkpoint.type.casefold() != channel:
                 continue
@@ -1477,7 +1486,9 @@ class LiveEvidence:
             anchor: dict[str, Any] = {}
             if channel == "cli":
                 try:
-                    capture = evidence.load_cli_capture(checkpoint, self.repo, pr)
+                    capture = evidence.load_cli_capture(
+                        checkpoint, self.repo, pr, cli_common, records=cli_records
+                    )
                 except evidence.EvidenceError:
                     capture = None
                 if capture is not None:
@@ -1529,7 +1540,9 @@ class LiveEvidence:
                 }
             )
         if channel == "cli":
-            for capture in evidence.discover_cli_captures(self.repo, pr):
+            for capture in evidence.discover_cli_captures(
+                self.repo, pr, cli_common, records=cli_records
+            ):
                 run_id = capture.metadata.get("run_id", "")
                 if run_id in public_cli_run_ids:
                     continue

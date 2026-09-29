@@ -4085,6 +4085,27 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("not fetched", report["detail_window"]["tail_evidence"])
         self.assertEqual(batch_calls, [tuple(values)])
 
+    def test_status_overview_ignores_historical_triggers_on_merged_prs(self):
+        values, heads = _stacked_prs(7, merged=(1, 2))
+        evidence = CountingEvidence(active_targets={1, 2, 7})
+        scanned = []
+
+        def active_targets(numbers, identities):
+            scanned.extend(numbers)
+            return evidence.active_targets.intersection(numbers)
+
+        evidence.active_review_targets = active_targets
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(scanned, [3, 4, 5, 6, 7])
+        self.assertEqual(report["detail_window"]["active_targets"], [7])
+        self.assertEqual(report["detail_window"]["deep_prs"], [3, 4, 5, 6, 7])
+        self.assertTrue(all(pr_number not in {1, 2} for pr_number, _ in evidence.history_reads))
+
     def test_live_evidence_probe_includes_active_hosted_trigger_without_allocation(self):
         trigger_at = "2026-09-26T01:00:00Z"
         response_at = "2026-09-26T01:02:00Z"

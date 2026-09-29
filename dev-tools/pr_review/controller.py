@@ -21,6 +21,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -4716,24 +4717,31 @@ class ReviewController:
         except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
             return self._unknown_overview(state, str(error))
 
+        # Closed PRs remain in the queue for history, but old manual trigger
+        # comments and reservations on them cannot be active review targets.
+        # Deep-reading those records on every display refresh is expensive;
+        # request admission still performs its own fresh repository-wide check.
+        open_prs = tuple(pr for pr in state.ordered_prs if not batch_live[pr].merged)
         active_targets = {
             allocation.pr
             for allocation in state.allocations.values()
-            if allocation.handoff_checkpoint is None and allocation.stop_basis is None
+            if allocation.pr in open_prs
+            and allocation.handoff_checkpoint is None
+            and allocation.stop_basis is None
         }
         active_scan_status = "unknown"
         active_scan_error = None
         discover_active = getattr(self._evidence_provider, "active_review_targets", None)
         if callable(discover_active):
             try:
-                found = discover_active(state.ordered_prs, raw_identities)
+                found = discover_active(open_prs, raw_identities)
                 active_scan_status = "complete"
             except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
                 found = set()
                 active_scan_status = "unknown"
                 active_scan_error = str(error)
             if not isinstance(found, (set, frozenset)) or any(
-                isinstance(pr, bool) or not isinstance(pr, int) or pr not in state.ordered_prs for pr in found
+                isinstance(pr, bool) or not isinstance(pr, int) or pr not in open_prs for pr in found
             ):
                 active_scan_status = "unknown"
                 active_scan_error = "active review target probe returned malformed PR identities"
@@ -4773,6 +4781,33 @@ class ReviewController:
                 batch_live[pr].merged or pr in deep_prs for pr in state.ordered_prs
             )
             try:
+                # Deep PR metadata and complete review snapshots are independent
+                # reads. Fetch the newly selected window together instead of
+                # serializing each GitHub round trip. New-request preflight is
+                # separate and still reads fresh evidence at request time.
+                new_deep_prs = [
+                    pr for pr in state.ordered_prs if pr in deep_prs and pr not in live_identity_cache
+                ]
+                if new_deep_prs:
+                    fetch_started = time.perf_counter()
+                    prefetch_payload = getattr(self._evidence_provider, "prefetch_payload", None)
+                    with ThreadPoolExecutor(max_workers=min(8, len(new_deep_prs) * 2)) as pool:
+                        identities = {
+                            pr: pool.submit(self._require_github().pull_request, pr)
+                            for pr in new_deep_prs
+                        }
+                        evidence_reads = (
+                            [pool.submit(prefetch_payload, pr) for pr in new_deep_prs]
+                            if callable(prefetch_payload)
+                            else []
+                        )
+                        for pr in new_deep_prs:
+                            live_identity_cache[pr] = identities[pr].result()
+                        for future in evidence_reads:
+                            future.result()
+                    phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                        "deep_pr_identity_ms", 0.0
+                    ) + (time.perf_counter() - fetch_started) * 1000
                 scoped_report = self._status_from_state(
                     scoped_state,
                     evidence_prs=deep_prs,
