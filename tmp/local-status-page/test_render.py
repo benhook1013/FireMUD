@@ -1332,8 +1332,8 @@ vm.runInNewContext(process.argv[1], {
         self.assertIn('<span class="round-pill zero-accepted unlinked" '
                       'aria-label="2/0 (unlinked, non-counting), Completion time unavailable" '
                       'title="Completion time unavailable"><span>2/0</span><span class="round-age">age n/a</span></span>', result)
-        self.assertIn('.round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
-        self.assertIn('.front-evidence .round-pill.zero-accepted { background: #ad3b55; color: #fff; }', result)
+        self.assertIn('.round-pill.zero-accepted { background: var(--fire); border-color: var(--fire); color: #fff; }', result)
+        self.assertIn('.front-evidence .round-pill.zero-accepted { background: var(--fire); border-color: #fff; color: #fff; }', result)
         self.assertNotIn('.round-pill.unlinked.zero-accepted', result)
         self.assertNotIn('class="activity-caption">', result)
         self.assertNotIn('from older heads', result)

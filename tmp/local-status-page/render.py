@@ -64,7 +64,7 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
-.round-pill.zero-accepted { background: #ad3b55; color: #fff; }
+.round-pill.zero-accepted { background: var(--fire); border-color: var(--fire); color: #fff; }
 .independent-review { color: #37414a; }
 @media (max-width: 760px) {
   .activity-grid { grid-template-columns: 1fr; }
@@ -1877,7 +1877,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
 .front-evidence .round-pill {{ background: #fff; color: var(--ink); }}
-.front-evidence .round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
+.front-evidence .round-pill.zero-accepted {{ background: var(--fire); border-color: #fff; color: #fff; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
 .section-head p {{ max-width: 70ch; margin: 0; color: var(--muted); font-size: .8rem; }}
