@@ -365,6 +365,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     ScriptDefinition staleDefinition = scriptDefinition(name, "{\"stale\":true}");
     staleDefinition.setId(restoredDefinition.getId());
+    staleDefinition.setScriptVersion(scriptPatchVersion);
+    staleDefinition.setBaseVersionId(1L);
     staleDefinition.setRowVersion(originalDefinitionRowVersion);
     assertThatThrownBy(() -> scriptDefinitionRepository.save(staleDefinition))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
