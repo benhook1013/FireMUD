@@ -1422,6 +1422,22 @@ if not (
         "Game Design recovery warning must follow diagnostics and precede rollout failure"
     )
 game_design_warning_run = game_design_warning.get("run", "")
+expected_game_design_warning_run = (
+    'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh '
+    'recovery-warning >> "$GITHUB_STEP_SUMMARY"'
+)
+if game_design_warning_run.strip() != expected_game_design_warning_run:
+    raise SystemExit("Game Design recovery warning must use the exact summary helper mode")
+game_design_warning_output = subprocess.run(
+    [
+        "bash",
+        str(repository_root / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"),
+        "recovery-warning",
+    ],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout
 for required_warning in (
     "may have left Game Design unavailable",
     "scaled to zero",
@@ -1429,7 +1445,7 @@ for required_warning in (
     "Inspect and repair",
     "Game Design Deployment, Pods, Service, and EndpointSlices",
 ):
-    if required_warning not in game_design_warning_run:
+    if required_warning not in game_design_warning_output:
         raise SystemExit(
             f"Game Design recovery warning must include: {required_warning}"
         )
