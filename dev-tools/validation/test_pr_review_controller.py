@@ -482,6 +482,51 @@ class ControllerTests(unittest.TestCase):
             trigger_path = hosted.default_trigger_record_path("owner/repo", 42, common)
             self.assertEqual(hosted_path, trigger_path.parent / "request.lock")
 
+    def test_hosted_stop_ignores_unrelated_cli_lock_but_persists_stop(self):
+        controller = self.make(
+            {
+                2893: pr(2893, HEAD_1),
+                2829: pr(2829, HEAD_2, base_ref="feature-2893", base_tip=HEAD_1),
+            },
+            {(2893, "hosted"): [self.allocation_evidence(number=2893)]},
+            heads={"feature-2893": HEAD_1, "feature-2829": HEAD_2},
+        )
+        controller.set_stack([2893, 2829])
+        # The repository-wide CLI lock is held by the unrelated child review;
+        # it carries no PR identity, so the configured stack supplies it here.
+        cli_path, _ = controller._stop_lock_paths(2893)
+        cli_path.parent.mkdir(parents=True, exist_ok=True)
+        with cli_path.open("a+") as cli_handle:
+            fcntl.flock(cli_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            stopped = controller.decide_stop(
+                pr=2893,
+                channel="hosted",
+                reason="stop Hosted discovery after the reviewed checkpoint",
+            )
+            fcntl.flock(cli_handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(controller.store.load().allocations["2893:hosted"].stop_basis, "direct_human")
+
+    def test_hosted_stop_rejects_concurrent_same_pr_hosted_request_lock(self):
+        controller = self.make(
+            {2893: pr(2893, HEAD_1)},
+            {(2893, "hosted"): [self.allocation_evidence(number=2893)]},
+            heads={"feature-2893": HEAD_1},
+        )
+        controller.set_stack([2893])
+        _, hosted_path = controller._stop_lock_paths(2893)
+        hosted_path.parent.mkdir(parents=True, exist_ok=True)
+        with hosted_path.open("a+") as hosted_handle:
+            fcntl.flock(hosted_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(ControllerError, "review is active"):
+                controller.decide_stop(
+                    pr=2893,
+                    channel="hosted",
+                    reason="do not race the active Hosted request",
+                )
+            fcntl.flock(hosted_handle.fileno(), fcntl.LOCK_UN)
+
     def test_stop_cli_accepts_multiple_exact_ambiguity_fingerprints(self):
         fingerprints = ("f" * 64, "e" * 64)
 
