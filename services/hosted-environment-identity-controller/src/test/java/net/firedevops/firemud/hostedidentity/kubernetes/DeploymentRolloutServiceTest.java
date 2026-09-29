@@ -206,8 +206,7 @@ class DeploymentRolloutServiceTest {
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
     verify(lockedSocialGroups).replace(socialGroupsReplacement.capture());
     assertEquals(
-        expectedWorkloadRevision(
-            "grpc-current", "social-groups-current", "social-groups-leaf"),
+        expectedWorkloadRevision("grpc-current", "social-groups-current", "social-groups-leaf"),
         socialGroupsReplacement
             .getValue()
             .getSpec()

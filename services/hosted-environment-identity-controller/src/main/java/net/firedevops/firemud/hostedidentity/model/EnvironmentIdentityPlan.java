@@ -129,8 +129,7 @@ public record EnvironmentIdentityPlan(
   }
 
   public String grpcSocialGroupsCertificateName() {
-    return grpcWorkloadIdentityCertificateNames.get(
-        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+    return grpcWorkloadIdentityCertificateNames.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
   }
 
   public String grpcSocialGroupsSecretName() {

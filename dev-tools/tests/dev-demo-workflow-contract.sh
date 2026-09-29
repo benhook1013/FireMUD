@@ -364,6 +364,35 @@ openssl pkey -in "$certificate_fixture_dir/valid.key" -check -noout >/dev/null 2
   echo "generated publication key failed OpenSSL key validation" >&2
   exit 1
 }
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/social-groups.crt" "$certificate_fixture_dir/social-groups.key" \
+  pr-42 social-groups-service
+social_groups_sans="$(openssl x509 -in "$certificate_fixture_dir/social-groups.crt" \
+  -noout -ext subjectAltName)"
+grep -Fq 'URI:spiffe://firemud/ns/pr-42/sa/social-groups-service' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact SPIFFE identity" >&2
+  exit 1
+}
+grep -Fq 'DNS:social-groups-service.pr-42.svc.cluster.local' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact Service DNS SAN" >&2
+  exit 1
+}
+if "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/unsupported.crt" "$certificate_fixture_dir/unsupported.key" \
+  pr-42 unsupported-service >"$certificate_fixture_dir/unsupported.stdout" \
+  2>"$certificate_fixture_dir/unsupported.stderr"; then
+  echo "workload certificate helper accepted an unlisted service" >&2
+  exit 1
+fi
+grep -Fq 'unsupported gRPC workload identity: unsupported-service' \
+  "$certificate_fixture_dir/unsupported.stderr" || {
+  echo "workload certificate helper rejected an unknown service without the expected diagnostic" >&2
+  exit 1
+}
 echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
 
 make_profile_certificate() {

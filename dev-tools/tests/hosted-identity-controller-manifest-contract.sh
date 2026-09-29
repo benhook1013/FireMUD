@@ -2098,7 +2098,11 @@ assert {
         (("firemud.dev/preview", "true"),),
         (("firemud.dev/dev-demo", "true"),),
     )
-    for workload in ("account-service", "game-session-service")
+    for workload in (
+        "account-service",
+        "game-session-service",
+        "social-groups-service",
+    )
 }, grpc_targets
 PY
 for text_value in \
@@ -4542,7 +4546,9 @@ if ! helm template hosted-identity-contract "$ROOT_DIR/k8s/helm/firemud" \
   >"$helm_rendered"; then
   fail "Helm chart render failed for resolved hosted values fixture"
 fi
-python3 - "$helm_rendered" "$base_rendered" <<'PY'
+python3 - "$helm_rendered" "$base_rendered" "$ARTIFACT_VALIDATOR" <<'PY'
+import copy
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -4564,6 +4570,54 @@ documents = [
     for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if isinstance(document, dict)
 ]
+validator_spec = importlib.util.spec_from_file_location(
+    "preview_artifact_validator", sys.argv[3]
+)
+validator = importlib.util.module_from_spec(validator_spec)
+validator_spec.loader.exec_module(validator)
+network_policies = [
+    document for document in documents if document.get("kind") == "NetworkPolicy"
+]
+validator.validate_network_policies(network_policies)
+social_policy_name = "social-groups-service-controller-ingress"
+assert any(
+    document.get("metadata", {}).get("name") == social_policy_name
+    for document in network_policies
+)
+without_social_controller_ingress = [
+    document
+    for document in network_policies
+    if document.get("metadata", {}).get("name") != social_policy_name
+]
+try:
+    validator.validate_network_policies(without_social_controller_ingress)
+except ValueError as error:
+    assert social_policy_name in str(error), str(error)
+else:
+    raise AssertionError(
+        "preview validator accepted a missing Social Groups controller probe rule"
+    )
+
+unsafe_social_controller_ingress = copy.deepcopy(network_policies)
+social_policy = next(
+    document
+    for document in unsafe_social_controller_ingress
+    if document.get("metadata", {}).get("name") == social_policy_name
+)
+social_policy["spec"]["ingress"][0]["from"][0]["namespaceSelector"]["matchLabels"][
+    "kubernetes.io/metadata.name"
+] = "kube-system"
+try:
+    validator.validate_network_policies(unsafe_social_controller_ingress)
+except ValueError as error:
+    assert str(error) == (
+        f"NetworkPolicy/{social_policy_name} has an unsafe exception"
+    ), str(error)
+else:
+    raise AssertionError(
+        "preview validator accepted a widened Social Groups controller ingress"
+    )
+
 deployments = {}
 for document in documents:
     if document.get("kind") != "Deployment":

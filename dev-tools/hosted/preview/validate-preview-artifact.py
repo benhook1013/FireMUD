@@ -88,6 +88,7 @@ EXPECTED_NAMES = {
         "internal-services-egress",
         "account-service-controller-ingress",
         "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
@@ -239,6 +240,7 @@ def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[st
             {
                 "account-service-controller-ingress",
                 "game-session-service-controller-ingress",
+                "social-groups-service-controller-ingress",
             }
         )
     return expected_names
@@ -1834,7 +1836,11 @@ def validate_network_policies(
         },
     }
     if certificate_identity_mode == "hosted-controller":
-        for workload in ("account-service", "game-session-service"):
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
             policy_name = f"{workload}-controller-ingress"
             spec = _require_mapping(
                 policies[policy_name].get("spec"),

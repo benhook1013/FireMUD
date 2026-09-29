@@ -81,6 +81,7 @@ public class ServedEnvironmentProbe {
   private static final SecureRandom WEBSOCKET_NONCE_SOURCE = new SecureRandom();
   private static final String GRPC_PROBE_SERVICE = "account-service";
   private static final String GRPC_GAME_SESSION_PROBE_SERVICE = "game-session-service";
+  private static final String GRPC_SOCIAL_GROUPS_PROBE_SERVICE = "social-groups-service";
   private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
   private static final ThreadLocal<ProbeAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
   private final HostedIdentityProperties properties;
@@ -101,7 +102,8 @@ public class ServedEnvironmentProbe {
       String expectedGatewayInternalWsLeafSha256,
       Secret grpcMaterial,
       String expectedGrpcLeafSha256,
-      String expectedGrpcGameSessionLeafSha256) {
+      String expectedGrpcGameSessionLeafSha256,
+      String expectedGrpcSocialGroupsLeafSha256) {
     return probe(
         plan,
         HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
@@ -112,7 +114,8 @@ public class ServedEnvironmentProbe {
         expectedGatewayInternalWsLeafSha256,
         grpcMaterial,
         expectedGrpcLeafSha256,
-        expectedGrpcGameSessionLeafSha256);
+        expectedGrpcGameSessionLeafSha256,
+        expectedGrpcSocialGroupsLeafSha256);
   }
 
   public ProbeResult probe(
@@ -125,7 +128,8 @@ public class ServedEnvironmentProbe {
       String expectedGatewayInternalWsLeafSha256,
       Secret grpcMaterial,
       String expectedGrpcLeafSha256,
-      String expectedGrpcGameSessionLeafSha256) {
+      String expectedGrpcGameSessionLeafSha256,
+      String expectedGrpcSocialGroupsLeafSha256) {
     return probe(
         plan,
         exposureMode,
@@ -136,6 +140,7 @@ public class ServedEnvironmentProbe {
             bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
         (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256),
         (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcGameSessionLeafSha256),
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcSocialGroupsLeafSha256),
         TOTAL_PROBE_TIMEOUT);
   }
 
@@ -153,6 +158,7 @@ public class ServedEnvironmentProbe {
         httpsProbe,
         telnetProbe,
         bridgeProbe,
+        grpcProbe,
         grpcProbe,
         grpcProbe,
         TOTAL_PROBE_TIMEOUT);
@@ -173,6 +179,7 @@ public class ServedEnvironmentProbe {
         httpsProbe,
         telnetProbe,
         bridgeProbe,
+        grpcProbe,
         grpcProbe,
         grpcProbe,
         timeout);
@@ -195,6 +202,7 @@ public class ServedEnvironmentProbe {
         bridgeProbe,
         grpcProbe,
         grpcProbe,
+        grpcProbe,
         TOTAL_PROBE_TIMEOUT);
   }
 
@@ -214,6 +222,7 @@ public class ServedEnvironmentProbe {
         httpsProbe,
         telnetProbe,
         bridgeProbe,
+        grpcProbe,
         grpcProbe,
         grpcProbe,
         timeout);
@@ -237,6 +246,7 @@ public class ServedEnvironmentProbe {
         bridgeProbe,
         grpcProbe,
         grpcGameSessionProbe,
+        grpcProbe,
         TOTAL_PROBE_TIMEOUT);
   }
 
@@ -249,6 +259,53 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
       EndpointProbe grpcGameSessionProbe,
+      Duration timeout) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        grpcGameSessionProbe,
+        grpcProbe,
+        timeout);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      EndpointProbe grpcGameSessionProbe,
+      EndpointProbe grpcSocialGroupsProbe) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        grpcGameSessionProbe,
+        grpcSocialGroupsProbe,
+        TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      EndpointProbe grpcGameSessionProbe,
+      EndpointProbe grpcSocialGroupsProbe,
       Duration timeout) {
     if (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
         && !HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
@@ -292,6 +349,21 @@ public class ServedEnvironmentProbe {
               } catch (IllegalArgumentException exception) {
                 LOGGER.debug(
                     "Game Session gRPC probe rejected material or configuration for runtime Namespace {}",
+                    plan.runtimeNamespace(),
+                    exception);
+                return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+              }
+            }));
+    probes.add(
+        startProbe(
+            ProbeName.GRPC_SOCIAL_GROUPS,
+            () -> {
+              try {
+                return grpcSocialGroupsProbe.check(
+                    grpcHostname(plan, GRPC_SOCIAL_GROUPS_PROBE_SERVICE), GRPC_PORT);
+              } catch (IllegalArgumentException exception) {
+                LOGGER.debug(
+                    "Social Groups gRPC probe rejected material or configuration for runtime Namespace {}",
                     plan.runtimeNamespace(),
                     exception);
                 return new ProbeResult(false, "grpc-material-or-configuration-invalid");
@@ -364,7 +436,9 @@ public class ServedEnvironmentProbe {
   }
 
   static ProbeResult prefixedResult(ProbeName probeName, ProbeResult result) {
-    if (probeName == ProbeName.GRPC
+    if ((probeName == ProbeName.GRPC
+            || probeName == ProbeName.GRPC_GAME_SESSION
+            || probeName == ProbeName.GRPC_SOCIAL_GROUPS)
         && "grpc-material-or-configuration-invalid".equals(result.reason())) {
       return result;
     }
@@ -468,7 +542,11 @@ public class ServedEnvironmentProbe {
   }
 
   private static String grpcHostname(EnvironmentIdentityPlan plan, String service) {
-    if (!Set.of(GRPC_PROBE_SERVICE, GRPC_GAME_SESSION_PROBE_SERVICE).contains(service)
+    if (!Set.of(
+                GRPC_PROBE_SERVICE,
+                GRPC_GAME_SESSION_PROBE_SERVICE,
+                GRPC_SOCIAL_GROUPS_PROBE_SERVICE)
+            .contains(service)
         || !plan.grpcConsumers().contains(service)) {
       throw new IllegalArgumentException("fixed gRPC probe service is not a rollout consumer");
     }
@@ -959,7 +1037,8 @@ public class ServedEnvironmentProbe {
     TELNET("telnet"),
     BRIDGE("bridge"),
     GRPC("grpc"),
-    GRPC_GAME_SESSION("grpc-game-session");
+    GRPC_GAME_SESSION("grpc-game-session"),
+    GRPC_SOCIAL_GROUPS("grpc-social-groups");
 
     private final String label;
 

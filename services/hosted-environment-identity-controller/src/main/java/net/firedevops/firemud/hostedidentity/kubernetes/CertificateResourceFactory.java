@@ -111,7 +111,9 @@ public class CertificateResourceFactory {
         renewBefore);
   }
 
-  /** Builds the retained Social Groups workload identity used by protected profile/presence calls. */
+  /**
+   * Builds the retained Social Groups workload identity used by protected profile/presence calls.
+   */
   public GenericKubernetesResource grpcSocialGroups(
       EnvironmentIdentityPlan plan, Duration renewBefore) {
     return grpcWorkloadIdentity(
