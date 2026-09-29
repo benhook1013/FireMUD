@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -38,11 +40,11 @@ public final class GameplayWorldCatalog {
   }
 
   public static GameplayWorldCatalog forWorldViews(List<WorldView> worlds) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worlds));
+    return new GameplayWorldCatalog(() -> worlds);
   }
 
   public static GameplayWorldCatalog forWorldSupplier(Supplier<List<WorldView>> worldSupplier) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worldSupplier.get()));
+    return new GameplayWorldCatalog(worldSupplier);
   }
 
   public WorldsViewOutput browseView() {
@@ -59,7 +61,7 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = publicVisibleWorlds();
+    List<WorldView> worlds = publicVisibleWorlds(catalogSnapshot());
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= worlds.size()) {
@@ -80,10 +82,11 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> catalogWorlds = catalogSnapshot();
+    List<WorldView> worlds = visibleWorlds(catalogWorlds);
     try {
       int index = Integer.parseInt(selector);
-      List<WorldView> publicWorlds = publicVisibleWorlds();
+      List<WorldView> publicWorlds = publicVisibleWorlds(catalogWorlds);
       if (index >= 1 && index <= publicWorlds.size()) {
         return Optional.of(publicWorlds.get(index - 1));
       }
@@ -136,10 +139,12 @@ public final class GameplayWorldCatalog {
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
-    return visibleRealms.stream()
-        .filter(RealmView::publicProductionRealm)
-        .findFirst()
-        .or(() -> Optional.of(visibleRealms.get(0)));
+    List<RealmView> publicRealms =
+        visibleRealms.stream().filter(RealmView::publicProductionRealm).toList();
+    if (publicRealms.size() > 1) {
+      return Optional.empty();
+    }
+    return publicRealms.stream().findFirst().or(() -> Optional.of(visibleRealms.get(0)));
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
@@ -149,7 +154,7 @@ public final class GameplayWorldCatalog {
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
     List<RealmView> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        catalogSnapshot().stream()
             .flatMap(world -> world.realms().stream())
             .filter(realm -> realm.tenantId() == tenantId)
             .filter(realm -> realm.gameInstanceId() == gameInstanceId)
@@ -159,7 +164,7 @@ public final class GameplayWorldCatalog {
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
     List<RuntimeRealmTarget> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        catalogSnapshot().stream()
             .flatMap(
                 world ->
                     world.realms().stream()
@@ -183,7 +188,7 @@ public final class GameplayWorldCatalog {
     String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
     String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
     List<WorldView> worlds =
-        visibleWorlds().stream()
+        visibleWorlds(catalogSnapshot()).stream()
             .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
             .toList();
     if (worlds.size() != 1) {
@@ -211,19 +216,68 @@ public final class GameplayWorldCatalog {
   }
 
   public List<WorldView> visibleWorlds() {
-    return normalizeWorlds(worldSupplier.get()).stream()
-        .filter(this::hasVisibleRealmEntries)
-        .toList();
+    return visibleWorlds(catalogSnapshot());
   }
 
   public List<WorldView> publicVisibleWorlds() {
-    return normalizeWorlds(worldSupplier.get()).stream()
-        .filter(world -> !publicVisibleRealms(world).isEmpty())
+    return publicVisibleWorlds(catalogSnapshot());
+  }
+
+  private List<WorldView> visibleWorlds(List<WorldView> worlds) {
+    return worlds.stream().filter(this::hasVisibleRealmEntries).toList();
+  }
+
+  private List<WorldView> publicVisibleWorlds(List<WorldView> worlds) {
+    return worlds.stream().filter(world -> !publicVisibleRealms(world).isEmpty()).toList();
+  }
+
+  private List<WorldView> catalogSnapshot() {
+    List<WorldView> sourceWorlds = worldSupplier.get();
+    List<RealmView> sourceRealms =
+        sourceWorlds == null
+            ? List.of()
+            : sourceWorlds.stream()
+                .filter(Objects::nonNull)
+                .flatMap(world -> world.realms() == null ? Stream.empty() : world.realms().stream())
+                .filter(Objects::nonNull)
+                .toList();
+    Map<Long, Long> visiblePublicRealmCounts =
+        sourceRealms.stream()
+            .filter(RealmView::visible)
+            .filter(RealmView::publicProductionRealm)
+            .collect(Collectors.groupingBy(RealmView::tenantId, Collectors.counting()));
+    List<WorldView> worlds = normalizeWorlds(sourceWorlds);
+    Map<Long, Long> normalizedVisiblePublicRealmCounts =
+        worlds.stream()
+            .flatMap(world -> world.realms().stream())
+            .filter(RealmView::visible)
+            .filter(RealmView::publicProductionRealm)
+            .collect(Collectors.groupingBy(RealmView::tenantId, Collectors.counting()));
+    Set<Long> tenantsWithOneVisiblePublicRealm =
+        visiblePublicRealmCounts.entrySet().stream()
+            .filter(entry -> entry.getValue() == 1L)
+            .filter(
+                entry -> normalizedVisiblePublicRealmCounts.getOrDefault(entry.getKey(), 0L) == 1L)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
+
+    return worlds.stream()
+        .map(
+            world ->
+                new WorldView(
+                    world.slug(),
+                    world.displayName(),
+                    world.realms().stream()
+                        .filter(
+                            realm -> tenantsWithOneVisiblePublicRealm.contains(realm.tenantId()))
+                        // A hidden public-production record does not authorize public admission.
+                        .filter(realm -> realm.visible() || !realm.publicProductionRealm())
+                        .toList()))
         .toList();
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<WorldView> worlds = publicVisibleWorlds();
+    List<WorldView> worlds = publicVisibleWorlds(catalogSnapshot());
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (int i = 0; i < worlds.size(); i++) {
       WorldView world = worlds.get(i);
@@ -292,8 +346,25 @@ public final class GameplayWorldCatalog {
   }
 
   private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
+    List<GameplayAdmissionPointerSnapshot> sourcePointers =
+        pointers == null ? List.of() : pointers.stream().filter(Objects::nonNull).toList();
+    Map<Long, List<GameplayAdmissionPointerSnapshot>> visiblePublicPointersByTenant =
+        sourcePointers.stream()
+            .filter(GameplayAdmissionPointerSnapshot::visible)
+            .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+            .collect(Collectors.groupingBy(GameplayAdmissionPointerSnapshot::tenantId));
+    Set<Long> tenantsWithOneCompleteVisiblePublicPointer =
+        visiblePublicPointersByTenant.entrySet().stream()
+            .filter(entry -> entry.getValue().size() == 1)
+            .filter(entry -> hasCompleteAuthorityPointer(entry.getValue().getFirst()))
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
     List<GameplayAdmissionPointerSnapshot> completePointers =
-        pointers.stream().filter(GameplayWorldCatalog::hasCompleteAuthorityPointer).toList();
+        sourcePointers.stream()
+            .filter(GameplayWorldCatalog::hasCompleteAuthorityPointer)
+            .filter(
+                pointer -> tenantsWithOneCompleteVisiblePublicPointer.contains(pointer.tenantId()))
+            .toList();
     Map<String, Set<Long>> tenantsByWorldSlug = new LinkedHashMap<>();
     Map<TenantWorldKey, Set<String>> rawWorldSlugsByTenant = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : completePointers) {

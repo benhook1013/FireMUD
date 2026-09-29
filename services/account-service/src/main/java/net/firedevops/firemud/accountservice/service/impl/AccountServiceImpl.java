@@ -492,6 +492,12 @@ public class AccountServiceImpl implements AccountService {
         || current.pointerVersion() != target.pointerVersion()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(target.tenantId(), caller.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     String scopeId =
@@ -1237,9 +1243,16 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
-        subscriptionRepository.findByTenantId(tenantId);
-    if (subscriptions.size() != 1) {
+    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
+    try {
+      subscriptions = subscriptionRepository.findByTenantId(tenantId);
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is unavailable; retry later",
+          ex);
+    }
+    if (subscriptions == null || subscriptions.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is missing or ambiguous; retry later");
@@ -1249,6 +1262,10 @@ public class AccountServiceImpl implements AccountService {
     boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
     boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
     long version = subscription.getEntitlementVersion();
+    if (version <= 0L) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement version is invalid; retry later");
+    }
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }
