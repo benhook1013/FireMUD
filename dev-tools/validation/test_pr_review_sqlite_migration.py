@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+from pr_review.sqlite_review_records import SqliteReviewRecords
 from pr_review.sqlite_store import CUTOVER_VERSION, SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import ControllerStateStore, ReviewState, StateError, StateStore, controller_state_status
 
@@ -46,6 +47,42 @@ class SqliteMigrationEntrypointTest(unittest.TestCase):
         self.assertEqual(self.database_path.read_bytes(), before)
         with self.assertRaises(StateError):
             StateStore(self.legacy_path).save(ReviewState(ordered_prs=(9999,)))
+
+    def test_records_schema_writer_fence_can_advance_after_cutover(self) -> None:
+        expected = ReviewState(ordered_prs=(2828,))
+        StateStore(self.legacy_path).save(expected)
+        SqliteStateStore.migrate_legacy_json(
+            self.legacy_path, self.database_path, writer_build=2
+        )
+        marker_path = self.legacy_path / "sqlite-cutover.json"
+        original_marker = marker_path.read_bytes()
+        self.assertEqual(json.loads(original_marker)["min_writer_build"], 2)
+
+        SqliteReviewRecords(self.database_path).bootstrap()
+
+        self.assertEqual(marker_path.read_bytes(), original_marker)
+        status = controller_state_status(self.legacy_path)
+        self.assertTrue(status["compatible"])
+        self.assertEqual(status["min_writer_build"], WRITER_BUILD)
+        self.assertEqual(ControllerStateStore(self.legacy_path).load(), expected)
+        old_writer = SqliteStateStore(self.database_path, writer_build=2)
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
+            old_writer.load()
+
+    def test_cutover_marker_writer_floor_above_database_floor_fails_closed(self) -> None:
+        StateStore(self.legacy_path).save(ReviewState(ordered_prs=(2828,)))
+        SqliteStateStore.migrate_legacy_json(self.legacy_path, self.database_path)
+        marker_path = self.legacy_path / "sqlite-cutover.json"
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["min_writer_build"] = WRITER_BUILD + 1
+        marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+
+        status = controller_state_status(self.legacy_path)
+
+        self.assertFalse(status["compatible"])
+        self.assertIn("cutover marker does not match database metadata", status["reason"])
+        with self.assertRaisesRegex(StateError, "cutover marker does not match database metadata"):
+            ControllerStateStore(self.legacy_path).load()
 
     def test_migration_waits_for_in_flight_legacy_writer_and_imports_its_state(self) -> None:
         initial = ReviewState(ordered_prs=(2828,))
