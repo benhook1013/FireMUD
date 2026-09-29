@@ -279,6 +279,25 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             [101, 102, 103],
         )
 
+    def test_archive_window_excludes_replies_after_review_completion(self) -> None:
+        thread = {
+            "id": "thread-1",
+            "comments": {"nodes": [
+                {"databaseId": 201, "author": {"login": "coderabbitai[bot]"},
+                 "createdAt": "2026-09-29T01:02:00Z", "body": "Fix the retry fence"},
+                {"databaseId": 202, "author": {"login": "maintainer"},
+                 "createdAt": "2026-09-29T02:00:00Z", "body": "x" * (9 * 1024 * 1024)},
+            ]},
+        }
+        pull_request = sqlite_hosted_capture._complete_pull_request(
+            self.payload(comments=[self.trigger_comment()], review_threads=[thread]), PR)
+        window = sqlite_hosted_capture.archive_window(
+            pull_request, self.trigger_record(), finished_at="2026-09-29T01:04:00Z")
+        self.assertEqual(
+            [item["databaseId"] for item in window["review_threads"][0]["comments"]["nodes"]],
+            [201],
+        )
+
     def test_completed_review_records_its_attributed_inline_finding(self) -> None:
         review = {
             "databaseId": 201,

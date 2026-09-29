@@ -18,7 +18,7 @@ from pr_review.sqlite_records_repair import (
     archive_incomplete_checkpoint,
     repair_provider_checkpoints,
 )
-from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
 
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
 REPO = "owner/repo"
@@ -122,6 +122,51 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         for name, contents in files.items():
             (capture_dir / name).write_bytes(contents)
         return files
+
+    def record_cli_attempt(self, *, disposition: str = "routed") -> None:
+        run_id = "run.Repair1"
+        self.records.start_attempt(
+            attempt_id=run_id,
+            source_pr=PR,
+            channel="cli",
+            candidate_sha=HEAD,
+            started_at="2026-09-27T11:00:00Z",
+        )
+        self.records.complete_attempt_run(
+            run_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-09-27T11:01:00Z",
+                "duration_seconds": 60,
+                "exit_status": 0,
+                "artifacts": {"cli_events": "{}\n"},
+            },
+            run={
+                "run_id": run_id,
+                "source_pr": PR,
+                "channel": "cli",
+                "findings": (
+                    FindingObservation(
+                        source_finding_key=f"cli-run:{run_id}:finding:1",
+                        title="CLI title only",
+                    ),
+                ),
+                "source_head": HEAD,
+                "reviewer": "CodeRabbit CLI",
+                "scope": "broad",
+                "started_at": "2026-09-27T11:00:00Z",
+                "finished_at": "2026-09-27T11:01:00Z",
+            },
+        )
+        self.records.record_source_decision(
+            run_id,
+            f"cli-run:{run_id}:finding:1",
+            decision_id="decision.repair-attempt",
+            decision=disposition,  # type: ignore[arg-type]
+            actor="backfill-reviewer",
+            reason="owner PR #2879",
+            decided_at="2026-09-27T12:00:00Z",
+        )
 
     def test_missing_old_capture_is_archived_as_gap_without_review_credit(self) -> None:
         checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
@@ -236,6 +281,155 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(origin, ("owner/repo", PR, "hosted", "review:700", 10, first["items"][0]["run_id"]))
         self.assertEqual([row[0] for row in artifacts], ["hosted_comments", "hosted_review", "metadata"])
         self.assertTrue(all(len(row[1]) == 64 for row in artifacts))
+
+    def test_repair_links_exact_automatically_recorded_cli_attempt_without_duplicate(self) -> None:
+        self.cli_capture()
+        self.record_cli_attempt()
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1
+        )
+
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["action"], "already_imported")
+        self.assertEqual(report["items"][0]["run_id"], "run.Repair1")
+        self.assertTrue(report["items"][0]["origin_linked"])
+        self.assertEqual([run["run_id"] for run in self.records.history(PR)["runs"]], ["run.Repair1"])
+        with sqlite3.connect(self.database) as connection:
+            origin = connection.execute("SELECT provider_id, run_id FROM provider_origins").fetchone()
+            artifact_run_ids = connection.execute(
+                "SELECT DISTINCT run_id FROM imported_artifacts"
+            ).fetchall()
+        self.assertEqual(origin, ("run:run.Repair1", "run.Repair1"))
+        self.assertEqual(artifact_run_ids, [("run.Repair1",)])
+        replay = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+        self.assertEqual(replay["items"][0]["run_id"], "run.Repair1")
+        self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_repair_links_exact_automatically_recorded_hosted_attempt_without_duplicate(self) -> None:
+        self.hosted_capture()
+        attempt_id = "hosted-attempt.700"
+        self.records.start_attempt(
+            attempt_id=attempt_id,
+            source_pr=PR,
+            channel="hosted",
+            candidate_sha=HEAD,
+            started_at="2026-09-27T11:58:00Z",
+        )
+        self.records.complete_attempt_run(
+            attempt_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-09-27T11:59:00Z",
+                "trigger_id": "999",
+                "provider_review_id": "700",
+                "checkpoint_id": "10",
+                "artifacts": {
+                    "hosted_review": "{}",
+                    "hosted_comments": "{}",
+                    "metadata": "{}",
+                },
+            },
+            run={
+                "run_id": attempt_id,
+                "source_pr": PR,
+                "channel": "hosted",
+                "findings": (
+                    FindingObservation(
+                        source_finding_key="hosted-comment:701",
+                        title="Hosted title only",
+                    ),
+                ),
+                "source_head": HEAD,
+                "reviewer": "coderabbitai[bot]",
+                "scope": "broad",
+                "started_at": "2026-09-27T11:59:00Z",
+                "finished_at": "2026-09-27T11:59:00Z",
+            },
+        )
+        self.records.record_source_decision(
+            attempt_id,
+            "hosted-comment:701",
+            decision_id="decision.hosted-attempt",
+            decision="accepted",
+            actor="backfill-reviewer",
+            reason="validated source finding",
+            decided_at="2026-09-27T11:59:00Z",
+        )
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["action"], "already_imported")
+        self.assertEqual(report["items"][0]["run_id"], attempt_id)
+        self.assertEqual(
+            [run["run_id"] for run in self.records.history(PR)["runs"]], [attempt_id]
+        )
+        with sqlite3.connect(self.database) as connection:
+            origin = connection.execute("SELECT provider_id, run_id FROM provider_origins").fetchone()
+        self.assertEqual(origin, ("review:700", attempt_id))
+        replay = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+        self.assertEqual(replay["items"][0]["run_id"], attempt_id)
+        self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_repair_refuses_mismatched_automatic_attempt_without_duplicate_or_origin(self) -> None:
+        self.cli_capture()
+        self.record_cli_attempt(disposition="accepted")
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1
+        )
+
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError, "accepted count|identity or counts|finding or decision"
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                dry_run=False,
+            )
+
+        self.assertEqual([run["run_id"] for run in self.records.history(PR)["runs"]], ["run.Repair1"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
 
     def test_duplicate_provider_origin_with_different_checkpoint_ids_is_refused_preflight(self) -> None:
         self.hosted_capture()

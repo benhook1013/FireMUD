@@ -1033,6 +1033,39 @@ def _persist_import(
         "\0".join((repo.casefold(), str(pr_number), channel, str(origin))),
     ).hex
     try:
+        # Historical importer versions sometimes stored a less useful title or
+        # detail for the same provider finding. Keep that original projection
+        # immutable while allowing a newer importer to replay the exact run,
+        # decisions, and archived evidence. All other run and decision fields
+        # remain subject to import_completed_run's normal conflict checks.
+        history = records.history(pr_number)
+        existing_run = next(
+            (item for item in history["runs"] if item["run_id"] == run_id), None
+        )
+        if existing_run is not None:
+            persisted = {
+                item["source_finding_key"]: item
+                for item in history["findings"]
+                if item["run_id"] == run_id
+            }
+            supplied = {item.source_finding_key: item for item in observations}
+            expected_counts = {
+                "found": len(observations),
+                "accepted": sum(item["decision"] == "accepted" for item in decisions),
+                "routed": sum(item["decision"] == "routed" for item in decisions),
+            }
+            if set(persisted) != set(supplied) or existing_run["counts"] != expected_counts:
+                raise ProviderImportError(
+                    "run_id was already imported with different finding identity or decisions"
+                )
+            observations = tuple(
+                dataclasses.replace(
+                    observation,
+                    title=persisted[observation.source_finding_key]["title"],
+                    detail=persisted[observation.source_finding_key]["detail"],
+                )
+                for observation in observations
+            )
         imported = records.import_completed_run(
             run_id=run_id,
             source_pr=pr_number,

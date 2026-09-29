@@ -173,6 +173,59 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertEqual(len(history["decisions"]), 1)
         self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
 
+    def test_hosted_reimport_preserves_old_projection_but_rejects_decision_conflict(self) -> None:
+        self.hosted_capture()
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+        stored = self.records.history(PR)["findings"][0]
+
+        capture_path = self.common / "firemud" / "hosted-review.700" / "snapshot.json"
+        capture = json.loads(capture_path.read_text(encoding="utf-8"))
+        capture["comments"][0]["body"] = (
+            "**Validate the current value before use.**\n\n"
+            "The newer importer extracts a clearer title and longer detail."
+        )
+        capture_path.write_text(json.dumps(capture), encoding="utf-8")
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(replay["run_id"], first["run_id"])
+        persisted = self.records.history(PR)["findings"][0]
+        self.assertEqual(persisted["title"], stored["title"])
+        self.assertEqual(persisted["detail"], stored["detail"])
+
+        decisions_path = self.common / "firemud" / "hosted-review.700" / "decisions.tsv"
+        decisions_path.write_text("701\taccepted\tchanged decision reason\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            pr_review.sqlite_provider_imports.ProviderImportError,
+            "different immutable content|decision",
+        ):
+            pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+            )
+
     def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
         self.hosted_capture(
             finding_body=(

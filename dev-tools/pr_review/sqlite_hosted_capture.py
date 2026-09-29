@@ -902,7 +902,13 @@ def archive_window(
         author = first.get("author")
         login = author.get("login") if isinstance(author, dict) else None
         if in_window(first.get("createdAt")) and github.is_coderabbit_login(login):
-            review_threads.append(thread)
+            review_threads.append({
+                **thread,
+                "comments": {
+                    **thread["comments"],
+                    "nodes": [item for item in nodes if in_window(item.get("createdAt"))],
+                },
+            })
     return {"reviews": reviews, "comments": comments, "review_threads": review_threads}
 
 

@@ -170,10 +170,10 @@ def _import_one(
     summary_dispositions: Sequence[Any] | None,
     hosted_payload: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], str]:
-    try:
+    def import_checkpoint(target: SqliteReviewRecords) -> dict[str, Any]:
         if checkpoint.type == "Hosted":
-            imported = sqlite_provider_imports.import_hosted_checkpoint(
-                records,
+            return sqlite_provider_imports.import_hosted_checkpoint(
+                target,
                 repo=repo,
                 pr_number=pr_number,
                 checkpoint=checkpoint,
@@ -184,17 +184,117 @@ def _import_one(
                 summary_dispositions=summary_dispositions,
                 hosted_payload=hosted_payload,
             )
-        else:
-            imported = sqlite_provider_imports.import_cli_checkpoint(
-                records,
-                repo=repo,
-                pr_number=pr_number,
-                checkpoint=checkpoint,
-                actor=actor,
-                common=common,
-                scope=scope,  # type: ignore[arg-type]
-                coverage_limits=coverage_limits,
+        return sqlite_provider_imports.import_cli_checkpoint(
+            target,
+            repo=repo,
+            pr_number=pr_number,
+            checkpoint=checkpoint,
+            actor=actor,
+            common=common,
+            scope=scope,  # type: ignore[arg-type]
+            coverage_limits=coverage_limits,
+        )
+
+    try:
+        matching_attempts = [
+            item for item in records.attempt_history(pr_number)
+            if item["channel"] == ("hosted" if checkpoint.type == "Hosted" else "cli")
+            and (
+                item["attempt_id"] == checkpoint.run_id
+                if checkpoint.type == "CLI"
+                else item["provider_review_id"] == str(checkpoint.hosted_review_id)
             )
+        ]
+        if len(matching_attempts) > 1:
+            raise SqliteRecordsRepairError(
+                "provider checkpoint matches multiple completed attempts; exact run is uncertain"
+            )
+        if matching_attempts:
+            attempt = matching_attempts[0]
+            if attempt["state"] != "completed" or attempt["run_id"] != attempt["attempt_id"]:
+                raise SqliteRecordsRepairError(
+                    "matching provider attempt is not linked to its exact completed source run"
+                )
+            if attempt["checkpoint_id"] is not None and checkpoint.comment_id is not None and (
+                attempt["checkpoint_id"] != str(checkpoint.comment_id)
+            ):
+                raise SqliteRecordsRepairError(
+                    "matching provider attempt names a different public checkpoint"
+                )
+
+            # Validate the supplied capture with the canonical importer on a
+            # snapshot, then compare it to the automatic attempt's existing
+            # projection before linking any public origin or archive rows.
+            with tempfile.TemporaryDirectory(prefix="pr-review-attempt-repair-") as scratch:
+                probe = _clone_records(records, Path(scratch) / "records.sqlite3")
+                imported = import_checkpoint(probe)
+                probe_history = probe.history(pr_number)
+            expected_run = next(
+                (item for item in probe_history["runs"] if item["run_id"] == imported["run_id"]),
+                None,
+            )
+            stored_history = records.history(pr_number)
+            stored_run = next(
+                (item for item in stored_history["runs"] if item["run_id"] == attempt["run_id"]),
+                None,
+            )
+            if expected_run is None or stored_run is None:
+                raise SqliteRecordsRepairError("matching attempt has no verifiable completed source run")
+            if (
+                stored_run["source_pr"] != pr_number
+                or stored_run["channel"] != expected_run["channel"]
+                or stored_run["source_head"] != expected_run["source_head"]
+                or attempt["candidate_sha"] != expected_run["source_head"]
+                or stored_run["outcome"] != "completed"
+                or not stored_run["attributable"]
+                or stored_run["counts"] != expected_run["counts"]
+            ):
+                raise SqliteRecordsRepairError(
+                    "matching provider attempt conflicts with captured run identity or counts"
+                )
+
+            def observation_projection(history: Mapping[str, Any], run_id: str) -> dict[str, tuple[Any, ...]]:
+                routes = {item["route_id"]: item for item in history["routes"]}
+                return {
+                    item["source_finding_key"]: (
+                        item["disposition"],
+                        routes.get(item["route_id"], {}).get("target_pr")
+                        if item["route_id"] is not None else None,
+                    )
+                    for item in history["findings"] if item["run_id"] == run_id
+                }
+
+            def decision_projection(history: Mapping[str, Any], run_id: str) -> dict[str, tuple[Any, ...]]:
+                keys = {
+                    item["finding_id"]: item["source_finding_key"]
+                    for item in history["findings"] if item["run_id"] == run_id
+                }
+                result = {
+                    keys[item["finding_id"]]: (item["decision"], item["target_pr"], item["reason"])
+                    for item in history["decisions"]
+                    if item["run_id"] == run_id and item["scope"] == "source"
+                    and item["finding_id"] in keys
+                }
+                for correction in history["corrections"]:
+                    if correction["run_id"] == run_id and correction["finding_id"] in keys:
+                        result[keys[correction["finding_id"]]] = (
+                            correction["decision"], correction["target_pr"], correction["reason"]
+                        )
+                return result
+
+            if observation_projection(stored_history, attempt["run_id"]) != observation_projection(
+                probe_history, imported["run_id"]
+            ) or decision_projection(stored_history, attempt["run_id"]) != decision_projection(
+                probe_history, imported["run_id"]
+            ):
+                raise SqliteRecordsRepairError(
+                    "matching provider attempt conflicts with captured finding or decision evidence"
+                )
+            imported["run_id"] = attempt["run_id"]
+            imported["counts"] = stored_run["counts"]
+            imported["idempotent_replay"] = True
+        else:
+            imported = import_checkpoint(records)
     except (sqlite_provider_imports.ProviderImportError, ReviewRecordsError, evidence.EvidenceError) as exc:
         raise SqliteRecordsRepairError(str(exc)) from exc
     if not isinstance(imported, dict) or not isinstance(imported.get("run_id"), str):
