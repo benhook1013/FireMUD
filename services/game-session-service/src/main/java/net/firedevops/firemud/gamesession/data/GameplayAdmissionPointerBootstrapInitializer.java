@@ -1,5 +1,11 @@
 package net.firedevops.firemud.gamesession.data;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamesession.config.GameplayAdmissionPointerBootstrapProperties;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
@@ -34,18 +40,10 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
     if (pointerRepository.count() > 0) {
       return;
     }
-    if (bootstrapProperties.getPointers() == null) {
-      return;
-    }
-    for (GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer :
-        bootstrapProperties.getPointers()) {
-      if (pointer == null
-          || pointer.getWorldSlug() == null
-          || pointer.getWorldSlug().isBlank()
-          || pointer.getRealmSlug() == null
-          || pointer.getRealmSlug().isBlank()) {
-        continue;
-      }
+    List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
+        bootstrapProperties.getPointers();
+    validateSeeds(pointers);
+    for (GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer : pointers) {
       authorityService.upsertPointer(
           new GameplayAdmissionPointerMutation(
               pointer.getWorldSlug(),
@@ -73,6 +71,72 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
               0L,
               null));
     }
+  }
+
+  private static void validateSeeds(
+      List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers) {
+    if (pointers == null || pointers.isEmpty()) {
+      throw new IllegalArgumentException("Gameplay admission pointer bootstrap seeds are required");
+    }
+
+    Set<String> worldRealmKeys = new HashSet<>();
+    Set<String> runtimeTargetKeys = new HashSet<>();
+    Map<Long, Long> publicRealmCounts = new HashMap<>();
+    Set<Long> tenantIds = new HashSet<>();
+    for (int index = 0; index < pointers.size(); index++) {
+      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer = pointers.get(index);
+      if (pointer == null) {
+        throw invalidSeed(index, "must not be null");
+      }
+      requireText(pointer.getWorldSlug(), index, "world slug");
+      requireText(pointer.getWorldDisplayName(), index, "world display name");
+      requireText(pointer.getRealmSlug(), index, "realm slug");
+      requireText(pointer.getRealmDisplayName(), index, "realm display name");
+      if (pointer.getTenantId() <= 0) {
+        throw invalidSeed(index, "tenant ID must be positive");
+      }
+      if (pointer.getGameInstanceId() <= 0) {
+        throw invalidSeed(index, "game instance ID must be positive");
+      }
+
+      tenantIds.add(pointer.getTenantId());
+      String worldRealmKey =
+          pointer.getTenantId()
+              + ":"
+              + pointer.getWorldSlug().trim().toLowerCase(Locale.ROOT)
+              + ":"
+              + pointer.getRealmSlug().trim().toLowerCase(Locale.ROOT);
+      if (!worldRealmKeys.add(worldRealmKey)) {
+        throw invalidSeed(index, "duplicates a tenant world and realm selector");
+      }
+      String runtimeTargetKey = pointer.getTenantId() + ":" + pointer.getGameInstanceId();
+      if (!runtimeTargetKeys.add(runtimeTargetKey)) {
+        throw invalidSeed(index, "duplicates a tenant runtime target");
+      }
+      if (pointer.isVisible() && pointer.isPublicProductionRealm()) {
+        publicRealmCounts.merge(pointer.getTenantId(), 1L, Long::sum);
+      }
+    }
+
+    for (long tenantId : tenantIds) {
+      if (publicRealmCounts.getOrDefault(tenantId, 0L) != 1L) {
+        throw new IllegalArgumentException(
+            "Gameplay admission pointer bootstrap must define exactly one visible public "
+                + "production realm for tenant "
+                + tenantId);
+      }
+    }
+  }
+
+  private static void requireText(String value, int index, String field) {
+    if (value == null || value.isBlank()) {
+      throw invalidSeed(index, field + " is required");
+    }
+  }
+
+  private static IllegalArgumentException invalidSeed(int index, String reason) {
+    return new IllegalArgumentException(
+        "Invalid gameplay admission pointer bootstrap seed at index " + index + ": " + reason);
   }
 
   private static String stateScopeName(
