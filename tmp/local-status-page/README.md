@@ -22,6 +22,8 @@ Install the service unit in `/etc/systemd/system/`, then run `systemctl daemon-r
 
 Source, `progress.json`, and tests are tracked on the local Overseer branch and backed up to the private `benhook1013/FireMUD-status-page` repository. `status.json`, generated HTML, PID, and logs remain private runtime files outside that backup.
 
+Future scale option: if the number of per-PR pages makes rendering or publishing materially slow, measure those stages and evaluate serving review pages by PR number from a read-only database copy on the web host. The browser already checks for a newer published snapshot every two minutes; a faster snapshot cycle could provide near-live updates without a dynamic server. Keep the local controller database authoritative unless an actual scaling need justifies a different architecture.
+
 To back up source changes from the FireMUD worktree, commit the tracked files under `tmp/local-status-page`, then run this from the repository root. The subtree split includes only that folder's tracked history; it excludes the ignored runtime files and other Overseer notes.
 
 ```bash

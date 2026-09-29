@@ -33,6 +33,7 @@ class StatusPageTest(unittest.TestCase):
         ]}
         rendered = page.render(data, review, NOW, histories={42: history})
         self.assertIn("Subagent pre-review</strong><span>2 completed", rendered)
+        self.assertIn('<div class="activity-grid"><div class="activity-card independent-review">', rendered)
         self.assertIn("2/1/1", rendered)
         self.assertIn("0/0/0", rendered)
         self.assertIn("1h 5m", rendered)
@@ -293,8 +294,8 @@ class StatusPageTest(unittest.TestCase):
         )
         self.assertIn("Completed, review record missing", rendered)
         self.assertIn("its findings and count need recovery", rendered)
-        self.assertIn("rate limited", rendered)
-        self.assertIn("These attempts do not add review results", rendered)
+        self.assertNotIn("rate limited", rendered)
+        self.assertIn("Review data needs recovery", rendered)
 
     def test_route_status_summary_counts_all_routes(self):
         summary = page._route_status_summary([
@@ -378,7 +379,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("@media (max-width: 359px)", page.ACTIVITY_CSS)
         self.assertNotIn('class="activity-caption">', rendered)
         self.assertIn("Three-number pills mean found (raw) / accepted here (useful) / routed.", rendered)
-        self.assertIn(".history-card > h2 { margin: 0 0 .75rem; }", rendered)
+        self.assertIn(".history-card > h2 { margin: 0 0 .75rem; font-size: 1.35rem;", rendered)
 
     def test_activity_cards_show_only_nonzero_exception_counts(self):
         ordinary = {"raw": 2, "accepted": 1, "current_head": True, "attributable": True,
@@ -472,19 +473,20 @@ class StatusPageTest(unittest.TestCase):
         self.assertEqual(run.call_count, 3)
         self.assertEqual(snapshots[42]["state"], "empty")
 
-    def test_failed_cli_attempt_is_visible_without_adding_a_review_pill(self):
+    def test_failed_cli_attempt_is_not_shown_as_a_review(self):
         history = {"state": "available", "runs": [], "findings": [], "routes": [], "decisions": [],
                    "cli_attempts": {"available": True, "attempts": [{
                        "run_id": "run." + "a" * 32, "outcome": "rate_limited",
                        "finished_at": "2026-09-24T11:30:00Z",
                    }]}}
-        compact = page.render_failed_cli_attempts(history, NOW, compact=True)
         detail = page.render_review_detail(self.fixture(), page.review_snapshot(None, 42, HEAD, NOW),
                                            NOW, 42, history)
-        self.assertIn("CLI attempt, not a review: Rate limited", compact)
-        self.assertIn("Failed CLI attempts (not reviews)", detail)
+        self.assertNotIn("Rate limited", detail)
+        self.assertNotIn("Failed CLI attempts", detail)
+        self.assertNotIn("Review data needs recovery", detail)
+
         self.assertNotIn("run." + "a" * 32, detail)
-        self.assertNotIn('class="round-pill"', compact)
+        self.assertNotIn('class="round-pill"', detail)
 
     def test_detail_pages_are_generated_under_review_directory(self):
         data = self.fixture()

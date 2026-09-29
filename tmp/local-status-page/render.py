@@ -65,12 +65,7 @@ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: #ad3b55; color: #fff; }
-.attempt-note { margin: .55rem 0 0; padding: .4rem .6rem; border-left: 3px solid #d7aa61; background: #fff1d6; color: #755018; font-size: .78rem; }
-.attempt-history { margin-top: .8rem; padding: .55rem .7rem; border: 1px solid #d7aa61; border-radius: 8px; background: #fff9ec; }
-.attempt-history h3 { margin: 0 0 .35rem; font-size: .9rem; }
-.attempt-history ul { margin: 0; padding-left: 1.2rem; font-size: .82rem; }
-.attempt-history li + li { margin-top: .2rem; }
-.independent-review { margin-top: .5rem; color: #37414a; }
+.independent-review { color: #37414a; }
 @media (max-width: 760px) {
   .activity-grid { grid-template-columns: 1fr; }
   .round-pills { gap: .35rem; }
@@ -1259,26 +1254,20 @@ def render_review_attempts(history: dict) -> str:
     attempts = history.get("attempts", []) if isinstance(history, dict) else []
     if not isinstance(attempts, list):
         return ""
-    pending = [attempt for attempt in attempts if isinstance(attempt, dict)
-               and (attempt.get("state") != "completed" or not attempt.get("run_id"))]
-    if not pending:
+    missing = [attempt for attempt in attempts if isinstance(attempt, dict)
+               and attempt.get("state") == "completed" and not attempt.get("run_id")]
+    if not missing:
         return ""
     rows = []
-    for attempt in reversed(pending[-20:]):
+    for attempt in reversed(missing[-20:]):
         channel = _bounded_category(attempt.get("channel"))
-        state = _bounded_category(attempt.get("state"))
-        missing_run = attempt.get("state") == "completed" and not attempt.get("run_id")
-        label = "Completed, review record missing" if missing_run else state
         when = _record_text(attempt.get("finished_at") or attempt.get("started_at"))
-        rows.append(f'<li><strong>{channel}: {safe(label)}</strong>'
+        rows.append(f'<li><strong>{channel}: Completed, review record missing</strong>'
                     f'<span class="record-counts">{when}</span></li>')
-    warning = ('<p class="history-note">A completed attempt has no linked review record; '
-               'its findings and count need recovery.</p>'
-               if any(attempt.get("state") == "completed" and not attempt.get("run_id")
-                      for attempt in pending) else "")
-    return ('<section class="history-group"><h2>Review attempts</h2>'
-            '<p class="history-note">These attempts do not add review results.</p>'
-            f'{warning}<ul class="history-list">{"".join(rows)}</ul></section>')
+    return ('<section class="history-group"><h2>Review data needs recovery</h2>'
+            '<p class="history-note">A completed attempt has no linked review record; '
+            'its findings and count need recovery.</p>'
+            f'<ul class="history-list">{"".join(rows)}</ul></section>')
 
 
 def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
@@ -1289,9 +1278,8 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
         raise ValueError("review details require a configured queue PR")
     queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
     history = history or {"state": "unavailable"}
-    activity_html = (render_activity_cards(queue_item, now)
-                     + render_independent_activity(history, now)
-                     + render_failed_cli_attempts(history, now))
+    activity_html = render_activity_cards(
+        queue_item, now, independent_card=render_independent_activity(history, now))
     state = history.get("state")
     if state == "unavailable":
         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
@@ -1324,10 +1312,10 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
     records_html += render_review_attempts(history)
     timestamp = safe(now.isoformat())
     mast = render_mast(
-        f'PR #{pr} Review History',
-        f'<span class="mast-meta">Snapshot <time datetime="{timestamp}">{safe(local_time(now))}</time></span>',
-        "mast-meta",
-        (("/", "Delivery Status", "Status"), (f"{REPO_URL}{pr}", "Open PR on GitHub ↗", "GitHub ↗")),
+        "FireMUD Delivery Status",
+        f'<span class="refresh-time">Page rendered <time datetime="{timestamp}">{safe(local_time(now))}</time></span>',
+        "refresh-space",
+        (("/", "Delivery Status ↗", "Delivery ↗"), (f"{REPO_URL}{pr}", "GitHub ↗", "GitHub ↗")),
     )
     activity_section = activity_html or '<p class="history-note">Review-round summaries unavailable.</p>'
     return f'''<!doctype html>
@@ -1338,8 +1326,9 @@ def render_review_detail(data: dict, review: dict, now: datetime, pr: int,
 main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem) 4rem; }}
 .detail-title {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .7rem; }}
 .detail-title h2 {{ margin: 0; }} .detail-title .queue-status {{ margin-left: auto; }}
+.detail-pr-title {{ width: 100%; margin: 0; color: var(--muted); font-size: 1rem; }}
 .history-card {{ margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }}
-.history-card > h2 {{ margin: 0 0 .75rem; }}
+.history-card > h2 {{ margin: 0 0 .75rem; font-size: 1.35rem; letter-spacing: -.02em; }}
 .history-group {{ margin-top: 1.4rem; }} .history-group:first-child {{ margin-top: 0; }}
 .history-group h2 {{ font-size: 1.2rem; }} .history-list {{ margin: 0; padding-left: 1.3rem; }}
 .history-empty {{ margin: .3rem 0 .65rem; color: var(--muted); font-size: .85rem; }}
@@ -1380,7 +1369,8 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 {ACTIVITY_CSS}
 {SHARED_CSS}
 </style></head><body>{mast}<main>
-<section class="detail-title"><h2>{safe(item['title'])}</h2><span class="queue-status">{safe(item['stage'])}</span></section>
+<section class="detail-title"><h2>PR #{pr} Review History</h2><span class="queue-status">{safe(item['stage'])}</span>
+<p class="detail-pr-title">{safe(item['title'])}</p></section>
 <section class="history-card" aria-labelledby="round-summary"><h2 id="round-summary">Review rounds</h2>
 <p class="activity-caption activity-explanation">Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{activity_section}</section>
 <section class="history-card" aria-labelledby="record-history"><h2 id="record-history">Recorded review history</h2>{records_html}</section>
@@ -1388,7 +1378,7 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 </main></body></html>'''
 
 
-def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
+def render_activity_cards(queue_item: dict | None, now: datetime, *, independent_card: str = "") -> str:
     """Render the current compact Hosted/CLI round summaries for reuse on detail pages."""
     activity_cards = []
     if queue_item and isinstance(queue_item.get("review_activity"), dict):
@@ -1464,7 +1454,8 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                 f'<span>{safe(total_label)}</span></div>'
                 f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
             )
-    return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
+    cards = "".join(activity_cards) + independent_card
+    return f'<div class="activity-grid">{cards}</div>' if cards else ""
 
 
 def render_independent_activity(history: dict | None, now: datetime) -> str:
@@ -1507,38 +1498,6 @@ def render_independent_activity(history: dict | None, now: datetime) -> str:
             f'<strong>Subagent pre-review</strong><span>{len(completed)} completed</span></div>'
             f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>'
             f'{note}</div>')
-
-
-def render_failed_cli_attempts(history: dict | None, now: datetime, *, compact: bool = False) -> str:
-    """Keep provider failures visible without presenting them as review results."""
-    source = history.get("cli_attempts") if isinstance(history, dict) else None
-    if not isinstance(source, dict) or source.get("available") is not True:
-        return ""
-    attempts = source.get("attempts", [])
-    if not isinstance(attempts, list):
-        return ""
-    labels = {
-        "rate_limited": "Rate limited", "provider_failed": "Provider failed",
-        "timed_out": "Timed out", "setup_failed": "CLI setup failed",
-    }
-    rendered = []
-    for attempt in attempts:
-        if not isinstance(attempt, dict) or attempt.get("outcome") not in labels:
-            continue
-        finished = round_completion(attempt.get("finished_at"), now)
-        if finished is None or (compact and now - finished > timedelta(hours=6)):
-            continue
-        time_html = (f'<time datetime="{safe(finished.isoformat())}">'
-                     f'{safe(round_age(finished, now))} ago</time>')
-        rendered.append(f'{labels[attempt["outcome"]]} · {time_html}')
-        if compact:
-            break
-    if not rendered:
-        return ""
-    if compact:
-        return f'<p class="attempt-note">CLI attempt, not a review: {rendered[0]}</p>'
-    return ('<div class="attempt-history"><h3>Failed CLI attempts (not reviews)</h3>'
-            f'<ul>{"".join(f"<li>{item}</li>" for item in rendered)}</ul></div>')
 
 
 def write_review_detail_pages(output_dir: Path, data: dict, review: dict, now: datetime,
@@ -1678,9 +1637,8 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         elif queue_item and queue_item.get("detail_level") == "unknown":
             status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
         history = (histories or {}).get(number)
-        activity_grid = (render_activity_cards(queue_item, now)
-                         + render_independent_activity(history, now)
-                         + render_failed_cli_attempts(history, now, compact=True))
+        activity_grid = render_activity_cards(
+            queue_item, now, independent_card=render_independent_activity(history, now))
         if number == front_number:
             front_size_html = size_html
             if has_controller_states:

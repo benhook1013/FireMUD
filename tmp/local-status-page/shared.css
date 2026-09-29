@@ -78,6 +78,8 @@ header.mast {
   color: #fff;
   font-size: .86rem;
   font-weight: 700;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
   white-space: nowrap;
 }
 .mast .nav-short { display: none; }
