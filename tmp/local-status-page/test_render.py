@@ -134,6 +134,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<h1 class="brand">FireMUD Delivery Status</h1>', result)
         self.assertIn('</div><div class="mast-middle refresh-space"><form class="refresh-form"', result)
         self.assertIn('<nav class="repo-links">', result)
+        self.assertIn('class="local-public-link" href="https://status.preview.firedevops.net/"', result)
         self.assertIn('</form><span class="refresh-time">', result)
         self.assertIn('grid-template-areas: "title middle repo";', result)
         self.assertIn('grid-template-areas: "title repo" "middle middle";', result)

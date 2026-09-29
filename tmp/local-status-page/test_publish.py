@@ -225,6 +225,7 @@ class PublishedPageTest(unittest.TestCase):
             f'<script id="relative-age-updates">{age_script}</script>'
             f'<script id="snapshot-updates">{snapshot_script}</script>'
             '<h2>Worker lanes</h2><h2>Configured review queue</h2><a href="/queue-history.html">Queue history</a>'
+            '<a class="local-public-link" href="https://status.preview.firedevops.net/">Public Site</a>'
             '<footer>Local refresh instructions</footer>'
         )
         result = publisher.public_html(source, "http://192.168.50.100:8877/")
@@ -240,6 +241,7 @@ class PublishedPageTest(unittest.TestCase):
         age_hash = base64.b64encode(hashlib.sha256(age_script.encode()).digest()).decode()
         snapshot_hash = base64.b64encode(hashlib.sha256(snapshot_script.encode()).digest()).decode()
         self.assertIn('href="http://192.168.50.100:8877/"', result)
+        self.assertNotIn('class="local-public-link"', result)
         self.assertNotIn('action="/refresh"', result)
         self.assertNotIn('<form class="refresh-form"', result)
         self.assertIn('<span class="refresh-time">Refreshed '

@@ -36,6 +36,7 @@ AGE_BOOTSTRAP_SCRIPT = re.compile(r'<script id="age-pending-bootstrap">(.*?)</sc
 AGE_SCRIPT = re.compile(r'<script id="relative-age-updates">(.*?)</script>', re.DOTALL)
 SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re.DOTALL)
 REVIEW_LINK = re.compile(r'href="review/pr-(\d+)\.html"')
+LOCAL_PUBLIC_LINK = re.compile(r'<a class="local-public-link"[^>]*>.*?</a>', re.DOTALL)
 
 
 def local_wifi_url() -> str:
@@ -43,7 +44,7 @@ def local_wifi_url() -> str:
 
 
 def public_html(source: str, local_url: str, *, history: bool = False) -> str:
-    result = BRIEF_LINK.sub(r"\1 (local brief)", source)
+    result = LOCAL_PUBLIC_LINK.sub("", BRIEF_LINK.sub(r"\1 (local brief)", source))
     if REFRESH_TIME.search(result) is None:
         raise ValueError("the published page needs its read-only refresh timestamp")
     result = REFRESH_FORM.sub("", result)
@@ -96,7 +97,7 @@ def progress_public_html(source: str) -> str:
             or 'href="/"' not in source or "<form" in source
             or "/home/ben/" in source or "../../task-briefs/" in source):
         raise ValueError("the project map is incomplete or contains a private local path")
-    return source
+    return LOCAL_PUBLIC_LINK.sub("", source)
 
 
 def review_documents(linked_documents: str, directory: Path | None = None) -> dict[str, str]:
@@ -115,7 +116,7 @@ def review_documents(linked_documents: str, directory: Path | None = None) -> di
             raise ValueError(f"the rendered review detail page for PR {pr_number} is unavailable")
         if source.resolve(strict=True).parent != review_root:
             raise ValueError(f"the rendered review detail page for PR {pr_number} is outside its directory")
-        pages[f"review-pr-{pr_number}.html"] = source.read_text(encoding="utf-8")
+        pages[f"review-pr-{pr_number}.html"] = LOCAL_PUBLIC_LINK.sub("", source.read_text(encoding="utf-8"))
     return pages
 
 

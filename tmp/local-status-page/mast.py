@@ -21,6 +21,11 @@ def render_mast(title: str, middle_html: str, middle_class: str,
         f'<span class="nav-short">{escape(short)}</span></a>'
         for url, full, short in links
     )
+    navigation += (
+        '<a class="local-public-link" href="https://status.preview.firedevops.net/" '
+        'target="_blank" rel="noopener noreferrer">'
+        '<span class="nav-full">Public Site ↗</span><span class="nav-short">Public ↗</span></a>'
+    )
     return (
         '<header class="mast"><div class="mast-inner">'
         f'<div class="mast-content">{_FLAME}'
