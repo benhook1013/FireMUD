@@ -1917,6 +1917,105 @@ class HostedRunner:
         return candidate_heads[0]
 
     @staticmethod
+    def _manual_terminal_without_head(
+        repo: str,
+        pr: int,
+        payload: Mapping[str, Any],
+        command: Mapping[str, Any],
+        common: Path,
+    ) -> bool:
+        """Release admission on one immutable terminal result without assigning a review head."""
+        author = command.get("author")
+        trigger_id = github.immutable_database_id(dict(command))
+        trigger_url = command.get("url")
+        command_at = hosted.parse_timestamp(command.get("createdAt"))
+        if trigger_id is None or command_at is None or not isinstance(trigger_url, str) or not trigger_url:
+            return False
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            connections = [pull[name]["nodes"] for name in ("comments", "reviews", "reviewThreads")]
+        except (KeyError, TypeError):
+            return False
+        if (
+            not isinstance(pull, Mapping)
+            or any(not isinstance(nodes, list) for nodes in connections)
+            or any(not isinstance(item, Mapping) for nodes in connections for item in nodes)
+        ):
+            return False
+        state = hosted.trigger_state(
+            repo,
+            pr,
+            dict(payload),
+            {
+                "status": "posted",
+                # Empty is an explicit no-head sentinel; this ephemeral record is never persisted.
+                "head_sha": "",
+                "trigger": {
+                    "id": trigger_id,
+                    "created_at": command.get("createdAt"),
+                    "url": trigger_url,
+                    "author_login": author.get("login") if isinstance(author, Mapping) else None,
+                    "type": "full",
+                    "command": hosted.FULL_COMMAND,
+                },
+            },
+            hosted.default_trigger_record_path(repo, pr, common),
+        )
+        if state.terminal is not True or state.attributed is not True or state.response_id is None:
+            return False
+
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            comments = pull["comments"]["nodes"]
+        except (KeyError, TypeError):
+            return False
+        if not isinstance(comments, list) or any(not isinstance(item, Mapping) for item in comments):
+            return False
+        if state.state == "completed":
+            # A reply-only zero result is operationally terminal but remains non-counting without a head/checkpoint.
+            matches = [item for item in comments if github.immutable_database_id(dict(item)) == state.response_id]
+            return (
+                len(matches) == 1
+                and isinstance(matches[0].get("body"), str)
+                and hosted._is_finished_action_response(matches[0]["body"], allow_action_wrapper=True)
+                and hosted.finished_reply_without_findings(dict(payload), "", command_at, state.response_id)
+            )
+        if (
+            state.state not in {"rate_limited", "noop", "failed"}
+            or state.reason == "CodeRabbit finished after explicitly reporting incomplete file coverage"
+        ):
+            return False
+
+        terminal_ids: list[int] = []
+        active: list[datetime] = []
+        for item in comments:
+            author = item.get("author")
+            if not github.is_coderabbit_login(author.get("login") if isinstance(author, Mapping) else None):
+                continue
+            created = hosted.parse_timestamp(item.get("createdAt"))
+            updated = hosted.parse_timestamp(item.get("updatedAt"))
+            if created is None or updated is None or updated < created:
+                return False
+            if created <= command_at and updated <= command_at:
+                continue
+            if created <= command_at or created != updated:
+                return False
+            response_id = github.immutable_database_id(dict(item))
+            response_state = LiveEvidence._public_response_state(dict(item), "createdAt", {})
+            if response_id is None:
+                return False
+            if response_state == "active":
+                active.append(created)
+            elif response_state in {"rate_limited", "noop", "failed"}:
+                body = item.get("body")
+                if isinstance(body, str) and hosted._summary_has_explicit_incomplete_coverage(body):
+                    return False
+                terminal_ids.append(response_id)
+            else:
+                return False
+        return len(terminal_ids) == 1 and terminal_ids[0] == state.response_id and not active
+
+    @staticmethod
     def _normalize_rest_issue_comments(pr: int, comments: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         """Project a complete REST issue-comment history into the matcher shape."""
 
@@ -2096,6 +2195,9 @@ class HostedRunner:
                     )
                 reviewed_head = self._manual_trigger_reviewed_head(payload, command)
                 if reviewed_head is None:
+                    if self._manual_terminal_without_head(self.repo, other_pr, payload, command, common):
+                        # Public terminality releases only the operational request slot; it is never review credit.
+                        continue
                     raise ControllerError(
                         f"another manual Hosted request is unresolved for PR #{other_pr}: "
                         "its command-time head cannot be verified"

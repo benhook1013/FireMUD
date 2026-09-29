@@ -1360,6 +1360,104 @@ class RuntimeTest(unittest.TestCase):
                 42, Path(directory)
             )
 
+    def test_hosted_global_scan_releases_slot_for_headless_terminal_manual_status(self) -> None:
+        terminal_responses = (
+            "Review rate limited; next reviews available in 30 minutes",
+            f"This request {hosted.NOOP_MARKER}",
+            "The review failed due to an internal error.",
+        )
+        for index, response_body in enumerate(terminal_responses):
+            with self.subTest(response=response_body):
+                manual = {
+                    "databaseId": 930 + index * 2,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-23T00:00:00Z",
+                    "url": f"https://example.test/comments/{930 + index * 2}",
+                }
+                response = {
+                    "databaseId": 931 + index * 2,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": response_body,
+                    "createdAt": "2026-09-23T00:01:00Z",
+                    "updatedAt": "2026-09-23T00:01:00Z",
+                }
+                payload = self._payload([manual, response], head="d" * 40)
+                payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+                def api_endpoint(endpoint: str, manual: Mapping[str, Any] = manual) -> list[dict[str, Any]]:
+                    if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                        return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+                    if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                        return [self._rest_issue_comment(manual)]
+                    raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+                with (
+                    tempfile.TemporaryDirectory() as directory,
+                    patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                ):
+                    HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                        42, Path(directory)
+                    )
+
+    def test_hosted_global_scan_releases_slot_for_headless_finished_reply_only(self) -> None:
+        manual = {
+            "databaseId": 940,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/940",
+        }
+        finished_reply = {
+            "databaseId": 941,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, finished_reply], head="d" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+
+    def test_headless_terminal_manual_status_keeps_incomplete_coverage_blocked(self) -> None:
+        manual = {
+            "databaseId": 950,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/950",
+        }
+        failed_incomplete = {
+            "databaseId": 951,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "The review failed with incomplete coverage: 4 of 10 files were reviewed.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, failed_incomplete], head="d" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(
+                HostedRunner._manual_terminal_without_head(
+                    "owner/repo", 99, payload, manual, Path(directory)
+                )
+            )
+
     def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
         snapshots = {
             number: PullRequestSnapshot(number, "OPEN", "develop", BASE, HEAD, "feature", 1)
