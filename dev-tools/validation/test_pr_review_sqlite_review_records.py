@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from pr_review.sqlite_review_records import (
     AttemptNotFound,
     FindingObservation,
+    RecordsNotBootstrapped,
     RecordsSchemaIncompatible,
     ReviewRecordsError,
     SqliteReviewRecords,
@@ -123,8 +124,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
         self.assertEqual(str(raised.exception), "review attempt does not exist")
 
-    def test_attempt_marks_unbootstrapped_and_v4_v5_records_schemas_incompatible(self) -> None:
-        with self.assertRaises(RecordsSchemaIncompatible):
+    def test_attempt_distinguishes_unbootstrapped_and_incompatible_records_schemas(self) -> None:
+        with self.assertRaises(RecordsNotBootstrapped):
             self.records.attempt("attempt-on-unbootstrapped-database")
 
         self.bootstrap()
@@ -141,9 +142,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute(
                 "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
             )
-        with self.assertRaises(ReviewRecordsError) as raised:
+        with self.assertRaises(RecordsSchemaIncompatible):
             self.records.attempt("attempt-on-unknown-schema")
-        self.assertIs(type(raised.exception), ReviewRecordsError)
 
     def test_attempt_metadata_errors_are_not_schema_incompatibility(self) -> None:
         self.bootstrap()

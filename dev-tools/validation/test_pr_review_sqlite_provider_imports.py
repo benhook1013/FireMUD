@@ -176,6 +176,115 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertEqual(len(history["decisions"]), 1)
         self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
 
+    def test_hosted_import_replay_uses_original_decision_after_accepted_rejected_corrections(self) -> None:
+        self.hosted_capture()
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+        original = self.records.history(PR)["decisions"][0]
+        self.records.correct_source_decision(
+            first["run_id"],
+            "hosted-comment:701",
+            supersedes_id=original["decision_id"],
+            correction_id="correction.accepted-to-rejected",
+            decision="rejected",
+            actor="adjudicator",
+            reason="provider finding was not owned by this PR",
+            decided_at="2026-09-27T12:01:00Z",
+        )
+
+        rejected_replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+        self.assertTrue(rejected_replay["idempotent_replay"])
+        self.assertEqual(rejected_replay["counts"], {"found": 1, "accepted": 0, "routed": 0})
+
+        latest = self.records.history(PR)["corrections"][-1]
+        self.records.correct_source_decision(
+            first["run_id"],
+            "hosted-comment:701",
+            supersedes_id=latest["correction_id"],
+            correction_id="correction.rejected-to-accepted",
+            decision="accepted",
+            actor="adjudicator",
+            reason="follow-up review restored the original ownership decision",
+            decided_at="2026-09-27T12:02:00Z",
+        )
+        accepted_replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        self.assertTrue(accepted_replay["idempotent_replay"])
+        self.assertEqual(accepted_replay["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        history = self.records.history(PR)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        self.assertEqual(history["findings"][0]["disposition"], "accepted")
+        self.assertEqual(history["decisions"][0]["decision"], "accepted")
+        self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
+        self.assertEqual(
+            [item["decision"] for item in history["corrections"]],
+            ["rejected", "accepted"],
+        )
+
+    def test_hosted_import_replay_refuses_changed_provider_decision(self) -> None:
+        self.hosted_capture()
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+        (self.common / "firemud" / "hosted-review.700" / "decisions.tsv").write_text(
+            "701\trejected\tprovider decision changed\n",
+            encoding="utf-8",
+        )
+        changed_checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 700 -->",
+            accepted=0,
+        )
+
+        with self.assertRaisesRegex(
+            pr_review.sqlite_provider_imports.ProviderImportError,
+            "^run_id was already imported with different finding identity or decisions$",
+        ):
+            pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=changed_checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+            )
+
+        history = self.records.history(PR)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        self.assertEqual(history["corrections"], [])
+
     def test_hosted_reimport_preserves_old_projection_but_rejects_decision_conflict(self) -> None:
         self.hosted_capture()
         checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")

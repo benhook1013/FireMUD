@@ -60,7 +60,11 @@ class AttemptNotFound(ReviewRecordsError):
 
 
 class RecordsSchemaIncompatible(ReviewRecordsError):
-    """Raised when attempt reads cannot use an unbootstrapped or supported old schema."""
+    """Raised when the controller or review-records schema is incompatible."""
+
+
+class RecordsNotBootstrapped(RecordsSchemaIncompatible):
+    """Raised when the review-records schema has not been bootstrapped."""
 
 
 def _translate_database_errors(method):
@@ -2434,24 +2438,24 @@ class SqliteReviewRecords:
     def _require_controller_compatible(self, connection: sqlite3.Connection) -> None:
         schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if schema_version != SQLITE_SCHEMA_VERSION:
-            raise ReviewRecordsError(f"unsupported controller SQLite schema version {schema_version}")
+            raise RecordsSchemaIncompatible(f"unsupported controller SQLite schema version {schema_version}")
         if "controller_metadata" not in self._table_names(connection):
-            raise ReviewRecordsError("controller SQLite metadata is missing")
+            raise RecordsSchemaIncompatible("controller SQLite metadata is missing")
         try:
             row = connection.execute(
                 "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
             ).fetchone()
         except sqlite3.DatabaseError as exc:
-            raise ReviewRecordsError("controller SQLite metadata has an incompatible shape") from exc
+            raise RecordsSchemaIncompatible("controller SQLite metadata has an incompatible shape") from exc
         if row is None:
-            raise ReviewRecordsError("controller SQLite metadata row is missing")
+            raise RecordsSchemaIncompatible("controller SQLite metadata row is missing")
         data_model_version, min_writer_build = row
         if data_model_version != ReviewState().schema_version:
-            raise ReviewRecordsError(f"unsupported controller data-model version {data_model_version}")
+            raise RecordsSchemaIncompatible(f"unsupported controller data-model version {data_model_version}")
         if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-            raise ReviewRecordsError("controller SQLite minimum writer build metadata is invalid")
+            raise RecordsSchemaIncompatible("controller SQLite minimum writer build metadata is invalid")
         if self.writer_build < min_writer_build:
-            raise ReviewRecordsError(f"controller SQLite database requires writer build {min_writer_build}")
+            raise RecordsSchemaIncompatible(f"controller SQLite database requires writer build {min_writer_build}")
 
     @staticmethod
     def _raise_controller_writer_fence(connection: sqlite3.Connection) -> None:
@@ -2466,7 +2470,7 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
-            raise RecordsSchemaIncompatible(
+            raise RecordsNotBootstrapped(
                 "review-records schema is not bootstrapped; call bootstrap() explicitly"
             )
         try:
@@ -2475,25 +2479,23 @@ class SqliteReviewRecords:
                 f"min_writer_build FROM {_RECORDS_METADATA_TABLE} WHERE singleton = 1"
             ).fetchone()
         except sqlite3.DatabaseError as exc:
-            raise ReviewRecordsError("review-records metadata has an incompatible shape") from exc
+            raise RecordsSchemaIncompatible("review-records metadata has an incompatible shape") from exc
         if row is None:
-            raise ReviewRecordsError("review-records metadata row is missing")
+            raise RecordsSchemaIncompatible("review-records metadata row is missing")
         records_version, controller_version, data_model_version, min_writer_build = row
         if records_version != _RECORDS_SCHEMA_VERSION:
-            if records_version in {4, 5}:
-                raise RecordsSchemaIncompatible(f"unsupported review-records schema version {records_version}")
-            raise ReviewRecordsError(f"unsupported review-records schema version {records_version}")
+            raise RecordsSchemaIncompatible(f"unsupported review-records schema version {records_version}")
         if controller_version != SQLITE_SCHEMA_VERSION:
-            raise ReviewRecordsError(f"review records require controller schema {controller_version}")
+            raise RecordsSchemaIncompatible(f"review records require controller schema {controller_version}")
         if data_model_version != ReviewState().schema_version:
-            raise ReviewRecordsError(f"review records require controller data model {data_model_version}")
+            raise RecordsSchemaIncompatible(f"review records require controller data model {data_model_version}")
         if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-            raise ReviewRecordsError("review-records minimum writer build metadata is invalid")
+            raise RecordsSchemaIncompatible("review-records minimum writer build metadata is invalid")
         if self.writer_build < min_writer_build:
-            raise ReviewRecordsError(f"review records require writer build {min_writer_build}")
+            raise RecordsSchemaIncompatible(f"review records require writer build {min_writer_build}")
         missing = _RECORDS_TABLES - tables
         if missing:
-            raise ReviewRecordsError("review-records schema is incomplete")
+            raise RecordsSchemaIncompatible("review-records schema is incomplete")
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:

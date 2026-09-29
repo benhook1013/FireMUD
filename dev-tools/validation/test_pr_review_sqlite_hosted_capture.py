@@ -193,6 +193,59 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(comments_archive["review_threads"], [])
         self.assertEqual(json.loads(artifacts["metadata"])["response_id"], 102)
 
+    def test_completed_replay_requires_attempt_to_link_its_exact_source_run(self) -> None:
+        reply = {
+            "databaseId": 102,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-29T01:01:00Z",
+            "updatedAt": "2026-09-29T01:04:00Z",
+            "url": "https://github.example/owner/repo/pull/42#issuecomment-102",
+        }
+        summary = {
+            "databaseId": 103,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {HEAD[:12]} and {HEAD}."
+            ),
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+        }
+        payload = self.payload(comments=[self.trigger_comment(), reply, summary])
+        sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=payload,
+        )
+        self.records.import_completed_run(
+            run_id="other-hosted-run",
+            source_pr=PR,
+            channel="hosted",
+            findings=(),
+            source_decisions=(),
+            source_head=HEAD,
+            started_at=TRIGGER_AT,
+            finished_at="2026-09-29T02:00:00Z",
+        )
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?",
+                ("other-hosted-run", self.attempt_id),
+            )
+        with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "different source run"):
+            sqlite_hosted_capture.record_hosted_terminal_result(
+                self.records,
+                attempt_id=self.attempt_id,
+                repo=REPO,
+                source_pr=PR,
+                trigger_record=self.trigger_record(),
+                payload=payload,
+            )
+
     def test_completed_review_rolls_back_attempt_when_run_write_fails(self) -> None:
         reply = {
             "databaseId": 102,

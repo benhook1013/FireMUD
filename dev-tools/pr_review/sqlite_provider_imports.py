@@ -959,14 +959,62 @@ def _persist_import(
                 if item["run_id"] == run_id
             }
             supplied = {item.source_finding_key: item for item in observations}
-            expected_counts = {
-                "found": len(observations),
-                "accepted": sum(item["decision"] == "accepted" for item in decisions),
-                "routed": sum(item["decision"] == "routed" for item in decisions),
+            finding_keys = {
+                item["finding_id"]: item["source_finding_key"]
+                for item in persisted.values()
             }
-            if set(persisted) != set(supplied) or existing_run["counts"] != expected_counts:
+            original_decisions = {
+                finding_keys[item["finding_id"]]: item
+                for item in history["decisions"]
+                if item["run_id"] == run_id
+                and item["scope"] == "source"
+                and item["finding_id"] in finding_keys
+            }
+            expected_counts = {
+                "found": len(persisted),
+                "accepted": sum(item["decision"] == "accepted" for item in original_decisions.values()),
+                "routed": sum(item["decision"] == "routed" for item in original_decisions.values()),
+            }
+            supplied_decisions = {
+                item["source_finding_key"]: item["decision"]
+                for item in decisions
+            }
+            if (
+                set(persisted) != set(supplied)
+                or set(original_decisions) != set(persisted)
+                or len(decisions) != len(original_decisions)
+                or supplied_decisions != {
+                    key: item["decision"]
+                    for key, item in original_decisions.items()
+                }
+                or {
+                    "found": len(observations),
+                    "accepted": sum(item["decision"] == "accepted" for item in decisions),
+                    "routed": sum(item["decision"] == "routed" for item in decisions),
+                }
+                != expected_counts
+            ):
                 raise ProviderImportError(
                     "run_id was already imported with different finding identity or decisions"
+                )
+            current_decisions = {
+                key: item["decision"]
+                for key, item in original_decisions.items()
+            }
+            for correction in history["corrections"]:
+                if correction["run_id"] != run_id:
+                    continue
+                finding_key = finding_keys.get(correction["finding_id"])
+                if finding_key is not None:
+                    current_decisions[finding_key] = correction["decision"]
+            current_counts = {
+                "found": len(current_decisions),
+                "accepted": sum(item == "accepted" for item in current_decisions.values()),
+                "routed": sum(item == "routed" for item in current_decisions.values()),
+            }
+            if existing_run["counts"] != current_counts:
+                raise ProviderImportError(
+                    "run_id has counts that conflict with its immutable decisions and correction history"
                 )
             observations = tuple(
                 dataclasses.replace(

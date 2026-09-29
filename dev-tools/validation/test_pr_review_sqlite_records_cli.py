@@ -110,6 +110,28 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(len(history["findings"]), 2)
         self.assertEqual(history["routes"][0]["target_pr"], 2895)
 
+    def test_subagent_completion_replay_preserves_attempt_finish_time_without_prior_run(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "subagent.replay-finished-at"
+        self.invoke(
+            "subagent", "start", "--pr", "2893", "--run-id", run_id,
+            "--reviewer", "Luna", "--scope", "narrow", "--database", str(self.database),
+        )
+        expected_finished_at = "2026-09-29T01:02:03Z"
+        SqliteReviewRecords(self.database).finish_attempt(
+            run_id, state="completed", finished_at=expected_finished_at,
+        )
+        code, completed = self.invoke(
+            "subagent", "complete", "--run-id", run_id, "--actor", "Overseer",
+            "--database", str(self.database),
+        )
+        self.assertEqual(code, 0)
+        self.assertFalse(completed["result"]["run"]["idempotent_replay"])
+        self.assertEqual(
+            SqliteReviewRecords(self.database).history(2893)["runs"][0]["finished_at"],
+            expected_finished_at,
+        )
+
     def test_failed_subagent_pass_has_no_completed_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         self.invoke("subagent", "start", "--pr", "2893", "--run-id", "subagent.failed-1",

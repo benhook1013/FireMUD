@@ -23,7 +23,16 @@ def observe_trigger(repo: str, pr: int, trigger_id: int) -> hosted.TriggerState:
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     for path in hosted.trigger_record_paths(repo, pr):
-        if path.name.startswith("trigger-") and path.name != f"trigger-{trigger_id}.json":
+        if path.name == "trigger.json":
+            reservation = hosted.load_trigger_reservation(path, repo, pr)
+            trigger = reservation.get("trigger")
+            if not isinstance(trigger, dict):
+                # An unresolved current posting reservation has no public
+                # trigger yet and cannot be the requested exact trigger.
+                continue
+            if type(trigger.get("id")) is not int or trigger["id"] != trigger_id:
+                continue
+        elif path.name != f"trigger-{trigger_id}.json":
             continue
         record = hosted.load_trigger_record(path, repo, pr)
         trigger = record.get("trigger")

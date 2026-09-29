@@ -128,17 +128,13 @@ def record_hosted_terminal_result(
         ):
             raise HostedCaptureError("terminal Hosted replay conflicts with its stored immutable identity")
         if completed:
-            if attempt["run_id"] not in (None, attempt_id):
+            if attempt["run_id"] != attempt_id:
                 raise HostedCaptureError("terminal Hosted attempt links to a different source run")
             runs = [
                 item for item in records.history(source_pr)["runs"] if item["run_id"] == attempt_id
             ]
             if len(runs) != 1:
                 raise HostedCaptureError("completed Hosted attempt has no unique stored source run")
-            if attempt["run_id"] is None:
-                # Recover only the exact already-created run after a crash
-                # between record_run and link_attempt_run.
-                records.link_attempt_run(attempt_id, attempt_id)
             return {
                 "attempt_id": attempt_id,
                 "state": result.state,

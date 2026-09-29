@@ -647,29 +647,21 @@ def _load_cli_capture(
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
     # New runs are adjudicated in SQLite. Historical captures retain their
     # existing TSV evidence until the one-time backfill proves each record.
-    from .sqlite_review_records import ReviewRecordsError
+    from .sqlite_review_records import RecordsNotBootstrapped, RecordsSchemaIncompatible, ReviewRecordsError
 
     if selected_records is not None:
         try:
             sql_decisions = selected_records.cli_source_decisions(checkpoint.run_id)
+        except RecordsNotBootstrapped:
+            # Historical checkpoints predate the records schema and retain
+            # their source decisions in the capture's decisions.tsv.
+            sql_decisions = None
+        except RecordsSchemaIncompatible as exc:
+            raise CaptureInvalid(
+                "linked SQLite CLI decisions use an incompatible schema; run records migrate before importing"
+            ) from exc
         except ReviewRecordsError as exc:
-            message = str(exc)
-            if message == "review-records schema is not bootstrapped; call bootstrap() explicitly":
-                # Historical checkpoints predate the records schema and retain
-                # their source decisions in the capture's decisions.tsv.
-                sql_decisions = None
-            elif message.startswith((
-                "unsupported review-records schema version",
-                "unsupported controller SQLite schema version",
-                "controller SQLite metadata has an incompatible shape",
-                "review-records ",
-                "review records require ",
-            )):
-                raise CaptureInvalid(
-                    "linked SQLite CLI decisions use an incompatible schema; run records migrate before importing"
-                ) from exc
-            else:
-                raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
+            raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
         if sql_decisions is not None:
             capture = CaptureData(metadata, findings, sql_decisions, [], True, str(run_dir.resolve()))
             if validate_checkpoint_decisions:
@@ -761,6 +753,8 @@ def discover_cli_captures(
         roots[0] / "runs",
         roots[0] / "coderabbit-review-logs",
     )
+    from .sqlite_review_records import RecordsSchemaIncompatible
+
     captures: list[CaptureData] = []
     visited: set[Path] = set()
     for root in candidate_roots:
@@ -813,6 +807,13 @@ def discover_cli_captures(
                         records=records,
                     )
                 )
+            except CaptureInvalid as exc:
+                # A schema cutover error is actionable evidence. Do not let
+                # discovery silently drop a current-head capture (or hide a
+                # required migration behind an empty history result).
+                if isinstance(exc.__cause__, RecordsSchemaIncompatible):
+                    raise
+                continue
             except (EvidenceError, OSError, ValueError):
                 continue
     return captures

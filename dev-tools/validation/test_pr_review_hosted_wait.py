@@ -45,6 +45,32 @@ class HostedWaitTests(unittest.TestCase):
             self.assertEqual(classify.call_args.args[:3], ("owner/repo", 19, payload))
             self.assertEqual(classify.call_args.args[4], path)
 
+    def test_exact_wait_skips_unposted_current_reservation(self) -> None:
+        current = Path("trigger.json")
+        archived = Path("trigger-42.json")
+        reservation = {
+            "repository": "owner/repo",
+            "pr_number": 19,
+            "status": "posting",
+            "head_sha": "a" * 40,
+        }
+        record = {
+            "repository": "owner/repo",
+            "pr_number": 19,
+            "head_sha": "a" * 40,
+            "trigger": {"id": 42},
+        }
+        expected = observation("completed", terminal=True)
+        with (
+            patch.object(hosted, "trigger_record_paths", return_value=[current, archived]),
+            patch.object(hosted, "load_trigger_reservation", return_value=reservation),
+            patch.object(hosted, "load_trigger_record", return_value=record) as load_record,
+            patch.object(github, "fetch_pull_request", return_value={"complete": "snapshot"}),
+            patch.object(hosted, "trigger_state", return_value=expected),
+        ):
+            self.assertIs(hosted_wait.observe_trigger("owner/repo", 19, 42), expected)
+        load_record.assert_called_once_with(archived, "owner/repo", 19)
+
     def test_unknown_trigger_does_not_fetch_or_post(self) -> None:
         with (
             patch.object(hosted, "trigger_record_paths", return_value=[]),

@@ -1008,7 +1008,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 metadata = attempt["metadata"]
                 prior = next((run for run in store.history(attempt["source_pr"])["runs"]
                               if run["run_id"] == args.run_id), None)
-                finished_at = prior["finished_at"] if prior else datetime.now(timezone.utc).isoformat(timespec="seconds")
+                finished_at = prior["finished_at"] if prior else attempt["finished_at"]
+                if not isinstance(finished_at, str) or not finished_at:
+                    finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 recorded = store.import_completed_run(
                     run_id=args.run_id,
                     source_pr=attempt["source_pr"],

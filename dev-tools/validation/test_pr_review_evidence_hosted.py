@@ -20,7 +20,7 @@ from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
-from pr_review.sqlite_store import SqliteStateStore
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
 REPO = "owner/repo"
 PR = 42
@@ -558,6 +558,68 @@ class GithubAndEvidenceTests(unittest.TestCase):
                     decision_text="1\trejected\tpre-cutover decision\n",
                     records=records,
                 )
+
+    def test_cli_discovery_propagates_unsupported_v5_records_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
+                )
+
+            run_id = "run.UnsupportedV5"
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+    def test_cli_discovery_propagates_controller_schema_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(f"PRAGMA user_version = {SQLITE_SCHEMA_VERSION + 1}")
+
+            run_id = "run.ControllerSchema"
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
 
     def _hosted_capture_snapshot(self, common: Path) -> Path:
         review_id = 99

@@ -320,6 +320,53 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual([row[0] for row in artifacts], ["hosted_comments", "hosted_review", "metadata"])
         self.assertTrue(all(len(row[1]) == 64 for row in artifacts))
 
+    def test_replay_after_source_decision_correction_keeps_origin_and_current_counts(self) -> None:
+        self.hosted_capture()
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        first = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+        history = self.records.history(PR)
+        self.records.correct_source_decision(
+            first["items"][0]["run_id"],
+            "hosted-comment:701",
+            supersedes_id=history["decisions"][0]["decision_id"],
+            correction_id="correction.repair-accepted-to-rejected",
+            decision="rejected",
+            actor="adjudicator",
+            reason="correction retained the audited source evidence",
+            decided_at="2026-09-27T12:01:00Z",
+        )
+
+        replay = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+
+        self.assertEqual(replay["items"][0]["action"], "already_imported")
+        self.assertEqual(
+            replay["items"][0]["counts"],
+            {"found": 1, "accepted": 0, "routed": 0},
+        )
+        self.assertEqual(
+            self.records.history(PR)["runs"][0]["counts"],
+            {"found": 1, "accepted": 0, "routed": 0},
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 3)
+
     def test_repair_links_exact_automatically_recorded_cli_attempt_without_duplicate(self) -> None:
         self.cli_capture()
         self.record_cli_attempt()
