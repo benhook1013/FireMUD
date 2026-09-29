@@ -180,7 +180,7 @@ class EntityDigestBaselineMigrationServiceTest {
   }
 
   @Test
-  void migrateRejectsDraftBeforeEntityDigestOrAuditRead() {
+  void migrateRejectsNewDraftOperationBeforeEntityDigestOrBaselineRead() {
     Version draft = version();
     draft.setVersionState(VersionLifecycleState.DRAFT);
     when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
@@ -193,7 +193,8 @@ class EntityDigestBaselineMigrationServiceTest {
 
     assertEquals("VERSION_DRAFT", rejected.failureCode());
     verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
-    verify(auditRepository, never()).findByOperationId(OPERATION_ID);
+    verify(auditRepository).findByOperationId(OPERATION_ID);
+    verify(baselineRepository, never()).findById(BASELINE_ID);
     verify(auditRepository, never()).insert(any());
   }
 
@@ -300,6 +301,29 @@ class EntityDigestBaselineMigrationServiceTest {
     assertEquals("v2-content", result.contentDigest());
     verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
     verify(versionRepository).findByTenantIdAndId(TENANT_ID, VERSION_ID);
+  }
+
+  @Test
+  void exactRetryOfCommittedOperationStillReadsBackAfterVersionBecomesDraft() {
+    RecordedParticipantDigest migrated = migratedBaseline("v2-content", "version:42");
+    EntityDigestBaselineMigrationAudit audit = audit(source, migrated, AUDIT_ID, auditTime());
+    Version draft = version();
+    draft.setVersionState(VersionLifecycleState.DRAFT);
+    when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
+        .thenReturn(Optional.of(draft));
+    when(auditRepository.findByOperationId(OPERATION_ID)).thenReturn(Optional.of(audit));
+    when(baselineRepository.findById(BASELINE_ID)).thenReturn(Optional.of(migrated));
+
+    EntityDigestBaselineMigrationService.MigrationResult result =
+        serviceWithMockWriter().migrate(command);
+
+    assertEquals(
+        EntityDigestBaselineMigrationService.MigrationDisposition.EXACT_RETRY,
+        result.disposition());
+    assertEquals("v2-content", result.contentDigest());
+    verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
+    verify(auditRepository, never()).insert(any());
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
   }
 
   @Test

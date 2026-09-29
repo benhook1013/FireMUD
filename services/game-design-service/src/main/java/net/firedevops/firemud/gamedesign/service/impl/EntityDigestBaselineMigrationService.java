@@ -144,16 +144,15 @@ public class EntityDigestBaselineMigrationService {
         || version.isScriptOnly()) {
       throw rejected("VERSION_SCOPE_MISMATCH", "version is outside the tenant or is script-only");
     }
-    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
-      throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
-    }
-
     Optional<EntityDigestBaselineMigrationAudit> priorAudit =
         auditRepository.findByOperationId(command.operationId());
     if (priorAudit.isPresent()) {
       EntityDigestBaselineMigrationAudit audit = priorAudit.orElseThrow();
       assertAuditSourceMatchesCommand(audit, command);
       return readBackCommittedResult(command, audit, MigrationDisposition.EXACT_RETRY);
+    }
+    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
+      throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
     }
 
     RecordedParticipantDigest current =
