@@ -579,7 +579,8 @@ def _screen_json_artifact(kind: str, content: str) -> None:
     try:
         if kind == "cli_events":
             documents = []
-            for line in content.splitlines():
+            for line in content.split("\n"):
+                line = line.removesuffix("\r")
                 if line.strip():
                     document = json.loads(line)
                     if not isinstance(document, dict):

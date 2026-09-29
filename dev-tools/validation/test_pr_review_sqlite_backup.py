@@ -359,6 +359,19 @@ class SqliteBackupTest(unittest.TestCase):
             backup_database(self.database, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
 
+    def test_cli_event_with_unicode_line_separator_is_screened_and_backed_up(self) -> None:
+        content = json.dumps({"message": "before\u2028after"}, ensure_ascii=False) + "\n"
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = ?",
+                (content, "run.backupfixture", "cli_events"),
+            )
+
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+        self.assertIn(receipt.remote_path, self.remote_files)
+
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
 
