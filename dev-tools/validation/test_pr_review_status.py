@@ -232,6 +232,8 @@ class StatusTest(unittest.TestCase):
         controller.status_for_pr.side_effect = stack_report
         with patch.object(cli, "default_controller", return_value=controller), patch.object(
             status, "status", side_effect=report_for
+        ), patch.object(
+            cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             target, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2879", "--json"]))
             source, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2828", "--json"]))
@@ -1082,6 +1084,7 @@ class StatusTest(unittest.TestCase):
         with (
             patch.object(cli, "default_controller", return_value=controller),
             patch.object(status, "status", return_value=report),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
 
@@ -1120,6 +1123,7 @@ class StatusTest(unittest.TestCase):
         with (
             patch.object(cli, "default_controller", return_value=controller),
             patch.object(status, "status", return_value=report) as status_call,
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
 

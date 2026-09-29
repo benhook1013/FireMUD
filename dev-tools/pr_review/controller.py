@@ -19,7 +19,9 @@ import dataclasses
 import fcntl
 import re
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -596,10 +598,11 @@ class ReviewController:
         anchor: AnchorFacts,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Return only observations not captured by the exact legacy transition."""
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         transition = self._legacy_transition_for(state, pr, anchor)
         if transition is None:
             return [self._clear_untrusted_non_counting(value) for value in history]
@@ -618,6 +621,7 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Project exact legacy observations as non-counting policy history.
 
@@ -627,7 +631,7 @@ class ReviewController:
         deliberately left visible to policy and can still block review.
         """
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
@@ -647,6 +651,8 @@ class ReviewController:
         pr: int,
         channel: policy.Channel,
         history_cache: dict[tuple[int, str], list[Any]] | None,
+        *,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Read one channel history once during a composed status invocation."""
 
@@ -654,7 +660,14 @@ class ReviewController:
             return _history(self._evidence_provider, pr, channel)
         key = (pr, channel.value)
         if key not in history_cache:
-            history_cache[key] = _history(self._evidence_provider, pr, channel)
+            started = time.perf_counter() if phase_timings is not None else 0.0
+            try:
+                history_cache[key] = _history(self._evidence_provider, pr, channel)
+            finally:
+                if phase_timings is not None:
+                    phase_timings["deep_evidence_history_ms"] = phase_timings.get(
+                        "deep_evidence_history_ms", 0.0
+                    ) + (time.perf_counter() - started) * 1000
         return history_cache[key]
 
     @staticmethod
@@ -1057,8 +1070,10 @@ class ReviewController:
         refresh_prs: set[int] | None = None,
         evidence_prs: set[int] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
-        remote_heads = self.git.remote_heads()
+        remote_heads = remote_head_snapshot if remote_head_snapshot is not None else self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(
             state,
             remote_heads,
@@ -1165,7 +1180,15 @@ class ReviewController:
             if not self._current_branches_match(state, live, baseline, pr, remote_heads):
                 continue
             try:
-                current = self._anchor(pr, live[pr], link)
+                anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                try:
+                    current = self._anchor(pr, live[pr], link)
+                finally:
+                    if phase_timings is not None:
+                        phase_timings["local_anchors_ms"] = (
+                            phase_timings.get("local_anchors_ms", 0.0)
+                            + (time.perf_counter() - anchor_started) * 1000
+                        )
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                 continue
@@ -1194,7 +1217,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is not None:
@@ -1331,7 +1359,14 @@ class ReviewController:
             current = anchors.get(pr)
             if current is None:
                 try:
-                    current = self._anchor(pr, live[pr], link)
+                    anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        current = self._anchor(pr, live[pr], link)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["local_anchors_ms"] = phase_timings.get(
+                                "local_anchors_ms", 0.0
+                            ) + (time.perf_counter() - anchor_started) * 1000
                 except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                     reason = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                     anchor_failures[pr] = reason
@@ -1343,7 +1378,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is None:
@@ -2042,12 +2082,20 @@ class ReviewController:
         return cli_path, hosted_path
 
     @contextlib.contextmanager
-    def _stop_review_locks(self, pr: int):
+    def _stop_review_locks(self, pr: int, channel: str):
         """Prevent the stop decision from racing an active channel review."""
 
         handles = []
         try:
-            for path in self._stop_lock_paths(pr):
+            lock_paths = self._stop_lock_paths(pr)
+            # Hosted request locks are scoped to one PR.  A Hosted stop must
+            # not be coupled to the repository-wide CLI lock, which may be
+            # held by an unrelated PR.  CLI stops retain both locks because a
+            # CLI run owns the repository-wide lock and the target request
+            # lock while it performs its preflight.
+            if channel == policy.Channel.HOSTED.value:
+                lock_paths = (lock_paths[1],)
+            for path in lock_paths:
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 handle = path.open("a+")
                 handles.append(handle)
@@ -4303,6 +4351,8 @@ class ReviewController:
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         review_target_prs: Sequence[int] | None = None,
         review_target_selection_complete: bool = False,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         if history_cache is None:
             history_cache = {}
@@ -4320,7 +4370,14 @@ class ReviewController:
         if live_identity_cache is not None:
             for pr in evidence_prs or ():
                 if pr not in live_identity_cache:
-                    live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    identity_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                                "deep_pr_identity_ms", 0.0
+                            ) + (time.perf_counter() - identity_started) * 1000
             selected_live_identities = dict(live_identities or {})
             selected_live_identities.update(live_identity_cache)
             refresh_prs = set()
@@ -4330,13 +4387,20 @@ class ReviewController:
             refresh_prs=refresh_prs,
             evidence_prs=evidence_prs,
             history_cache=history_cache,
+            remote_head_snapshot=remote_head_snapshot,
+            phase_timings=phase_timings,
         )
         values: list[dict[str, Any]] = []
         histories = {
             channel: {
                 pr: (
                     self._policy_history(
-                        state, pr, channel, reconciliation, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        reconciliation,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                     if evidence_prs is None or pr in evidence_prs
                     else []
@@ -4661,24 +4725,31 @@ class ReviewController:
         except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
             return self._unknown_overview(state, str(error))
 
+        # Closed PRs remain in the queue for history, but old manual trigger
+        # comments and reservations on them cannot be active review targets.
+        # Deep-reading those records on every display refresh is expensive;
+        # request admission still performs its own fresh repository-wide check.
+        open_prs = tuple(pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN")
         active_targets = {
             allocation.pr
             for allocation in state.allocations.values()
-            if allocation.handoff_checkpoint is None and allocation.stop_basis is None
+            if allocation.pr in open_prs
+            and allocation.handoff_checkpoint is None
+            and allocation.stop_basis is None
         }
         active_scan_status = "unknown"
         active_scan_error = None
         discover_active = getattr(self._evidence_provider, "active_review_targets", None)
         if callable(discover_active):
             try:
-                found = discover_active(state.ordered_prs, raw_identities)
+                found = discover_active(open_prs, raw_identities)
                 active_scan_status = "complete"
             except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
                 found = set()
                 active_scan_status = "unknown"
                 active_scan_error = str(error)
             if not isinstance(found, (set, frozenset)) or any(
-                isinstance(pr, bool) or not isinstance(pr, int) or pr not in state.ordered_prs for pr in found
+                isinstance(pr, bool) or not isinstance(pr, int) or pr not in open_prs for pr in found
             ):
                 active_scan_status = "unknown"
                 active_scan_error = "active review target probe returned malformed PR identities"
@@ -4687,11 +4758,11 @@ class ReviewController:
 
         first_four = []
         for pr in state.ordered_prs:
-            if not batch_live[pr].merged:
+            if batch_live[pr].state == "OPEN":
                 first_four.append(pr)
                 if len(first_four) == 4:
                     break
-        candidate_prs = [pr for pr in state.ordered_prs if not batch_live[pr].merged]
+        candidate_prs = [pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN"]
         target_prs = set(first_four) | active_targets
         target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
         deep_prs = target_prs.intersection(state.ordered_prs)
@@ -4701,6 +4772,7 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] = {}
         live_identity_cache: dict[int, Any] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        phase_timings: dict[str, float] = {}
         target_scan_prs: list[int] = []
         while deep_prs:
             frontier = max(state.ordered_prs.index(pr) for pr in deep_prs)
@@ -4708,15 +4780,42 @@ class ReviewController:
             scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
             target_scan_prs: list[int] = []
             for pr in state.ordered_prs:
-                if batch_live[pr].merged:
+                if batch_live[pr].state != "OPEN":
                     continue
                 if pr not in deep_prs:
                     break
                 target_scan_prs.append(pr)
             target_scan_complete = all(
-                batch_live[pr].merged or pr in deep_prs for pr in state.ordered_prs
+                batch_live[pr].state != "OPEN" or pr in deep_prs for pr in state.ordered_prs
             )
             try:
+                # Deep PR metadata and complete review snapshots are independent
+                # reads. Fetch the newly selected window together instead of
+                # serializing each GitHub round trip. New-request preflight is
+                # separate and still reads fresh evidence at request time.
+                new_deep_prs = [
+                    pr for pr in state.ordered_prs if pr in deep_prs and pr not in live_identity_cache
+                ]
+                if new_deep_prs:
+                    fetch_started = time.perf_counter()
+                    prefetch_payload = getattr(self._evidence_provider, "prefetch_payload", None)
+                    with ThreadPoolExecutor(max_workers=min(8, len(new_deep_prs) * 2)) as pool:
+                        identities = {
+                            pr: pool.submit(self._require_github().pull_request, pr)
+                            for pr in new_deep_prs
+                        }
+                        evidence_reads = (
+                            [pool.submit(prefetch_payload, pr) for pr in new_deep_prs]
+                            if callable(prefetch_payload)
+                            else []
+                        )
+                        for pr in new_deep_prs:
+                            live_identity_cache[pr] = identities[pr].result()
+                        for future in evidence_reads:
+                            future.result()
+                    phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                        "deep_pr_identity_ms", 0.0
+                    ) + (time.perf_counter() - fetch_started) * 1000
                 scoped_report = self._status_from_state(
                     scoped_state,
                     evidence_prs=deep_prs,
@@ -4726,6 +4825,8 @@ class ReviewController:
                     stop_audit_cache=stop_audit_cache,
                     review_target_prs=target_scan_prs,
                     review_target_selection_complete=target_scan_complete,
+                    remote_head_snapshot=remote_heads,
+                    phase_timings=phase_timings,
                 )
             except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
                 deep_error = str(error)
@@ -4744,6 +4845,42 @@ class ReviewController:
                 break
             deep_prs.update(next_target_prs)
 
+        remote_recheck_error = None
+        remote_affected: set[int] = set()
+        if deep_error is None and deep_prs:
+            try:
+                verified_remote_heads = self.git.remote_heads()
+            except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
+                remote_recheck_error = str(error)
+                remote_affected.update(deep_prs)
+            else:
+                relevant_refs: set[str] = set()
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.state != "OPEN":
+                        continue
+                    relevant_refs.add(item.base_ref)
+                    if item.head_ref:
+                        relevant_refs.add(item.head_ref)
+                changed_refs = {
+                    ref
+                    for ref in relevant_refs
+                    if remote_heads.get(ref) != verified_remote_heads.get(ref)
+                }
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.state != "OPEN":
+                        continue
+                    if item.base_ref in changed_refs or item.head_ref in changed_refs:
+                        remote_affected.add(pr)
+            changed = True
+            while changed:
+                changed = False
+                for pr in state.ordered_prs:
+                    if links[pr].parent_pr in remote_affected and pr not in remote_affected:
+                        remote_affected.add(pr)
+                        changed = True
+
         scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
         if not scoped_prs and deep_error is None:
             # The configured stack may contain only merged PRs; policy selection
@@ -4755,7 +4892,7 @@ class ReviewController:
             for item in (scoped_report or {}).get("prs", [])
             if isinstance(item, Mapping)
         }
-        mismatch: set[int] = set()
+        mismatch: set[int] = set(remote_affected)
         for pr in scoped_prs:
             if pr not in deep_prs:
                 continue
@@ -4787,7 +4924,7 @@ class ReviewController:
                 for pr in target_scan_prs
                 if pr in mismatch
                 or (
-                    not batch_live[pr].merged
+                    batch_live[pr].state == "OPEN"
                     and (
                         batch_live[pr].base_ref != links[pr].parent_ref
                         or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
@@ -4807,7 +4944,7 @@ class ReviewController:
             parent = links[pr]
             detailed = deep_by_pr.get(pr) if pr in deep_prs else None
             batch_topology_moved = (
-                not item.merged
+                item.state == "OPEN"
                 and (item.base_ref != parent.parent_ref or item.base_tip.casefold() != parent.parent_head.casefold())
             )
             saved_identity_moved = self._saved_identity_moved(state, pr, item, parent)
@@ -4824,7 +4961,11 @@ class ReviewController:
                 )
                 if pr in mismatch or batch_topology_moved:
                     row["reconciliation"] = "UNRECONCILED"
-                    row["reason"] = "live PR identity changed between batch overview and deep reconciliation"
+                    row["reason"] = (
+                        "remote parent or head branch changed during deep reconciliation"
+                        if pr in remote_affected
+                        else "live PR identity changed between batch overview and deep reconciliation"
+                    )
                     row["channels"] = {"hosted": "UNRECONCILED", "cli": "UNRECONCILED"}
                     row["allocations"] = {}
                     row["evidence_status"] = "stale"
@@ -4833,7 +4974,11 @@ class ReviewController:
 
             stale = pr in mismatch or batch_topology_moved or saved_identity_moved
             reason = (
-                "live parent topology or saved review identity moved"
+                (
+                    "remote parent or head branch changed during deep reconciliation"
+                    if pr in remote_affected
+                    else "live parent topology or saved review identity moved"
+                )
                 if stale
                 else "tail review evidence was not deeply checked in this status invocation"
             )
@@ -4872,13 +5017,22 @@ class ReviewController:
                 "unmerged_limit": max(4, len(target_scan_prs)),
                 "batch_status": "complete",
                 "deep_prs": [
-                    pr for pr in state.ordered_prs if pr in deep_prs and not batch_live[pr].merged
+                    pr for pr in state.ordered_prs if pr in deep_prs and batch_live[pr].state == "OPEN"
                 ] if deep_error is None else [],
                 "tail_evidence": "not fetched; identity-only rows are informational and never indicate completion",
                 "active_targets": sorted(active_targets),
                 "active_target_scan": active_scan_status,
+                "timing_ms": {
+                    "deep_pr_fetch": round(
+                        phase_timings.get("deep_pr_identity_ms", 0.0)
+                        + phase_timings.get("deep_evidence_history_ms", 0.0),
+                        1,
+                    ),
+                    "local_anchors": round(phase_timings.get("local_anchors_ms", 0.0), 1),
+                },
                 **({"active_target_error": active_scan_error} if active_scan_error else {}),
                 **({"deep_error": deep_error} if deep_error else {}),
+                **({"remote_head_recheck_error": remote_recheck_error} if remote_recheck_error else {}),
             },
             "prs": values,
             "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
@@ -4888,9 +5042,18 @@ class ReviewController:
             report["review_targets"] = self._unknown_review_targets(
                 f"deep review evidence is unavailable: {deep_error}"
             )
+        elif remote_recheck_error is not None:
+            report["review_targets"] = self._unknown_review_targets(
+                f"live remote branch heads could not be rechecked after deep reconciliation: {remote_recheck_error}"
+            )
         elif changed_target_pr is not None:
+            changed_reason = (
+                "remote parent or head branch changed during deep reconciliation"
+                if changed_target_pr in remote_affected
+                else "live PR identity changed between batch overview and deep reconciliation"
+            )
             unknown_targets = self._unknown_review_targets(
-                "live PR identity changed between batch overview and deep reconciliation"
+                changed_reason
             )
             positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
             changed_position = positions[changed_target_pr]
@@ -5397,9 +5560,9 @@ class ReviewController:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
         identity = f"{pr}:{selected.value}"
         previous = state.allocations.get(identity)
-        with self._stop_review_locks(pr):
-            # Refresh everything inside both channel locks so an in-flight review
-            # cannot be mistaken for a terminal result.
+        with self._stop_review_locks(pr, selected.value):
+            # Refresh everything inside the selected channel's lock(s) so an
+            # in-flight review cannot be mistaken for a terminal result.
             state = self._state()
             if pr not in state.ordered_prs:
                 raise ControllerError(f"PR #{pr} is not in the configured review stack")

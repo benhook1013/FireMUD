@@ -244,6 +244,8 @@ class AcceptanceCliTest(unittest.TestCase):
         args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
             "pr_review.cli.status_module.status", return_value=report
+        ), patch(
+            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             result, code = cli._dispatch(args)
 
@@ -260,6 +262,8 @@ class AcceptanceCliTest(unittest.TestCase):
         }
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
             "pr_review.cli.status_module.status", return_value={**report, "reasons": [], "ready": True}
+        ), patch(
+            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             result, code = cli._dispatch(args)
 

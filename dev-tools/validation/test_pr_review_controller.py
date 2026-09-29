@@ -482,6 +482,51 @@ class ControllerTests(unittest.TestCase):
             trigger_path = hosted.default_trigger_record_path("owner/repo", 42, common)
             self.assertEqual(hosted_path, trigger_path.parent / "request.lock")
 
+    def test_hosted_stop_ignores_unrelated_cli_lock_but_persists_stop(self):
+        controller = self.make(
+            {
+                2893: pr(2893, HEAD_1),
+                2829: pr(2829, HEAD_2, base_ref="feature-2893", base_tip=HEAD_1),
+            },
+            {(2893, "hosted"): [self.allocation_evidence(number=2893)]},
+            heads={"feature-2893": HEAD_1, "feature-2829": HEAD_2},
+        )
+        controller.set_stack([2893, 2829])
+        # The repository-wide CLI lock is held by the unrelated child review;
+        # it carries no PR identity, so the configured stack supplies it here.
+        cli_path, _ = controller._stop_lock_paths(2893)
+        cli_path.parent.mkdir(parents=True, exist_ok=True)
+        with cli_path.open("a+") as cli_handle:
+            fcntl.flock(cli_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            stopped = controller.decide_stop(
+                pr=2893,
+                channel="hosted",
+                reason="stop Hosted discovery after the reviewed checkpoint",
+            )
+            fcntl.flock(cli_handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(controller.store.load().allocations["2893:hosted"].stop_basis, "direct_human")
+
+    def test_hosted_stop_rejects_concurrent_same_pr_hosted_request_lock(self):
+        controller = self.make(
+            {2893: pr(2893, HEAD_1)},
+            {(2893, "hosted"): [self.allocation_evidence(number=2893)]},
+            heads={"feature-2893": HEAD_1},
+        )
+        controller.set_stack([2893])
+        _, hosted_path = controller._stop_lock_paths(2893)
+        hosted_path.parent.mkdir(parents=True, exist_ok=True)
+        with hosted_path.open("a+") as hosted_handle:
+            fcntl.flock(hosted_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(ControllerError, "review is active"):
+                controller.decide_stop(
+                    pr=2893,
+                    channel="hosted",
+                    reason="do not race the active Hosted request",
+                )
+            fcntl.flock(hosted_handle.fileno(), fcntl.LOCK_UN)
+
     def test_stop_cli_accepts_multiple_exact_ambiguity_fingerprints(self):
         fingerprints = ("f" * 64, "e" * 64)
 
@@ -3747,9 +3792,21 @@ class ControllerTests(unittest.TestCase):
         before = self.make(before_values, before_evidence, heads=before_heads)
         before.set_stack(ordered)
         self._enable_batch_status(before, before_values)
+        remote_head_calls_before = before.git.remote_heads_calls
 
         before_report = before.status_overview()
 
+        self.assertEqual(before.git.remote_heads_calls - remote_head_calls_before, 2)
+        self.assertEqual(
+            set(before_report["detail_window"]["timing_ms"]),
+            {"deep_pr_fetch", "local_anchors"},
+        )
+        self.assertTrue(
+            all(
+                isinstance(value, (int, float)) and value >= 0
+                for value in before_report["detail_window"]["timing_ms"].values()
+            )
+        )
         self.assertEqual(before_report["detail_window"]["deep_prs"], [1, 2, 3, 4])
         self.assertEqual(before_report["prs"][4]["evidence_status"], "unknown")
         self.assertEqual(before_report["prs"][4]["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
@@ -3766,6 +3823,50 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
         self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
         self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_status_overview_rechecks_remote_heads_after_deep_reconciliation(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for pr_number in range(1, 5):
+            hosted = self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            evidence[(pr_number, "hosted")] = [hosted]
+            evidence[(pr_number, "cli")] = [
+                {
+                    **hosted,
+                    "channel": "cli",
+                    "checkpoint": f"cli-{pr_number}-{round_number}",
+                }
+                for round_number in range(1, 4)
+            ]
+        self._enable_batch_status(controller, values)
+        original_pull = controller.github.pull_request
+
+        def move_parent_branch_during_deep_fetch(number):
+            value = original_pull(number)
+            if number == 5:
+                controller.git.heads["feature-2"] = "9" * 40
+            return value
+
+        controller.github.pull_request = move_parent_branch_during_deep_fetch
+        remote_calls_before = controller.git.remote_heads_calls
+
+        report = controller.status_overview()
+
+        self.assertEqual(controller.git.remote_heads_calls - remote_calls_before, 2)
+        rows = {item["pr"]: item for item in report["prs"]}
+        self.assertEqual(rows[1]["evidence_status"], "current")
+        self.assertEqual(rows[1]["channels"], {"hosted": "COMPLETE", "cli": "COMPLETE"})
+        for pr_number in range(2, 7):
+            self.assertEqual(rows[pr_number]["evidence_status"], "stale")
+            self.assertEqual(rows[pr_number]["reconciliation"], "UNRECONCILED")
+        for channel in ("hosted", "cli"):
+            self.assertIsNone(report["review_targets"][channel]["pr"])
+            self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+
+        with self.assertRaises(ControllerError):
+            controller.resolve_hosted_target()
 
     def test_status_overview_reports_divergent_controller_selected_targets(self):
         values, heads = _stacked_prs(3)
@@ -3879,7 +3980,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["detail_window"]["deep_prs"], list(range(1, 9)))
         self.assertEqual(report["prs"][8]["evidence_status"], "unknown")
         self.assertEqual(batch_calls, [tuple(values)])
-        self.assertEqual(pull_calls, list(range(1, 9)))
+        expected_deep_prs = set(range(1, 9))
+        self.assertEqual(len(pull_calls), len(expected_deep_prs))
+        self.assertEqual(set(pull_calls), expected_deep_prs)
+        self.assertTrue(all(pull_calls.count(pr_number) == 1 for pr_number in expected_deep_prs))
         self.assertEqual(set(evidence.history_reads), {
             (pr_number, channel)
             for pr_number in range(1, 9)
@@ -4016,6 +4120,34 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["prs"][0]["merged"], True)
         self.assertEqual(report["prs"][1]["channels"]["hosted"], "HUMAN_STOPPED")
 
+    def test_status_overview_skips_closed_unmerged_prs_but_retains_historical_rows(self):
+        values, heads = _stacked_prs(5)
+        values[1] = dataclasses.replace(values[1], state="CLOSED")
+        evidence = CountingEvidence()
+        scanned = []
+
+        def active_targets(numbers, identities):
+            scanned.extend(numbers)
+            return set()
+
+        evidence.active_review_targets = active_targets
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 2)
+        self.assertEqual(scanned, [2, 3, 4, 5])
+        self.assertEqual(report["detail_window"]["deep_prs"], [2, 3, 4, 5])
+        self.assertEqual(report["detail_window"]["active_targets"], [])
+        self.assertEqual(report["prs"][0]["state"], "CLOSED")
+        self.assertFalse(report["prs"][0]["merged"])
+        self.assertEqual(report["prs"][0]["detail_level"], "identity_only")
+        self.assertNotIn(1, {pr_number for pr_number, _ in evidence.history_reads})
+        self.assertTrue(all(pr_number in {2, 3, 4, 5} for pr_number, _ in evidence.history_reads))
+
     def test_status_overview_distinguishes_blocked_no_target_and_unknown_provider_state(self):
         values, heads = _stacked_prs(2)
         blocked_evidence = CountingEvidence({
@@ -4072,6 +4204,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(tail["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})
         self.assertIn("not fetched", report["detail_window"]["tail_evidence"])
         self.assertEqual(batch_calls, [tuple(values)])
+
+    def test_status_overview_ignores_historical_triggers_on_merged_prs(self):
+        values, heads = _stacked_prs(7, merged=(1, 2))
+        evidence = CountingEvidence(active_targets={1, 2, 7})
+        scanned = []
+
+        def active_targets(numbers, identities):
+            scanned.extend(numbers)
+            return evidence.active_targets.intersection(numbers)
+
+        evidence.active_review_targets = active_targets
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(scanned, [3, 4, 5, 6, 7])
+        self.assertEqual(report["detail_window"]["active_targets"], [7])
+        self.assertEqual(report["detail_window"]["deep_prs"], [3, 4, 5, 6, 7])
+        self.assertTrue(all(pr_number not in {1, 2} for pr_number, _ in evidence.history_reads))
 
     def test_live_evidence_probe_includes_active_hosted_trigger_without_allocation(self):
         trigger_at = "2026-09-26T01:00:00Z"
