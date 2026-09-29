@@ -124,3 +124,8 @@ Entry format:
   - Context: a Hosted sentinel missed an attributable result because it matched exact `coderabbitai` while GitHub returned `coderabbitai[bot]`.
   - Observation: hand-coded exact login filters can miss provider results that the controller can attribute correctly.
   - Expected pattern: use canonical controller attribution and readback, or match bot identity robustly; do not narrate unchanged waits.
+
+- `2026-09-30`: Review-stop locks must match the affected PR and channel
+  - Context: a Hosted stop on #2893 was refused while an unrelated CLI review ran on #2829.
+  - Observation: the stop path acquired the repository-wide CLI runner lock even for a Hosted decision on another PR, delaying the Hosted train without protecting the affected request.
+  - Expected pattern: synchronize a stop with the affected channel's request and durable state update; test that an unrelated active review cannot block it while a genuinely concurrent request on the same PR and channel remains protected.
