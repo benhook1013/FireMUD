@@ -801,6 +801,12 @@ class VersionPublishCommandServiceImplTest {
     verify(recordedParticipantDigestService)
         .recordVerifiedDigests(
             "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
+    InOrder reconciliationOrder = inOrder(versionRepository, recordedParticipantDigestService);
+    reconciliationOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 10L);
+    reconciliationOrder
+        .verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(
+            "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
   }
 

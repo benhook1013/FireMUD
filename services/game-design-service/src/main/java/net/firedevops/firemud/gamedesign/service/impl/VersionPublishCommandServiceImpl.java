@@ -373,6 +373,7 @@ public class VersionPublishCommandServiceImpl {
                 && current.getStatus() != PublishAttemptStatus.SUCCEEDED) {
               throw pendingReconciliation("full-version attempt is no longer pending");
             }
+            requireAttemptVersionForUpdate(current, request);
             PublicationReadback currentReadback = readPublication(request, current);
             if (!currentReadback.isComplete()) {
               throw pendingReconciliation(
