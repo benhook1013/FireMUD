@@ -2431,9 +2431,8 @@ public class AccountServiceImpl implements AccountService {
     long tenantId = requirePositiveLong(tenantIdText, "tenantId");
     UUID realmId = requireCanonicalRealmId(realmIdText);
     long gameInstanceId = requirePositiveLong(gameInstanceIdText, "gameInstanceId");
-    if (!StringUtils.hasText(playableStateNamespaceId)) {
-      throw new IllegalArgumentException("playableStateNamespaceId is required");
-    }
+    String canonicalPlayableStateNamespaceId =
+        requireCanonicalPlayableStateNamespaceId(playableStateNamespaceId);
     if (catalogRevision <= 0) {
       throw new IllegalArgumentException("catalogRevision must be positive");
     }
@@ -2452,7 +2451,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeRealmTarget(
         tenantId,
         realmId,
-        playableStateNamespaceId,
+        canonicalPlayableStateNamespaceId,
         gameInstanceId,
         worldSlug,
         realmSlug,
@@ -2492,6 +2491,21 @@ public class AccountServiceImpl implements AccountService {
       return realmId;
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
+  private String requireCanonicalPlayableStateNamespaceId(String value) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalArgumentException("playableStateNamespaceId is required");
+    }
+    try {
+      UUID namespaceId = UUID.fromString(value);
+      if (!namespaceId.toString().equals(value)) {
+        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
     }
   }
 
