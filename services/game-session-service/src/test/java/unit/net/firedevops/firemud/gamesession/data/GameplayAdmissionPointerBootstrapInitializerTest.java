@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -41,10 +43,6 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   @Test
   void runSeedsBootstrapPointersWhenAuthorityStoreIsEmpty() throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
-    properties.setPointers(
-        List.of(
-            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
-            pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, true)));
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
@@ -71,6 +69,21 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals(0L, mutations.get(0).expectedCatalogRevision());
     assertEquals("sandbox", mutations.get(1).worldSlug());
     assertTrue(mutations.get(1).requiresCharacterSelection());
+    assertFalse(mutations.get(1).publicProductionRealm());
+  }
+
+  @Test
+  void defaultEffectiveBootstrapSeedsHaveOneVisiblePublicProductionRealmPerTenant() {
+    List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
+        properties.getPointers();
+
+    assertEquals(2, pointers.size());
+    assertEquals("demo", pointers.get(0).getWorldSlug());
+    assertTrue(pointers.get(0).isVisible());
+    assertTrue(pointers.get(0).isPublicProductionRealm());
+    assertEquals("sandbox", pointers.get(1).getWorldSlug());
+    assertTrue(pointers.get(1).isVisible());
+    assertFalse(pointers.get(1).isPublicProductionRealm());
   }
 
   @Test
@@ -84,7 +97,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
-  void runSkipsBlankBootstrapPointerSeeds() throws Exception {
+  void runRejectsMalformedBootstrapPointerSeedsBeforeAnyMutation() throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
     properties.setPointers(
         new java.util.ArrayList<>(
@@ -94,12 +107,71 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
                 pointerSeed("sandbox", "Builder Sandbox", "", "Live Realm", 1L, 3L, true),
                 null)));
 
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+
+    verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void runRejectsMultipleVisiblePublicProductionSeedsForTenantBeforeAnyMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    GameplayAdmissionPointerBootstrapProperties.PointerSeed sandbox =
+        pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, true);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false), sandbox));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+
+    verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void runRejectsNoVisiblePublicProductionSeedForTenantBeforeAnyMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    GameplayAdmissionPointerBootstrapProperties.PointerSeed demo =
+        pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false);
+    demo.setPublicProductionRealm(false);
+    properties.setPointers(List.of(demo));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+
+    verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void runRejectsDuplicateWorldRealmSeedsBeforeAnyMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
+            pointerSeed(" DEMO ", "Duplicate World", "PRODUCTION", "Live Realm", 1L, 2L, true)));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+
+    verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void runAllowsSameWorldRealmSelectorInDifferentTenants() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
+            pointerSeed("demo", "Other Demo", "production", "Live Realm", 2L, 1L, false)));
+
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
-    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
-        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
-    verify(authorityService).upsertPointer(mutationCaptor.capture());
-    assertEquals("demo", mutationCaptor.getValue().worldSlug());
+    verify(authorityService, org.mockito.Mockito.times(2))
+        .upsertPointer(org.mockito.ArgumentMatchers.any());
   }
 
   @Test

@@ -85,6 +85,9 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
+  private static final String PLAYABLE_STATE_NAMESPACE_ID = "c6ed6a44-c7e7-4f18-81fc-078a74e67c07";
+  private static final String PLAYABLE_STATE_NAMESPACE_ID_TENANT_8 =
+      "a741a4b8-a2cb-405e-a330-8fbf3dfb841f";
   @Mock private AccountRepository accountRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
@@ -157,7 +160,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -176,7 +179,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -829,7 +832,7 @@ class AccountServiceImplTest {
             UUID.fromString(REALM_ID),
             "demo",
             "production",
-            "production-namespace-7",
+            PLAYABLE_STATE_NAMESPACE_ID,
             "SHARED",
             44L,
             23L,
@@ -939,7 +942,7 @@ class AccountServiceImplTest {
             UUID.fromString(REALM_ID),
             "demo",
             "production",
-            "production-namespace-7",
+            PLAYABLE_STATE_NAMESPACE_ID,
             "SHARED",
             44L,
             23L,
@@ -1843,7 +1846,7 @@ class AccountServiceImplTest {
                     .setTenantId("bad")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -1904,7 +1907,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -2058,7 +2061,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(realmId)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -2273,7 +2276,7 @@ class AccountServiceImplTest {
                     Map.entry("realmId", realmId),
                     Map.entry("worldSlug", "demo"),
                     Map.entry("realmSlug", "production"),
-                    Map.entry("playableStateNamespaceId", "production-namespace-7"),
+                    Map.entry("playableStateNamespaceId", PLAYABLE_STATE_NAMESPACE_ID),
                     Map.entry("playableStateScope", "SHARED"),
                     Map.entry("gameInstanceId", "44"),
                     Map.entry("catalogRevision", "23"),
@@ -2639,7 +2642,7 @@ class AccountServiceImplTest {
             11L,
             7L,
             UUID.fromString(REALM_ID),
-            "production-namespace-7",
+            PLAYABLE_STATE_NAMESPACE_ID,
             "SHARED",
             44L,
             "session-1",
@@ -2822,7 +2825,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("99")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
                 .setVisible(true)
@@ -2876,7 +2879,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -2934,7 +2937,7 @@ class AccountServiceImplTest {
                     .setTenantId("")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -2996,7 +2999,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("99")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
                 .setVisible(true)
@@ -3234,7 +3237,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(true)
@@ -3253,7 +3256,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("55")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
                 .setVisible(true)
@@ -3327,7 +3330,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("99")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
                 .setVisible(true)
@@ -3362,7 +3365,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -3605,7 +3608,7 @@ class AccountServiceImplTest {
             .setTenantId("7")
             .setGameInstanceId("44")
             .setRealmId(REALM_ID)
-            .setPlayableStateNamespaceId("production-namespace-7")
+            .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
             .setCatalogRevision(23L)
             .setPointerVersion(17L)
             .setVisible(true)
@@ -3625,7 +3628,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -3681,7 +3684,7 @@ class AccountServiceImplTest {
             .setTenantId("7")
             .setGameInstanceId("44")
             .setRealmId(REALM_ID)
-            .setPlayableStateNamespaceId("production-namespace-7")
+            .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
             .setCatalogRevision(23L)
             .setPointerVersion(17L)
             .setVisible(true)
@@ -3734,7 +3737,7 @@ class AccountServiceImplTest {
             .setTenantId("7")
             .setGameInstanceId("44")
             .setRealmId(REALM_ID)
-            .setPlayableStateNamespaceId("production-namespace-7")
+            .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
             .setCatalogRevision(23L)
             .setPointerVersion(17L)
             .setVisible(true)
@@ -3781,9 +3784,57 @@ class AccountServiceImplTest {
             .get("realmId"));
     assertEquals("SHARED", realms.getFirst().stateScope());
     assertEquals(23L, realms.getFirst().catalogRevision());
-    assertEquals("production-namespace-7", realms.getFirst().playableStateNamespaceId());
+    assertEquals(PLAYABLE_STATE_NAMESPACE_ID, realms.getFirst().playableStateNamespaceId());
     assertEquals("PLAYABLE_STATE_SCOPE_SHARED", realms.getFirst().playableStateScope());
     assertEquals("ALLOW_NEW", realms.getFirst().characterCreationPolicy());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "shared-live",
+        "C6ED6A44-C7E7-4F18-81FC-078A74E67C07",
+        "c6ed6a44c7e74f1881fc078a74e67c07"
+      })
+  void listBootstrapRealmsRejectsNoncanonicalPlayableStateNamespaceIdFromReachableRealm(
+      String namespaceId) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(namespaceId)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
   }
 
   @Test
@@ -3806,7 +3857,7 @@ class AccountServiceImplTest {
                     .setTenantId("bad")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -3822,7 +3873,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -3863,7 +3914,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -3905,7 +3956,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("91")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -3924,7 +3975,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("91")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -3981,7 +4032,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("bad")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -4029,7 +4080,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -4076,7 +4127,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("91")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -4095,7 +4146,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -4114,7 +4165,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("91")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
                 .setVisible(true)
@@ -4174,7 +4225,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
                     .setVisible(true)
@@ -4189,7 +4240,7 @@ class AccountServiceImplTest {
                     .setTenantId("8")
                     .setGameInstanceId("45")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-8")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID_TENANT_8)
                     .setCatalogRevision(23L)
                     .setPointerVersion(18L)
                     .setVisible(true)
@@ -4318,7 +4369,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(false)
@@ -4366,7 +4417,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(visible)
@@ -4385,7 +4436,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("55")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
                 .setVisible(visible)
@@ -4429,7 +4480,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(visible)
@@ -4491,7 +4542,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setRealmId(REALM_ID)
-                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
                     .setVisible(visible)
@@ -4510,7 +4561,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("55")
                 .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
                 .setVisible(visible)
@@ -5021,7 +5072,7 @@ class AccountServiceImplTest {
         11L,
         7L,
         UUID.fromString(REALM_ID),
-        "production-namespace-7",
+        PLAYABLE_STATE_NAMESPACE_ID,
         "SHARED",
         44L,
         "session-1",
@@ -5034,7 +5085,7 @@ class AccountServiceImplTest {
         UUID.fromString(REALM_ID),
         "demo",
         "production",
-        "production-namespace-7",
+        PLAYABLE_STATE_NAMESPACE_ID,
         "SHARED",
         44L,
         23L,
@@ -5069,7 +5120,7 @@ class AccountServiceImplTest {
         .setTenantId(Long.toString(tenantId))
         .setGameInstanceId(gameInstanceId)
         .setRealmId(REALM_ID)
-        .setPlayableStateNamespaceId("production-namespace-" + tenantId)
+        .setPlayableStateNamespaceId(playableStateNamespaceIdForTenant(tenantId))
         .setCatalogRevision(23L)
         .setPointerVersion(pointerVersion)
         .setVisible(visible)
@@ -5078,6 +5129,18 @@ class AccountServiceImplTest {
         .setStateScope(stateScope)
         .setCharacterCreationPolicy(characterCreationPolicy)
         .build();
+  }
+
+  private static String playableStateNamespaceIdForTenant(long tenantId) {
+    return switch ((int) tenantId) {
+      case 7 -> PLAYABLE_STATE_NAMESPACE_ID;
+      case 8 -> PLAYABLE_STATE_NAMESPACE_ID_TENANT_8;
+      default ->
+          UUID.nameUUIDFromBytes(
+                  ("playable-state-namespace-" + tenantId)
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+              .toString();
+    };
   }
 
   private static AccountTenantMembership membership(Account account, long tenantId) {
