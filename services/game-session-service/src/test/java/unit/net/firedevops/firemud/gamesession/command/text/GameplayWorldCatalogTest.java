@@ -8,6 +8,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.junit.jupiter.api.Test;
@@ -34,22 +36,31 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void visibleWorldsDropsWorldSlugSharedAcrossTenants() {
+  void visibleWorldsKeepsSameWorldSlugSeparateAcrossTenants() {
     when(authorityService.listPointers())
         .thenReturn(
             List.of(
                 pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
-                pointer("DEMO", "Other Demo", "production", "Other Live", 2L, 21L, 8L),
-                pointer("other", "Other World", "production", "Other Live", 1L, 22L, 9L)));
+                pointer("DEMO", "Other Demo", "production", "Other Live", 2L, 21L, 8L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThat(catalog.visibleWorlds())
         .extracting(GameplayWorldCatalog.WorldView::slug)
-        .containsExactly("other");
+        .containsExactly("demo", "DEMO");
     assertThat(catalog.resolveWorld("demo")).isEmpty();
-    assertThat(catalog.publicProductionRealmCardinality(1L))
-        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
-    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
+    GameplayWorldCatalog.DiscoverySnapshot snapshot = catalog.readDiscoverySnapshot();
+    assertThat(snapshot.output().worlds())
+        .extracting(WorldsViewOutput.WorldEntry::ordinal)
+        .containsExactly(1, 2);
+    assertThat(snapshot.output().worlds())
+        .extracting(WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo", "DEMO");
+    assertThat(snapshot.ordinalTargets())
+        .extracting(DirectTextConnectScopeSessionStore.WorldOrdinalTarget::tenantId)
+        .containsExactly(1L, 2L);
+    assertThat(catalog.resolveSnapshotOrdinal(snapshot, snapshot.ordinalTargets().get(1)))
+        .hasValueSatisfying(
+            world -> assertThat(world.realms().getFirst().tenantId()).isEqualTo(2L));
   }
 
   @Test

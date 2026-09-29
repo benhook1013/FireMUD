@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -137,16 +138,73 @@ public final class DirectTextConnectScopeSessionStore {
   public void replaceWorldScopes(
       SessionContext caller,
       String requestedWorldSelector,
+      long tenantId,
       String canonicalWorldSlug,
       List<ScopedRealm> scopes) {
-    replaceRealmSnapshot(
-        caller, requestedWorldSelector, canonicalWorldSlug, null, List.of(), scopes, Instant.now());
+    Objects.requireNonNull(caller, "caller must not be null");
+    requireCallerIdentity(caller);
+    String requestedSelector = normalizeSelector(requestedWorldSelector);
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (requestedSelector == null || worldSlug == null || tenantId <= 0L) {
+      throw new IllegalArgumentException("world selection identity must be complete");
+    }
+    Instant now = Instant.now();
+    List<ScopedRealm> safeScopes =
+        List.copyOf(Objects.requireNonNull(scopes, "scopes must not be null"));
+    safeScopes.forEach(scope -> validateScopeIdentity(caller, tenantId, scope));
+    long nowMillis = now.toEpochMilli();
+    List<StoredScopedRealm> storedScopes =
+        safeScopes.stream()
+            .filter(scope -> scope.expiresAt().toEpochMilli() > nowMillis)
+            .map(scope -> storeScope(scope, nowMillis))
+            .toList();
+    long expiresAt =
+        storedScopes.stream()
+            .mapToLong(StoredScopedRealm::expiresAtEpochMs)
+            .max()
+            .orElse(now.plus(WORLDS_SNAPSHOT_TTL).toEpochMilli());
+    String key = worldIdentityKey(tenantId, worldSlug);
+    mutate(
+        caller.sessionId(),
+        nowMillis,
+        current -> {
+          LobbyRecord record = current == null ? LobbyRecord.empty(caller.sessionId()) : current;
+          Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
+          byWorld.remove(key);
+          if (!storedScopes.isEmpty()) {
+            byWorld.put(key, storedScopes);
+          }
+          Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
+          realmsByWorld.put(
+              key,
+              new StoredRealmsSnapshot(
+                  tenantId, worldSlug, requestedSelector, "", expiresAt, List.of()));
+          return new LobbyRecord(
+              caller.sessionId(),
+              caller.accountId(),
+              record.worldsExpiresAtEpochMs(),
+              record.catalogFingerprint(),
+              record.ordinalTargets(),
+              byWorld,
+              record.worldBySelector(),
+              realmsByWorld);
+        });
+  }
+
+  public void replaceWorldScopes(
+      SessionContext caller,
+      String requestedWorldSelector,
+      String canonicalWorldSlug,
+      List<ScopedRealm> scopes) {
+    long tenantId = uniqueTenantId(scopes);
+    replaceWorldScopes(caller, requestedWorldSelector, tenantId, canonicalWorldSlug, scopes);
   }
 
   /** Atomically stores the exact REALMS response and any Account scopes it produced. */
   public void replaceRealmSnapshot(
       SessionContext caller,
       String requestedWorldSelector,
+      long tenantId,
       String canonicalWorldSlug,
       String catalogFingerprint,
       List<RealmOrdinalTarget> ordinalTargets,
@@ -156,7 +214,7 @@ public final class DirectTextConnectScopeSessionStore {
     requireCallerIdentity(caller);
     String requestedSelector = normalizeSelector(requestedWorldSelector);
     String worldSlug = normalizeSelector(canonicalWorldSlug);
-    if (requestedSelector == null || worldSlug == null) {
+    if (requestedSelector == null || worldSlug == null || tenantId <= 0L) {
       throw new IllegalArgumentException("world selectors must not be blank");
     }
     Objects.requireNonNull(now, "now must not be null");
@@ -172,7 +230,7 @@ public final class DirectTextConnectScopeSessionStore {
     validateRealmOrdinalTargets(safeTargets);
     List<ScopedRealm> safeScopes =
         List.copyOf(Objects.requireNonNull(scopes, "scopes must not be null"));
-    safeScopes.forEach(scope -> validateScopeIdentity(caller, scope));
+    safeScopes.forEach(scope -> validateScopeIdentity(caller, tenantId, scope));
     long nowMillis = now.toEpochMilli();
     List<StoredScopedRealm> storedScopes =
         safeScopes.stream()
@@ -180,6 +238,7 @@ public final class DirectTextConnectScopeSessionStore {
             .map(scope -> storeScope(scope, nowMillis))
             .toList();
     long snapshotExpiresAtMillis = now.plus(WORLDS_SNAPSHOT_TTL).toEpochMilli();
+    String worldKey = worldIdentityKey(tenantId, worldSlug);
 
     mutate(
         caller.sessionId(),
@@ -195,21 +254,22 @@ public final class DirectTextConnectScopeSessionStore {
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
           Map<String, String> worldBySelector = new HashMap<>(record.worldBySelector());
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
-          byWorld.remove(worldSlug);
-          realmsByWorld.remove(worldSlug);
-          worldBySelector.entrySet().removeIf(entry -> worldSlug.equals(entry.getValue()));
+          byWorld.remove(worldKey);
+          realmsByWorld.remove(worldKey);
+          worldBySelector.entrySet().removeIf(entry -> worldKey.equals(entry.getValue()));
           if (!storedScopes.isEmpty()) {
-            byWorld.put(worldSlug, storedScopes);
-            worldBySelector.put(worldSlug, worldSlug);
-            worldBySelector.put(requestedSelector, worldSlug);
+            byWorld.put(worldKey, storedScopes);
           }
           if (catalogFingerprint != null) {
-            worldBySelector.put(worldSlug, worldSlug);
-            worldBySelector.put(requestedSelector, worldSlug);
             realmsByWorld.put(
-                worldSlug,
+                worldKey,
                 new StoredRealmsSnapshot(
-                    worldSlug, catalogFingerprint, snapshotExpiresAtMillis, safeTargets));
+                    tenantId,
+                    worldSlug,
+                    requestedSelector,
+                    catalogFingerprint,
+                    snapshotExpiresAtMillis,
+                    safeTargets));
           }
           return new LobbyRecord(
               caller.sessionId(),
@@ -224,6 +284,35 @@ public final class DirectTextConnectScopeSessionStore {
   }
 
   public Optional<RealmsSnapshot> realmsSnapshot(
+      SessionContext caller, long tenantId, String canonicalWorldSlug, Instant now) {
+    Objects.requireNonNull(caller, "caller must not be null");
+    Objects.requireNonNull(now, "now must not be null");
+    requireCallerIdentity(caller);
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (worldSlug == null || tenantId <= 0L) {
+      return Optional.empty();
+    }
+    LobbyRecord record = readRecord(caller.sessionId());
+    if (!matchesCaller(record, caller)) {
+      return Optional.empty();
+    }
+    StoredRealmsSnapshot snapshot =
+        record.realmsByWorld().get(worldIdentityKey(tenantId, worldSlug));
+    if (snapshot == null || snapshot.expiresAtEpochMs() <= now.toEpochMilli()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new RealmsSnapshot(
+            snapshot.worldSlug(),
+            snapshot.tenantId(),
+            snapshot.requestedWorldSelector(),
+            snapshot.catalogFingerprint(),
+            Instant.ofEpochMilli(snapshot.expiresAtEpochMs()),
+            snapshot.ordinalTargets()));
+  }
+
+  /** Resolves a legacy bare world selector only when this session has one matching tenant. */
+  public Optional<RealmsSnapshot> realmsSnapshot(
       SessionContext caller, String canonicalWorldSlug, Instant now) {
     Objects.requireNonNull(caller, "caller must not be null");
     Objects.requireNonNull(now, "now must not be null");
@@ -236,25 +325,33 @@ public final class DirectTextConnectScopeSessionStore {
     if (!matchesCaller(record, caller)) {
       return Optional.empty();
     }
-    StoredRealmsSnapshot snapshot = record.realmsByWorld().get(worldSlug);
-    if (snapshot == null || snapshot.expiresAtEpochMs() <= now.toEpochMilli()) {
+    List<StoredRealmsSnapshot> matches =
+        record.realmsByWorld().values().stream()
+            .filter(snapshot -> snapshot.worldSlug().equals(worldSlug))
+            .filter(snapshot -> snapshot.expiresAtEpochMs() > now.toEpochMilli())
+            .toList();
+    if (matches.size() != 1) {
       return Optional.empty();
     }
+    StoredRealmsSnapshot snapshot = matches.getFirst();
     return Optional.of(
         new RealmsSnapshot(
             snapshot.worldSlug(),
+            snapshot.tenantId(),
+            snapshot.requestedWorldSelector(),
             snapshot.catalogFingerprint(),
             Instant.ofEpochMilli(snapshot.expiresAtEpochMs()),
             snapshot.ordinalTargets()));
   }
 
-  public void clearWorldScopes(SessionContext caller, String worldSelector) {
+  public void clearWorldScopes(SessionContext caller, long tenantId, String canonicalWorldSlug) {
     Objects.requireNonNull(caller, "caller must not be null");
     requireCallerIdentity(caller);
-    String selector = normalizeSelector(worldSelector);
-    if (selector == null) {
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (worldSlug == null || tenantId <= 0L) {
       return;
     }
+    String worldKey = worldIdentityKey(tenantId, worldSlug);
     long nowMillis = Instant.now().toEpochMilli();
     mutate(
         caller.sessionId(),
@@ -270,16 +367,12 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
             record = LobbyRecord.empty(caller.sessionId());
           }
-          String worldSlug = record.worldBySelector().get(selector);
-          if (worldSlug == null) {
-            return record.withAccountId(caller.accountId());
-          }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
-          byWorld.remove(worldSlug);
-          realmsByWorld.remove(worldSlug);
+          byWorld.remove(worldKey);
+          realmsByWorld.remove(worldKey);
           Map<String, String> worldBySelector = new HashMap<>(record.worldBySelector());
-          worldBySelector.entrySet().removeIf(entry -> worldSlug.equals(entry.getValue()));
+          worldBySelector.entrySet().removeIf(entry -> worldKey.equals(entry.getValue()));
           return new LobbyRecord(
               caller.sessionId(),
               caller.accountId(),
@@ -292,25 +385,42 @@ public final class DirectTextConnectScopeSessionStore {
         });
   }
 
+  public void clearWorldScopes(SessionContext caller, String canonicalWorldSlug) {
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (worldSlug == null) {
+      return;
+    }
+    LobbyRecord record = readRecord(caller.sessionId());
+    if (record == null) {
+      return;
+    }
+    List<StoredWorldIdentity> matches =
+        record.realmsByWorld().values().stream()
+            .filter(snapshot -> snapshot.worldSlug().equals(worldSlug))
+            .map(snapshot -> new StoredWorldIdentity(snapshot.tenantId(), snapshot.worldSlug()))
+            .distinct()
+            .toList();
+    if (matches.size() == 1) {
+      clearWorldScopes(caller, matches.getFirst().tenantId(), matches.getFirst().worldSlug());
+    }
+  }
+
   public Optional<ScopedRealm> publicProductionScope(
-      SessionContext caller, String worldSelector, Instant now) {
+      SessionContext caller, long tenantId, String canonicalWorldSlug, Instant now) {
     Objects.requireNonNull(caller, "caller must not be null");
     Objects.requireNonNull(now, "now must not be null");
     requireCallerIdentity(caller);
-    String selector = normalizeSelector(worldSelector);
-    if (selector == null) {
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (worldSlug == null || tenantId <= 0L) {
       return Optional.empty();
     }
     LobbyRecord record = readRecord(caller.sessionId());
     if (!matchesCaller(record, caller)) {
       return Optional.empty();
     }
-    String worldSlug = record.worldBySelector().get(selector);
-    if (worldSlug == null) {
-      return Optional.empty();
-    }
+    String worldKey = worldIdentityKey(tenantId, worldSlug);
     List<ScopedRealm> publicScopes =
-        record.scopesByWorld().getOrDefault(worldSlug, List.of()).stream()
+        record.scopesByWorld().getOrDefault(worldKey, List.of()).stream()
             .map(DirectTextConnectScopeSessionStore::fromStoredScope)
             .filter(scope -> scope.expiresAt().isAfter(now))
             .filter(ScopedRealm::publicProductionRealm)
@@ -318,16 +428,30 @@ public final class DirectTextConnectScopeSessionStore {
     return publicScopes.size() == 1 ? Optional.of(publicScopes.getFirst()) : Optional.empty();
   }
 
+  public Optional<ScopedRealm> publicProductionScope(
+      SessionContext caller, String canonicalWorldSlug, Instant now) {
+    StoredWorldIdentity identity = uniqueStoredWorld(caller, canonicalWorldSlug);
+    return identity == null
+        ? Optional.empty()
+        : publicProductionScope(caller, identity.tenantId(), identity.worldSlug(), now);
+  }
+
   /** Atomically binds and reuses one JOIN request ID for the exact Account scope. */
   public Optional<JoinScope> publicProductionScopeForJoin(
-      SessionContext caller, String worldSelector, Instant now) {
+      SessionContext caller,
+      String requestedWorldSelector,
+      long tenantId,
+      String canonicalWorldSlug,
+      Instant now) {
     Objects.requireNonNull(caller, "caller must not be null");
     Objects.requireNonNull(now, "now must not be null");
     requireCallerIdentity(caller);
-    String selector = normalizeSelector(worldSelector);
-    if (selector == null) {
+    String selector = normalizeSelector(requestedWorldSelector);
+    String worldSlug = normalizeSelector(canonicalWorldSlug);
+    if (selector == null || worldSlug == null || tenantId <= 0L) {
       return Optional.empty();
     }
+    String worldKey = worldIdentityKey(tenantId, worldSlug);
     long nowMillis = now.toEpochMilli();
     JoinScope[] selected = new JoinScope[1];
     mutate(
@@ -338,12 +462,14 @@ public final class DirectTextConnectScopeSessionStore {
           if (!matchesCaller(current, caller)) {
             return current;
           }
-          String worldSlug = current.worldBySelector().get(selector);
-          if (worldSlug == null) {
+          StoredRealmsSnapshot realmsSnapshot = current.realmsByWorld().get(worldKey);
+          if (realmsSnapshot == null
+              || realmsSnapshot.expiresAtEpochMs() <= nowMillis
+              || !selector.equals(realmsSnapshot.requestedWorldSelector())) {
             return current;
           }
           List<StoredScopedRealm> scopes =
-              current.scopesByWorld().getOrDefault(worldSlug, List.of());
+              current.scopesByWorld().getOrDefault(worldKey, List.of());
           List<StoredScopedRealm> validPublicScopes =
               scopes.stream()
                   .filter(scope -> scope.expiresAtEpochMs() > nowMillis)
@@ -367,13 +493,22 @@ public final class DirectTextConnectScopeSessionStore {
                     .map(candidate -> candidate == scopeToReplace ? scopeToStore : candidate)
                     .toList();
             Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(current.scopesByWorld());
-            byWorld.put(worldSlug, updatedScopes);
+            byWorld.put(worldKey, updatedScopes);
             current = current.withScopes(byWorld, current.worldBySelector());
           }
           selected[0] = new JoinScope(fromStoredScope(boundScope), requestId);
           return current;
         });
     return Optional.ofNullable(selected[0]);
+  }
+
+  public Optional<JoinScope> publicProductionScopeForJoin(
+      SessionContext caller, String worldSelector, Instant now) {
+    StoredWorldIdentity identity = uniqueStoredWorld(caller, worldSelector);
+    return identity == null
+        ? Optional.empty()
+        : publicProductionScopeForJoin(
+            caller, worldSelector, identity.tenantId(), identity.worldSlug(), now);
   }
 
   public void clearSession(long transportSessionId) {
@@ -529,13 +664,87 @@ public final class DirectTextConnectScopeSessionStore {
     }
   }
 
-  private static void validateScopeIdentity(SessionContext caller, ScopedRealm scope) {
+  private static void validateScopeIdentity(
+      SessionContext caller, long tenantId, ScopedRealm scope) {
     Objects.requireNonNull(scope, "scope must not be null");
     PlayerExecutionContext context = scope.playerContext();
     if (!Long.toString(caller.accountId()).equals(context.getAccountId())
-        || !Long.toString(caller.sessionId()).equals(context.getSessionId())) {
+        || !Long.toString(caller.sessionId()).equals(context.getSessionId())
+        || tenantId <= 0L
+        || !Long.toString(tenantId).equals(context.getTenantId())) {
       throw new ConflictingIdentityException("Account scope caller identity did not match session");
     }
+  }
+
+  private static long parsePositiveLong(String value) {
+    try {
+      long parsed = Long.parseLong(value);
+      return parsed > 0L ? parsed : -1L;
+    } catch (NumberFormatException ex) {
+      return -1L;
+    }
+  }
+
+  private static long uniqueTenantId(List<ScopedRealm> scopes) {
+    List<Long> tenantIds =
+        Objects.requireNonNull(scopes, "scopes must not be null").stream()
+            .map(scope -> parsePositiveLong(scope.playerContext().getTenantId()))
+            .distinct()
+            .toList();
+    if (tenantIds.size() != 1 || tenantIds.getFirst() <= 0L) {
+      throw new IllegalArgumentException("scopes must identify exactly one tenant");
+    }
+    return tenantIds.getFirst();
+  }
+
+  private StoredWorldIdentity uniqueStoredWorld(SessionContext caller, String selector) {
+    Objects.requireNonNull(caller, "caller must not be null");
+    requireCallerIdentity(caller);
+    String normalized = normalizeSelector(selector);
+    if (normalized == null) {
+      return null;
+    }
+    LobbyRecord record = readRecord(caller.sessionId());
+    if (!matchesCaller(record, caller)) {
+      return null;
+    }
+    List<StoredWorldIdentity> matches;
+    if (normalized.chars().allMatch(Character::isDigit)) {
+      int ordinal;
+      try {
+        ordinal = Integer.parseInt(normalized);
+      } catch (NumberFormatException ex) {
+        return null;
+      }
+      matches =
+          record.ordinalTargets().stream()
+              .filter(target -> target.ordinal() == ordinal)
+              .map(target -> new StoredWorldIdentity(target.tenantId(), target.worldSlug()))
+              .distinct()
+              .toList();
+    } else {
+      matches =
+          record.realmsByWorld().values().stream()
+              .filter(snapshot -> snapshot.worldSlug().equals(normalized))
+              .map(snapshot -> new StoredWorldIdentity(snapshot.tenantId(), snapshot.worldSlug()))
+              .distinct()
+              .toList();
+    }
+    return matches.size() == 1 ? matches.getFirst() : null;
+  }
+
+  private record StoredWorldIdentity(long tenantId, String worldSlug) {}
+
+  private static String worldIdentityKey(long tenantId, String worldSlug) {
+    String normalized = normalizeSelector(worldSlug);
+    if (tenantId <= 0L || normalized == null) {
+      throw new IllegalArgumentException("world identity must be complete");
+    }
+    String encodedSlug =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(normalized.getBytes(StandardCharsets.UTF_8));
+    return tenantId + ":" + encodedSlug;
   }
 
   private static boolean matchesCaller(LobbyRecord record, SessionContext caller) {
@@ -616,13 +825,11 @@ public final class DirectTextConnectScopeSessionStore {
       long catalogRevision,
       String targetFingerprint) {
     public WorldOrdinalTarget {
+      worldSlug = normalizeSelector(worldSlug);
       if (ordinal < 1 || tenantId <= 0L || catalogRevision < 0L) {
         throw new IllegalArgumentException("world ordinal target authority was invalid");
       }
-      if (worldSlug == null
-          || worldSlug.isBlank()
-          || targetFingerprint == null
-          || targetFingerprint.isBlank()) {
+      if (worldSlug == null || targetFingerprint == null || targetFingerprint.isBlank()) {
         throw new IllegalArgumentException("world ordinal target identity must not be blank");
       }
     }
@@ -663,12 +870,17 @@ public final class DirectTextConnectScopeSessionStore {
 
   public record RealmsSnapshot(
       String worldSlug,
+      long tenantId,
+      String requestedWorldSelector,
       String catalogFingerprint,
       Instant expiresAt,
       List<RealmOrdinalTarget> ordinalTargets) {
     public RealmsSnapshot {
-      if (worldSlug == null || worldSlug.isBlank()) {
-        throw new IllegalArgumentException("worldSlug must not be blank");
+      if (worldSlug == null || worldSlug.isBlank() || tenantId <= 0L) {
+        throw new IllegalArgumentException("world identity must be complete");
+      }
+      if (requestedWorldSelector == null || requestedWorldSelector.isBlank()) {
+        throw new IllegalArgumentException("requestedWorldSelector must not be blank");
       }
       if (catalogFingerprint == null || catalogFingerprint.isBlank()) {
         throw new IllegalArgumentException("catalogFingerprint must not be blank");
@@ -861,12 +1073,19 @@ public final class DirectTextConnectScopeSessionStore {
   }
 
   private record StoredRealmsSnapshot(
+      long tenantId,
       String worldSlug,
+      String requestedWorldSelector,
       String catalogFingerprint,
       long expiresAtEpochMs,
       List<RealmOrdinalTarget> ordinalTargets) {
     private StoredRealmsSnapshot {
+      if (tenantId < 0L) {
+        throw new IllegalArgumentException("tenantId must not be negative");
+      }
       Objects.requireNonNull(worldSlug, "worldSlug must not be null");
+      requestedWorldSelector =
+          requestedWorldSelector == null ? "" : normalizeSelector(requestedWorldSelector);
       Objects.requireNonNull(catalogFingerprint, "catalogFingerprint must not be null");
       ordinalTargets = List.copyOf(ordinalTargets == null ? List.of() : ordinalTargets);
     }

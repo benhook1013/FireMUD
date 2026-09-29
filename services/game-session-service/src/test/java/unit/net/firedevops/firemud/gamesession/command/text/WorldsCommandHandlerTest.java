@@ -127,6 +127,88 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void sameWorldSlugAcrossTenantsKeepsDistinctOrdinalsAndJoinTargets() {
+    GameplayWorldCatalog.WorldView worldA = worldView("demo", "Tenant A", 22L, 1L);
+    GameplayWorldCatalog.WorldView worldB = worldView("DEMO", "Tenant B", 33L, 2L);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(List.of(worldA, worldB)),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    WorldsViewOutput worlds = localHandler.browseView("7", Optional.of(authenticatedSession()));
+    assertThat(worlds.worlds())
+        .extracting(WorldsViewOutput.WorldEntry::ordinal)
+        .containsExactly(1, 2);
+    assertThat(worlds.worlds())
+        .extracting(WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo", "DEMO");
+    assertThat(localHandler.browseRealms("7", authenticatedSession(), "1"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(localHandler.browseRealms("7", authenticatedSession(), "2"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+
+    Mockito.clearInvocations(accountClient);
+    assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.invalidSelector());
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "2"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.eq("scope"),
+            Mockito.anyString());
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.eq("scope"),
+            Mockito.anyString());
+  }
+
+  @Test
+  void joinRejectsUnboundOrdinalBeforeCallingAccount() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    Mockito.clearInvocations(accountClient);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
   void stableSlugRealmSelectorResolvesAgainstCurrentCatalogAfterReorder() {
     GameplayWorldCatalog.RealmView realmA =
         new GameplayWorldCatalog.RealmView(
@@ -214,7 +296,7 @@ class WorldsCommandHandlerTest {
         new GameplayWorldCatalog.RealmView(
             "preview",
             "Preview Realm",
-            23L,
+            22L,
             2L,
             1L,
             true,
@@ -1356,7 +1438,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void joinUsesRetainedRealmScopeWhenCurrentWorldOrdinalChanges() {
+  void joinRejectsRetainedRealmScopeWhenCurrentWorldOrdinalChanges() {
     GameplayWorldCatalog.RealmView realmA =
         new GameplayWorldCatalog.RealmView(
             "production",
@@ -1421,21 +1503,13 @@ class WorldsCommandHandlerTest {
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
     worlds.set(List.of(worldB, worldA));
     assertThat(catalog.resolveWorld("1")).hasValue(worldB);
+    Mockito.clearInvocations(accountClient);
     WorldsCommandHandler.JoinMembershipResult join =
         localHandler.joinPublicProductionMembership(authenticatedSession(), "1");
 
-    assertThat(join).isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
-    assertThat(
-            ((WorldsCommandHandler.JoinMembershipResult.Response) join).response().getOutcomeCode())
-        .isEqualTo("CONNECT_SCOPE_MISMATCH");
-    Mockito.verify(accountClient)
-        .joinPublicProductionMembership(
-            Mockito.argThat(
-                context ->
-                    context.getTenantId().equals("22")
-                        && context.getRealmId().equals(realmA.realmId().toString())),
-            Mockito.eq("scope-a"),
-            Mockito.anyString());
+    assertThat(join)
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
 
@@ -1571,7 +1645,9 @@ class WorldsCommandHandlerTest {
 
     assertThat(catalog.publicProductionRealmCardinality(22L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
-    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
+    assertThat(catalog.readDiscoverySnapshot().output().worlds())
+        .extracting(WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("DEMO");
     Mockito.clearInvocations(accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "other"))
@@ -1579,8 +1655,7 @@ class WorldsCommandHandlerTest {
     Mockito.verifyNoInteractions(accountClient);
 
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
-        .isEqualTo(
-            WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
     Mockito.verifyNoInteractions(accountClient);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
@@ -1681,6 +1756,26 @@ class WorldsCommandHandlerTest {
         1L,
         ADMISSION_REALM_ID,
         ADMISSION_NAMESPACE_ID);
+  }
+
+  private GameplayWorldCatalog.WorldView worldView(
+      String worldSlug, String displayName, long tenantId, long gameInstanceId) {
+    GameplayWorldCatalog.RealmView realm =
+        new GameplayWorldCatalog.RealmView(
+            "production",
+            "Production",
+            tenantId,
+            gameInstanceId,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            UUID.randomUUID(),
+            UUID.randomUUID());
+    return new GameplayWorldCatalog.WorldView(worldSlug, displayName, List.of(realm));
   }
 
   private GameplayCatalogProperties publicProductionProperties() {

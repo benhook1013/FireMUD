@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -381,6 +382,181 @@ class PlayCommandHandlerTest {
         sessionContextService,
         gameplayPresenceLifecycleService,
         scriptEventPublisher);
+  }
+
+  @Test
+  void numericPlayRealmUsesTenantQualifiedSnapshotForDuplicateWorldSlug() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayCatalogProperties.World secondTenantWorld =
+        world(
+            "demo",
+            "Demo World - Second Tenant",
+            List.of(realm("production", "Second Tenant Live Realm", 23L, 3L, true, false)));
+    List<GameplayCatalogProperties.World> configuredWorlds =
+        new ArrayList<>(gameplayCatalogProperties.getWorlds());
+    configuredWorlds.add(secondTenantWorld);
+    gameplayCatalogProperties.setWorlds(configuredWorlds);
+
+    GameplayWorldCatalog.DiscoverySnapshot worlds = worldCatalog.readDiscoverySnapshot();
+    DirectTextConnectScopeSessionStore.WorldOrdinalTarget selectedWorldTarget =
+        worlds.ordinalTargets().stream()
+            .filter(target -> target.tenantId() == 23L)
+            .findFirst()
+            .orElseThrow();
+    GameplayWorldCatalog.WorldView selectedWorld =
+        worlds.visibleWorlds().stream()
+            .filter(
+                candidate -> candidate.realms().stream().anyMatch(realm -> realm.tenantId() == 23L))
+            .findFirst()
+            .orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot realms =
+        worldCatalog.readRealmDiscoverySnapshot(selectedWorld);
+    String worldSelector = Integer.toString(selectedWorldTarget.ordinal());
+    connectScopeSessionStore.replaceWorldSnapshot(
+        context.sessionId(),
+        context.accountId(),
+        worlds.catalogFingerprint(),
+        worlds.ordinalTargets(),
+        Instant.now());
+    connectScopeSessionStore.replaceRealmSnapshot(
+        context,
+        worldSelector,
+        23L,
+        selectedWorld.slug(),
+        realms.catalogFingerprint(),
+        realms.ordinalTargets(),
+        List.of(),
+        Instant.now());
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("Sora")
+                    .build()));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.eq("123"), Mockito.eq("23"), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("23")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("23")
+                .setGameplayAvailable(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(23L, 3L, 7001L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of(worldSelector, "1", "Sora"),
+                "PLAY " + worldSelector + " 1 Sora"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("23"), Mockito.anyString());
+    Mockito.verify(moderationPolicyClient).evaluateGameplayAdmission(23L, 123L);
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.tenantId() == 23L
+                        && saved.gameInstanceId() == 3L
+                        && "demo".equals(saved.worldSlug())
+                        && "production".equals(saved.realmSlug())));
+  }
+
+  @Test
+  void numericPlayRealmFailsClosedForWrongTenantOrStaleRealmSnapshot() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    List<GameplayCatalogProperties.World> configuredWorlds =
+        new ArrayList<>(gameplayCatalogProperties.getWorlds());
+    configuredWorlds.add(
+        world(
+            "demo",
+            "Demo World - Second Tenant",
+            List.of(realm("production", "Second Tenant Live Realm", 23L, 3L, true, false))));
+    gameplayCatalogProperties.setWorlds(configuredWorlds);
+
+    GameplayWorldCatalog.DiscoverySnapshot worlds = worldCatalog.readDiscoverySnapshot();
+    DirectTextConnectScopeSessionStore.WorldOrdinalTarget selectedWorldTarget =
+        worlds.ordinalTargets().stream()
+            .filter(target -> target.tenantId() == 23L)
+            .findFirst()
+            .orElseThrow();
+    GameplayWorldCatalog.WorldView selectedWorld =
+        worlds.visibleWorlds().stream()
+            .filter(
+                candidate -> candidate.realms().stream().anyMatch(realm -> realm.tenantId() == 23L))
+            .findFirst()
+            .orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot realms =
+        worldCatalog.readRealmDiscoverySnapshot(selectedWorld);
+    String worldSelector = Integer.toString(selectedWorldTarget.ordinal());
+    connectScopeSessionStore.replaceWorldSnapshot(
+        context.sessionId(),
+        context.accountId(),
+        worlds.catalogFingerprint(),
+        worlds.ordinalTargets(),
+        Instant.now());
+
+    // A snapshot for the colliding slug under the other tenant must not bind this selection.
+    connectScopeSessionStore.replaceRealmSnapshot(
+        context,
+        worldSelector,
+        22L,
+        selectedWorld.slug(),
+        realms.catalogFingerprint(),
+        realms.ordinalTargets(),
+        List.of(),
+        Instant.now());
+    PlayCommandHandlingResult wrongTenantResult =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of(worldSelector, "1"), "PLAY " + worldSelector + " 1"));
+    assertThat(wrongTenantResult.commandResult().accepted()).isFalse();
+    assertThat(wrongTenantResult.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+
+    // The right tenant key still fails when its retained REALMS fingerprint is stale.
+    connectScopeSessionStore.replaceRealmSnapshot(
+        context,
+        worldSelector,
+        23L,
+        selectedWorld.slug(),
+        "stale-fingerprint",
+        realms.ordinalTargets(),
+        List.of(),
+        Instant.now());
+    PlayCommandHandlingResult staleResult =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of(worldSelector, "1"), "PLAY " + worldSelector + " 1"));
+
+    assertThat(staleResult.commandResult().accepted()).isFalse();
+    assertThat(staleResult.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
   @Test

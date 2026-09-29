@@ -135,7 +135,7 @@ public class WorldsCommandHandler {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     try {
-      connectScopeSessionStore.clearWorldScopes(sessionContext, worldSelector);
+      connectScopeSessionStore.clearWorldScopes(sessionContext, worldTenantId(world), world.slug());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -205,6 +205,7 @@ public class WorldsCommandHandler {
       connectScopeSessionStore.replaceRealmSnapshot(
           sessionContext,
           worldSelector,
+          worldTenantId(world),
           world.slug(),
           realmSnapshot.catalogFingerprint(),
           realmSnapshot.ordinalTargets(),
@@ -308,7 +309,9 @@ public class WorldsCommandHandler {
     }
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
     try {
-      maybeSnapshot = connectScopeSessionStore.realmsSnapshot(caller, world.slug(), Instant.now());
+      maybeSnapshot =
+          connectScopeSessionStore.realmsSnapshot(
+              caller, worldTenantId(world), world.slug(), Instant.now());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new RealmSelectorResolution.Unavailable();
@@ -556,11 +559,51 @@ public class WorldsCommandHandler {
     if (accountClient == null || connectScopeSessionStore == null) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
+    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot;
+    try {
+      catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    WorldSelectorResolution selection =
+        resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
+    if (selection instanceof WorldSelectorResolution.Invalid
+        || selection instanceof WorldSelectorResolution.Stale) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    if (selection instanceof WorldSelectorResolution.Unavailable) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog;
+    try {
+      currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeRealmSnapshot;
+    try {
+      maybeRealmSnapshot =
+          connectScopeSessionStore.realmsSnapshot(
+              sessionContext, worldTenantId(world), world.slug(), Instant.now());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (maybeRealmSnapshot.isEmpty()
+        || !maybeRealmSnapshot
+            .orElseThrow()
+            .catalogFingerprint()
+            .equals(currentRealmCatalog.catalogFingerprint())
+        || !normalizeSelector(worldSelector)
+            .equals(maybeRealmSnapshot.orElseThrow().requestedWorldSelector())) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
     Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope;
     try {
       maybeJoinScope =
           connectScopeSessionStore.publicProductionScopeForJoin(
-              sessionContext, worldSelector, Instant.now());
+              sessionContext, worldSelector, worldTenantId(world), world.slug(), Instant.now());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
@@ -575,6 +618,9 @@ public class WorldsCommandHandler {
       tenantId = Long.parseLong(scope.playerContext().getTenantId());
     } catch (NumberFormatException ex) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+    }
+    if (tenantId != worldTenantId(world)) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     boolean hasPublicProductionRealm;
     try {
@@ -591,6 +637,16 @@ public class WorldsCommandHandler {
     return JoinMembershipResult.response(
         accountClient.joinPublicProductionMembership(
             playerContext, scope.connectScopeId(), requestId));
+  }
+
+  private static long worldTenantId(GameplayWorldCatalog.WorldView world) {
+    List<Long> tenantIds =
+        world.realms().stream().map(GameplayWorldCatalog.RealmView::tenantId).distinct().toList();
+    return tenantIds.size() == 1 ? tenantIds.getFirst() : -1L;
+  }
+
+  private static String normalizeSelector(String selector) {
+    return selector == null ? "" : selector.trim().toLowerCase(java.util.Locale.ROOT);
   }
 
   private DirectTextConnectScopeTarget connectScopeTarget(

@@ -1259,9 +1259,14 @@ public class PlayCommandHandler {
           .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
           .orElseGet(RealmSelectorResolution.Invalid::new);
     }
+    long tenantId = worldTenantId(world);
+    if (tenantId <= 0L) {
+      return new RealmSelectorResolution.Invalid();
+    }
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
     try {
-      maybeSnapshot = connectScopeSessionStore.realmsSnapshot(context, world.slug(), Instant.now());
+      maybeSnapshot =
+          connectScopeSessionStore.realmsSnapshot(context, tenantId, world.slug(), Instant.now());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new RealmSelectorResolution.Unavailable();
@@ -1292,6 +1297,12 @@ public class PlayCommandHandler {
         .resolveRealmSnapshotOrdinal(world, currentRealmCatalog, maybeTarget.orElseThrow())
         .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
         .orElseGet(RealmSelectorResolution.Stale::new);
+  }
+
+  private static long worldTenantId(GameplayWorldCatalog.WorldView world) {
+    List<Long> tenantIds =
+        world.realms().stream().map(GameplayWorldCatalog.RealmView::tenantId).distinct().toList();
+    return tenantIds.size() == 1 ? tenantIds.getFirst() : -1L;
   }
 
   private sealed interface WorldSelectorResolution

@@ -71,6 +71,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
     firstInstance.replaceWorldScopes(
         caller,
         "1",
+        22L,
         "demo-world",
         List.of(
             new DirectTextConnectScopeSessionStore.ScopedRealm(
@@ -79,6 +80,22 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                 "account-connect-scope-17",
                 now.plusSeconds(600),
                 playerContext(caller))));
+    firstInstance.replaceWorldScopes(
+        caller,
+        "2",
+        33L,
+        "demo-world",
+        List.of(
+            new DirectTextConnectScopeSessionStore.ScopedRealm(
+                "production",
+                true,
+                "account-connect-scope-33",
+                now.plusSeconds(600),
+                playerContext(caller, 33L))));
+    assertThat(
+            replacementJoinScope(newStoreInstance(), caller, "2", 33L, "demo-world", Instant.now()))
+        .satisfies(
+            selected -> assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("33"));
 
     List<DirectTextConnectScopeSessionStore> replacementInstances =
         java.util.stream.IntStream.range(0, 8).mapToObj(ignored -> newStoreInstance()).toList();
@@ -103,7 +120,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                     throw new IllegalStateException("concurrent JOIN test did not start");
                   }
                   return replacement
-                      .publicProductionScopeForJoin(caller, "1", Instant.now())
+                      .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", Instant.now())
                       .orElseThrow()
                       .requestId();
                 }));
@@ -118,12 +135,16 @@ class RedisDirectTextConnectScopeSessionStoreTest {
       assertThat(requestIds).containsOnly(requestIds.getFirst());
 
       DirectTextConnectScopeSessionStore replacement = replacementInstances.getLast();
-      replacement.clearWorldScopes(caller, "1");
-      assertThat(firstInstance.publicProductionScopeForJoin(caller, "1", Instant.now())).isEmpty();
+      replacement.clearWorldScopes(caller, 22L, "demo-world");
+      assertThat(
+              firstInstance.publicProductionScopeForJoin(
+                  caller, "1", 22L, "demo-world", Instant.now()))
+          .isEmpty();
 
       replacement.replaceWorldScopes(
           caller,
           "1",
+          22L,
           "demo-world",
           List.of(
               new DirectTextConnectScopeSessionStore.ScopedRealm(
@@ -134,14 +155,17 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                   playerContext(caller))));
       String freshRequestId =
           firstInstance
-              .publicProductionScopeForJoin(caller, "1", Instant.now())
+              .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", Instant.now())
               .orElseThrow()
               .requestId();
       assertThat(freshRequestId).isNotEqualTo(requestIds.getFirst());
 
       replacement.clearSession(SESSION_ID);
       assertThat(firstInstance.worldsSnapshot(caller, Instant.now())).isEmpty();
-      assertThat(firstInstance.publicProductionScopeForJoin(caller, "1", Instant.now())).isEmpty();
+      assertThat(
+              firstInstance.publicProductionScopeForJoin(
+                  caller, "1", 22L, "demo-world", Instant.now()))
+          .isEmpty();
     } finally {
       workers.shutdownNow();
     }
@@ -156,14 +180,28 @@ class RedisDirectTextConnectScopeSessionStoreTest {
   }
 
   private static PlayerExecutionContext playerContext(SessionContext caller) {
+    return playerContext(caller, 22L);
+  }
+
+  private static PlayerExecutionContext playerContext(SessionContext caller, long tenantId) {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(Long.toString(caller.accountId()))
         .setSessionId(Long.toString(caller.sessionId()))
-        .setTenantId("22")
+        .setTenantId(Long.toString(tenantId))
         .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
         .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
         .setPlayableStateScope("SHARED")
         .setGameInstanceId("9")
         .build();
+  }
+
+  private static DirectTextConnectScopeSessionStore.JoinScope replacementJoinScope(
+      DirectTextConnectScopeSessionStore store,
+      SessionContext caller,
+      String selector,
+      long tenantId,
+      String slug,
+      Instant now) {
+    return store.publicProductionScopeForJoin(caller, selector, tenantId, slug, now).orElseThrow();
   }
 }
