@@ -5,6 +5,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
@@ -119,8 +120,10 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
+                .setMembershipLifecycleState("ACTIVE")
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -129,7 +132,7 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -137,7 +140,13 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenAnswer(
+            invocation ->
+                validGrant(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                    invocation.getArgument(3)));
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -1140,8 +1149,10 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("INACTIVE")
                 .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1168,8 +1179,11 @@ class PlayCommandHandlerTest {
                 .setAccountId("123")
                 .setTenantId("22")
                 .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(true)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipVersion(0L)
+                .setMembershipAuthorityGeneration(0L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1203,7 +1217,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenReturn(validGrant());
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1357,9 +1371,11 @@ class PlayCommandHandlerTest {
                 .setAccountId("123")
                 .setTenantId("22")
                 .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
                 .setMembershipVersion(0L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(0L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1387,8 +1403,10 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("INACTIVE")
                 .setMembershipVersion(4L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1416,6 +1434,8 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt("not-a-timestamp")
                 .build());
 
@@ -1434,6 +1454,116 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"stale", "future", "wrong-account", "missing-generation"})
+  void playRejectsInvalidPositiveMembershipAuthority(String invalidEvidence) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    GetTenantMembershipForRuntimeResponse.Builder response =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId("123")
+            .setTenantId("22")
+            .setMembershipExists(true)
+            .setGameplayAdmissionAllowed(true)
+            .setMembershipLifecycleState("ACTIVE")
+            .setMembershipVersion(1L)
+            .setMembershipAuthorityGeneration(1L)
+            .setEvaluatedAt(evaluatedAtNow());
+    switch (invalidEvidence) {
+      case "stale" -> response.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
+      case "future" -> response.setEvaluatedAt(Instant.now().plusSeconds(1).toString());
+      case "wrong-account" -> response.setAccountId("999");
+      case "missing-generation" -> response.setMembershipAuthorityGeneration(0L);
+      default -> throw new IllegalArgumentException(invalidEvidence);
+    }
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(response.build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"stale", "future", "wrong-tenant", "missing-version", "missing-sequence"})
+  void playRejectsInvalidEntitlementAuthority(String invalidEvidence) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    GetTenantEntitlementsForRuntimeResponse.Builder response =
+        GetTenantEntitlementsForRuntimeResponse.newBuilder()
+            .setTenantId("22")
+            .setGameplayAvailable(true)
+            .setEntitlementVersion(1L)
+            .setTenantBillingSequence(1L)
+            .setEvaluatedAt(evaluatedAtNow());
+    switch (invalidEvidence) {
+      case "stale" -> response.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
+      case "future" -> response.setEvaluatedAt(Instant.now().plusSeconds(1).toString());
+      case "wrong-tenant" -> response.setTenantId("23");
+      case "missing-version" -> response.setEntitlementVersion(0L);
+      case "missing-sequence" -> response.setTenantBillingSequence(0L);
+      default -> throw new IllegalArgumentException(invalidEvidence);
+    }
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(response.build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"stale", "future", "wrong-account", "wrong-realm"})
+  void playRejectsInvalidPositiveGrantAuthority(String invalidEvidence) {
+    markPreviewRealmInvisible();
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GetRealmAccessGrantForRuntimeResponse.Builder grant =
+        GetRealmAccessGrantForRuntimeResponse.newBuilder()
+            .setAccountId("123")
+            .setTenantId("22")
+            .setWorldSlug("sandbox")
+            .setRealmSlug("preview")
+            .setGranted(true)
+            .setGrantVersion(1L)
+            .setEvaluatedAt(evaluatedAtNow());
+    switch (invalidEvidence) {
+      case "stale" -> grant.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
+      case "future" -> grant.setEvaluatedAt(Instant.now().plusSeconds(1).toString());
+      case "wrong-account" -> grant.setAccountId("999");
+      case "wrong-realm" -> grant.setRealmSlug("production");
+      default -> throw new IllegalArgumentException(invalidEvidence);
+    }
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(grant.build());
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
   @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
@@ -1446,7 +1576,7 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(5L)
                 .setTenantBillingSequence(5L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1641,6 +1771,27 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private static String evaluatedAtNow() {
+    return Instant.now().toString();
+  }
+
+  private static GetRealmAccessGrantForRuntimeResponse validGrant() {
+    return validGrant("123", "22", "sandbox", "preview");
+  }
+
+  private static GetRealmAccessGrantForRuntimeResponse validGrant(
+      String accountId, String tenantId, String worldSlug, String realmSlug) {
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setAccountId(accountId)
+        .setTenantId(tenantId)
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setGranted(true)
+        .setGrantVersion(1L)
+        .setEvaluatedAt(evaluatedAtNow())
+        .build();
   }
 
   private void markPreviewRealmInvisible() {

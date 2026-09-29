@@ -851,6 +851,11 @@ public class PlayCommandHandler {
             worldAccessDeniedFailure(
                 context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
       }
+      if (!isValidGrant(grantResponse, context, selectedWorld, selectedRealm)) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
       return Optional.empty();
     }
     return Optional.empty();
@@ -904,6 +909,11 @@ public class PlayCommandHandler {
       return Optional.of(
           tenantBillingBlockedFailure(
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+    }
+    if (!isValidEntitlement(response, selectedRealm)) {
+      return Optional.of(
+          entitlementUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
     if (!response.getGameplayAvailable()) {
       return Optional.of(
@@ -1015,23 +1025,81 @@ public class PlayCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
       GameplayWorldCatalog.RealmView selectedRealm) {
-    if (!StringUtils.hasText(response.getAccountId())
-        || !StringUtils.hasText(response.getTenantId())
-        || !StringUtils.hasText(response.getEvaluatedAt())) {
+    if (!hasMatchingAuthorityIdentity(
+            response.getAccountId(),
+            response.getTenantId(),
+            context.accountId(),
+            selectedRealm.tenantId())
+        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+      return false;
+    }
+    if (!response.getMembershipExists()) {
+      return "MISSING".equalsIgnoreCase(response.getMembershipLifecycleState())
+          && !response.getGameplayAdmissionAllowed()
+          && response.getMembershipVersion() == 0L
+          && response.getMembershipAuthorityGeneration() == 0L;
+    }
+    if (response.getMembershipVersion() <= 0L
+        || response.getMembershipAuthorityGeneration() <= 0L) {
+      return false;
+    }
+    if (response.getGameplayAdmissionAllowed()) {
+      return "ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState());
+    }
+    return "ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
+        || "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState());
+  }
+
+  private boolean isValidGrant(
+      GetRealmAccessGrantForRuntimeResponse response,
+      SessionContext context,
+      GameplayWorldCatalog.WorldView world,
+      GameplayWorldCatalog.RealmView realm) {
+    return response.getGrantVersion() > 0L
+        && hasMatchingAuthorityIdentity(
+            response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
+        && world.slug().equals(response.getWorldSlug())
+        && realm.slug().equals(response.getRealmSlug())
+        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+  }
+
+  private boolean isValidEntitlement(
+      GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
+    return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
+        && response.getEntitlementVersion() > 0L
+        && response.getTenantBillingSequence() > 0L
+        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+  }
+
+  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
+    if (!StringUtils.hasText(evaluatedAt)) {
       return false;
     }
     try {
-      Instant.parse(response.getEvaluatedAt());
-      if (Long.parseLong(response.getAccountId()) != context.accountId()
-          || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
-        return false;
-      }
-    } catch (DateTimeParseException | NumberFormatException ex) {
+      Instant evaluated = Instant.parse(evaluatedAt);
+      Instant now = Instant.now();
+      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
+    } catch (DateTimeParseException ex) {
       return false;
     }
-    return response.getMembershipExists()
-        ? response.getMembershipVersion() > 0L
-        : response.getMembershipVersion() == 0L;
+  }
+
+  private boolean hasMatchingAuthorityIdentity(
+      String accountId, String tenantId, long expectedAccountId, long expectedTenantId) {
+    try {
+      return Long.parseLong(accountId) == expectedAccountId
+          && Long.parseLong(tenantId) == expectedTenantId;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
+  }
+
+  private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
+    try {
+      return Long.parseLong(tenantId) == expectedTenantId;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
   }
 
   private boolean maybeRecordFreshEntryFallback(

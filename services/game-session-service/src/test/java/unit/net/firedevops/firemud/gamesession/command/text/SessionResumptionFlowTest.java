@@ -482,7 +482,9 @@ class SessionResumptionFlowTest {
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("INACTIVE")
                 .setMembershipVersion(2L)
+                .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
