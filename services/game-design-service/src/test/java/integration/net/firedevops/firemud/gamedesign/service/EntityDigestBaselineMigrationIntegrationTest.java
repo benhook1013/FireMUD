@@ -8,6 +8,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -330,6 +335,176 @@ class EntityDigestBaselineMigrationIntegrationTest {
     assertThat(readback).usingRecursiveComparison().isEqualTo(secondSource);
     assertThat(auditRepository.findByOperationId(firstCommand.operationId()).orElseThrow().id())
         .isEqualTo(firstResult.auditId());
+  }
+
+  @Test
+  void databaseMigrationRolesHaveOnlyTheirDirectTablePrivileges() throws Exception {
+    createGame("9701");
+    Version version = createVersion("9701", 1);
+    RecordedParticipantDigest baseline = seedEntityBaseline("9701", version, 1);
+    provisionMigrationDatabaseRoles();
+
+    try (Connection reader = connectAs("firemud_game_design_baseline_reader_test", "reader-proof")) {
+      assertThat(reader.getMetaData().getUserName())
+          .isEqualTo("firemud_game_design_baseline_reader_test");
+      assertCount(reader, "version");
+      assertCount(reader, "publish_recorded_participant_digest");
+      assertDenied(
+          reader,
+          "UPDATE game_design_service.publish_recorded_participant_digest "
+              + "SET content_digest = 'forbidden' WHERE false");
+      assertDenied(
+          reader,
+          "INSERT INTO game_design_service.publish_recorded_participant_digest "
+              + "(tenant_id) VALUES ('forbidden')");
+      assertDenied(reader, "CREATE TABLE game_design_service.reader_forbidden (id integer)");
+      assertDenied(
+          reader,
+          "CREATE TABLE baseline_migration_other_schema.reader_forbidden (id integer)");
+      assertDenied(
+          reader,
+          "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
+    }
+
+    try (Connection writer = connectAs("firemud_game_design_baseline_writer_test", "writer-proof")) {
+      assertThat(writer.getMetaData().getUserName())
+          .isEqualTo("firemud_game_design_baseline_writer_test");
+      assertCount(writer, "version");
+      assertCount(writer, "publish_recorded_participant_digest");
+      assertCount(writer, "entity_digest_baseline_migration_audit");
+
+      try (PreparedStatement update =
+          writer.prepareStatement(
+              "UPDATE game_design_service.publish_recorded_participant_digest "
+                  + "SET content_digest = ?, digest_schema_version = 2 "
+                  + "WHERE id = ? AND content_digest = ? AND digest_schema_version = 1")) {
+        update.setString(1, "entity-v2-restricted-writer-proof");
+        update.setLong(2, baseline.getId());
+        update.setString(3, baseline.getContentDigest());
+        assertThat(update.executeUpdate()).isEqualTo(1);
+      }
+      try (PreparedStatement insert =
+          writer.prepareStatement(
+              "INSERT INTO game_design_service.entity_digest_baseline_migration_audit ("
+                  + "operation_id, recorded_participant_digest_id, source_tenant_id, "
+                  + "source_publish_type, source_participant_key, source_base_version_id, "
+                  + "source_scope_value, source_applied_commit_id, source_content_digest, "
+                  + "source_digest_schema_version, source_recorded_from_publish_workflow_id, "
+                  + "source_recorded_at, source_last_verified_publish_workflow_id, "
+                  + "source_last_verified_at, observed_tenant_id, observed_publish_type, "
+                  + "observed_participant_key, observed_base_version_id, observed_scope_value, "
+                  + "observed_applied_commit_id, observed_content_digest, "
+                  + "observed_digest_schema_version, actor_identity, workload_identity, outcome, "
+                  + "committed_at) "
+                  + "SELECT ?, id, tenant_id, publish_type, participant_key, base_version_id, "
+                  + "scope_value, applied_commit_id, ?, 1, recorded_from_publish_workflow_id, "
+                  + "recorded_at, last_verified_publish_workflow_id, last_verified_at, tenant_id, "
+                  + "publish_type, participant_key, base_version_id, scope_value, "
+                  + "applied_commit_id, content_digest, digest_schema_version, ?, ?, "
+                  + "'COMMITTED', CURRENT_TIMESTAMP "
+                  + "FROM game_design_service.publish_recorded_participant_digest WHERE id = ?")) {
+        insert.setString(1, "restricted-writer-proof-" + baseline.getId());
+        insert.setString(2, baseline.getContentDigest());
+        insert.setString(3, "operator:test-actor");
+        insert.setString(4, "spiffe://firemud/ns/dev/sa/game-design-baseline-migrator");
+        insert.setLong(5, baseline.getId());
+        assertThat(insert.executeUpdate()).isEqualTo(1);
+      }
+
+      assertDenied(
+          writer,
+          "UPDATE game_design_service.version SET version_state = 'DRAFT' WHERE id = "
+              + version.getId());
+      assertDenied(
+          writer,
+          "UPDATE game_design_service.publish_recorded_participant_digest "
+              + "SET tenant_id = 'forbidden' WHERE id = "
+              + baseline.getId());
+      assertDenied(
+          writer,
+          "INSERT INTO game_design_service.version (tenant_id) VALUES ('forbidden')");
+      assertDenied(
+          writer,
+          "SELECT id FROM game_design_service.version WHERE id = "
+              + version.getId()
+              + " FOR UPDATE");
+      assertDenied(
+          writer,
+          "UPDATE game_design_service.flyway_schema_history_game_design_service "
+              + "SET success = success WHERE false");
+      assertDenied(writer, "CREATE TABLE game_design_service.writer_forbidden (id integer)");
+      assertDenied(
+          writer,
+          "CREATE TABLE baseline_migration_other_schema.writer_forbidden (id integer)");
+      assertDenied(
+          writer,
+          "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
+    }
+  }
+
+  private void provisionMigrationDatabaseRoles() throws SQLException {
+    try (Connection admin =
+            DriverManager.getConnection(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        Statement statement = admin.createStatement()) {
+      statement.execute(
+          "CREATE ROLE firemud_game_design_baseline_reader_test LOGIN NOINHERIT PASSWORD 'reader-proof'");
+      statement.execute(
+          "CREATE ROLE firemud_game_design_baseline_writer_test LOGIN NOINHERIT PASSWORD 'writer-proof'");
+      statement.execute("CREATE SCHEMA baseline_migration_other_schema");
+      statement.execute(
+          "CREATE TABLE baseline_migration_other_schema.sentinel (id integer NOT NULL)");
+      statement.execute("INSERT INTO baseline_migration_other_schema.sentinel VALUES (1)");
+      statement.execute("GRANT USAGE ON SCHEMA game_design_service TO firemud_game_design_baseline_reader_test");
+      statement.execute("GRANT USAGE ON SCHEMA game_design_service TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT SELECT ON TABLE game_design_service.version, "
+              + "game_design_service.publish_recorded_participant_digest "
+              + "TO firemud_game_design_baseline_reader_test");
+      statement.execute(
+          "GRANT SELECT ON TABLE game_design_service.version, "
+              + "game_design_service.publish_recorded_participant_digest, "
+              + "game_design_service.entity_digest_baseline_migration_audit "
+              + "TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT UPDATE (applied_commit_id, content_digest, digest_schema_version) "
+              + "ON TABLE game_design_service.publish_recorded_participant_digest "
+              + "TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT INSERT ON TABLE game_design_service.entity_digest_baseline_migration_audit "
+              + "TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT USAGE, SELECT ON SEQUENCE "
+              + "game_design_service.entity_digest_baseline_migration_audit_id_seq "
+              + "TO firemud_game_design_baseline_writer_test");
+    }
+  }
+
+  private Connection connectAs(String username, String password) throws SQLException {
+    return DriverManager.getConnection(
+        postgres.getJdbcUrl() + "?currentSchema=game_design_service", username, password);
+  }
+
+  private void assertCount(Connection connection, String tableName) throws SQLException {
+    try (Statement statement = connection.createStatement();
+        var rows =
+            statement.executeQuery(
+                "SELECT COUNT(*) FROM game_design_service." + tableName)) {
+      assertThat(rows.next()).isTrue();
+      assertThat(rows.getLong(1)).isGreaterThanOrEqualTo(0);
+    }
+  }
+
+  private void assertDenied(Connection connection, String sql) throws SQLException {
+    try (Statement statement = connection.createStatement()) {
+      try {
+        statement.execute(sql);
+      } catch (SQLException denied) {
+        assertThat(denied.getSQLState()).isEqualTo("42501");
+        return;
+      }
+    }
+    throw new AssertionError("restricted migration database role unexpectedly succeeded: " + sql);
   }
 
   private void createGame(String tenantId) {

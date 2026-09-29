@@ -75,6 +75,35 @@ def require_failure(case, override, expected_fragment):
         )
 
 
+def assert_database_identity(job, expected_secret_name, mode):
+    container = job.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])[0]
+    if container.get("envFrom"):
+        raise SystemExit(f"{mode} Job must not import a broad service environment")
+    env = {entry["name"]: entry for entry in container.get("env", [])}
+    for name in ("FIREMUD_POSTGRES_USER", "FIREMUD_POSTGRES_PASSWORD"):
+        ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
+        if ref.get("name") != expected_secret_name:
+            raise SystemExit(f"{mode} Job must use {expected_secret_name} for {name}")
+        if ref.get("key") != name:
+            raise SystemExit(f"{mode} Job must use the exact {name} Secret key")
+        if ref.get("optional") is not False:
+            raise SystemExit(f"{mode} Job must require its {name} Secret key")
+    if env.get("SPRING_FLYWAY_ENABLED", {}).get("value") != "false":
+        raise SystemExit(f"{mode} Job must disable Flyway")
+
+    def contains_shared_secret(value):
+        if isinstance(value, dict):
+            if value.get("name") == "firemud-secret" or value.get("secretName") == "firemud-secret":
+                return True
+            return any(contains_shared_secret(child) for child in value.values())
+        if isinstance(value, list):
+            return any(contains_shared_secret(child) for child in value)
+        return False
+
+    if contains_shared_secret(job):
+        raise SystemExit(f"{mode} Job must not reference shared firemud-secret")
+
+
 disabled = render("migration-disabled")
 if disabled.returncode != 0:
     raise SystemExit(f"disabled chart render failed: {disabled.stderr}")
@@ -121,6 +150,7 @@ job_name = "game-design-baseline-migrator-entity-v1-to-v2-pr123-v42"
 job = by_kind_name.get(("Job", job_name))
 if job is None:
     raise SystemExit("enabled configuration did not render the operation-scoped Job")
+assert_database_identity(job, "firemud-game-design-baseline-writer-db", "migrate")
 if by_kind_name.get(("ServiceAccount", "game-design-baseline-migrator"), {}).get(
     "automountServiceAccountToken"
 ) is not False:
@@ -196,13 +226,6 @@ for name in (
 ):
     if "fieldRef" not in env.get(name, {}).get("valueFrom", {}):
         raise SystemExit(f"Job must derive {name} from downward API identity")
-for name in (
-    "FIREMUD_POSTGRES_USER",
-    "FIREMUD_POSTGRES_PASSWORD",
-):
-    secret_ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
-    if secret_ref.get("name") != "firemud-secret":
-        raise SystemExit(f"Job database credential {name} is not secret-projected")
 for name in (
     "FIREMUD_POSTGRES_HOST",
     "FIREMUD_POSTGRES_PORT",
@@ -306,6 +329,7 @@ preflight_docs = documents(preflight_result.stdout)
 preflight_job = next(
     item for item in preflight_docs if item.get("kind") == "Job" and item.get("metadata", {}).get("name", "").startswith("game-design-baseline-migrator-preflight-")
 )
+assert_database_identity(preflight_job, "firemud-game-design-baseline-reader-db", "preflight")
 if any(volume.get("name") == "expected-source" for volume in preflight_job["spec"]["template"]["spec"].get("volumes", [])):
     raise SystemExit("read-only preflight unexpectedly requires or mounts an expected-source tuple")
 
@@ -326,6 +350,7 @@ enumerate_docs = documents(enumerate_result.stdout)
 enumerate_job = next(
     item for item in enumerate_docs if item.get("kind") == "Job" and "-enumerate-" in item.get("metadata", {}).get("name", "")
 )
+assert_database_identity(enumerate_job, "firemud-game-design-baseline-reader-db", "enumerate")
 enumerate_env = {
     entry["name"]: entry
     for entry in enumerate_job["spec"]["template"]["spec"]["containers"][0].get("env", [])
