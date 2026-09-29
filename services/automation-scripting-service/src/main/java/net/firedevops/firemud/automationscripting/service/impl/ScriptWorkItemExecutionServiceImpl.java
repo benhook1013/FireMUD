@@ -893,7 +893,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
     if (retryableFanoutFence != null) {
-      retryOrDeadLetterPluginFence(workItem, retryableFanoutFence, STAGE_DSL_EVAL);
+      // Evaluation has already produced output and fan-out may have accepted earlier commands.
+      // There is no durable output/child ledger to safely resume, so neither automatic retry nor
+      // operator replay may re-enter the DSL after this uncertain post-evaluation boundary.
+      deadLetter(
+          workItem,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+          OUTCOME_INFRASTRUCTURE_ERROR,
+          retryableFanoutFence.reason(),
+          Instant.now());
       return false;
     }
     if (firstRejectedHandoff != null

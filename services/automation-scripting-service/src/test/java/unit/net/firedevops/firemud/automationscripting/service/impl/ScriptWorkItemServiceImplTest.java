@@ -405,14 +405,14 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void rejectsPostEvaluationReplayWhileRetainingOriginalFailureEvidence() {
+  void rejectsReplayAfterPartialFanoutAuthorityLossWithoutReenteringDsl() {
     ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(95L));
-    item.setCancelReason("GAME_SESSION_UNAVAILABLE");
+    item.setCancelReason("authority_unavailable");
     item.setFailureGeneration(2L);
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setFinalStage("TICK_HANDOFF");
-    audit.setFinalOutcome("authority_unavailable_exhausted");
-    audit.setFinalReason("GAME_SESSION_UNAVAILABLE");
+    audit.setFinalOutcome("infrastructure_error");
+    audit.setFinalReason("authority_unavailable");
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(95L)).thenReturn(Optional.of(audit));
 
@@ -513,10 +513,11 @@ class ScriptWorkItemServiceImplTest {
               assertThat(replay.rejectionReason()).isEqualTo("stage_evidence_unavailable");
             });
     assertThat(originalStage).hasValue("TICK_HANDOFF");
-    assertThat(originalReason).hasValue("GAME_SESSION_UNAVAILABLE");
-    assertThat(item.getCancelReason()).isEqualTo("GAME_SESSION_UNAVAILABLE");
+    assertThat(originalReason).hasValue("authority_unavailable");
+    assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
-    assertThat(audit.getFinalReason()).isEqualTo("GAME_SESSION_UNAVAILABLE");
+    assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
+    assertThat(audit.getFinalReason()).isEqualTo("authority_unavailable");
     verify(auditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
     verify(workItemRepository, never())
         .claimDeadLetterForReplay(

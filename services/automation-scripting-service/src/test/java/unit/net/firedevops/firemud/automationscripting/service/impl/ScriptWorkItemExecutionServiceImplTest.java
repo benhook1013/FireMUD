@@ -2346,8 +2346,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     }
   }
 
-  @Test
-  void retryablePluginFenceDuringFanoutRequeuesWorkAndContinuesWithSibling() {
+  @ParameterizedTest
+  @ValueSource(ints = {0, 3})
+  void pluginFenceDuringPartialFanoutDeadLettersAndContinuesWithSibling(int retryCount) {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
         Mockito.mock(ScriptDefinitionRepository.class);
@@ -2358,6 +2359,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     PluginRuntimeStateRepository pluginRepository =
         Mockito.mock(PluginRuntimeStateRepository.class);
     ScriptWorkItem item = pluginWorkItem();
+    item.setAuthorityUnavailableRetryCount(retryCount);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     ScriptWorkItem sibling = workItem();
     sibling.setId(100L);
     sibling.setScriptId("script-2");
@@ -2396,12 +2400,18 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(result.completedCount()).isEqualTo(1);
-    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
     assertThat(sibling.getStatus()).isEqualTo("HANDED_OFF");
     verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
+    verify(handoffService)
+        .recordUnattempted(Mockito.eq(item), Mockito.any(), Mockito.eq("authority_unavailable"));
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(workItemRepository, Mockito.times(2)).save(Mockito.any());
+    assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
+    assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
+    assertThat(audit.getFinalReason()).isEqualTo("authority_unavailable");
   }
 
   @Test
