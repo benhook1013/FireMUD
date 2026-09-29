@@ -638,9 +638,7 @@ class GameSessionGrpcServiceTest {
         .thenReturn(java.util.Optional.of(selectedPublicRealm));
     Mockito.when(pointerAuthorityService.listPointers())
         .thenReturn(
-            List.of(
-                selectedPublicRealm,
-                authorityPointer("beta", "live", 7L, 55L, true, true)));
+            List.of(selectedPublicRealm, authorityPointer("beta", "live", 7L, 55L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
     AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
 

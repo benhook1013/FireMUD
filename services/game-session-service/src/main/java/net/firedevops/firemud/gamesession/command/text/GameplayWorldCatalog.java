@@ -593,8 +593,8 @@ public final class GameplayWorldCatalog {
    *
    * <p>Text discovery intentionally continues to use {@link #visibleWorlds()}, which filters
    * malformed or ambiguous rows for its existing negative-admission behavior. The gRPC discovery
-   * boundary validates completeness and tenant-global public-realm uniqueness on one exact
-   * snapshot before projecting it.
+   * boundary validates completeness and tenant-global public-realm uniqueness on one exact snapshot
+   * before projecting it.
    */
   public List<WorldView> visibleWorldsFromAuthoritySnapshot() {
     if (authorityPointerSupplier == null) {
@@ -616,8 +616,8 @@ public final class GameplayWorldCatalog {
   }
 
   /**
-   * Requires a direct public-production admission target to match the sole visible public realm
-   * in its tenant's current authoritative pointer snapshot.
+   * Requires a direct public-production admission target to match the sole visible public realm in
+   * its tenant's current authoritative pointer snapshot.
    */
   public void requireUniqueVisiblePublicProductionRealm(
       GameplayAdmissionPointerSnapshot expectedPointer) {
