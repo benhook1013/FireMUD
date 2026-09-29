@@ -1883,21 +1883,22 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
             for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
         ]
         if mode == "hosted-controller":
-            documents.append(
-                self._policy_document(
-                    "account-service-controller-ingress",
-                    {
-                        "podSelector": {"matchLabels": {"app": "account-service"}},
-                        "policyTypes": ["Ingress"],
-                        "ingress": [
-                            {
-                                "from": [controller_from],
-                                "ports": [{"protocol": "TCP", "port": 6565}],
-                            }
-                        ],
-                    },
+            for workload in ("account-service", "game-session-service"):
+                documents.append(
+                    self._policy_document(
+                        f"{workload}-controller-ingress",
+                        {
+                            "podSelector": {"matchLabels": {"app": workload}},
+                            "policyTypes": ["Ingress"],
+                            "ingress": [
+                                {
+                                    "from": [controller_from],
+                                    "ports": [{"protocol": "TCP", "port": 6565}],
+                                }
+                            ],
+                        },
+                    )
                 )
-            )
         documents.extend(
             [
                 self._policy_document(
@@ -2065,6 +2066,40 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
             self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        missing_game_session = [
+            document
+            for document in hosted
+            if document["metadata"]["name"]
+            != "game-session-service-controller-ingress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(
+                missing_game_session, "hosted-controller"
+            )
+
+        for field, value, message in (
+            (
+                "podSelector",
+                {"matchLabels": {"app": "account-service"}},
+                "selects an unsafe workload",
+            ),
+            ("policyTypes", ["Ingress", "Egress"], "must only govern ingress"),
+            ("ingress", [], "has an unsafe exception"),
+        ):
+            with self.subTest(mode="hosted-controller", game_session_field=field):
+                malformed = copy.deepcopy(hosted)
+                policy = next(
+                    document
+                    for document in malformed
+                    if document["metadata"]["name"]
+                    == "game-session-service-controller-ingress"
+                )
+                policy["spec"][field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    self.validator.validate_network_policies(
+                        malformed, "hosted-controller"
+                    )
 
         for mode in ("standalone", "hosted-controller"):
             with self.subTest(mode=mode, case="missing gateway egress"):
