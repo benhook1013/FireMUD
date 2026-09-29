@@ -30,6 +30,7 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    pointerRepository.lockForBootstrap();
     if (pointerRepository.count() > 0) {
       return;
     }

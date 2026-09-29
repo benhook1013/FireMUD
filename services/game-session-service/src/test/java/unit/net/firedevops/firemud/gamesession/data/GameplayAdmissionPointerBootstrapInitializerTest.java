@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -49,6 +51,9 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
         ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
     verify(authorityService, org.mockito.Mockito.times(2)).upsertPointer(mutationCaptor.capture());
+    InOrder bootstrapOrder = inOrder(pointerRepository);
+    bootstrapOrder.verify(pointerRepository).lockForBootstrap();
+    bootstrapOrder.verify(pointerRepository).count();
     List<GameplayAdmissionPointerMutation> mutations = mutationCaptor.getAllValues();
     assertEquals(2, mutations.size());
     assertEquals("demo", mutations.get(0).worldSlug());

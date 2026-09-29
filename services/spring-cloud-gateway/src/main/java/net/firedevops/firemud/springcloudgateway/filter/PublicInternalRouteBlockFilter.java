@@ -1,7 +1,10 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
@@ -23,12 +26,14 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
   private static final PathPatternParser PATH_PATTERN_PARSER = new PathPatternParser();
   private static final PathPattern UNAVAILABLE_EXTERNAL_ACCOUNT_ROUTE =
       PATH_PATTERN_PARSER.parse("/api/account/accounts/{accountId}/external");
+  private static final PathPattern UNAVAILABLE_PUBLIC_JOIN_ROUTE =
+      PATH_PATTERN_PARSER.parse("/api/account/auth/bootstrap/join");
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     String path = exchange.getRequest().getPath().value();
     PathContainer pathWithinApplication = exchange.getRequest().getPath().pathWithinApplication();
-    if (!targetsBlockedPath(path, pathWithinApplication)) {
+    if (!targetsBlockedPath(exchange.getRequest().getMethod(), path, pathWithinApplication)) {
       return chain.filter(exchange);
     }
     exchange.getResponse().setStatusCode(HttpStatus.NOT_FOUND);
@@ -40,10 +45,62 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
     return -2;
   }
 
-  private boolean targetsBlockedPath(String path, PathContainer pathWithinApplication) {
+  private boolean targetsBlockedPath(
+      HttpMethod method, String path, PathContainer pathWithinApplication) {
     String[] segments = path.split("/", -1);
     return targetsBlockedInternalPath(path, segments)
-        || targetsUnavailableExternalAccountPath(pathWithinApplication);
+        || targetsUnavailableExternalAccountPath(pathWithinApplication)
+        || targetsUnavailablePublicJoinRoute(method, path);
+  }
+
+  private boolean targetsUnavailablePublicJoinRoute(HttpMethod method, String path) {
+    if (!HttpMethod.POST.equals(method)) {
+      return false;
+    }
+    String canonicalPath = canonicalizePublicRoutePath(path);
+    return UNAVAILABLE_PUBLIC_JOIN_ROUTE.matches(PathContainer.parsePath(canonicalPath));
+  }
+
+  private String canonicalizePublicRoutePath(String path) {
+    String decodedPath = decodePath(path);
+    StringBuilder canonicalPath = new StringBuilder(decodedPath.length());
+    String[] rawSegments = decodedPath.replace('\\', '/').split("/", -1);
+    for (String rawSegment : rawSegments) {
+      String segment = rawSegment;
+      int matrixParameterStart = segment.indexOf(';');
+      if (matrixParameterStart >= 0) {
+        segment = segment.substring(0, matrixParameterStart);
+      }
+      if (segment.isEmpty() || ".".equals(segment)) {
+        continue;
+      }
+      if ("..".equals(segment)) {
+        int previousSeparator = canonicalPath.lastIndexOf("/");
+        if (previousSeparator >= 0) {
+          canonicalPath.setLength(previousSeparator);
+        }
+        continue;
+      }
+      canonicalPath.append('/').append(segment);
+    }
+    return canonicalPath.length() == 0 ? "/" : canonicalPath.toString();
+  }
+
+  private String decodePath(String path) {
+    String decodedPath = path;
+    for (int pass = 0; pass < 8; pass++) {
+      try {
+        String nextPath =
+            URLDecoder.decode(decodedPath.replace("+", "%2B"), StandardCharsets.UTF_8);
+        if (nextPath.equals(decodedPath)) {
+          return decodedPath;
+        }
+        decodedPath = nextPath;
+      } catch (IllegalArgumentException exception) {
+        return path;
+      }
+    }
+    return decodedPath;
   }
 
   private boolean targetsBlockedInternalPath(String path, String[] segments) {

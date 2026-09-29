@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,6 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore.RealmOrdinalTarget;
@@ -591,8 +593,8 @@ public final class GameplayWorldCatalog {
    *
    * <p>Text discovery intentionally continues to use {@link #visibleWorlds()}, which filters
    * malformed or ambiguous rows for its existing negative-admission behavior. The gRPC discovery
-   * boundary instead needs to distinguish an empty authority store from an unavailable authority
-   * row, so it validates the exact snapshot before projecting it.
+   * boundary validates completeness and tenant-global public-realm uniqueness on one exact
+   * snapshot before projecting it.
    */
   public List<WorldView> visibleWorldsFromAuthoritySnapshot() {
     if (authorityPointerSupplier == null) {
@@ -609,7 +611,49 @@ public final class GameplayWorldCatalog {
             "Authoritative gameplay pointer is incomplete");
       }
     }
+    requireExactlyOneVisiblePublicProductionRealmPerTenant(pointers);
     return toWorlds(pointers).stream().filter(this::hasVisibleRealmEntries).toList();
+  }
+
+  /**
+   * Requires a direct public-production admission target to match the sole visible public realm
+   * in its tenant's current authoritative pointer snapshot.
+   */
+  public void requireUniqueVisiblePublicProductionRealm(
+      GameplayAdmissionPointerSnapshot expectedPointer) {
+    if (authorityPointerSupplier == null) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative gameplay pointer list is unavailable");
+    }
+    if (expectedPointer == null || expectedPointer.tenantId() <= 0L) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative public-production realm identity is unavailable");
+    }
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    if (pointers == null) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative gameplay pointer list is unavailable");
+    }
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (pointer == null || pointer.tenantId() == expectedPointer.tenantId()) {
+        if (!hasCompleteAuthorityPointer(pointer)) {
+          throw new AuthorityPointerUnavailableException(
+              "Authoritative gameplay pointer is incomplete");
+        }
+      }
+    }
+
+    List<GameplayAdmissionPointerSnapshot> publicRealms =
+        pointers.stream()
+            .filter(pointer -> pointer.tenantId() == expectedPointer.tenantId())
+            .filter(GameplayAdmissionPointerSnapshot::visible)
+            .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+            .toList();
+    if (publicRealms.size() != 1 || !publicRealms.getFirst().equals(expectedPointer)) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative public-production realm is not unique for tenant "
+              + expectedPointer.tenantId());
+    }
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
@@ -789,6 +833,26 @@ public final class GameplayWorldCatalog {
                             .map(entry -> toRealmView(entry.getValue().getFirst()))
                             .toList()))
             .toList());
+  }
+
+  private static void requireExactlyOneVisiblePublicProductionRealmPerTenant(
+      List<GameplayAdmissionPointerSnapshot> pointers) {
+    Set<Long> tenantIds =
+        pointers.stream()
+            .map(GameplayAdmissionPointerSnapshot::tenantId)
+            .collect(Collectors.toSet());
+    Map<Long, Long> publicRealmCounts = new HashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (pointer.visible() && pointer.publicProductionRealm()) {
+        publicRealmCounts.merge(pointer.tenantId(), 1L, Long::sum);
+      }
+    }
+    for (long tenantId : tenantIds) {
+      if (publicRealmCounts.getOrDefault(tenantId, 0L) != 1L) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative public-production realm count is invalid for tenant " + tenantId);
+      }
+    }
   }
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
