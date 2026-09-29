@@ -649,11 +649,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
                 FindingObservation(key, value)
 
-    def test_safe_finding_detail_normalizes_c0_controls_before_recording(self) -> None:
-        detail = _safe_finding_detail("before\x1b[31mafter\x00token=ghp_" + "A" * 30)
+    def test_safe_finding_detail_strips_csi_color_and_normalizes_c0_c1_controls(self) -> None:
+        detail = _safe_finding_detail(
+            "before\x1b[31mafter\x1b[0m\x00token=ghp_" + "A" * 30 + "\x9b31m\x85tail"
+        )
 
-        self.assertEqual(detail, "before [31mafter token=[redacted credential]")
-        self.assertFalse(any(ord(character) < 0x20 for character in detail))
+        self.assertEqual(detail, "beforeafter token=[redacted credential] tail")
+        self.assertFalse(any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in detail))
         self.assertEqual(FindingObservation("control-text", "title", detail=detail).detail, detail)
 
     def test_redacted_archive_artifact_uses_sentinel_and_passes_backup_screening(self) -> None:

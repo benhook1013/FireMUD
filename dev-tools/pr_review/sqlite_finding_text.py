@@ -43,13 +43,16 @@ _BADGE_LABELS = {
     "tests",
 }
 
+_CSI_COLOR_SEQUENCE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*m")
+
 
 def _safe_finding_detail(value: Any) -> str:
     """Keep a readable, secret-scrubbed detail excerpt within the public limit."""
 
     if not isinstance(value, str):
         return ""
-    normalized = " ".join(re.sub(r"[\x00-\x1f]", " ", value).split())
+    without_color = _CSI_COLOR_SEQUENCE.sub("", value)
+    normalized = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", without_color).split())
     redacted, _ = _redact_archive_text(normalized)
     return redacted[:1000].rstrip()
 
