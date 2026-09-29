@@ -201,7 +201,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         requirePositiveRequestId(context.getAccountId(), "accountId"),
         requirePositiveRequestId(context.getTenantId(), "tenantId"),
         requireCanonicalRealmId(context.getRealmId()),
-        requireText(context.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId()),
         requireText(context.getPlayableStateScope(), "playableStateScope"),
         requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
         requireText(context.getSessionId(), "sessionId"),
@@ -220,6 +220,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       return realmId;
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
+  private String requireCanonicalPlayableStateNamespaceId(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("playableStateNamespaceId is required");
+    }
+    try {
+      UUID namespaceId = UUID.fromString(value);
+      if (!namespaceId.toString().equals(value)) {
+        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
     }
   }
 

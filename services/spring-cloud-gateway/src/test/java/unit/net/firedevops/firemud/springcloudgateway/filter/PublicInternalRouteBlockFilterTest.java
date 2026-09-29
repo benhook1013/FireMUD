@@ -329,7 +329,8 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   private void assertBlockedPost(String path) {
-    MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.post(path).build());
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.post(path).build());
     AtomicBoolean chainCalled = new AtomicBoolean(false);
 
     filter.filter(exchange, chain(chainCalled)).block();
