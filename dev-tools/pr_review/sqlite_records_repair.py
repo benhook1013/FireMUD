@@ -29,12 +29,20 @@ from . import evidence, github, sqlite_hosted_capture, sqlite_provider_imports
 from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 
 _API_VERSION = 1
+_MAX_PARTIAL_DIAGNOSTIC = 1000
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _PROVIDER_ID = re.compile(r"^(?:review|trigger|run):[A-Za-z0-9._-]{1,80}$")
 
 
 class SqliteRecordsRepairError(ValueError):
     """Raised when source evidence or its attribution is not safe to repair."""
+
+
+def _partial_diagnostic(exc: OSError | sqlite3.DatabaseError) -> str:
+    detail = str(exc).strip()
+    if not detail:
+        detail = type(exc).__name__
+    return f"{type(exc).__name__}: {detail}"[:_MAX_PARTIAL_DIAGNOSTIC].rstrip()
 
 
 def _validate_request(
@@ -587,6 +595,16 @@ def repair_provider_checkpoints(
             item["origin_linked"] = True
             _archive_artifacts(records, imported["run_id"], artifacts)
             item["artifacts_archived"] = True
+        except (OSError, sqlite3.DatabaseError) as exc:
+            return {
+                "api_version": _API_VERSION,
+                "status": "partial",
+                "dry_run": False,
+                "repository": repo.casefold(),
+                "source_pr": pr_number,
+                "items": applied,
+                "error": _partial_diagnostic(exc),
+            }
         except SqliteRecordsRepairError as exc:
             return {
                 "api_version": _API_VERSION,

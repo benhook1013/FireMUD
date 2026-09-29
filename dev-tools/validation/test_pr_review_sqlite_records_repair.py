@@ -14,7 +14,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli, evidence, hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
+from pr_review import (
+    cli,
+    evidence,
+    hosted,
+    sqlite_hosted_capture,
+    sqlite_provider_imports,
+    sqlite_records_repair,
+    sqlite_store,
+)
 from pr_review.sqlite_records_repair import (
     SqliteRecordsRepairError,
     archive_incomplete_checkpoint,
@@ -354,6 +362,50 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(origin, ("owner/repo", PR, "hosted", "review:700", 10, first["items"][0]["run_id"]))
         self.assertEqual([row[0] for row in artifacts], ["hosted_comments", "hosted_review", "metadata"])
         self.assertTrue(all(len(row[1]) == 64 for row in artifacts))
+
+    def test_apply_reports_partial_after_raw_database_failure_and_keeps_prior_item(self) -> None:
+        self.cli_capture("run.Partial1")
+        self.cli_capture("run.Partial2")
+        first = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Partial1 -->", comment_id=14, accepted=0, routed=1
+        )
+        second = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Partial2 -->", comment_id=15, accepted=0, routed=1
+        )
+        original_import_one = sqlite_records_repair._import_one
+        calls = 0
+
+        def fail_on_second_apply(*args: object, **kwargs: object) -> tuple[dict[str, object], str]:
+            nonlocal calls
+            calls += 1
+            if calls == 4:  # two preflight imports, then the first live item
+                raise sqlite3.DatabaseError("injected database failure" + "!" * 5000)
+            return original_import_one(*args, **kwargs)
+
+        with patch.object(sqlite_records_repair, "_import_one", side_effect=fail_on_second_apply):
+            report = repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[first, second],
+                actor="backfill-reviewer",
+                common=self.common,
+                dry_run=False,
+            )
+
+        self.assertEqual(report["status"], "partial")
+        self.assertEqual(len(report["items"]), 1)
+        self.assertEqual(report["items"][0]["checkpoint_id"], first.comment_id)
+        self.assertTrue(report["items"][0]["origin_linked"])
+        self.assertTrue(report["items"][0]["artifacts_archived"])
+        self.assertEqual(report["error"], "DatabaseError: injected database failure" + "!" * 960)
+        self.assertEqual(
+            [run["run_id"] for run in self.records.history(PR)["runs"]],
+            [report["items"][0]["run_id"]],
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 3)
 
     def test_replay_after_source_decision_correction_keeps_origin_and_current_counts(self) -> None:
         self.hosted_capture()
