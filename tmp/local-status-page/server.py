@@ -22,8 +22,11 @@ OUTPUT = ROOT / "output"
 DEFAULT_EXTERNAL_ORIGIN = "http://192.168.50.100:8877"
 RENDER_SCRIPT = ROOT / "render.py"
 PUBLISH_SCRIPT = ROOT / "publish-hetzner.py"
+STATUS_CONFIG = ROOT / "status.json"
 REFRESH_COOLDOWN_SECONDS = 15
 AUTO_REFRESH_INTERVAL_SECONDS = 30 * 60
+CONTROLLER_HELP_TIMEOUT_SECONDS = 10
+HOSTED_SYNC_TIMEOUT_SECONDS = 90
 LOG = logging.getLogger(__name__)
 TIMING_LINE = re.compile(
     r"^STATUS_PAGE_TIMING stage=([a-z_]+) elapsed_seconds=([0-9]{1,3}(?:\.[0-9]{1,3})?) outcome=(ok|failed)$"
@@ -84,6 +87,50 @@ def publish_snapshot() -> None:
     run_local_script(PUBLISH_SCRIPT, 300)
 
 
+def sync_hosted_reviews() -> str:
+    """Sync completed Hosted reviews only through the configured capable controller."""
+    config = json.loads(STATUS_CONFIG.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("status config must be an object")
+    configured = config.get("review_tool")
+    if configured is None:
+        return "unconfigured"
+    if not isinstance(configured, str) or not Path(configured).is_absolute():
+        raise ValueError("review_tool must be an absolute path")
+    tool = Path(configured)
+    command = [sys.executable, str(tool), "records"]
+    help_result = subprocess.run(
+        [*command, "--help"],
+        cwd=tool.parent.parent,
+        capture_output=True,
+        text=True,
+        timeout=CONTROLLER_HELP_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if help_result.returncode:
+        raise RuntimeError(f"controller records help exited {help_result.returncode}: {help_result.stderr[-1200:]}")
+    if not re.search(r"(?m)^\s*sync-hosted\s", help_result.stdout):
+        return "unsupported"
+    started_at = time.monotonic()
+    try:
+        result = subprocess.run(
+            [*command, "sync-hosted"],
+            cwd=tool.parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=HOSTED_SYNC_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        _log_timing("hosted_sync", max(0.0, time.monotonic() - started_at), "failed")
+        raise
+    _log_timing("hosted_sync", max(0.0, time.monotonic() - started_at),
+                "ok" if result.returncode == 0 else "failed")
+    if result.returncode:
+        raise RuntimeError(f"records sync-hosted exited {result.returncode}: {result.stderr[-1200:]}")
+    return "complete"
+
+
 class StatusServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -91,7 +138,8 @@ class StatusServer(ThreadingHTTPServer):
                  render: Callable[[], None] = render_snapshot,
                  publish: Callable[[], None] = publish_snapshot,
                  auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS,
-                 external_origin: str = DEFAULT_EXTERNAL_ORIGIN):
+                 external_origin: str = DEFAULT_EXTERNAL_ORIGIN,
+                 sync_hosted: Callable[[], str] = sync_hosted_reviews):
         parsed_origin = urlsplit(external_origin)
         if (parsed_origin.scheme != "http" or not parsed_origin.netloc or parsed_origin.path
                 or parsed_origin.query or parsed_origin.fragment or parsed_origin.username
@@ -99,6 +147,8 @@ class StatusServer(ThreadingHTTPServer):
             raise ValueError("external origin must be an http origin without a path or credentials")
         self.render = render
         self.publish = publish
+        self.sync_hosted = sync_hosted
+        self.hosted_sync_status = "not_run"
         self.external_origin = external_origin.rstrip("/")
         self.external_host = parsed_origin.netloc
         self.phase = "idle"
@@ -154,6 +204,12 @@ class StatusServer(ThreadingHTTPServer):
                 continue
             if self.scheduler_stop.is_set():
                 break
+            self.hosted_sync_status = "running"
+            try:
+                self.hosted_sync_status = self.sync_hosted()
+            except Exception as error:
+                self.hosted_sync_status = "failed"
+                LOG.error("hosted review sync failed: %s", error)
             result = self.refresh_once()
             if result in {"cooldown", "failure_backoff"}:
                 self.next_auto_refresh_at = max(self.next_auto_refresh_at, self.next_refresh_at)
@@ -230,7 +286,8 @@ class StatusHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/refresh-status":
-            body = json.dumps({"phase": self.server.phase}).encode()
+            body = json.dumps({"phase": self.server.phase,
+                               "hosted_sync": self.server.hosted_sync_status}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

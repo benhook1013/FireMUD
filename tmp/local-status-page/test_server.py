@@ -28,6 +28,7 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.index.write_text("old snapshot")
         self.render_calls = 0
         self.publish_calls = 0
+        self.sync_calls = 0
 
         def render():
             self.render_calls += 1
@@ -36,7 +37,14 @@ class LocalRefreshServerTest(unittest.TestCase):
         def publish():
             self.publish_calls += 1
 
-        self.server = server_module.StatusServer(("127.0.0.1", 0), Path(self.directory.name), render, publish)
+        def sync_hosted():
+            self.sync_calls += 1
+            return "complete"
+
+        self.server = server_module.StatusServer(
+            ("127.0.0.1", 0), Path(self.directory.name), render, publish,
+            sync_hosted=sync_hosted,
+        )
         self.server.external_origin = f"http://127.0.0.1:{self.server.server_port}"
         self.server.external_host = f"127.0.0.1:{self.server.server_port}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -61,10 +69,13 @@ class LocalRefreshServerTest(unittest.TestCase):
         return result
 
     def phase(self):
+        return self.refresh_status()["phase"]
+
+    def refresh_status(self):
         status, headers, body = self.request("GET", "/refresh-status")
         self.assertEqual(status, 200)
         self.assertEqual(headers["Cache-Control"], "no-store")
-        return json.loads(body)["phase"]
+        return json.loads(body)
 
     def wait_for(self, condition, timeout=2):
         deadline = time.monotonic() + timeout
@@ -86,6 +97,8 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.assertEqual(headers["Location"], "/")
         self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
         self.assertEqual(self.phase(), "complete")
+        self.assertEqual(self.refresh_status()["hosted_sync"], "not_run")
+        self.assertEqual(self.sync_calls, 0)
         status, _, body = self.request("GET", "/")
         self.assertEqual(status, 200)
         self.assertEqual(body, b"new snapshot")
@@ -98,8 +111,30 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.trigger_automatic_refresh()
         self.assertTrue(self.wait_for(lambda: self.phase() == "complete"))
         self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
+        self.assertEqual(self.sync_calls, 1)
+        self.assertEqual(self.refresh_status()["hosted_sync"], "complete")
         self.assertEqual(self.index.read_text(), "new snapshot")
         self.assertGreater(self.server.next_auto_refresh_at - time.monotonic(), 59)
+
+    def test_automatic_sync_completes_before_render(self):
+        order = []
+
+        def sync_hosted():
+            order.append("sync")
+            return "complete"
+
+        def render():
+            order.append("render")
+
+        def publish():
+            order.append("publish")
+
+        self.server.sync_hosted = sync_hosted
+        self.server.render = render
+        self.server.publish = publish
+        self.trigger_automatic_refresh()
+        self.assertTrue(self.wait_for(lambda: self.phase() == "complete"))
+        self.assertEqual(order, ["sync", "render", "publish"])
 
     def test_automatic_refresh_skips_an_active_manual_job(self):
         entered = threading.Event()
@@ -123,6 +158,37 @@ class LocalRefreshServerTest(unittest.TestCase):
         self.assertEqual(result, [303])
         self.assertGreater(self.server.next_auto_refresh_at - time.monotonic(), 59)
         self.assertEqual((self.render_calls, self.publish_calls), (1, 1))
+
+    def test_automatic_sync_failure_is_reported_without_blocking_refresh(self):
+        def fail_sync():
+            self.sync_calls += 1
+            raise subprocess.TimeoutExpired(["records", "sync-hosted"], 90)
+
+        self.server.sync_hosted = fail_sync
+        self.trigger_automatic_refresh()
+        self.assertTrue(self.wait_for(lambda: self.phase() == "complete"))
+        self.assertEqual(self.refresh_status(), {"phase": "complete", "hosted_sync": "failed"})
+        self.assertEqual((self.sync_calls, self.render_calls, self.publish_calls), (1, 1, 1))
+        self.assertEqual(self.index.read_text(), "new snapshot")
+
+    def test_manual_refresh_can_run_while_automatic_sync_is_in_progress(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_sync():
+            self.sync_calls += 1
+            entered.set()
+            release.wait(timeout=2)
+            return "complete"
+
+        self.server.sync_hosted = slow_sync
+        self.trigger_automatic_refresh()
+        self.assertTrue(entered.wait(timeout=1))
+        self.assertEqual(self.refresh_status(), {"phase": "idle", "hosted_sync": "running"})
+        self.assertEqual(self.request()[0], 303)
+        release.set()
+        self.assertTrue(self.wait_for(lambda: self.refresh_status()["hosted_sync"] == "complete"))
+        self.assertEqual((self.sync_calls, self.render_calls, self.publish_calls), (1, 1, 1))
 
     def test_manual_refresh_is_rejected_during_an_automatic_job(self):
         entered = threading.Event()
@@ -257,6 +323,35 @@ class LocalRefreshServerTest(unittest.TestCase):
         )
         self.assertEqual([call.kwargs["cwd"] for call in run.call_args_list], [server_module.ROOT] * 2)
         self.assertFalse(any("wsl.exe" in arg for call in run.call_args_list for arg in call.args[0]))
+
+    @patch.object(server_module.subprocess, "run")
+    def test_hosted_sync_skips_configured_older_controller(self, run):
+        config = Path(self.directory.name) / "status.json"
+        config.write_text(json.dumps({"review_tool": "/tmp/old-controller/dev-tools/pr-review"}))
+        run.return_value = subprocess.CompletedProcess([], 0, "  {bootstrap,history,routes}\n", "")
+        with patch.object(server_module, "STATUS_CONFIG", config):
+            self.assertEqual(server_module.sync_hosted_reviews(), "unsupported")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0],
+                         [sys.executable, "/tmp/old-controller/dev-tools/pr-review", "records", "--help"])
+        self.assertEqual(run.call_args.kwargs["cwd"], Path("/tmp/old-controller"))
+        self.assertEqual(run.call_args.kwargs["timeout"], server_module.CONTROLLER_HELP_TIMEOUT_SECONDS)
+
+    @patch.object(server_module.subprocess, "run")
+    def test_hosted_sync_uses_same_configured_capable_controller_with_timeout(self, run):
+        config = Path(self.directory.name) / "status.json"
+        config.write_text(json.dumps({"review_tool": "/tmp/new-controller/dev-tools/pr-review"}))
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, "  sync-hosted  import completed Hosted reviews\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+        with patch.object(server_module, "STATUS_CONFIG", config):
+            self.assertEqual(server_module.sync_hosted_reviews(), "complete")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.args[0],
+                         [sys.executable, "/tmp/new-controller/dev-tools/pr-review", "records", "sync-hosted"])
+        self.assertEqual(run.call_args.kwargs["cwd"], Path("/tmp/new-controller"))
+        self.assertEqual(run.call_args.kwargs["timeout"], server_module.HOSTED_SYNC_TIMEOUT_SECONDS)
 
     def test_refresh_uses_configured_external_origin_behind_port_forward(self):
         self.server.external_origin = "http://192.168.50.100:8877"
