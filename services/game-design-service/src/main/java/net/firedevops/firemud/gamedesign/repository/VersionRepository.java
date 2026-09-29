@@ -20,6 +20,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class VersionRepository {
+  private static final String ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION =
+      "game_design_service.lock_version_for_entity_digest_baseline_migration";
   private static final Table<?> VERSION_TABLE = DSL.table(DSL.name("version"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
@@ -85,6 +87,25 @@ public class VersionRepository {
         dsl.selectFrom(VERSION_TABLE)
             .where(TENANT_ID.eq(tenantId).and(ID.eq(id)))
             .forUpdate()
+            .fetchOne(this::toEntity));
+  }
+
+  /**
+   * Reads and locks the exact version row through the restricted migration-only database function.
+   * The function performs the lock with its owner privileges so the migration writer need not have
+   * direct Version UPDATE privilege.
+   */
+  public Optional<Version> findByTenantIdAndIdForEntityDigestBaselineMigration(
+      String tenantId, Long id) {
+    return Optional.ofNullable(
+        dsl.resultQuery(
+                "SELECT id, tenant_id, version_number, version_state, version_state_epoch, "
+                    + "script_patch_version, base_version_id, is_script_only, notes, "
+                    + "created_at, updated_at FROM "
+                    + ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION
+                    + "(?, ?)",
+                tenantId,
+                id)
             .fetchOne(this::toEntity));
   }
 

@@ -48,7 +48,7 @@ class EntityDigestBaselineMigrationWriteServiceTest {
   void draftAtGuardedWriteBoundaryPreventsBaselineAndAuditWrites() {
     Version draft = new Version();
     draft.setVersionState(VersionLifecycleState.DRAFT);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(draft));
 
     assertThrows(
@@ -57,13 +57,15 @@ class EntityDigestBaselineMigrationWriteServiceTest {
 
     verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
   }
 
   @Test
   void compareAndSetAndAuditAreBothRequiredForCommit() {
     Version version = new Version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(1);
@@ -72,13 +74,15 @@ class EntityDigestBaselineMigrationWriteServiceTest {
 
     verify(baselineRepository).migrateEntityFullVersionBaselineIfUnchanged(source, replacement);
     verify(auditRepository).insert(audit);
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
   }
 
   @Test
   void changedRowPreventsAuditInsert() {
     Version version = new Version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(0);
@@ -86,6 +90,8 @@ class EntityDigestBaselineMigrationWriteServiceTest {
     assertThrows(IllegalStateException.class, () -> service.commit(source, replacement, audit));
 
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
   }
 
   @Test

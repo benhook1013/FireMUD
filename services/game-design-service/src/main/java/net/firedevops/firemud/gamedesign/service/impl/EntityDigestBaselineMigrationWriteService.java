@@ -45,7 +45,8 @@ public class EntityDigestBaselineMigrationWriteService {
     }
     var version =
         versionRepository
-            .findByTenantIdAndIdForUpdate(expectedOld.getTenantId(), versionId)
+            .findByTenantIdAndIdForEntityDigestBaselineMigration(
+                expectedOld.getTenantId(), versionId)
             .orElseThrow(() -> new IllegalStateException("migration version disappeared"));
     if (version.getVersionState() == VersionLifecycleState.DRAFT) {
       throw new DraftVersionException();

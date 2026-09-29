@@ -344,11 +344,13 @@ class EntityDigestBaselineMigrationIntegrationTest {
     RecordedParticipantDigest baseline = seedEntityBaseline("9701", version, 1);
     provisionMigrationDatabaseRoles();
 
-    try (Connection reader = connectAs("firemud_game_design_baseline_reader_test", "reader-proof")) {
+    try (Connection reader =
+        connectAs("firemud_game_design_baseline_reader_test", postgres.getPassword())) {
       assertThat(reader.getMetaData().getUserName())
           .isEqualTo("firemud_game_design_baseline_reader_test");
       assertCount(reader, "version");
       assertCount(reader, "publish_recorded_participant_digest");
+      assertVersionLockDenied(reader, "9701", version.getId());
       assertDenied(
           reader,
           "UPDATE game_design_service.publish_recorded_participant_digest "
@@ -359,19 +361,48 @@ class EntityDigestBaselineMigrationIntegrationTest {
               + "(tenant_id) VALUES ('forbidden')");
       assertDenied(reader, "CREATE TABLE game_design_service.reader_forbidden (id integer)");
       assertDenied(
-          reader,
-          "CREATE TABLE baseline_migration_other_schema.reader_forbidden (id integer)");
+          reader, "CREATE TABLE baseline_migration_other_schema.reader_forbidden (id integer)");
       assertDenied(
-          reader,
-          "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
+          reader, "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
     }
 
-    try (Connection writer = connectAs("firemud_game_design_baseline_writer_test", "writer-proof")) {
+    try (Connection writer =
+        connectAs("firemud_game_design_baseline_writer_test", postgres.getPassword())) {
       assertThat(writer.getMetaData().getUserName())
           .isEqualTo("firemud_game_design_baseline_writer_test");
       assertCount(writer, "version");
       assertCount(writer, "publish_recorded_participant_digest");
       assertCount(writer, "entity_digest_baseline_migration_audit");
+
+      writer.setAutoCommit(false);
+      try (PreparedStatement lock =
+          writer.prepareStatement(
+              "SELECT id, tenant_id, version_number, version_state, version_state_epoch,"
+                  + " script_patch_version, base_version_id, is_script_only, notes, created_at,"
+                  + " updated_at FROM"
+                  + " game_design_service.lock_version_for_entity_digest_baseline_migration(?,"
+                  + " ?)")) {
+        lock.setString(1, "9701");
+        lock.setLong(2, version.getId());
+        try (var rows = lock.executeQuery()) {
+          assertThat(rows.next()).isTrue();
+          assertThat(rows.getLong("id")).isEqualTo(version.getId());
+          assertThat(rows.getString("tenant_id")).isEqualTo("9701");
+          assertThat(rows.getInt("version_number")).isEqualTo(1);
+          assertThat(rows.getString("version_state")).isEqualTo("PUBLISHED");
+          assertThat(rows.getLong("version_state_epoch")).isEqualTo(version.getVersionStateEpoch());
+          assertThat(rows.getString("script_patch_version"))
+              .isEqualTo(version.getScriptPatchVersion());
+          assertThat(rows.getObject("base_version_id")).isNull();
+          assertThat(rows.getBoolean("is_script_only")).isFalse();
+          assertThat(rows.getString("notes")).isEqualTo(version.getNotes());
+          assertThat(rows.next()).isFalse();
+        }
+      }
+      writer.commit();
+      assertNoVersionLockRow(writer, "wrong-tenant", version.getId());
+      assertNoVersionLockRow(writer, "9701", version.getId() + 1_000_000L);
+      writer.setAutoCommit(true);
 
       try (PreparedStatement update =
           writer.prepareStatement(
@@ -421,8 +452,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
               + "SET tenant_id = 'forbidden' WHERE id = "
               + baseline.getId());
       assertDenied(
-          writer,
-          "INSERT INTO game_design_service.version (tenant_id) VALUES ('forbidden')");
+          writer, "INSERT INTO game_design_service.version (tenant_id) VALUES ('forbidden')");
       assertDenied(
           writer,
           "SELECT id FROM game_design_service.version WHERE id = "
@@ -434,11 +464,16 @@ class EntityDigestBaselineMigrationIntegrationTest {
               + "SET success = success WHERE false");
       assertDenied(writer, "CREATE TABLE game_design_service.writer_forbidden (id integer)");
       assertDenied(
-          writer,
-          "CREATE TABLE baseline_migration_other_schema.writer_forbidden (id integer)");
+          writer, "CREATE TABLE baseline_migration_other_schema.writer_forbidden (id integer)");
       assertDenied(
-          writer,
-          "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
+          writer, "UPDATE baseline_migration_other_schema.sentinel SET id = id WHERE false");
+    }
+
+    try (Connection unrelated =
+        connectAs("firemud_game_design_baseline_unrelated_test", postgres.getPassword())) {
+      assertThat(unrelated.getMetaData().getUserName())
+          .isEqualTo("firemud_game_design_baseline_unrelated_test");
+      assertVersionLockDenied(unrelated, "9701", version.getId());
     }
   }
 
@@ -448,15 +483,27 @@ class EntityDigestBaselineMigrationIntegrationTest {
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Statement statement = admin.createStatement()) {
       statement.execute(
-          "CREATE ROLE firemud_game_design_baseline_reader_test LOGIN NOINHERIT PASSWORD 'reader-proof'");
+          "CREATE ROLE firemud_game_design_baseline_reader_test LOGIN NOINHERIT PASSWORD"
+              + " 'test'");
       statement.execute(
-          "CREATE ROLE firemud_game_design_baseline_writer_test LOGIN NOINHERIT PASSWORD 'writer-proof'");
+          "CREATE ROLE firemud_game_design_baseline_writer_test LOGIN NOINHERIT PASSWORD"
+              + " 'test'");
+      statement.execute(
+          "CREATE ROLE firemud_game_design_baseline_unrelated_test LOGIN NOINHERIT "
+              + "PASSWORD 'test'");
       statement.execute("CREATE SCHEMA baseline_migration_other_schema");
       statement.execute(
           "CREATE TABLE baseline_migration_other_schema.sentinel (id integer NOT NULL)");
       statement.execute("INSERT INTO baseline_migration_other_schema.sentinel VALUES (1)");
-      statement.execute("GRANT USAGE ON SCHEMA game_design_service TO firemud_game_design_baseline_reader_test");
-      statement.execute("GRANT USAGE ON SCHEMA game_design_service TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT USAGE ON SCHEMA game_design_service TO "
+              + "firemud_game_design_baseline_reader_test");
+      statement.execute(
+          "GRANT USAGE ON SCHEMA game_design_service TO "
+              + "firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT USAGE ON SCHEMA game_design_service TO"
+              + " firemud_game_design_baseline_unrelated_test");
       statement.execute(
           "GRANT SELECT ON TABLE game_design_service.version, "
               + "game_design_service.publish_recorded_participant_digest "
@@ -477,6 +524,11 @@ class EntityDigestBaselineMigrationIntegrationTest {
           "GRANT USAGE, SELECT ON SEQUENCE "
               + "game_design_service.entity_digest_baseline_migration_audit_id_seq "
               + "TO firemud_game_design_baseline_writer_test");
+      statement.execute(
+          "GRANT EXECUTE ON FUNCTION "
+              + "game_design_service.lock_version_for_entity_digest_baseline_migration("
+              + "VARCHAR(36), BIGINT) "
+              + "TO firemud_game_design_baseline_writer_test");
     }
   }
 
@@ -488,11 +540,44 @@ class EntityDigestBaselineMigrationIntegrationTest {
   private void assertCount(Connection connection, String tableName) throws SQLException {
     try (Statement statement = connection.createStatement();
         var rows =
-            statement.executeQuery(
-                "SELECT COUNT(*) FROM game_design_service." + tableName)) {
+            statement.executeQuery("SELECT COUNT(*) FROM game_design_service." + tableName)) {
       assertThat(rows.next()).isTrue();
       assertThat(rows.getLong(1)).isGreaterThanOrEqualTo(0);
     }
+  }
+
+  private void assertNoVersionLockRow(Connection connection, String tenantId, long versionId)
+      throws SQLException {
+    try (PreparedStatement lock =
+        connection.prepareStatement(
+            "SELECT id FROM "
+                + "game_design_service.lock_version_for_entity_digest_baseline_migration(?, ?)")) {
+      lock.setString(1, tenantId);
+      lock.setLong(2, versionId);
+      try (var rows = lock.executeQuery()) {
+        assertThat(rows.next()).isFalse();
+      }
+    }
+  }
+
+  private void assertVersionLockDenied(Connection connection, String tenantId, long versionId)
+      throws SQLException {
+    try (PreparedStatement lock =
+        connection.prepareStatement(
+            "SELECT id FROM "
+                + "game_design_service.lock_version_for_entity_digest_baseline_migration(?, ?)")) {
+      lock.setString(1, tenantId);
+      lock.setLong(2, versionId);
+      try {
+        try (var rows = lock.executeQuery()) {
+          assertThat(rows.next()).isFalse();
+        }
+      } catch (SQLException denied) {
+        assertThat(denied.getSQLState()).isEqualTo("42501");
+        return;
+      }
+    }
+    throw new AssertionError("restricted migration role unexpectedly executed version lock");
   }
 
   private void assertDenied(Connection connection, String sql) throws SQLException {

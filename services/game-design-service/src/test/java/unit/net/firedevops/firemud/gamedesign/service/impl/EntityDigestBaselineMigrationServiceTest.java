@@ -211,7 +211,8 @@ class EntityDigestBaselineMigrationServiceTest {
     stubInitialMigrationReads(persistedBaseline, persistedAudit);
     Version draftAtCommit = version();
     draftAtCommit.setVersionState(VersionLifecycleState.DRAFT);
-    when(versionRepository.findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+            TENANT_ID, VERSION_ID))
         .thenReturn(Optional.of(draftAtCommit));
     when(entityManagementClient.getDraftDesignDigestForVersion(any()))
         .thenReturn(v2Digest("v2-content", "version:42"));
@@ -226,6 +227,9 @@ class EntityDigestBaselineMigrationServiceTest {
     assertTrue(persistedAudit.get() == null);
     verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository)
+        .findByTenantIdAndIdForEntityDigestBaselineMigration(TENANT_ID, VERSION_ID);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID);
   }
 
   @Test
@@ -239,7 +243,8 @@ class EntityDigestBaselineMigrationServiceTest {
         new EntityDigestBaselineMigrationService(
             baselineRepository, auditRepository, versionRepository, entityManagementClient, writer);
     stubInitialMigrationReads(persistedBaseline, persistedAudit);
-    when(versionRepository.findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+            TENANT_ID, VERSION_ID))
         .thenReturn(Optional.of(version()));
     when(entityManagementClient.getDraftDesignDigestForVersion(any()))
         .thenReturn(v2Digest("v2-content", "version:42"));
@@ -281,6 +286,9 @@ class EntityDigestBaselineMigrationServiceTest {
     assertEquals(source.getLastVerifiedAt(), persistedBaseline.get().getLastVerifiedAt());
     assertEquals(source.getContentDigest(), persistedAudit.get().sourceContentDigest());
     assertEquals("v2-content", persistedAudit.get().observedContentDigest());
+    verify(versionRepository)
+        .findByTenantIdAndIdForEntityDigestBaselineMigration(TENANT_ID, VERSION_ID);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID);
   }
 
   @Test
