@@ -495,12 +495,176 @@ def unresolved_preceding_full_trigger(
             if recorded_id in records:
                 raise ValueError("public full-review command has duplicate private records")
             records[recorded_id] = (record, path)
+
+    def unrecorded_command_has_terminal_result(index: int) -> bool:
+        command_at, command_id = commands[index]
+        end = commands[index + 1][0]
+        reviews = (pr.get("reviews") or {}).get("nodes")
+        threads = (pr.get("reviewThreads") or {}).get("nodes")
+        if not isinstance(reviews, list) or not isinstance(threads, list):
+            raise TypeError("complete public review history is required")
+        if any(not isinstance(item, dict) for item in reviews + threads):
+            raise ValueError("public review history contains a malformed item")
+        for thread in threads:
+            thread_comments = (thread.get("comments") or {}).get("nodes")
+            if not isinstance(thread_comments, list) or any(not isinstance(item, dict) for item in thread_comments):
+                raise ValueError("complete public review-thread history is required")
+
+        def in_window(value: Any) -> datetime | None:
+            timestamp = parse_timestamp(value)
+            return timestamp if timestamp is not None and command_at < timestamp < end else None
+
+        response_items: list[tuple[dict[str, Any], str, datetime, int, str | None]] = []
+        all_response_ids: set[int] = set()
+        for item, timestamp_field in (
+            *((comment, "createdAt") for comment in comments),
+            *((review, "submittedAt") for review in reviews),
+        ):
+            if not is_coderabbit_login(_comment_author_login(item)):
+                continue
+            body = item.get("body")
+            if timestamp_field == "createdAt":
+                comment_created = parse_timestamp(item.get("createdAt"))
+                comment_updated = parse_timestamp(item.get("updatedAt"))
+                if comment_created is None or comment_updated is None:
+                    return False
+                if comment_created <= command_at < comment_updated < end:
+                    return False
+                if (
+                    isinstance(body, str)
+                    and "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->" in body
+                ):
+                    if comment_created <= command_at and comment_updated <= command_at:
+                        continue
+                    if in_window(comment_created) is not None or in_window(comment_updated) is not None:
+                        return False
+            identity = immutable_database_id(item)
+            response_at = parse_timestamp(item.get(timestamp_field))
+            if identity is None or response_at is None or identity in all_response_ids:
+                return False
+            all_response_ids.add(identity)
+            if command_at < response_at < end:
+                response_items.append(
+                    (item, timestamp_field, response_at, identity, public_response_state(item, timestamp_field, {}))
+                )
+
+        exact_heads: set[str] = set()
+        for review in reviews:
+            if not is_coderabbit_login(_comment_author_login(review)) or review.get("state") == "DISMISSED":
+                continue
+            if in_window(review.get("submittedAt")) is None:
+                continue
+            commit = (review.get("commit") or {}).get("oid")
+            if isinstance(commit, str) and EXACT_SHA.fullmatch(commit):
+                exact_heads.add(commit.casefold())
+        for item in comments:
+            if not is_coderabbit_login(_comment_author_login(item)):
+                continue
+            body = item.get("body")
+            if not isinstance(body, str):
+                continue
+            created_in_window = in_window(item.get("createdAt")) is not None
+            updated_in_window = in_window(item.get("updatedAt")) is not None
+            reported_head = _scope_head(body)
+            if (
+                (created_in_window or updated_in_window)
+                and isinstance(reported_head, str)
+                and EXACT_SHA.fullmatch(reported_head)
+            ):
+                exact_heads.add(reported_head.casefold())
+
+        if len(exact_heads) > 1:
+            return False
+        if exact_heads:
+            head = next(iter(exact_heads))
+            trigger_comment = next(item for item in comments if immutable_database_id(item) == command_id)
+            synthetic_record = {
+                "schema_version": 2,
+                "status": "posted",
+                "repository": repo,
+                "pr_number": pr_number,
+                "head_sha": head,
+                "trigger": {
+                    "id": command_id,
+                    "created_at": trigger_comment.get("createdAt"),
+                    "url": trigger_comment.get("url"),
+                    "author_login": _comment_author_login(trigger_comment),
+                    "type": "full",
+                    "command": FULL_COMMAND,
+                },
+            }
+            state = trigger_state(repo, pr_number, payload, synthetic_record)
+            if (
+                state.state != "completed"
+                or state.terminal is not True
+                or state.attributed is not True
+                or state.response_id is None
+                or state.trigger_comment_id != command_id
+                or state.head_sha.casefold() != head
+            ):
+                return False
+            response_items = [
+                item
+                for item in (*comments, *reviews)
+                if immutable_database_id(item) == state.response_id
+            ]
+            if len(response_items) != 1:
+                return False
+            response = response_items[0]
+            response_at = parse_timestamp(response.get("createdAt") or response.get("submittedAt"))
+            terminal_at = parse_timestamp(
+                response.get("updatedAt") if response in comments else response.get("submittedAt")
+            )
+            if response_at is None or terminal_at is None or not command_at < response_at < end or terminal_at >= end:
+                return False
+            if response in reviews:
+                commit = (response.get("commit") or {}).get("oid")
+                return isinstance(commit, str) and EXACT_SHA.fullmatch(commit) and commit.casefold() == head
+            body = response.get("body")
+            if isinstance(body, str) and (_scope_head(body) or "").casefold() == head:
+                return True
+            if isinstance(body, str) and _is_finished_action_response(body, allow_action_wrapper=True):
+                summary = _zero_finding_summary(payload, head, command_at, state.response_id, end)
+                if summary is None or (_scope_head(summary.get("body", "")) or "").casefold() != head:
+                    summary = provider_format_zero_finding_summary(payload, head, command_at, state.response_id, end)
+                return summary is not None
+            return False
+
+        # Terminal failures, no-ops, and rate limits can release the overlap
+        # without a reviewed-head claim. Use the public classifier directly;
+        # never synthesize a review head from the live branch tip.
+        terminal_events = [
+            (response_at, identity, response_state, item, timestamp_field)
+            for item, timestamp_field, response_at, identity, response_state in response_items
+            if response_state in {"failed", "noop", "rate_limited"}
+        ]
+        ambiguous_events = [item for item in response_items if item[4] == "ambiguous"]
+        active_events = [item[2] for item in response_items if item[4] == "active"]
+        if ambiguous_events:
+            return False
+        if len(terminal_events) != 1:
+            return False
+        response_at, _, response_state, response, timestamp_field = terminal_events[0]
+        if any(active_at > response_at for active_at in active_events):
+            return False
+        response_body = response.get("body")
+        if response_state == "failed" and isinstance(response_body, str) and (
+            provider_file_ceiling_skip(response_body) or _summary_has_explicit_incompleteness(response_body)
+        ):
+            return False
+        terminal_at = parse_timestamp(
+            response.get("updatedAt") if timestamp_field == "createdAt" else response.get("submittedAt")
+        )
+        return terminal_at is not None and command_at < terminal_at < end
+
     for index in range(positions[0]):
         _, preceding_id = commands[index]
         end, _ = commands[index + 1]
         recorded = records.get(preceding_id)
         if recorded is None:
-            return True
+            if not unrecorded_command_has_terminal_result(index):
+                return True
+            continue
         record, path = recorded
         if record.get("status") == "retired":
             retirement = record.get("retirement")
@@ -557,6 +721,51 @@ def _unresolved_retired_predecessor(
         }:
             return True
     return False
+
+
+def public_response_state(
+    item: dict[str, Any], timestamp_field: str, checkpoint_by_response: dict[int, Any]
+) -> str | None:
+    """Classify one public Hosted response when its private trigger record is absent."""
+
+    identity = immutable_database_id(item)
+    checkpoint = checkpoint_by_response.get(identity) if identity is not None else None
+    raw_body = item.get("body")
+    body = raw_body if isinstance(raw_body, str) else ""
+    if timestamp_field == "submittedAt":
+        if item.get("state") == "DISMISSED":
+            return None
+        if item.get("state") not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}:
+            return "ambiguous"
+        commit = (item.get("commit") or {}).get("oid")
+        if isinstance(commit, str) and EXACT_SHA.fullmatch(commit):
+            return "completed"
+        if _substantive(body):
+            return "completed" if _scope_head(body) else "ambiguous"
+        if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
+            return "completed"
+        return None
+
+    created = parse_timestamp(item.get("createdAt"))
+    if REVIEW_LIMIT_MARKER in body or (created is not None and _rate_limit(body, created) is not None) or body.strip().lower().startswith(
+        "review rate limited"
+    ):
+        return "rate_limited"
+    if provider_file_ceiling_skip(body):
+        return "failed"
+    if NOOP_MARKER in body:
+        return "noop"
+    if ACTIVE_PATTERN.search(_unquoted(body)):
+        return "active"
+    if FAILED_PATTERN.search(_unquoted(body)):
+        return "failed"
+    if _substantive(body) or FINISHED_REVIEW_PATTERN.search(_unquoted(body)):
+        if _scope_head(body):
+            return "completed"
+        if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
+            return "completed"
+        return "ambiguous"
+    return None
 
 
 def adopt_manual_completed_trigger(

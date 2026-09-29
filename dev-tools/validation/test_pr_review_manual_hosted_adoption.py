@@ -144,6 +144,171 @@ class ManualHostedAdoptionTest(unittest.TestCase):
                 )
             self.assertFalse(path.exists())
 
+    def test_later_manual_request_can_be_adopted_after_untracked_terminal_review(self):
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        first = pull["comments"]["nodes"][0]
+        second = {**first, "databaseId": 20, "createdAt": "2026-09-28T10:10:00Z"}
+        second["url"] = "https://example.test/comments/20"
+        pull["comments"]["nodes"] = [first, second]
+        pull["reviews"]["nodes"] = [
+            {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:09:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 56,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:19:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            adopted = hosted.adopt_manual_completed_trigger(
+                REPO,
+                42,
+                20,
+                HEAD,
+                ANCHOR,
+                payload_fetcher(payload),
+                path=hosted.default_trigger_record_path(REPO, 42, common),
+                common=common,
+            )
+
+        self.assertEqual(adopted["status"], "adopted")
+        self.assertEqual(adopted["response_id"], 56)
+
+    def test_later_manual_request_stays_blocked_when_older_summary_is_edited_in_window(self):
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        first = pull["comments"]["nodes"][0]
+        second = {**first, "databaseId": 20, "createdAt": "2026-09-28T10:10:00Z"}
+        second["url"] = "https://example.test/comments/20"
+        edited_summary = {
+            "databaseId": 19,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": "2026-09-28T10:00:00Z",
+            "updatedAt": "2026-09-28T10:09:30Z",
+        }
+        pull["comments"]["nodes"] = [first, edited_summary, second]
+        pull["reviews"]["nodes"] = [
+            {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:09:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 56,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:19:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path(REPO, 42, common)
+            with self.assertRaisesRegex(ValueError, "earlier full-review command is unresolved"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 20, HEAD, ANCHOR, payload_fetcher(payload), path=path, common=common
+                )
+            self.assertFalse(path.exists())
+
+    def test_later_manual_request_stays_blocked_when_new_summary_shares_terminal_window(self):
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        first = pull["comments"]["nodes"][0]
+        second = {**first, "databaseId": 20, "createdAt": "2026-09-28T10:10:00Z"}
+        second["url"] = "https://example.test/comments/20"
+        new_summary = {
+            "databaseId": 19,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": "2026-09-28T10:09:00Z",
+            "updatedAt": "2026-09-28T10:09:00Z",
+        }
+        terminal_reply = {
+            "databaseId": 21,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review rate limited; next reviews available in 30 minutes.",
+            "createdAt": "2026-09-28T10:09:30Z",
+            "updatedAt": "2026-09-28T10:09:30Z",
+        }
+        pull["comments"]["nodes"] = [first, new_summary, terminal_reply, second]
+        pull["reviews"]["nodes"] = [
+            {
+                "databaseId": 56,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:19:00Z",
+                "commit": {"oid": HEAD},
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path(REPO, 42, common)
+            with self.assertRaisesRegex(ValueError, "earlier full-review command is unresolved"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 20, HEAD, ANCHOR, payload_fetcher(payload), path=path, common=common
+                )
+            self.assertFalse(path.exists())
+
+    def test_later_manual_request_stays_blocked_by_ambiguous_untracked_command(self):
+        payload = public_payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        first = pull["comments"]["nodes"][0]
+        second = {**first, "databaseId": 20, "createdAt": "2026-09-28T10:10:00Z"}
+        second["url"] = "https://example.test/comments/20"
+        ambiguous_finish = {
+            "databaseId": 21,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-28T10:09:00Z",
+            "updatedAt": "2026-09-28T10:09:00Z",
+        }
+        pull["comments"]["nodes"] = [first, ambiguous_finish, second]
+        pull["reviews"]["nodes"] = [
+            {
+                "databaseId": 56,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-28T10:19:00Z",
+                "commit": {"oid": HEAD},
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path(REPO, 42, common)
+            with self.assertRaisesRegex(ValueError, "earlier full-review command is unresolved"):
+                hosted.adopt_manual_completed_trigger(
+                    REPO, 42, 20, HEAD, ANCHOR, payload_fetcher(payload), path=path, common=common
+                )
+            self.assertFalse(path.exists())
+
     def test_cli_exposes_exact_manual_identity(self):
         args = cli._parser().parse_args(
             ["decide", "trigger-adopt-manual", "--pr", "42", "--trigger-id", "10", "--head", HEAD]

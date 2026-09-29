@@ -381,45 +381,7 @@ class LiveEvidence:
         item: dict[str, Any], timestamp_field: str, checkpoint_by_response: dict[int, evidence.Checkpoint]
     ) -> str | None:
         """Classify a public response when its private trigger record is gone."""
-
-        identity = github.immutable_database_id(item)
-        checkpoint = checkpoint_by_response.get(identity) if identity is not None else None
-        raw_body = item.get("body")
-        body = raw_body if isinstance(raw_body, str) else ""
-        if timestamp_field == "submittedAt":
-            if item.get("state") == "DISMISSED":
-                return None
-            if item.get("state") not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}:
-                return "ambiguous"
-            commit = (item.get("commit") or {}).get("oid")
-            if isinstance(commit, str) and hosted.EXACT_SHA.fullmatch(commit):
-                return "completed"
-            if hosted._substantive(body):
-                return "completed" if hosted._scope_head(body) else "ambiguous"
-            if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
-                return "completed"
-            return None
-
-        created = hosted.parse_timestamp(item.get("createdAt"))
-        if hosted.REVIEW_LIMIT_MARKER in body or (
-            created is not None and hosted._rate_limit(body, created) is not None
-        ) or body.strip().lower().startswith("review rate limited"):
-            return "rate_limited"
-        if hosted.provider_file_ceiling_skip(body):
-            return "failed"
-        if hosted.NOOP_MARKER in body:
-            return "noop"
-        if hosted.ACTIVE_PATTERN.search(hosted._unquoted(body)):
-            return "active"
-        if hosted.FAILED_PATTERN.search(hosted._unquoted(body)):
-            return "failed"
-        if hosted._substantive(body) or hosted.FINISHED_REVIEW_PATTERN.search(hosted._unquoted(body)):
-            if hosted._scope_head(body):
-                return "completed"
-            if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
-                return "completed"
-            return "ambiguous"
-        return None
+        return hosted.public_response_state(item, timestamp_field, checkpoint_by_response)
 
     @staticmethod
     def _uncheckpointed_hosted_observation(pr: int, state: hosted.TriggerState) -> dict[str, Any]:
