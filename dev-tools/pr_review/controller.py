@@ -2082,12 +2082,20 @@ class ReviewController:
         return cli_path, hosted_path
 
     @contextlib.contextmanager
-    def _stop_review_locks(self, pr: int):
+    def _stop_review_locks(self, pr: int, channel: str):
         """Prevent the stop decision from racing an active channel review."""
 
         handles = []
         try:
-            for path in self._stop_lock_paths(pr):
+            lock_paths = self._stop_lock_paths(pr)
+            # Hosted request locks are scoped to one PR.  A Hosted stop must
+            # not be coupled to the repository-wide CLI lock, which may be
+            # held by an unrelated PR.  CLI stops retain both locks because a
+            # CLI run owns the repository-wide lock and the target request
+            # lock while it performs its preflight.
+            if channel == policy.Channel.HOSTED.value:
+                lock_paths = (lock_paths[1],)
+            for path in lock_paths:
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 handle = path.open("a+")
                 handles.append(handle)
@@ -5552,9 +5560,9 @@ class ReviewController:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
         identity = f"{pr}:{selected.value}"
         previous = state.allocations.get(identity)
-        with self._stop_review_locks(pr):
-            # Refresh everything inside both channel locks so an in-flight review
-            # cannot be mistaken for a terminal result.
+        with self._stop_review_locks(pr, selected.value):
+            # Refresh everything inside the selected channel's lock(s) so an
+            # in-flight review cannot be mistaken for a terminal result.
             state = self._state()
             if pr not in state.ordered_prs:
                 raise ControllerError(f"PR #{pr} is not in the configured review stack")
