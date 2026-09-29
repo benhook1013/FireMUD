@@ -8,6 +8,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -43,6 +45,10 @@ import org.mockito.Mockito;
 
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
+  private static final UUID ADMISSION_REALM_ID =
+      UUID.fromString("00000000-0000-0000-0000-000000000001");
+  private static final UUID ADMISSION_NAMESPACE_ID =
+      UUID.fromString("00000000-0000-0000-0000-000000000002");
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
@@ -418,6 +424,53 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
+  }
+
+  @Test
+  void playRejectsPointerRevisionCutoverBeforeAdmissionReads() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
+    GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
+    AtomicInteger pointerReads = new AtomicInteger();
+    when(authorityService.listPointers())
+        .thenAnswer(
+            invocation ->
+                pointerReads.getAndIncrement() == 0 ? List.of(pointerA) : List.of(pointerB));
+    GameplayWorldCatalog authorityBackedCatalog = new GameplayWorldCatalog(authorityService);
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            authorityBackedCatalog,
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(pointerReads).hasValue(2);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
   }
 
   @Test
@@ -1973,6 +2026,25 @@ class PlayCommandHandlerTest {
     world.setDisplayName(displayName);
     world.setRealms(realms);
     return world;
+  }
+
+  private static GameplayAdmissionPointerSnapshot admissionPointer(long pointerVersion) {
+    return new GameplayAdmissionPointerSnapshot(
+        "demo",
+        "Demo World",
+        "production",
+        "Live Realm",
+        22L,
+        1L,
+        pointerVersion,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        1L,
+        ADMISSION_REALM_ID,
+        ADMISSION_NAMESPACE_ID);
   }
 
   private static GameplayCatalogProperties.Realm realm(

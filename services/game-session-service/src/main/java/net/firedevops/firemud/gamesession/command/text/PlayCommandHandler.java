@@ -316,7 +316,7 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
+      if (!gameplayWorldCatalog.matchesCurrentAdmissionPointer(selectedWorld, selectedRealm)) {
         return admissionPointerUnavailableFailure(
             selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
       }

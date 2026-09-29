@@ -383,10 +383,15 @@ public class WorldsCommandHandler {
           ? NonPublicRealmAuthorization.AUTHORITY_UNAVAILABLE
           : NonPublicRealmAuthorization.DENIED;
     }
+    if (!isValidMembershipAuthoritySnapshot(membershipResponse, sessionContext, realm)) {
+      return NonPublicRealmAuthorization.AUTHORITY_UNAVAILABLE;
+    }
     if (!membershipResponse.getMembershipExists()
-        || !membershipResponse.getGameplayAdmissionAllowed()
         || "INACTIVE".equalsIgnoreCase(membershipResponse.getMembershipLifecycleState())) {
       return NonPublicRealmAuthorization.ENROLLMENT_REQUIRED;
+    }
+    if (!membershipResponse.getGameplayAdmissionAllowed()) {
+      return NonPublicRealmAuthorization.MEMBERSHIP_DENIED;
     }
     if (!isValidActiveMembership(membershipResponse, sessionContext, realm)) {
       return NonPublicRealmAuthorization.AUTHORITY_UNAVAILABLE;
@@ -520,6 +525,7 @@ public class WorldsCommandHandler {
   private enum NonPublicRealmAuthorization {
     AUTHORIZED,
     DENIED,
+    MEMBERSHIP_DENIED,
     ENROLLMENT_REQUIRED,
     AUTHORITY_UNAVAILABLE,
     ENTITLEMENT_UNAVAILABLE
@@ -729,7 +735,8 @@ public class WorldsCommandHandler {
 
     GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
     if (!worldCatalog.hasValidPublicProductionRealm(catalogSnapshot, world)
-        || !hasCompleteSelectedRealmPointerEvidence(realm)) {
+        || !hasCompleteSelectedRealmPointerEvidence(realm)
+        || !worldCatalog.matchesCurrentAdmissionPointer(world, realm)) {
       return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
 
@@ -808,11 +815,13 @@ public class WorldsCommandHandler {
       return entitlementAuthorization.authorization();
     }
     if (!membershipResponse.getMembershipExists()
-        || !membershipResponse.getGameplayAdmissionAllowed()
-        || !"ACTIVE".equalsIgnoreCase(membershipResponse.getMembershipLifecycleState())) {
+        || "INACTIVE".equalsIgnoreCase(membershipResponse.getMembershipLifecycleState())) {
       return entitlementAuthorization.allowPublicJoin()
           ? CharacterBrowseAuthorization.JOIN_REQUIRED
           : CharacterBrowseAuthorization.PUBLIC_PRODUCTION_ADMISSION_DENIED;
+    }
+    if (!membershipResponse.getGameplayAdmissionAllowed()) {
+      return CharacterBrowseAuthorization.PUBLIC_PRODUCTION_ADMISSION_DENIED;
     }
     if (!isValidActiveMembership(membershipResponse, sessionContext, realm)) {
       return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
@@ -864,7 +873,7 @@ public class WorldsCommandHandler {
       NonPublicRealmAuthorization authorization) {
     return switch (authorization) {
       case AUTHORIZED -> CharacterBrowseAuthorization.AUTHORIZED;
-      case DENIED -> CharacterBrowseAuthorization.DENIED;
+      case DENIED, MEMBERSHIP_DENIED -> CharacterBrowseAuthorization.DENIED;
       case ENROLLMENT_REQUIRED -> CharacterBrowseAuthorization.NON_PUBLIC_ENROLLMENT_REQUIRED;
       case AUTHORITY_UNAVAILABLE -> CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
       case ENTITLEMENT_UNAVAILABLE -> CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE;
@@ -894,7 +903,7 @@ public class WorldsCommandHandler {
       return false;
     }
     if ("ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())) {
-      return response.getGameplayAdmissionAllowed();
+      return true;
     }
     return "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
         && !response.getGameplayAdmissionAllowed();

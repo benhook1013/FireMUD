@@ -650,6 +650,64 @@ public final class GameplayWorldCatalog {
     }
   }
 
+  /**
+   * Re-reads the current routing authority and requires the selected realm to remain the exact
+   * target that was resolved from the earlier catalog snapshot.
+   *
+   * <p>This is intentionally a read-before-admission fence, not an atomic read/bind operation. The
+   * caller must invoke it immediately before any Account or Entity admission read.
+   */
+  public boolean matchesCurrentAdmissionPointer(WorldView expectedWorld, RealmView expectedRealm) {
+    if (expectedWorld == null || expectedRealm == null) {
+      return false;
+    }
+    if (authorityPointerSupplier != null) {
+      List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+      if (pointers == null
+          || pointers.stream().anyMatch(pointer -> !hasCompleteAuthorityPointer(pointer))) {
+        return false;
+      }
+      if (pointers.stream()
+              .filter(pointer -> pointer.tenantId() == expectedRealm.tenantId())
+              .filter(GameplayAdmissionPointerSnapshot::visible)
+              .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+              .count()
+          != 1L) {
+        return false;
+      }
+      return pointers.stream()
+              .filter(pointer -> matchesExpectedTarget(expectedWorld, expectedRealm, pointer))
+              .count()
+          == 1L;
+    }
+
+    CatalogState currentState = readCatalogState();
+    if (currentState.publicProductionCounts().getOrDefault(expectedRealm.tenantId(), 0L) != 1L) {
+      return false;
+    }
+    List<WorldView> currentWorlds = currentState.worlds();
+    return currentWorlds.stream()
+            .filter(world -> sameWorld(expectedWorld, world))
+            .flatMap(world -> world.realms().stream())
+            .filter(realm -> realm.equals(expectedRealm))
+            .count()
+        == 1L;
+  }
+
+  private static boolean matchesExpectedTarget(
+      WorldView expectedWorld,
+      RealmView expectedRealm,
+      GameplayAdmissionPointerSnapshot currentPointer) {
+    return Objects.equals(expectedWorld.slug(), currentPointer.worldSlug())
+        && Objects.equals(expectedWorld.displayName(), currentPointer.worldDisplayName())
+        && toRealmView(currentPointer).equals(expectedRealm);
+  }
+
+  private static boolean sameWorld(WorldView expectedWorld, WorldView currentWorld) {
+    return Objects.equals(expectedWorld.slug(), currentWorld.slug())
+        && Objects.equals(expectedWorld.displayName(), currentWorld.displayName());
+  }
+
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
     CatalogState catalogState = readCatalogState();
     List<WorldView> worlds = discoverableWorlds(catalogState);
