@@ -118,7 +118,7 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return world.realms().stream()
+    return normalizedRealmViews(world.realms()).stream()
         .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
         .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
         .findFirst();
@@ -181,27 +181,28 @@ public final class GameplayWorldCatalog {
     }
     String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
     String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
-    return visibleWorlds().stream()
-        .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .flatMap(
-            world ->
-                visibleRealms(world).stream()
-                    .filter(realm -> normalizedRealm.equals(realm.slug().toLowerCase(Locale.ROOT)))
-                    .map(
-                        realm ->
-                            new RuntimeRealmTarget(
-                                world.slug(),
-                                world.displayName(),
-                                realm.slug(),
-                                realm.displayName())))
-        .findFirst();
+    List<WorldView> worlds =
+        visibleWorlds().stream()
+            .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    if (worlds.size() != 1) {
+      return Optional.empty();
+    }
+    WorldView world = worlds.getFirst();
+    return visibleRealms(world).stream()
+        .filter(realm -> normalizedRealm.equals(realm.slug().toLowerCase(Locale.ROOT)))
+        .findFirst()
+        .map(
+            realm ->
+                new RuntimeRealmTarget(
+                    world.slug(), world.displayName(), realm.slug(), realm.displayName()));
   }
 
   public List<RealmView> visibleRealms(WorldView world) {
     if (world == null || world.realms() == null) {
       return List.of();
     }
-    return world.realms().stream().filter(RealmView::visible).toList();
+    return normalizedRealmViews(world.realms()).stream().filter(RealmView::visible).toList();
   }
 
   public List<RealmView> publicVisibleRealms(WorldView world) {
@@ -313,7 +314,7 @@ public final class GameplayWorldCatalog {
                   new MutableWorldAccumulator(pointer.worldSlug(), pointer.worldDisplayName()));
       world
           .realmsBySlug
-          .computeIfAbsent(pointer.realmSlug(), ignored -> new ArrayList<>())
+          .computeIfAbsent(normalizeSlug(pointer.realmSlug()), ignored -> new ArrayList<>())
           .add(pointer);
     }
     return normalizeWorlds(
@@ -360,16 +361,30 @@ public final class GameplayWorldCatalog {
   }
 
   private static WorldView copyWorldView(WorldView input) {
-    return new WorldView(
-        input.slug(),
-        input.displayName(),
-        input.realms() == null
-            ? List.of()
-            : input.realms().stream()
-                .filter(Objects::nonNull)
-                .filter(realm -> realm.slug() != null && !realm.slug().isBlank())
-                .map(GameplayWorldCatalog::copyRealmView)
-                .toList());
+    return new WorldView(input.slug(), input.displayName(), normalizedRealmViews(input.realms()));
+  }
+
+  private static List<RealmView> normalizedRealmViews(List<RealmView> realms) {
+    if (realms == null) {
+      return List.of();
+    }
+    List<RealmView> copiedRealms =
+        realms.stream()
+            .filter(Objects::nonNull)
+            .filter(realm -> realm.slug() != null && !realm.slug().isBlank())
+            .map(GameplayWorldCatalog::copyRealmView)
+            .toList();
+    Set<String> seenSlugs = new HashSet<>();
+    Set<String> ambiguousSlugs = new HashSet<>();
+    for (RealmView realm : copiedRealms) {
+      String normalizedSlug = normalizeSlug(realm.slug());
+      if (!seenSlugs.add(normalizedSlug)) {
+        ambiguousSlugs.add(normalizedSlug);
+      }
+    }
+    return copiedRealms.stream()
+        .filter(realm -> !ambiguousSlugs.contains(normalizeSlug(realm.slug())))
+        .toList();
   }
 
   private static RealmView copyRealmView(RealmView input) {

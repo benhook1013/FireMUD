@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.junit.jupiter.api.Test;
 
 class EnvironmentIdentityPlannerTest {
@@ -183,6 +186,88 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void mapsEveryRoleFamilyToItsCanonicalSourceSecretName() {
+    var plan = planner.plan("pr-42");
+
+    assertEquals(
+        plan.ingressSecretName(), plan.sourceSecretName(HostedIdentityContract.INGRESS_ROLE));
+    assertEquals(
+        plan.telnetSecretName(), plan.sourceSecretName(HostedIdentityContract.TELNET_ROLE));
+    assertEquals(
+        plan.gatewayInternalWsSecretName(),
+        plan.sourceSecretName(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
+    assertEquals(
+        plan.tcpProxyBridgeSecretName(),
+        plan.sourceSecretName(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
+    assertEquals(plan.grpcSecretName(), plan.sourceSecretName(HostedIdentityContract.GRPC_ROLE));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      assertEquals(plan.grpcPublicationSourceSecretName(workload), plan.sourceSecretName(role));
+    }
+    assertThrows(IllegalArgumentException.class, () -> plan.sourceSecretName("unsupported"));
+  }
+
+  @Test
+  void rejectsPublicationSourceSecretRoleMapsWithMissingOrExtraRoles() {
+    var plan = planner.plan("pr-42");
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    var sourceSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySourceSecretNames());
+    sourceSecretNames.remove(role);
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcWorkloadIdentityCertificateNames(),
+        plan.grpcWorkloadIdentitySecretNames(),
+        sourceSecretNames);
+
+    var extraSourceSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySourceSecretNames());
+    extraSourceSecretNames.put("grpc-publication-unsupported-service", "unsupported-source-secret");
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcWorkloadIdentityCertificateNames(),
+        plan.grpcWorkloadIdentitySecretNames(),
+        extraSourceSecretNames);
+  }
+
+  @Test
+  void rejectsPublicationCertificateAndSecretRoleMapsWithMissingOrExtraRoles() {
+    var plan = planner.plan("pr-42");
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    String unsupportedRole = "grpc-publication-unsupported-service";
+
+    var missingCertificateNames = new HashMap<>(plan.grpcWorkloadIdentityCertificateNames());
+    missingCertificateNames.remove(role);
+    assertInvalidPublicationRoleMaps(
+        plan,
+        missingCertificateNames,
+        plan.grpcWorkloadIdentitySecretNames(),
+        plan.grpcWorkloadIdentitySourceSecretNames());
+
+    var extraCertificateNames = new HashMap<>(plan.grpcWorkloadIdentityCertificateNames());
+    extraCertificateNames.put(unsupportedRole, "unsupported-certificate");
+    assertInvalidPublicationRoleMaps(
+        plan,
+        extraCertificateNames,
+        plan.grpcWorkloadIdentitySecretNames(),
+        plan.grpcWorkloadIdentitySourceSecretNames());
+
+    var missingSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySecretNames());
+    missingSecretNames.remove(role);
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcWorkloadIdentityCertificateNames(),
+        missingSecretNames,
+        plan.grpcWorkloadIdentitySourceSecretNames());
+
+    var extraSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySecretNames());
+    extraSecretNames.put(unsupportedRole, "unsupported-secret");
+    assertInvalidPublicationRoleMaps(
+        plan,
+        plan.grpcWorkloadIdentityCertificateNames(),
+        extraSecretNames,
+        plan.grpcWorkloadIdentitySourceSecretNames());
+  }
+
+  @Test
   void rejectsNamesOutsideTheFixedEnvironmentSet() {
     assertThrows(IllegalArgumentException.class, () -> planner.plan(null));
     assertThrows(IllegalArgumentException.class, () -> planner.plan(""));
@@ -192,5 +277,52 @@ class EnvironmentIdentityPlannerTest {
     assertThrows(IllegalArgumentException.class, () -> planner.plan("preview-pr-42"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42x"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42-other"));
+  }
+
+  private static void assertInvalidPublicationRoleMaps(
+      EnvironmentIdentityPlan plan,
+      Map<String, String> certificateNames,
+      Map<String, String> secretNames,
+      Map<String, String> sourceSecretNames) {
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> copyPlan(plan, certificateNames, secretNames, sourceSecretNames));
+    assertEquals(
+        "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles",
+        failure.getMessage());
+  }
+
+  private static EnvironmentIdentityPlan copyPlan(
+      EnvironmentIdentityPlan plan,
+      Map<String, String> certificateNames,
+      Map<String, String> secretNames,
+      Map<String, String> sourceSecretNames) {
+    return new EnvironmentIdentityPlan(
+        plan.name(),
+        plan.controlNamespace(),
+        plan.identityNamespace(),
+        plan.runtimeNamespace(),
+        plan.hostname(),
+        plan.ingressCertificateName(),
+        plan.ingressSecretName(),
+        plan.telnetCertificateName(),
+        plan.telnetSecretName(),
+        plan.gatewayInternalWsCertificateName(),
+        plan.gatewayInternalWsSecretName(),
+        plan.gatewayInternalWsDnsName(),
+        plan.tcpProxyBridgeCertificateName(),
+        plan.tcpProxyBridgeSecretName(),
+        plan.tcpProxyBridgeUriSan(),
+        plan.grpcCertificateName(),
+        plan.grpcSecretName(),
+        plan.ingressIssuer(),
+        plan.telnetIssuer(),
+        plan.grpcIssuer(),
+        plan.caSecretName(),
+        plan.grpcConsumers(),
+        certificateNames,
+        secretNames,
+        sourceSecretNames);
   }
 }

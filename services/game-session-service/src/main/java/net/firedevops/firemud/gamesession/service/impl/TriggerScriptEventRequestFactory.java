@@ -13,10 +13,19 @@ final class TriggerScriptEventRequestFactory {
     if (commonFields.scriptPinEpoch() < 0L) {
       throw new IllegalArgumentException("scriptPinEpoch cannot be negative");
     }
+    if (commonFields.scriptPatchBaseVersionId() < 0L) {
+      throw new IllegalArgumentException("scriptPatchBaseVersionId cannot be negative");
+    }
     ScriptPinTupleCoherence.requireCoherent(
         commonFields.scriptPatchVersion(),
         commonFields.scriptPinEpoch() == 0L ? null : commonFields.scriptPinEpoch(),
         commonFields.scriptPinControlPlaneRequestId());
+    boolean hasScriptPin =
+        commonFields.scriptPatchVersion() != null && !commonFields.scriptPatchVersion().isBlank();
+    if (hasScriptPin != (commonFields.scriptPatchBaseVersionId() > 0L)) {
+      throw new IllegalArgumentException(
+          "scriptPatchBaseVersionId must be positive exactly when a script patch is pinned");
+    }
     PlayableStateScope playableStateScope =
         requirePlayableStateScope(commonFields.playableStateScope());
     TriggerScriptEventRequest.Builder builder =
@@ -30,6 +39,7 @@ final class TriggerScriptEventRequestFactory {
             .setEventSchemaVersion(commonFields.eventSchemaVersion())
             .setScriptPatchVersion(
                 commonFields.scriptPatchVersion() == null ? "" : commonFields.scriptPatchVersion())
+            .setScriptPatchBaseVersionId(commonFields.scriptPatchBaseVersionId())
             .setScriptPinEpoch(commonFields.scriptPinEpoch())
             .setScriptPinControlPlaneRequestId(
                 commonFields.scriptPinControlPlaneRequestId() == null
@@ -84,6 +94,7 @@ final class TriggerScriptEventRequestFactory {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      long scriptPatchBaseVersionId,
       /** Zero represents an absent script pin epoch. */
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,

@@ -254,6 +254,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             .setAutomationWorkItemId("work-item-1")
             .setScriptId("script-1")
             .setScriptPatchVersion("patch-1")
+            .setScriptPatchBaseVersionId(7L)
             .setScriptPinEpoch(1L)
             .setScriptPinControlPlaneRequestId("request-1")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -270,6 +271,70 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals(
         List.of("transaction-begin", "transaction-commit", "redis-enqueue", "immediate-tick"),
         events);
+  }
+
+  @Test
+  void persistsTheExactScriptPatchBaseOnFreshAdmission() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    AdmissionRequest request = automationRequestWithScriptPatchBase(7L);
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(automationInstance()));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                request.tenantId(),
+                request.gameInstanceId(),
+                request.regionId(),
+                request.regionEpoch(),
+                request.automationDispatchId()))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(request.tenantId());
+    ownership.setGameInstanceId(request.gameInstanceId());
+    ownership.setRegionId(request.regionId());
+    ownership.setRegionEpoch(request.regionEpoch());
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(
+            request.tenantId(), request.regionId()))
+        .thenReturn(Optional.of(ownership));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertTrue(result.accepted());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
+    assertEquals(7L, commandCaptor.getValue().getScriptPatchBaseVersionId());
+  }
+
+  @Test
+  void rejectsLocalAdmissionWithoutPositiveScriptPatchBase() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+                    automationRequestWithScriptPatchBase(null),
+                    gameInstanceRepository,
+                    gameplayCommandRepository,
+                    runtimeRegionStatusRepository,
+                    tickService));
+
+    assertEquals("script_patch_base_version_id must be positive", exception.getMessage());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
   }
 
   @Test
@@ -316,6 +381,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 "work-item-1",
                 "script-1",
                 "patch-1",
+                7L,
                 "plugin-1",
                 "plugin-v1",
                 "SHARED",
@@ -431,6 +497,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             "work-item-1",
             "script-1",
             "patch-1",
+            7L,
             "plugin-1",
             "plugin-v1",
             "SHARED",
@@ -513,6 +580,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             "remote-work-1",
             "script-1",
             "patch-1",
+            null,
             "plugin-1",
             "plugin-v1",
             "SHARED",
@@ -683,6 +751,46 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void keepsExistingAcceptedCommandRetryableWhenOwnershipReadFails() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    AdmissionRequest request = automationRequest();
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, request);
+    existing.setCommandId("auto-owner-read-failed");
+    existing.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenThrow(new IllegalStateException("database connection failed"));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("RETRY_QUEUED", result.admissionOutcome());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("auto-owner-read-failed", result.commandId());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
   void doesNotRedriveExistingAcceptedRemoteCommandAfterOwnershipEpochAdvances() {
     GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
@@ -787,6 +895,41 @@ class AutomationGameplayCommandAdmissionSupportTest {
             tickService);
 
     assertFalse(result.accepted());
+    assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void rejectsDuplicateWhenStoredScriptPatchBaseDiffers() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = automationInstance();
+    instance.setScriptPatchBaseVersionId(42L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    AdmissionRequest originalRequest = automationRequestWithScriptPatchBase(41L);
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, originalRequest);
+    existing.setCommandId("auto-existing");
+    existing.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequestWithScriptPatchBase(42L),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
     assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
     verifyNoTickEnqueue(tickService);
   }
@@ -910,6 +1053,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             "work-item-1",
             "script-1",
             "patch-1",
+            7L,
             "plugin-1",
             "plugin-v1",
             "SHARED",
@@ -1038,6 +1182,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             "work-item-1",
             "script-1",
             "patch-1",
+            7L,
             "plugin-1",
             "plugin-v1",
             "SHARED",
@@ -1347,6 +1492,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
                         "work-item-1",
                         "script-1",
                         "patch-1",
+                        7L,
                         "plugin-1",
                         "plugin-v1",
                         "SHARED",
@@ -1420,6 +1566,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
                         "work-item-1",
                         "script-1",
                         "patch-1",
+                        7L,
                         "plugin-1",
                         "plugin-v1",
                         "SHARED",
@@ -1480,6 +1627,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 "work-item-1",
                 "script-1",
                 "patch-1",
+                7L,
                 "plugin-1",
                 "plugin-v1",
                 "SHARED",
@@ -1521,6 +1669,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         "work-item-1",
         "script-1",
         "patch-1",
+        7L,
         "plugin-1",
         "plugin-v1",
         "SHARED",
@@ -1542,6 +1691,40 @@ class AutomationGameplayCommandAdmissionSupportTest {
         "request-1");
   }
 
+  private static AdmissionRequest automationRequestWithScriptPatchBase(Long baseVersionId) {
+    AdmissionRequest base = automationRequest();
+    return new AdmissionRequest(
+        base.tenantId(),
+        base.gameInstanceId(),
+        base.regionId(),
+        base.regionEpoch(),
+        base.sourceType(),
+        base.automationDispatchId(),
+        base.automationWorkItemId(),
+        base.scriptId(),
+        base.scriptPatchVersion(),
+        baseVersionId,
+        base.pluginId(),
+        base.pluginVersionId(),
+        base.playableStateScope(),
+        base.worldSlug(),
+        base.realmSlug(),
+        base.pointerVersion(),
+        base.originSourceKind(),
+        base.originSourceState(),
+        base.originSourceOrdinal(),
+        base.originSourceDueTickId(),
+        base.originSourceDueAtMs(),
+        base.targetEntityId(),
+        base.remoteCoordinatorId(),
+        base.remoteFollowupId(),
+        base.command(),
+        base.requiresSoloTick(),
+        base.dueTickId(),
+        base.scriptPinEpoch(),
+        base.scriptPinControlPlaneRequestId());
+  }
+
   private static AdmissionRequest automationRequestWithSourceType(String sourceType) {
     AdmissionRequest base = automationRequest();
     return new AdmissionRequest(
@@ -1554,6 +1737,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         base.automationWorkItemId(),
         base.scriptId(),
         base.scriptPatchVersion(),
+        base.scriptPatchBaseVersionId(),
         base.pluginId(),
         base.pluginVersionId(),
         base.playableStateScope(),
@@ -1587,6 +1771,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         base.automationWorkItemId(),
         base.scriptId(),
         base.scriptPatchVersion(),
+        base.scriptPatchBaseVersionId(),
         base.pluginId(),
         base.pluginVersionId(),
         base.playableStateScope(),
@@ -1626,6 +1811,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         null,
         null,
         null,
+        null,
         "SHARED",
         "demo",
         "production",
@@ -1658,6 +1844,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.automationWorkItemId(),
           base.scriptId(),
           base.scriptPatchVersion(),
+          base.scriptPatchBaseVersionId(),
           base.pluginId(),
           base.pluginVersionId(),
           base.playableStateScope(),
@@ -1687,6 +1874,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.automationWorkItemId(),
           base.scriptId(),
           base.scriptPatchVersion(),
+          base.scriptPatchBaseVersionId(),
           base.pluginId(),
           base.pluginVersionId(),
           base.playableStateScope(),
@@ -1716,6 +1904,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.automationWorkItemId(),
           base.scriptId(),
           base.scriptPatchVersion(),
+          base.scriptPatchBaseVersionId(),
           base.pluginId(),
           base.pluginVersionId(),
           base.playableStateScope(),
@@ -1745,6 +1934,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.automationWorkItemId(),
           base.scriptId(),
           base.scriptPatchVersion(),
+          base.scriptPatchBaseVersionId(),
           base.pluginId(),
           base.pluginVersionId(),
           base.playableStateScope(),
@@ -1789,6 +1979,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         base.automationWorkItemId(),
         base.scriptId(),
         scriptPatchVersion,
+        base.scriptPatchBaseVersionId(),
         base.pluginId(),
         base.pluginVersionId(),
         base.playableStateScope(),
@@ -1823,6 +2014,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     command.setAutomationWorkItemId(request.automationWorkItemId());
     command.setScriptId(request.scriptId());
     command.setScriptPatchVersion(request.scriptPatchVersion());
+    command.setScriptPatchBaseVersionId(request.scriptPatchBaseVersionId());
     command.setScriptPinEpoch(request.scriptPinEpoch());
     command.setScriptPinControlPlaneRequestId(request.scriptPinControlPlaneRequestId());
     command.setPluginId(request.pluginId());
@@ -1849,6 +2041,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     instance.setId(2L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchBaseVersionId(7L);
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
     return instance;

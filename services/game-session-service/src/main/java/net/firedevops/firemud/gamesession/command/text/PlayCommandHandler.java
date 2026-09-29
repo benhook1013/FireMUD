@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -1062,6 +1063,11 @@ public class PlayCommandHandler {
           tenantBillingBlockedFailure(
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
+    if (!isSafeEntitlementAuthorityResponse(response, selectedRealm)) {
+      return Optional.of(
+          entitlementUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+    }
     if (!response.getGameplayAvailable()) {
       return Optional.of(
           tenantBillingBlockedFailure(
@@ -1202,7 +1208,27 @@ public class PlayCommandHandler {
     } catch (DateTimeParseException ex) {
       return false;
     }
-    return true;
+    return isPositiveCanonicalDecimal(response.getMembershipAuthorityGeneration());
+  }
+
+  private boolean isSafeEntitlementAuthorityResponse(
+      GetTenantEntitlementsForRuntimeResponse response,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    if (!StringUtils.hasText(response.getTenantId())
+        || !StringUtils.hasText(response.getEvaluatedAt())
+        || response.getEntitlementVersion() <= 0L) {
+      return false;
+    }
+    try {
+      long tenantId = Long.parseLong(response.getTenantId());
+      Instant evaluatedAt = Instant.parse(response.getEvaluatedAt());
+      Instant now = Instant.now();
+      return tenantId == selectedRealm.tenantId()
+          && !evaluatedAt.isAfter(now)
+          && evaluatedAt.isAfter(now.minus(15, ChronoUnit.SECONDS));
+    } catch (DateTimeParseException | NumberFormatException ex) {
+      return false;
+    }
   }
 
   private void maybeRecordFreshEntryFallback(

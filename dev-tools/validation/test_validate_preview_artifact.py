@@ -2599,6 +2599,354 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
             self.validator.validate_service_consumers([document], "pr-42")
 
 
+class PreviewArtifactFrontendValidationTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _frontend_deployment(self):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "frontend"},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "frontend"}},
+                "template": {
+                    "metadata": {"labels": {"app": "frontend"}},
+                    "spec": {
+                        "automountServiceAccountToken": False,
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "runAsUser": 101,
+                            "runAsGroup": 101,
+                            "fsGroup": 101,
+                            "fsGroupChangePolicy": "OnRootMismatch",
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "imagePullSecrets": [{"name": "ghcr-preview-pull"}],
+                        "containers": [
+                            {
+                                "name": "frontend",
+                                "image": "ghcr.io/benhook1013/web-client:pr-42-head-42",
+                                "imagePullPolicy": "Always",
+                                "securityContext": {
+                                    "allowPrivilegeEscalation": False,
+                                    "readOnlyRootFilesystem": True,
+                                    "runAsNonRoot": True,
+                                    "runAsUser": 101,
+                                    "runAsGroup": 101,
+                                    "capabilities": {"drop": ["ALL"]},
+                                },
+                                "ports": [
+                                    {
+                                        "name": "http",
+                                        "containerPort": 8080,
+                                        "protocol": "TCP",
+                                    }
+                                ],
+                                "readinessProbe": {
+                                    "httpGet": {"path": "/healthz", "port": "http"},
+                                    "initialDelaySeconds": 2,
+                                    "periodSeconds": 10,
+                                },
+                                "livenessProbe": {
+                                    "httpGet": {"path": "/healthz", "port": "http"},
+                                    "initialDelaySeconds": 5,
+                                    "periodSeconds": 20,
+                                },
+                                "resources": copy.deepcopy(
+                                    self.validator.FRONTEND_RESOURCES
+                                ),
+                                "volumeMounts": [
+                                    {"name": "nginx-tmp", "mountPath": "/tmp"}
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "nginx-tmp",
+                                "emptyDir": {"sizeLimit": "16Mi"},
+                            }
+                        ],
+                    },
+                },
+            },
+        }
+
+    def _frontend_service(self):
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "frontend"},
+            "spec": copy.deepcopy(self.validator.FRONTEND_SERVICE_SPEC),
+        }
+
+    def _frontend_policy(self):
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {"name": "frontend-static-host"},
+            "spec": copy.deepcopy(self.validator.FRONTEND_NETWORK_POLICY_SPEC),
+        }
+
+    def _frontend_middleware(self):
+        return {
+            "apiVersion": "traefik.io/v1alpha1",
+            "kind": "Middleware",
+            "metadata": {"name": "firemud-preview-auth-path-rewrite"},
+            "spec": copy.deepcopy(self.validator.FRONTEND_MIDDLEWARE_SPEC),
+        }
+
+    def _frontend_ingress(self):
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": "firemud-preview",
+                "annotations": {
+                    self.validator.FRONTEND_MIDDLEWARE_ANNOTATION: (
+                        "pr-42-firemud-preview-auth-path-rewrite@kubernetescrd"
+                    )
+                },
+            },
+            "spec": {
+                "ingressClassName": "traefik",
+                "tls": [
+                    {
+                        "hosts": ["pr-42.preview.example.test"],
+                        "secretName": "pr-42-tls",
+                    }
+                ],
+                "rules": [
+                    {
+                        "host": "pr-42.preview.example.test",
+                        "http": {"paths": self.validator._frontend_ingress_paths()},
+                    }
+                ],
+            },
+        }
+
+    def test_opt_in_frontend_contract_is_exact_and_default_is_closed(self):
+        self.validator.validate_frontend_deployment(
+            self._frontend_deployment(), "pr-42-head-42"
+        )
+        self.validator.validate_services(
+            [self._frontend_service()], "hosted-controller", True
+        )
+        self.validator.validate_frontend_middleware(
+            self._frontend_middleware(), "pr-42"
+        )
+        self.validator.validate_ingress(
+            self._frontend_ingress(), "pr-42", "pr-42.preview.example.test", True
+        )
+        enabled = self.validator._expected_names_for_mode("hosted-controller", True)
+        disabled = self.validator._expected_names_for_mode("hosted-controller", False)
+        for kind, names in self.validator.FRONTEND_EXPECTED_NAMES.items():
+            self.assertTrue(names <= enabled[kind])
+            self.assertTrue(names.isdisjoint(disabled.get(kind, set())))
+
+    def test_sanitize_accepts_named_opt_in_objects_and_preserves_middleware(self):
+        documents = [
+            self._frontend_deployment(),
+            self._frontend_service(),
+            self._frontend_policy(),
+            self._frontend_middleware(),
+            self._frontend_ingress(),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "render.yaml"
+            destination = Path(directory) / "sanitized.yaml"
+            source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            self.validator.sanitize(source, destination)
+            sanitized = list(yaml.safe_load_all(destination.read_text(encoding="utf-8")))
+        ingress = next(document for document in sanitized if document["kind"] == "Ingress")
+        self.assertEqual(
+            ingress["metadata"]["annotations"],
+            {
+                self.validator.FRONTEND_MIDDLEWARE_ANNOTATION: (
+                    "pr-42-firemud-preview-auth-path-rewrite@kubernetescrd"
+                )
+            },
+        )
+        self.assertEqual(
+            {(document["kind"], document["metadata"]["name"]) for document in sanitized},
+            {
+                ("Deployment", "frontend"),
+                ("Service", "frontend"),
+                ("NetworkPolicy", "frontend-static-host"),
+                ("Middleware", "firemud-preview-auth-path-rewrite"),
+                ("Ingress", "firemud-preview"),
+            },
+        )
+
+    def test_validate_manifest_accepts_complete_opt_in_closed_set(self):
+        documents = [
+            self._frontend_deployment(),
+            self._frontend_service(),
+            self._frontend_policy(),
+            self._frontend_middleware(),
+            self._frontend_ingress(),
+        ]
+        labels = self.validator._expected_object_labels("pr-42")
+        for document in documents:
+            document["metadata"]["labels"] = copy.deepcopy(labels)
+        expected_names = {
+            "Deployment": {"frontend"},
+            "Service": {"frontend"},
+            "NetworkPolicy": {"frontend-static-host"},
+            "Middleware": {"firemud-preview-auth-path-rewrite"},
+            "Ingress": {"firemud-preview"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.yaml"
+            path.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            with (
+                patch.object(self.validator, "EXPECTED_NAMES", expected_names),
+                patch.object(self.validator, "validate_services"),
+                patch.object(self.validator, "validate_network_policies"),
+                patch.object(self.validator, "validate_infrastructure_deployments"),
+                patch.object(self.validator, "validate_service_consumers"),
+            ):
+                self.validator.validate_manifest(
+                    path,
+                    "pr-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+    def test_validate_manifest_rejects_missing_opt_in_object(self):
+        documents = [
+            self._frontend_deployment(),
+            self._frontend_service(),
+            self._frontend_policy(),
+            self._frontend_ingress(),
+        ]
+        labels = self.validator._expected_object_labels("pr-42")
+        for document in documents:
+            document["metadata"]["labels"] = copy.deepcopy(labels)
+        expected_names = {
+            "Deployment": {"frontend"},
+            "Service": {"frontend"},
+            "NetworkPolicy": {"frontend-static-host"},
+            "Middleware": {"firemud-preview-auth-path-rewrite"},
+            "Ingress": {"firemud-preview"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.yaml"
+            path.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            with (
+                patch.object(self.validator, "EXPECTED_NAMES", expected_names),
+                self.assertRaisesRegex(ValueError, "object set is not closed"),
+            ):
+                self.validator.validate_manifest(
+                    path,
+                    "pr-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+    def test_frontend_deployment_rejects_mutated_security_or_image(self):
+        cases = (
+            (
+                "root filesystem",
+                lambda document: document["spec"]["template"]["spec"]["containers"][0][
+                    "securityContext"
+                ].__setitem__("readOnlyRootFilesystem", False),
+            ),
+            (
+                "image repository",
+                lambda document: document["spec"]["template"]["spec"]["containers"][0].__setitem__(
+                    "image", "ghcr.io/attacker/web-client:pr-42-head-42"
+                ),
+            ),
+            (
+                "image digest",
+                lambda document: document["spec"]["template"]["spec"]["containers"][0].__setitem__(
+                    "image", "ghcr.io/benhook1013/web-client@sha256:abc"
+                ),
+            ),
+        )
+        for case, mutate in cases:
+            with self.subTest(case=case):
+                document = self._frontend_deployment()
+                mutate(document)
+                with self.assertRaises(ValueError):
+                    self.validator.validate_frontend_deployment(
+                        document, "pr-42-head-42"
+                    )
+
+    def test_frontend_service_policy_and_middleware_reject_shape_changes(self):
+        service = self._frontend_service()
+        service["spec"]["ports"][0]["targetPort"] = 8081
+        with self.assertRaisesRegex(ValueError, "unsafe frontend spec"):
+            self.validator.validate_services([service], "hosted-controller", True)
+
+        policy = self._frontend_policy()
+        policy["spec"]["egress"] = [
+            {"to": [{"ipBlock": {"cidr": "0.0.0.0/0"}}]}
+        ]
+        with self.assertRaisesRegex(ValueError, "frontend-static-host has an unsafe spec"):
+            self.validator.validate_frontend_network_policy(policy)
+
+        middleware = self._frontend_middleware()
+        middleware["spec"]["replacePathRegex"]["replacement"] = "/api/account/login$1"
+        with self.assertRaisesRegex(ValueError, "unsafe spec"):
+            self.validator.validate_frontend_middleware(middleware, "pr-42")
+
+    def test_frontend_ingress_rejects_missing_extra_and_misrouted_paths(self):
+        cases = (
+            (
+                "missing route",
+                lambda ingress: ingress["spec"]["rules"][0]["http"]["paths"].pop(),
+            ),
+            (
+                "misrouted auth",
+                lambda ingress: ingress["spec"]["rules"][0]["http"]["paths"][1][
+                    "backend"
+                ]["service"].__setitem__("name", "frontend"),
+            ),
+            (
+                "extra route",
+                lambda ingress: ingress["spec"]["rules"][0]["http"]["paths"].append(
+                    {
+                        "path": "/admin",
+                        "pathType": "Prefix",
+                        "backend": {
+                            "service": {
+                                "name": "spring-cloud-gateway",
+                                "port": {"number": 80},
+                            }
+                        },
+                    }
+                ),
+            ),
+        )
+        for case, mutate in cases:
+            with self.subTest(case=case):
+                ingress = self._frontend_ingress()
+                mutate(ingress)
+                with self.assertRaisesRegex(ValueError, "route"):
+                    self.validator.validate_ingress(
+                        ingress, "pr-42", "pr-42.preview.example.test", True
+                    )
+
+    def test_frontend_policy_closed_set_rejects_missing_and_extra_objects(self):
+        expected = self.validator._expected_names_for_mode(
+            "hosted-controller", True
+        )["NetworkPolicy"]
+        for case, names in (
+            ("missing", expected - {"frontend-static-host"}),
+            ("extra", expected | {"frontend-extra"}),
+        ):
+            with self.subTest(case=case):
+                documents = [
+                    {"kind": "NetworkPolicy", "metadata": {"name": name}}
+                    for name in names
+                ]
+                with self.assertRaisesRegex(ValueError, "set is not closed"):
+                    self.validator.validate_network_policies(
+                        documents, "hosted-controller", True
+                    )
+
+
 class PreviewArtifactNetworkPolicyTest(unittest.TestCase):
     validator = VALIDATOR
 

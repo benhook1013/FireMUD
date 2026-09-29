@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -165,12 +166,16 @@ class TextCommandInterpreterTest {
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "1"),
-                        invocation.getArgument(0)));
+            invocation -> {
+              var response =
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                          123L, 22L, "1")
+                      .toBuilder()
+                      .setEvaluatedAt(Instant.now().toString())
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(response, invocation.getArgument(0));
+            });
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -190,7 +195,7 @@ class TextCommandInterpreterTest {
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
@@ -356,7 +361,6 @@ class TextCommandInterpreterTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService(),
             pointerAuthorityService,
@@ -980,7 +984,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         look.outputs().stream().map(PlayerOutput::kind).toList());
     assertTrue(((LookViewOutput) look.outputs().get(0).payload()).includeLongDescription());
-    verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("1", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("1", "LOOK", false);
   }
 

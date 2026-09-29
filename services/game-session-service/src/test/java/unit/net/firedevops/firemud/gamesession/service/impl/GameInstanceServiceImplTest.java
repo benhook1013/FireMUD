@@ -77,7 +77,8 @@ class GameInstanceServiceImplTest {
                     "RUNNING"));
 
     assertEquals(
-        "scriptPatchVersion requires scriptPinEpoch and script pin owner request id",
+        "scriptPatchVersion requires scriptPatchBaseVersionId, scriptPinEpoch, and script pin"
+            + " owner request id",
         exception.getMessage());
   }
 
@@ -741,7 +742,8 @@ class GameInstanceServiceImplTest {
   @Test
   void startSessionWithReplacementRestoresExistingRunningStateWhenNewStateSaveFails() {
     StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    GameInstance existing =
+        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 100L, 3L, "pin-request-1");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
     AtomicInteger saveCount = new AtomicInteger();
@@ -759,15 +761,17 @@ class GameInstanceServiceImplTest {
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
-    assertNull(store.get(7L).getScriptPatchVersion());
-    assertNull(store.get(7L).getScriptPinEpoch());
-    assertNull(store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
+    assertEquals("patch-1", store.get(7L).getScriptPatchVersion());
+    assertEquals(100L, store.get(7L).getScriptPatchBaseVersionId());
+    assertEquals(3L, store.get(7L).getScriptPinEpoch());
+    assertEquals("pin-request-1", store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
     verify(stateService, never()).deleteState(2L, 7L);
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(2)).saveState(states.capture());
     assertEquals(10L, states.getAllValues().get(0).id());
     assertEquals(7L, states.getAllValues().get(1).id());
     assertEquals("RUNNING", states.getAllValues().get(1).status());
+    assertEquals(100L, states.getAllValues().get(1).scriptPatchBaseVersionId());
     verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
   }
 
@@ -1123,6 +1127,7 @@ class GameInstanceServiceImplTest {
         entity.getTenantId(),
         entity.getRuntimeVersion(),
         entity.getScriptPatchVersion(),
+        entity.getScriptPatchBaseVersionId(),
         entity.getScriptPinEpoch(),
         entity.getScriptPatchPinnedControlPlaneRequestId(),
         entity.getGameTemplateId(),
@@ -1342,10 +1347,12 @@ class GameInstanceServiceImplTest {
   @Test
   void persistExistingPreservesScriptPinOwnerRequestIdInCopiedTuple() {
     GameInstance existing =
-        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 3L, "pin-request-1");
+        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 100L, 3L, "pin-request-1");
 
+    assertEquals(100L, existing.getScriptPatchBaseVersionId());
     assertEquals(3L, existing.getScriptPinEpoch());
     assertEquals("pin-request-1", existing.getScriptPatchPinnedControlPlaneRequestId());
+    assertEquals(100L, store.get(7L).getScriptPatchBaseVersionId());
     assertEquals("pin-request-1", store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
   }
 
@@ -1517,11 +1524,34 @@ class GameInstanceServiceImplTest {
       String status,
       Long scriptPinEpoch,
       String scriptPatchPinnedControlPlaneRequestId) {
+    return persistExisting(
+        id,
+        tenantId,
+        runtimeVersion,
+        scriptPatchVersion,
+        ownerAccountId,
+        status,
+        null,
+        scriptPinEpoch,
+        scriptPatchPinnedControlPlaneRequestId);
+  }
+
+  private GameInstance persistExisting(
+      Long id,
+      Long tenantId,
+      String runtimeVersion,
+      String scriptPatchVersion,
+      Long ownerAccountId,
+      String status,
+      Long scriptPatchBaseVersionId,
+      Long scriptPinEpoch,
+      String scriptPatchPinnedControlPlaneRequestId) {
     GameInstance instance = new GameInstance();
     instance.setId(id);
     instance.setTenantId(tenantId);
     instance.setRuntimeVersion(runtimeVersion);
     instance.setScriptPatchVersion(scriptPatchVersion);
+    instance.setScriptPatchBaseVersionId(scriptPatchBaseVersionId);
     instance.setScriptPinEpoch(scriptPinEpoch);
     instance.setScriptPatchPinnedControlPlaneRequestId(scriptPatchPinnedControlPlaneRequestId);
     instance.setOwnerAccountId(ownerAccountId);
@@ -1536,6 +1566,7 @@ class GameInstanceServiceImplTest {
     copy.setTenantId(instance.getTenantId());
     copy.setRuntimeVersion(instance.getRuntimeVersion());
     copy.setScriptPatchVersion(instance.getScriptPatchVersion());
+    copy.setScriptPatchBaseVersionId(instance.getScriptPatchBaseVersionId());
     copy.setScriptPinEpoch(instance.getScriptPinEpoch());
     copy.setScriptPatchPinnedControlPlaneRequestId(
         instance.getScriptPatchPinnedControlPlaneRequestId());

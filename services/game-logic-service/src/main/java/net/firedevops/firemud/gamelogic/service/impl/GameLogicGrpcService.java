@@ -89,7 +89,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
-  private PublicationReadGuard publicationReadGuard;
+  private final PublicationReadGuard publicationReadGuard;
 
   @Autowired
   public GameLogicGrpcService(
@@ -112,11 +112,11 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         itemRuntimeService,
         gameLogicDraftDesignDigestService,
         gameplaySessionAttestationService,
-        meterRegistry);
-    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+        meterRegistry,
+        PublicationReadGuard.configured(workloadNamespace));
   }
 
-  public GameLogicGrpcService(
+  GameLogicGrpcService(
       PingService pingService,
       CommandService commandService,
       LookAggregationService lookAggregationService,
@@ -126,15 +126,17 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.commandService = commandService;
-    this.lookAggregationService = lookAggregationService;
-    this.communicationAggregationService = communicationAggregationService;
-    this.moveAggregationService = moveAggregationService;
-    this.itemRuntimeService = itemRuntimeService;
-    this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
-    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
-    this.meterRegistry = meterRegistry;
+    this(
+        pingService,
+        commandService,
+        lookAggregationService,
+        communicationAggregationService,
+        moveAggregationService,
+        itemRuntimeService,
+        gameLogicDraftDesignDigestService,
+        gameplaySessionAttestationService,
+        meterRegistry,
+        (PublicationReadGuard) null);
   }
 
   public GameLogicGrpcService(
@@ -148,16 +150,15 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry,
       PublicationReadGuard publicationReadGuard) {
-    this(
-        pingService,
-        commandService,
-        lookAggregationService,
-        communicationAggregationService,
-        moveAggregationService,
-        itemRuntimeService,
-        gameLogicDraftDesignDigestService,
-        gameplaySessionAttestationService,
-        meterRegistry);
+    this.pingService = pingService;
+    this.commandService = commandService;
+    this.lookAggregationService = lookAggregationService;
+    this.communicationAggregationService = communicationAggregationService;
+    this.moveAggregationService = moveAggregationService;
+    this.itemRuntimeService = itemRuntimeService;
+    this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
+    this.meterRegistry = meterRegistry;
     this.publicationReadGuard = publicationReadGuard;
   }
 
@@ -182,17 +183,19 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         responseObserver.onCompleted();
         return;
       }
-      if (!request.getBaseVersionId().isEmpty()) {
-        throw new IllegalArgumentException("baseVersionId must be empty for full publication");
-      }
       PublicationDigestRequestBinding binding =
-          PublicationDigestRequestBinding.full(
-              request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
+          PublicationDigestRequestBinding.forScope(
+              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
       var digest =
           gameLogicDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
-      requireMatchingDigestScope(binding, digest.tenantId(), digest.scopeValue());
+      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
@@ -212,6 +215,18 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
                       "GetDraftDesignDigest",
                       "PERMISSION_DENIED",
                       ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (GameLogicDraftDesignDigestService.UnsupportedDigestScopeException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "UNSUPPORTED_SCOPE",
+                      "Game Logic cannot attest the requested full-version digest scope"))
               .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -235,29 +250,11 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     }
   }
 
-  private static void requireMatchingDigestScope(
-      PublicationDigestRequestBinding binding, String tenantId, String scopeValue) {
-    if (!binding.tenantId().equals(tenantId) || !binding.versionId().equals(scopeValue)) {
-      throw new IllegalArgumentException("owner digest scope does not match publication binding");
-    }
-  }
-
   private void requirePublicationRead() {
     if (publicationReadGuard == null) {
       throw new AdminAuthorizationException("Publication read authorization is not configured");
     }
     publicationReadGuard.requirePublicationRead(PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD);
-  }
-
-  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
-    if (workloadNamespace == null || workloadNamespace.isBlank()) {
-      return null;
-    }
-    try {
-      return new PublicationReadGuard(workloadNamespace);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
   }
 
   @Override

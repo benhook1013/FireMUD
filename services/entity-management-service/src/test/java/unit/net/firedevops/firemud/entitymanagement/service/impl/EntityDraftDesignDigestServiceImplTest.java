@@ -91,6 +91,61 @@ class EntityDraftDesignDigestServiceImplTest {
   }
 
   @Test
+  void canonicalizesEquivalentEquipmentSlotValues() {
+    var spacedDigest = digestForEquipmentSlot(" head ");
+    var normalizedDigest = digestForEquipmentSlot("HEAD");
+
+    assertEquals(spacedDigest.contentDigest(), normalizedDigest.contentDigest());
+  }
+
+  @Test
+  void distinctEquipmentSlotValuesChangeTheDigest() {
+    var headDigest = digestForEquipmentSlot("HEAD");
+    var torsoDigest = digestForEquipmentSlot("TORSO");
+
+    assertNotEquals(headDigest.contentDigest(), torsoDigest.contentDigest());
+  }
+
+  @Test
+  void canonicalizesEquivalentEffectPayloadJson() {
+    var firstDigest =
+        digestForEffectPayload(
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"health\","
+                + "\"value\":1,\"metadata\":{\"b\":2,\"a\":1}}]}");
+    var equivalentDigest =
+        digestForEffectPayload(
+            " { \"modifiers\" : [ { \"metadata\" : { \"a\" : 1, \"b\" : 2 },"
+                + " \"value\" : 1, \"target_key\" : \"health\", \"operation\" : \"ADD\" } ] } ");
+
+    assertEquals(firstDigest.contentDigest(), equivalentDigest.contentDigest());
+  }
+
+  @Test
+  void distinctEffectPayloadJsonChangesTheDigest() {
+    var addDigest =
+        digestForEffectPayload(
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"health\",\"value\":1}]}");
+    var subtractDigest =
+        digestForEffectPayload(
+            "{\"modifiers\":[{\"operation\":\"SUBTRACT\",\"target_key\":\"health\",\"value\":1}]}");
+
+    assertNotEquals(addDigest.contentDigest(), subtractDigest.contentDigest());
+  }
+
+  @Test
+  void rejectsMalformedNonBlankEffectPayloadJson() {
+    assertThrows(IllegalStateException.class, () -> digestForEffectPayload("{\"modifiers\":[}"));
+  }
+
+  @Test
+  void normalizesMissingAndBlankEffectPayloadJsonToTheSameDigest() {
+    var missingDigest = digestForEffectPayload(null);
+    var blankDigest = digestForEffectPayload(" \t ");
+
+    assertEquals(missingDigest.contentDigest(), blankDigest.contentDigest());
+  }
+
+  @Test
   void readsItemsWithinTheRequestedTenantAndVersion() {
     ItemRepository itemRepository = Mockito.mock(ItemRepository.class);
     NpcRepository npcRepository = Mockito.mock(NpcRepository.class);
@@ -135,6 +190,46 @@ class EntityDraftDesignDigestServiceImplTest {
         Mockito.mock(CraftingRecipeRepository.class);
     Mockito.when(itemRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
         .thenReturn(List.of(item(11L, groupKey)));
+    Mockito.when(npcRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of());
+    Mockito.when(craftingRecipeRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of());
+    EntityDraftDesignDigestServiceImpl service =
+        new EntityDraftDesignDigestServiceImpl(
+            itemRepository, npcRepository, craftingRecipeRepository, new ObjectMapper());
+
+    return service.getDraftDesignDigest("1", "7");
+  }
+
+  private static EntityDraftDesignDigest digestForEffectPayload(String effectPayloadJson) {
+    Item item = item(11L, null);
+    item.setEffectPayloadJson(effectPayloadJson);
+    ItemRepository itemRepository = Mockito.mock(ItemRepository.class);
+    NpcRepository npcRepository = Mockito.mock(NpcRepository.class);
+    CraftingRecipeRepository craftingRecipeRepository =
+        Mockito.mock(CraftingRecipeRepository.class);
+    Mockito.when(itemRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(item));
+    Mockito.when(npcRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of());
+    Mockito.when(craftingRecipeRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of());
+    EntityDraftDesignDigestServiceImpl service =
+        new EntityDraftDesignDigestServiceImpl(
+            itemRepository, npcRepository, craftingRecipeRepository, new ObjectMapper());
+
+    return service.getDraftDesignDigest("1", "7");
+  }
+
+  private static EntityDraftDesignDigest digestForEquipmentSlot(String equipmentSlot) {
+    Item item = item(11L, null);
+    item.setEquipmentSlot(equipmentSlot);
+    ItemRepository itemRepository = Mockito.mock(ItemRepository.class);
+    NpcRepository npcRepository = Mockito.mock(NpcRepository.class);
+    CraftingRecipeRepository craftingRecipeRepository =
+        Mockito.mock(CraftingRecipeRepository.class);
+    Mockito.when(itemRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(item));
     Mockito.when(npcRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
         .thenReturn(List.of());
     Mockito.when(craftingRecipeRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))

@@ -37,7 +37,7 @@ public class ScriptWorkItem {
   private int authorityUnavailableCount;
 
   /** Earliest instant at which the durable scanner may claim this item again. */
-  private Instant nextEligibleAt;
+  private Instant nextEligibleAt = Instant.now();
 
   private String targetScopeType = "";
   private String targetScopeId = "";
@@ -45,6 +45,7 @@ public class ScriptWorkItem {
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
+  private Long scriptPatchBaseVersionId;
   private long scriptPinEpoch;
   private String scriptPinControlPlaneRequestId;
   private String scriptEventId;
@@ -65,6 +66,7 @@ public class ScriptWorkItem {
   private long admissionEpoch = 1L;
   private String status = "PENDING_EVALUATION";
   private String cancelReason;
+  private int authorityUnavailableRetryCount;
   private Instant createdAt = Instant.now();
   private Instant updatedAt = Instant.now();
   private int rowVersion;

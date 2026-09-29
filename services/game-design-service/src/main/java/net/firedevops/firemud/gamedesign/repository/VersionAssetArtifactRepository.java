@@ -60,7 +60,7 @@ public class VersionAssetArtifactRepository {
     LocalDateTime updatedAt =
         artifact.getUpdatedAt() == null ? LocalDateTime.now() : artifact.getUpdatedAt();
     if (artifact.getId() == null) {
-      Record record =
+      Record inserted =
           dsl.insertInto(TABLE_REF)
               .set(TENANT_ID, artifact.getTenantId())
               .set(VERSION_ID, artifact.getVersionId())
@@ -73,9 +73,16 @@ public class VersionAssetArtifactRepository {
               .set(LAST_ERROR_MESSAGE, artifact.getLastErrorMessage())
               .set(EXPORTED_MANIFEST_ASSET_KEYS_JSON, artifact.getExportedManifestAssetKeysJson())
               .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
-              .returning()
+              .returning(ID)
               .fetchOne();
-      return toEntity(record);
+      if (inserted == null || inserted.get(ID) == null) {
+        throw new IllegalStateException("VERSION_ASSET_ARTIFACT_INSERT_FAILED");
+      }
+      Long insertedId = inserted.get(ID);
+      return Optional.ofNullable(
+              dsl.selectFrom(TABLE_REF).where(ID.eq(insertedId)).fetchOne(this::toEntity))
+          .orElseThrow(
+              () -> new IllegalStateException("VERSION_ASSET_ARTIFACT_INSERT_READBACK_FAILED"));
     }
     dsl.update(TABLE_REF)
         .set(TENANT_ID, artifact.getTenantId())

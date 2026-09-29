@@ -165,6 +165,12 @@ class RecordedParticipantDigestServiceImplTest {
 
   @Test
   void patchDigestLookupIncludesBaseScopeAndDoesNotReuseAnotherBase() {
+    RecordedParticipantDigest baseEight = new RecordedParticipantDigest();
+    baseEight.setBaseVersionId(8L);
+    baseEight.setScopeValue("patch-1");
+    baseEight.setAppliedCommitId("commit-1");
+    baseEight.setContentDigest("digest-base-8");
+    baseEight.setDigestSchemaVersion(4);
     when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
             "tenant-1",
             PublishType.SCRIPT_PATCH,
@@ -172,7 +178,15 @@ class RecordedParticipantDigestServiceImplTest {
             7L,
             "patch-1",
             "commit-1"))
-        .thenReturn(Optional.empty());
+        .thenReturn(Optional.of(recordedDigest("digest-1")));
+    when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            8L,
+            "patch-1",
+            "commit-1"))
+        .thenReturn(Optional.of(baseEight));
 
     service.assertMatchesRecordedDigests(
         "tenant-1",
@@ -189,6 +203,24 @@ class RecordedParticipantDigestServiceImplTest {
             7L,
             "patch-1",
             "commit-1");
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            8L,
+            "patch-1",
+            "commit-1");
+  }
+
+  private RecordedParticipantDigest recordedDigest(String contentDigest) {
+    RecordedParticipantDigest recorded = new RecordedParticipantDigest();
+    recorded.setBaseVersionId(7L);
+    recorded.setScopeValue("patch-1");
+    recorded.setAppliedCommitId("commit-1");
+    recorded.setContentDigest(contentDigest);
+    recorded.setDigestSchemaVersion(4);
+    return recorded;
   }
 
   @Test

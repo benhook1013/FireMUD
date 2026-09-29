@@ -91,6 +91,7 @@ public class VersionPublishCommandServiceImpl {
   }
 
   public PublishWorkflowSnapshot reconcileFullVersionPublish(PublishWorkflowRequest request) {
+    request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
         "Reconciling full-version publish workflow tenant={} workflowId={}",
@@ -101,12 +102,14 @@ public class VersionPublishCommandServiceImpl {
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
-    attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
-    validateFullVersionAttempt(attempt, request);
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
-      return reconcileCommittedAttempt(request, attempt);
+      validateTerminalFullVersionAttempt(attempt, request);
+      return replaySucceededAttempt(request, attempt);
     }
     if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
+      // Validate their stable scope before entering the draft-dependent compatibility backfill.
+      validateTerminalFullVersionAttempt(attempt, request);
       return new PublishWorkflowSnapshot(
           attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
           attempt.getVersionNumber(),
@@ -115,6 +118,8 @@ public class VersionPublishCommandServiceImpl {
           emptyIfNull(attempt.getFailureCode()),
           emptyIfNull(attempt.getFailureMessage()));
     }
+    attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
+    validateFullVersionAttempt(attempt, request);
 
     Version version = requireAttemptVersion(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
@@ -168,9 +173,10 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
 
+    PublishWorkflowRequest effectiveRequest = request;
     try {
       return publishAttemptService.executeFullVersionTransaction(
-          () -> finalizeFullVersion(request, participantDigests, exportedManifest));
+          () -> finalizeFullVersion(effectiveRequest, participantDigests, exportedManifest));
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       RuntimeException operationFailure = ex.causeException();
       if (operationFailure instanceof PendingReconciliationException) {
@@ -327,6 +333,28 @@ public class VersionPublishCommandServiceImpl {
     return succeededSnapshot(attempt);
   }
 
+  private PublishWorkflowSnapshot replaySucceededAttempt(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
+    PublishedReleaseBundleDto bundle;
+    try {
+      bundle = readPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
+    } catch (RuntimeException ex) {
+      throw pendingReconciliation(
+          "succeeded full-version attempt release bundle read is uncertain", ex);
+    }
+    if (bundle == null) {
+      throw pendingReconciliation(
+          "succeeded full-version attempt lacks its committed release bundle");
+    }
+    try {
+      requireExactCommittedBundleIdentity(request, attempt, bundle);
+    } catch (RuntimeException ex) {
+      throw pendingReconciliation(
+          "succeeded full-version attempt release bundle identity does not match", ex);
+    }
+    return succeededSnapshot(attempt);
+  }
+
   private void recordVerifiedAndSucceed(
       PublishWorkflowRequest request, PublishedReleaseBundleDto bundle) {
     try {
@@ -435,15 +463,17 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
-            // A failed candidate may be abandoned only while no bundle references it. The
-            // readback above is in this same locked transaction, so never delete a bundled version.
-            versionRepository.delete(currentVersion);
+            // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
-      throw ex.causeException();
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ex.causeException());
     } catch (RuntimeException ambiguousFailure) {
-      throw ambiguousFailure;
+      throw pendingReconciliation(
+          "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
+          ambiguousFailure);
     }
     cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
     return new PublishWorkflowSnapshot(
@@ -519,6 +549,40 @@ public class VersionPublishCommandServiceImpl {
   }
 
   private void validateFullVersionAttempt(PublishAttempt attempt, PublishWorkflowRequest request) {
+    validateFullVersionAttemptIdentity(attempt, request);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(
+            request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
+    if (!Objects.equals(binding.requestDigest(), attempt.getRequestDigest())) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
+    }
+  }
+
+  /**
+   * Validates terminal full-version replay using only durable attempt identity and, when present,
+   * the request digest. Legacy terminal rows intentionally have no request digest and may no longer
+   * have a draft version to backfill, so they must not enter the draft-dependent path.
+   */
+  private void validateTerminalFullVersionAttempt(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
+    validateFullVersionAttemptIdentity(attempt, request);
+    if (attempt.getRequestDigest() == null) {
+      // Legacy terminal attempts predate the digest column. Their canonical workflow identity,
+      // persisted full-version scope, and exact release-bundle identity are the replay binding.
+      return;
+    }
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(
+            request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
+    if (!Objects.equals(binding.requestDigest(), attempt.getRequestDigest())) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
+    }
+  }
+
+  private void validateFullVersionAttemptIdentity(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
     if (attempt == null
         || !Objects.equals(attempt.getTenantId(), request.tenantId())
         || !Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
@@ -529,13 +593,6 @@ public class VersionPublishCommandServiceImpl {
         || attempt.getVersionNumber() <= 0) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version attempt evidence does not match request");
-    }
-    PublicationDigestRequestBinding binding =
-        PublicationDigestRequestBinding.full(
-            request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
-    if (!Objects.equals(binding.requestDigest(), attempt.getRequestDigest())) {
-      throw new IllegalStateException(
-          "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
     }
   }
 
@@ -559,9 +616,9 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     PublishedReleaseBundleDto bundle =
-        tryGetPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
+        readPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
     VersionAssetArtifactStateDto artifact =
-        tryGetVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
+        readVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
     if (bundle == null
         && artifact == null
         && version.get().getVersionState() == VersionLifecycleState.DRAFT) {
@@ -588,13 +645,20 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       Version version,
       PublishedReleaseBundleDto bundle) {
+    requireExactCommittedBundleIdentity(request, attempt, bundle);
+    if (!Objects.equals(version.getTenantId(), bundle.tenantId())
+        || version.getVersionNumber() != bundle.versionNumber()
+        || version.isScriptOnly()) {
+      throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
+    }
+  }
+
+  private void requireExactCommittedBundleIdentity(
+      PublishWorkflowRequest request, PublishAttempt attempt, PublishedReleaseBundleDto bundle) {
     if (!Objects.equals(bundle.tenantId(), request.tenantId())
         || !Objects.equals(bundle.versionId(), attempt.getVersionId())
         || bundle.versionNumber() != attempt.getVersionNumber()
         || !Objects.equals(bundle.publishWorkflowId(), request.publishWorkflowId())
-        || !Objects.equals(version.getTenantId(), bundle.tenantId())
-        || version.getVersionNumber() != bundle.versionNumber()
-        || version.isScriptOnly()
         || bundle.scriptOnly()
         || bundle.scriptPatchVersion() != null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
@@ -618,13 +682,9 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
-  private VersionAssetArtifactStateDto tryGetVersionAssetArtifactState(
+  private VersionAssetArtifactStateDto readVersionAssetArtifactState(
       String tenantId, long versionId) {
-    try {
-      return versionAssetArtifactService.getState(tenantId, versionId);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+    return versionAssetArtifactService.findState(tenantId, versionId).orElse(null);
   }
 
   private PublishWorkflowSnapshot succeededSnapshot(PublishAttempt attempt) {
@@ -701,12 +761,10 @@ public class VersionPublishCommandServiceImpl {
         + 1;
   }
 
-  private PublishedReleaseBundleDto tryGetPublishedReleaseBundle(String tenantId, long versionId) {
-    try {
-      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, versionId);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
+  private PublishedReleaseBundleDto readPublishedReleaseBundle(String tenantId, long versionId) {
+    return publishedReleaseBundleService
+        .findPublishedReleaseBundle(tenantId, versionId)
+        .orElse(null);
   }
 
   private String generationConfigRevision(

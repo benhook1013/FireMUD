@@ -8,6 +8,7 @@ public class ScriptScheduleDefinition {
   private Long id;
   private Long tenantId;
   private String scriptPatchVersion;
+  private Long baseVersionId;
   private String scriptId;
   private String pluginId = "";
   private String pluginVersionId = "";

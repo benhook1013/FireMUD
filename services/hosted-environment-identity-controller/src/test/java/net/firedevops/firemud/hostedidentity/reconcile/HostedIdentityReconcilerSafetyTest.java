@@ -4,6 +4,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.findRepositoryFile;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -55,7 +56,6 @@ import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -276,7 +276,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
-            anyString());
+            org.mockito.ArgumentMatchers.eq("b".repeat(64)));
   }
 
   @Test
@@ -1560,6 +1560,124 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void grpcWorkloadIdentityRollbackIsRejectedAndHighWaterSurvivesRuntimeRecreation() {
+    record SourceProgressCase(
+        long sourceGeneration, long objectGeneration, String spki, String failure) {}
+
+    List<SourceProgressCase> rollbackCases =
+        List.of(
+            new SourceProgressCase(3, 2, "c".repeat(64), "generation"),
+            new SourceProgressCase(4, 1, "c".repeat(64), "object-generation"),
+            new SourceProgressCase(4, 2, "c".repeat(64), "same-generation-substitution"));
+    for (String role :
+        List.of(
+            HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE)) {
+      for (SourceProgressCase rollbackCase : rollbackCases) {
+        DeploymentHeadGateFixture fixture =
+            new DeploymentHeadGateFixture(
+                new RuntimeProfileService.RuntimeProfile(
+                    "recreated-runtime-uid",
+                    "a".repeat(40),
+                    "a".repeat(40),
+                    HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                    32016,
+                    true));
+        String previousCertificate = "previous-" + role;
+        String previousSpki = "b".repeat(64);
+        HostedEnvironmentIdentityStatus.RoleStatus highWater =
+            new HostedEnvironmentIdentityStatus.RoleStatus();
+        highWater.setRevision(
+            SecretProjectionService.revisionForRole(
+                role, Map.of("tls.crt", encoded(previousCertificate))));
+        highWater.setSourceGeneration(4L);
+        highWater.setSourceObjectGeneration(2L);
+        highWater.setSpkiSha256(previousSpki);
+        highWater.setProvenance("cert-manager");
+        highWater.setState("source-ready");
+        HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+        setGrpcWorkloadRoleStatus(priorStatus, role, highWater);
+        fixture.resource.setStatus(priorStatus);
+
+        CertificateMaterialService.RoleMaterial olderSource =
+            roleMaterial(
+                role,
+                rollbackCase.sourceGeneration(),
+                rollbackCase.objectGeneration(),
+                rollbackCase.spki(),
+                "replacement-" + role + "-" + rollbackCase.failure());
+        if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
+          when(fixture.batch.grpcAccount()).thenReturn(olderSource);
+        } else {
+          when(fixture.batch.grpcGameSession()).thenReturn(olderSource);
+        }
+
+        UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+        HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+        String expectedMessage =
+            switch (rollbackCase.failure()) {
+              case "generation" ->
+                  "certificate source generation rolled back for role "
+                      + role
+                      + " (source generation 3 < prior generation 4)";
+              case "object-generation" -> "certificate source object generation rolled back";
+              case "same-generation-substitution" ->
+                  "certificate source changed without generation advancement";
+              default -> throw new AssertionError("unknown rollback case");
+            };
+        assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+        assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+        assertEquals(expectedMessage, blocked.getConditions().get(0).getMessage());
+        HostedEnvironmentIdentityStatus.RoleStatus retained = grpcWorkloadRoleStatus(blocked, role);
+        assertNotNull(retained);
+        assertEquals(4L, retained.getSourceGeneration());
+        assertEquals(2L, retained.getSourceObjectGeneration());
+        assertEquals(highWater.getRevision(), retained.getRevision());
+        assertEquals(previousSpki, retained.getSpkiSha256());
+        verifyNoInteractions(fixture.projections);
+      }
+    }
+  }
+
+  @Test
+  void grpcWorkloadIdentityStatusReadbackAllowsLegacyAbsence() {
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    resource.setStatus(status);
+    assertNull(
+        HostedIdentityReconciler.previousRole(resource, HostedIdentityContract.GRPC_ACCOUNT_ROLE));
+    assertNull(
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+
+    HostedEnvironmentIdentityStatus.RoleStatus account =
+        roleStatus("account-revision", 4L, 2L, "a".repeat(64));
+    HostedEnvironmentIdentityStatus.RoleStatus gameSession =
+        roleStatus("game-session-revision", 5L, 3L, "b".repeat(64));
+    status.setGrpcAccountService(account);
+    status.setGrpcGameSessionService(gameSession);
+    resource.setStatus(status);
+
+    HostedEnvironmentIdentityStatus.RoleStatus accountReadback =
+        HostedIdentityReconciler.previousRole(resource, HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+    HostedEnvironmentIdentityStatus.RoleStatus gameSessionReadback =
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+    assertNotSame(account, accountReadback);
+    assertNotSame(gameSession, gameSessionReadback);
+    assertEquals(account.getRevision(), accountReadback.getRevision());
+    assertEquals(account.getSourceGeneration(), accountReadback.getSourceGeneration());
+    assertEquals(account.getSourceObjectGeneration(), accountReadback.getSourceObjectGeneration());
+    assertEquals(account.getSpkiSha256(), accountReadback.getSpkiSha256());
+    assertEquals(gameSession.getRevision(), gameSessionReadback.getRevision());
+    assertEquals(gameSession.getSourceGeneration(), gameSessionReadback.getSourceGeneration());
+    assertEquals(
+        gameSession.getSourceObjectGeneration(), gameSessionReadback.getSourceObjectGeneration());
+    assertEquals(gameSession.getSpkiSha256(), gameSessionReadback.getSpkiSha256());
+  }
+
+  @Test
   void grpcPublicationHistoryAllowsLegacyAbsenceAndRejectsMalformedPartialMap() {
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
     HostedEnvironmentIdentity resource = resource();
@@ -1659,6 +1777,21 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("revision-1", copy.getRevision());
   }
 
+  @Test
+  void crdSchemaParityUsesPatternSearchAndRejectsUnsupportedConstraints() {
+    Map<String, Object> unanchoredPattern =
+        Map.of("type", "string", "maxLength", 32, "pattern", "status");
+    assertTrue(crdSchemaAccepts(unanchoredPattern, "review-status-ready"));
+
+    Map<String, Object> unsupportedStringConstraint =
+        Map.of("type", "string", "maxLength", 32, "pattern", "status", "enum", List.of("status"));
+    assertThrows(AssertionError.class, () -> crdSchemaAccepts(unsupportedStringConstraint, null));
+
+    Map<String, Object> unsupportedIntegerConstraint =
+        Map.of("type", "integer", "format", "int64", "minimum", 1L, "maximum", 2L);
+    assertThrows(AssertionError.class, () -> crdSchemaAccepts(unsupportedIntegerConstraint, 1L));
+  }
+
   private static void assertRoleStatusExamples(
       Map<?, ?> roleProperties, String field, List<?> accepted, List<?> rejected) {
     assertRoleStatusValueParity(roleProperties, field, null, true);
@@ -1694,19 +1827,32 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   private static boolean crdSchemaAccepts(Map<?, ?> propertySchema, Object value) {
-    if (value == null) {
-      return true;
-    }
-    if ("string".equals(propertySchema.get("type"))) {
+    Object type = propertySchema.get("type");
+    if ("string".equals(type)) {
+      if (!propertySchema.keySet().equals(Set.of("type", "maxLength", "pattern"))) {
+        throw new AssertionError(
+            "unsupported CRD consumer string property schema: " + propertySchema);
+      }
+      if (value == null) {
+        return true;
+      }
       if (!(value instanceof String stringValue)) {
         return false;
       }
       int maxLength = ((Number) propertySchema.get("maxLength")).intValue();
       String pattern = Objects.toString(propertySchema.get("pattern"));
       return stringValue.length() <= maxLength
-          && Pattern.compile(pattern).matcher(stringValue).matches();
+          && Pattern.compile(pattern).matcher(stringValue).find();
     }
-    if ("integer".equals(propertySchema.get("type"))) {
+    if ("integer".equals(type)) {
+      if (!propertySchema.keySet().equals(Set.of("type", "format", "minimum"))
+          || !"int64".equals(propertySchema.get("format"))) {
+        throw new AssertionError(
+            "unsupported CRD consumer integer property schema: " + propertySchema);
+      }
+      if (value == null) {
+        return true;
+      }
       if (!(value instanceof Long || value instanceof Integer)) {
         return false;
       }
@@ -1731,6 +1877,8 @@ class HostedIdentityReconcilerSafetyTest {
             schemaMap(schemaMap(openApiSchema.get("properties")).get("status")).get("properties"));
     Map<?, ?> consumerSchema = schemaMap(statusProperties.get("ingress"));
     Map<?, ?> publicationSchema = schemaMap(statusProperties.get("grpcPublication"));
+    assertEquals(consumerSchema, statusProperties.get("grpcAccountService"));
+    assertEquals(consumerSchema, statusProperties.get("grpcGameSessionService"));
     assertEquals(
         consumerSchema,
         publicationSchema.get("additionalProperties"),
@@ -1743,21 +1891,6 @@ class HostedIdentityReconcilerSafetyTest {
       return map;
     }
     throw new AssertionError("expected CRD schema mapping but found " + value);
-  }
-
-  private static Path findRepositoryFile(String relativePath) {
-    Path directory = Path.of("").toAbsolutePath();
-    while (directory != null) {
-      Path candidate = directory.resolve(relativePath);
-      if (Files.isRegularFile(candidate)) {
-        return candidate;
-      }
-      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
-        break;
-      }
-      directory = directory.getParent();
-    }
-    throw new AssertionError("could not locate repository file " + relativePath);
   }
 
   @Test
@@ -2125,6 +2258,10 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("3".repeat(64), status.getGatewayInternalWs().getSpkiSha256());
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
+    assertEquals("b".repeat(64), status.getGrpcAccountService().getSpkiSha256());
+    assertEquals("c".repeat(64), status.getGrpcGameSessionService().getSpkiSha256());
+    assertEquals(1L, status.getGrpcAccountService().getSourceGeneration());
+    assertEquals(1L, status.getGrpcGameSessionService().getSourceGeneration());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<Map<String, String>> workloadIdentityRevisions =
         ArgumentCaptor.forClass(Map.class);
@@ -2211,6 +2348,59 @@ class HostedIdentityReconcilerSafetyTest {
         objectGeneration,
         "cert-manager",
         state);
+  }
+
+  private static CertificateMaterialService.RoleMaterial roleMaterial(
+      String role, long generation, long objectGeneration, String spki, String certificate) {
+    return new CertificateMaterialService.RoleMaterial(
+        role,
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded(certificate)))
+            .build(),
+        new SecretMaterialValidator.MaterialSummary(
+            sha256(certificate), spki, Instant.EPOCH, Instant.MAX, "4".repeat(64)),
+        generation,
+        objectGeneration,
+        "cert-manager",
+        SOURCE_READY);
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus roleStatus(
+      String revision, long sourceGeneration, long sourceObjectGeneration, String spki) {
+    HostedEnvironmentIdentityStatus.RoleStatus status =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    status.setRevision(revision);
+    status.setSourceGeneration(sourceGeneration);
+    status.setSourceObjectGeneration(sourceObjectGeneration);
+    status.setSpkiSha256(spki);
+    status.setProvenance("cert-manager");
+    status.setState("source-ready");
+    return status;
+  }
+
+  private static void setGrpcWorkloadRoleStatus(
+      HostedEnvironmentIdentityStatus status,
+      String role,
+      HostedEnvironmentIdentityStatus.RoleStatus roleStatus) {
+    if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
+      status.setGrpcAccountService(roleStatus);
+    } else if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
+      status.setGrpcGameSessionService(roleStatus);
+    } else {
+      throw new IllegalArgumentException("unsupported workload identity role: " + role);
+    }
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus grpcWorkloadRoleStatus(
+      HostedEnvironmentIdentityStatus status, String role) {
+    if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
+      return status.getGrpcAccountService();
+    }
+    if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
+      return status.getGrpcGameSessionService();
+    }
+    throw new IllegalArgumentException("unsupported workload identity role: " + role);
   }
 
   private static String sha256(String value) {

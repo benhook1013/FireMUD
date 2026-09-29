@@ -13,12 +13,8 @@ import org.springframework.context.annotation.Import;
 @Import(GlobalExceptionHandler.class)
 public class GameDesignServiceApplication {
   public static void main(String[] args) {
-    if ("true".equals(System.getenv("FIREMUD_ENTITY_BASELINE_MIGRATION_ENABLED"))) {
-      if (System.getenv("FIREMUD_AUTH_JWT_SECRET") != null
-          || System.getenv("FIREMUD_AUTH_JWT_SECRET_PATH") != null) {
-        throw new IllegalStateException(
-            "migration Job must not receive the shared JWT signing key");
-      }
+    if (oneShotMigrationRequested()) {
+      requireNoSharedJwtSecret();
       SpringApplication application = new SpringApplication(GameDesignServiceApplication.class);
       application.setWebApplicationType(WebApplicationType.NONE);
       application.setDefaultProperties(
@@ -34,6 +30,19 @@ public class GameDesignServiceApplication {
       }
     } else {
       SpringApplication.run(GameDesignServiceApplication.class, args);
+    }
+  }
+
+  private static boolean oneShotMigrationRequested() {
+    return "true".equals(System.getenv("FIREMUD_ENTITY_BASELINE_MIGRATION_ENABLED"))
+        || "true".equals(System.getenv("FIREMUD_TENANT_ASSOCIATION_MIGRATION_ENABLED"));
+  }
+
+  private static void requireNoSharedJwtSecret() {
+    if (System.getenv("FIREMUD_AUTH_JWT_SECRET") != null
+        || System.getenv("FIREMUD_AUTH_JWT_SECRET_PATH") != null) {
+      throw new IllegalStateException(
+          "Game Design migration Job must not receive the shared JWT key");
     }
   }
 }

@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
@@ -63,6 +65,13 @@ public class AutomationScriptingClient
       return stub()
           .withDeadlineAfter(EVENT_TRIGGER_DEADLINE_MILLIS, TimeUnit.MILLISECONDS)
           .triggerScriptEvent(request);
+    } catch (StatusRuntimeException ex) {
+      Status.Code code = ex.getStatus().getCode();
+      if (code == Status.Code.INVALID_ARGUMENT || code == Status.Code.PERMISSION_DENIED) {
+        throw ex;
+      }
+      LOG.warn("Automation & Scripting triggerScriptEvent failed", ex);
+      return unavailable();
     } catch (RuntimeException ex) {
       LOG.warn("Automation & Scripting triggerScriptEvent failed", ex);
       return unavailable();

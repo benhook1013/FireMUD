@@ -246,7 +246,7 @@ WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`,
 
 ## Hosting and Release Boundary
 
-The target first-party static frontend boundary is required by the supported baseline. When implemented, preview and hobby/self-hosted deployments will serve the immutable `web-client` artifact from an unprivileged static host; production may use that host directly or place an approved CDN/object-store origin in front of the same artifact. The public site router keeps frontend documents and `/frontend-assets/**` separate from Gateway ingress, rewrites public `/auth/**` to Gateway's existing `/api/account/auth/**` route, preserves explicitly allowlisted `/api/{service}/**` and `/ws/game/**` ingress, and keeps the published `/assets/**` family separate; the reserved compiled-asset prefix does not SPA-fallback. The router/rewrite and end-to-end browser proof remain unimplemented.
+The target first-party static frontend boundary is required by the supported baseline. Source and opt-in preview preparation now provides an unprivileged static host, reserved-asset handling, and the public `/auth/**` rewrite, but hosted values leave it disabled until an independently versioned image and trusted preview wiring exist; no frontend image is deployed by this slice. Preview and hobby/self-hosted deployments will serve the immutable `web-client` artifact from that host; production may use the host directly or place an approved CDN/object-store origin in front of the same artifact. The public site router keeps frontend documents and `/frontend-assets/**` separate from Gateway ingress, rewrites public `/auth/**` to Gateway's existing `/api/account/auth/**` route, preserves explicitly allowlisted `/api/{service}/**` and `/ws/game/**` ingress, and keeps the published `/assets/**` family separate; the reserved compiled-asset prefix does not SPA-fallback. Running-host security/cache behavior, trusted preview activation, and end-to-end browser proof remain unproved.
 
 The Telnet `LOGIN -> PLAY -> LOOK` hosted proof remains useful protocol evidence, but it is not a reason to defer the frontend boundary. The browser journey, static-host health/security/cache checks, independent frontend rollback, and versioned `PlayerOutput` consumer are separate implementation/proof obligations. A browser application may begin as a terminal-style client and grow richer UX without changing the static-host authority boundary.
 
@@ -257,7 +257,7 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run dev` starts the local development server with hot module replacement.
 - `npm run build` produces an optimized bundle under `dist/`, with compiled assets under `dist/frontend-assets/` and the existing public base preserved in generated references.
 - `npm run preview` serves the production bundle locally for verification.
-- `npm run test` runs unit tests with Jest and React Testing Library. The script runs the test suite.
+- `npm run test` runs the TypeScript-aware Node built-in test suite under `tests/`.
 - `npm run lint` and `npm run format` ensure consistent code style.
 - `npm run format:fix` writes formatting changes back to disk.
 - `npm run accessibility` audits the compiled site with axe-core. See [Developer Setup](../../DEVELOPER_SETUP.md#frontend-lint--accessibility) for Chrome requirements.
