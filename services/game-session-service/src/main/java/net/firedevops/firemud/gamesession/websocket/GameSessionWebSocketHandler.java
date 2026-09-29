@@ -251,7 +251,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           effectivePresentation);
       maybeRenderFreshReconnectLook(
           session, sessionId, command, interpretation, maybeContext);
-      maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     }
   }
 
@@ -414,15 +413,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     deliverySession.sendMessage(new TextMessage(text));
   }
 
-  private void maybeCloseAfterSuccessfulLogout(
-      WebSocketSession session, TextCommand command, TextCommandInterpretationResult interpretation)
-      throws IOException {
-    if (command.type() != TextCommandType.LOGOUT || !interpretation.commandResult().accepted()) {
-      return;
-    }
-    session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "logout"));
-  }
-
   private boolean shouldCloseAfterFirstPartyScopeRejection(
       WebSocketSession session,
       TextCommand command,
@@ -520,37 +510,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 }
               }
             });
-  }
-
-  private void sendReplayChunk(WebSocketSession session, String text, String label) {
-    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
-      try {
-        sendProtocolMessage(session, outputProjector.projectTranscriptChunk(session, label, text));
-      } catch (IOException ex) {
-        logger.warn("Failed to send reconnect {}", label, ex);
-      }
-    }
-  }
-
-  private void sendReplayEntries(
-      WebSocketSession session, ScreenBufferService.BufferedScreen buffer, String label) {
-    if (!outputProjector.isFirstPartyWeb(session)
-        || buffer.entries().stream()
-            .noneMatch(ScreenBufferService.BufferedEntry::hasStructuredOutput)) {
-      sendReplayChunk(session, buffer.protocolText(), label);
-      return;
-    }
-    for (ScreenBufferService.BufferedEntry entry : buffer.entries()) {
-      try (CombinedLoggingContext ignored = openLoggingContext(session)) {
-        try {
-          sendProtocolMessage(
-              session, outputProjector.projectTranscriptEntry(session, label, entry));
-        } catch (IOException ex) {
-          logger.warn("Failed to send reconnect {}", label, ex);
-          return;
-        }
-      }
-    }
   }
 
   private void sendProjectedOutput(
