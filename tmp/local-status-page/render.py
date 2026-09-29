@@ -56,12 +56,12 @@ TIMING_STAGE_NAMES = frozenset({
     "records_history", "html_render",
 })
 ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
-.activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid #cbd0d7; border-radius: 9px; background: #e9ebef; }
+.activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
 .activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
 .activity-note { margin: .3rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.25; overflow-wrap: anywhere; }
 .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
-.round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid #adb4be; border-radius: 12px; padding: .18rem .43rem; background: #e4e8ed; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
+.round-pill { display: inline-flex; flex: 0 0 5rem; flex-direction: column; align-items: center; justify-content: center; width: 5rem; border: 1px solid var(--line); border-radius: 12px; padding: .18rem .43rem; background: var(--surface); font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
 .round-age { display: block; margin-top: .08rem; font-size: .67rem; font-weight: 550; }
 .round-pill.unlinked { border-color: #b9945a; background: #f3e9d9; color: #79562b; }
 .round-pill.zero-accepted { background: var(--fire); border-color: var(--fire); color: #fff; }
@@ -1342,19 +1342,19 @@ main {{ max-width: 1160px; margin: auto; padding: 1.5rem clamp(1rem, 4vw, 3.5rem
 .run-list, .finding-list, .decision-list, .route-list {{ list-style: none; padding: 0; }}
 .route-list {{ display: grid; gap: .5rem; }}
 .run-list {{ display: grid; gap: 1rem; }}
-.run-card {{ overflow: hidden; border: 1px solid #c7cdd5; border-radius: 13px; background: #f0f2f5; box-shadow: 0 2px 9px #18222e0d; }}
-.run-header {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem 1rem; border-bottom: 1px solid #c7cdd5; background: #e7eaee; }}
+.run-card {{ overflow: hidden; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-muted); box-shadow: 0 2px 9px #18222e0d; }}
+.run-header {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: var(--ash); }}
 .run-header strong {{ color: #333d48; }}
 .run-header .record-counts {{ margin-left: auto; }}
-.run-header .record-counts span {{ padding: .14rem .55rem; border: 1px solid #c7cdd5; border-radius: 999px; background: #fff; color: #3c4650; font-weight: 650; }}
+.run-header .record-counts span {{ padding: .14rem .55rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: #3c4650; font-weight: 650; }}
 .finding-list {{ display: grid; gap: .65rem; padding: .8rem; }}
-.finding-card {{ min-width: 0; padding: .7rem .8rem; border: 1px solid #d2d7dd; border-radius: 9px; background: #fff; overflow-wrap: anywhere; }}
+.finding-card {{ min-width: 0; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow-wrap: anywhere; }}
 .finding-heading {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .55rem; }}
 .finding-heading strong {{ flex: 1 1 17rem; }}
 .finding-state {{ padding: .1rem .45rem; border-radius: 999px; background: #edf0f4; color: #43505d; font-size: .73rem; font-weight: 700; }}
-.linked-record.route-card, .history-group > .history-list > .route-card {{ padding: .5rem .65rem; border: 1px solid #d8dce2; border-radius: 7px; background: #f5f6f8; }}
+.linked-record.route-card, .history-group > .history-list > .route-card {{ padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }}
 .decision-list {{ display: grid; gap: .35rem; padding-left: 0; }}
-.decision-card {{ padding: .4rem .6rem; border-left: 3px solid var(--fire); border-radius: 4px; background: #f5f6f8; overflow-wrap: anywhere; }}
+.decision-card {{ padding: .4rem .6rem; border-left: 3px solid var(--fire); border-radius: 4px; background: var(--surface); overflow-wrap: anywhere; }}
 .decision-card summary {{ display: list-item; width: fit-content; cursor: pointer; }}
 .decision-card summary::marker {{ color: var(--muted); font-size: .75rem; }}
 .decision-card .decision-body {{ padding: .1rem 0 .2rem .8rem; }}
@@ -1829,9 +1829,9 @@ header p {{ color: var(--red-soft); max-width: 58ch; margin-bottom: 0; }} .gener
 .refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
 .refresh-form.failed .refresh-progress {{ position: fixed; z-index: 10; left: 1rem; right: 1rem; bottom: 1rem; width: auto; height: auto; max-width: 36rem; margin: 0 auto; padding: .75rem 1rem; overflow: visible; clip-path: none; white-space: normal; border: 1px solid #e9b7bb; border-radius: 8px; background: #71232f; color: #fff; box-shadow: 0 4px 18px #252b3940; }}
 section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: #5c6571; font-size: .88rem; }}
-.stack, .card {{ background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; box-shadow: 0 3px 12px #252b390c; }}
+.stack, .card {{ background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 3px 12px #252b390c; }}
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
-.overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #252b390c; }}
+.overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: var(--paper); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #252b390c; }}
 .overview li.merged {{ background: #dbcbe2; }}
 .overview .stage-order {{ grid-row: 1 / span 2; background: var(--smoke); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
 .overview h3 {{ line-height: 1.25; padding: .8rem .9rem 0; }} .overview p {{ margin: .45rem 0 0; padding: 0 .9rem .8rem; font-size: .9rem; }}
@@ -1863,7 +1863,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
 .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
 .front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
-.front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: #fff; color: var(--ink); font-size: .8rem; }}
+.front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: var(--surface); color: var(--ink); font-size: .8rem; }}
 .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
 .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 .front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
@@ -1872,11 +1872,11 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
 @media (min-width: 901px) {{ .front-copy {{ padding: 1.7rem 2.15rem 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
-.front-evidence .activity-card {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
-.front-evidence .independent-review {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
+.front-evidence .activity-card {{ background: var(--surface); border-color: #f4c9c7; color: var(--ink); }}
+.front-evidence .independent-review {{ background: var(--surface); border-color: #f4c9c7; color: var(--ink); }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
-.front-evidence .round-pill {{ background: #fff; color: var(--ink); }}
+.front-evidence .round-pill {{ background: var(--surface); color: var(--ink); }}
 .front-evidence .round-pill.zero-accepted {{ background: var(--fire); border-color: #fff; color: #fff; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
@@ -1913,7 +1913,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .queue-status-review-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
 .queue-status-draft {{ background: #e9eaf0; border-color: #b8bdcc; color: #444b5b; }}
 .queue-status-up-next {{ background: #fff3db; border-color: #d0a95c; color: #6a4d17; }}
-.queue-status-queued, .queue-status-pending {{ background: #fff; border-color: #c7ccd4; color: #58616d; }}
+.queue-status-queued, .queue-status-pending {{ background: var(--surface); border-color: #c7ccd4; color: #58616d; }}
 .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
 .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
 .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
