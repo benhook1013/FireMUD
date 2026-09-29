@@ -80,6 +80,36 @@ class HostedWaitTests(unittest.TestCase):
                 hosted_wait.observe_trigger("owner/repo", 19, 42)
             fetch.assert_not_called()
 
+    def test_malformed_exact_trigger_record_is_reported_as_wait_error(self) -> None:
+        path = Path("/private/owner_repo/19/trigger-42.json")
+        with (
+            patch.object(hosted, "trigger_record_paths", return_value=[path]),
+            patch.object(hosted, "load_trigger_record", side_effect=ValueError("invalid identity")),
+            patch.object(github, "fetch_pull_request") as fetch,
+            self.assertRaisesRegex(
+                hosted_wait.HostedWaitError,
+                r"saved Hosted trigger record .*/trigger-42\.json is invalid: invalid identity",
+            ) as raised,
+        ):
+            hosted_wait.observe_trigger("owner/repo", 19, 42)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        fetch.assert_not_called()
+
+    def test_malformed_current_reservation_is_reported_as_wait_error(self) -> None:
+        path = Path("/private/owner_repo/19/trigger.json")
+        with (
+            patch.object(hosted, "trigger_record_paths", return_value=[path]),
+            patch.object(hosted, "load_trigger_reservation", side_effect=ValueError("invalid reservation")),
+            patch.object(github, "fetch_pull_request") as fetch,
+            self.assertRaisesRegex(
+                hosted_wait.HostedWaitError,
+                r"saved Hosted trigger record .*/trigger\.json is invalid: invalid reservation",
+            ) as raised,
+        ):
+            hosted_wait.observe_trigger("owner/repo", 19, 42)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        fetch.assert_not_called()
+
     def test_wait_reports_completed_exact_result_and_state_changes(self) -> None:
         states = iter((observation("awaiting_response"), observation("active"),
                        observation("completed", terminal=True)))

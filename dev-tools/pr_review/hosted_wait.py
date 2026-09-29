@@ -24,7 +24,10 @@ def observe_trigger(repo: str, pr: int, trigger_id: int) -> hosted.TriggerState:
     matches: list[tuple[Path, dict[str, Any]]] = []
     for path in hosted.trigger_record_paths(repo, pr):
         if path.name == "trigger.json":
-            reservation = hosted.load_trigger_reservation(path, repo, pr)
+            try:
+                reservation = hosted.load_trigger_reservation(path, repo, pr)
+            except ValueError as error:
+                raise HostedWaitError(f"saved Hosted trigger record {path} is invalid: {error}") from error
             trigger = reservation.get("trigger")
             if not isinstance(trigger, dict):
                 # An unresolved current posting reservation has no public
@@ -34,7 +37,10 @@ def observe_trigger(repo: str, pr: int, trigger_id: int) -> hosted.TriggerState:
                 continue
         elif path.name != f"trigger-{trigger_id}.json":
             continue
-        record = hosted.load_trigger_record(path, repo, pr)
+        try:
+            record = hosted.load_trigger_record(path, repo, pr)
+        except ValueError as error:
+            raise HostedWaitError(f"saved Hosted trigger record {path} is invalid: {error}") from error
         trigger = record.get("trigger")
         if isinstance(trigger, dict) and type(trigger.get("id")) is int and trigger["id"] == trigger_id:
             matches.append((path, record))
