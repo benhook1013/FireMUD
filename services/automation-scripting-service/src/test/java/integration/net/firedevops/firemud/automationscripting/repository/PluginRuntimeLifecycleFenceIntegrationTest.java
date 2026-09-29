@@ -216,7 +216,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                   + "'event-utc-retry', 'test', 'MANUAL')");
           Long workItemId =
               transactionDsl
-                  .fetchOne(
+                  .fetchSingle(
                       "select id from script_work_items where script_event_id = 'event-utc-retry'")
                   .get("id", Long.class);
           assertThat(workItemId).isNotNull();
