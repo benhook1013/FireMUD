@@ -3641,6 +3641,95 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [])
             self.assertNotIn(audit_path, hosted.trigger_record_paths("owner/repo", 42, common))
 
+    def test_confirmed_prepost_recovery_finishes_the_linked_sqlite_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_directory = common / "firemud" / "pr-review-stack.json"
+            state_directory.mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-attempt"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result, exit_status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            attempt = records.attempt_history(42)[0]
+            self.assertEqual(attempt["attempt_id"], attempt_id)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertIn("POST was confirmed not issued", attempt["diagnostic"])
+
+    def test_unconfirmed_prepost_recovery_keeps_the_linked_sqlite_attempt_started(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_directory = common / "firemud" / "pr-review-stack.json"
+            state_directory.mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-uncertain"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = self._prepost_recovery_args(confirmed=False)
+            with (
+                patch.object(
+                    review_cli,
+                    "default_controller",
+                    return_value=SimpleNamespace(repository="owner/repo"),
+                ),
+                patch.object(review_cli, "github") as github_module,
+                self.assertRaisesRegex(review_cli.CliError, "--confirmed-not-posted"),
+            ):
+                review_cli._dispatch(args)
+            github_module.fetch_pull_request.assert_not_called()
+            self.assertEqual(records.attempt_history(42)[0]["state"], "started")
+            self.assertTrue(path.exists())
+
     def test_prepost_audit_write_failure_leaves_active_reservation_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

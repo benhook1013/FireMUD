@@ -1184,6 +1184,10 @@ def run_cli_review(
                             instructions = finding.get("codegenInstructions")
                             title = _cli_headline(instructions) or ""
                             title, _ = _redact_archive_text(title)
+                            # Redaction can expand a short provider headline (for
+                            # example, several credential-shaped tokens).  Keep
+                            # the value within FindingObservation's SQL limit.
+                            title = title[:300].rstrip()
                             observations.append(FindingObservation(
                                 source_finding_key=f"cli-run:{run_id}:finding:{index}",
                                 title=title or f"CodeRabbit CLI finding {index}",

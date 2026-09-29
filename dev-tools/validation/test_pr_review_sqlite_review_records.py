@@ -60,6 +60,18 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 ).fetchone()
             )
 
+    def test_bootstrap_raises_controller_writer_fence(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
+
+        old_writer = SqliteStateStore(self.database, writer_build=2)
+        self.assertEqual(old_writer.status()["min_writer_build"], 2)
+        self.bootstrap()
+
+        self.assertEqual(SqliteStateStore(self.database).status()["min_writer_build"], WRITER_BUILD)
+        with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
+            old_writer.update(lambda state: state)
+
     def test_attempt_archives_complete_json_events_and_redacts_credentials(self) -> None:
         self.bootstrap()
         start = self.records.start_attempt(
@@ -139,6 +151,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             ).fetchone()[0], 6)
         with self.assertRaisesRegex(Exception, "requires writer build 4"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
+
+    def test_current_version_migration_repairs_controller_writer_fence(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
+
+        old_writer = SqliteStateStore(self.database, writer_build=2)
+        self.assertEqual(old_writer.status()["min_writer_build"], 2)
+        self.records.migrate()
+
+        self.assertEqual(SqliteStateStore(self.database).status()["min_writer_build"], WRITER_BUILD)
+        with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
+            old_writer.update(lambda state: state)
 
     def test_history_batch_uses_one_read_snapshot_across_prs(self) -> None:
         self.bootstrap()

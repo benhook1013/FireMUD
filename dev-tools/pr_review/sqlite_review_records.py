@@ -263,12 +263,14 @@ class SqliteReviewRecords:
                 tables = self._table_names(connection)
                 if _RECORDS_METADATA_TABLE in tables:
                     self._require_compatible(connection)
+                    self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
                 partial = tables & _RECORDS_TABLES
                 if partial:
                     raise ReviewRecordsError("review-records schema is partial and cannot be bootstrapped")
                 self._create_schema(connection)
+                self._raise_controller_writer_fence(connection)
                 connection.commit()
         except ReviewRecordsError:
             raise
@@ -295,6 +297,7 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("review-records metadata row is missing")
                 if row[0] == _RECORDS_SCHEMA_VERSION:
                     self._require_compatible(connection)
+                    self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
                 if row[0] not in {4, 5}:
@@ -312,10 +315,7 @@ class SqliteReviewRecords:
                     self._create_attempt_schema(connection)
                 self._create_origin_schema(connection)
                 self._create_historical_gap_schema(connection)
-                connection.execute(
-                    "UPDATE controller_metadata SET min_writer_build = ? WHERE singleton = 1",
-                    (WRITER_BUILD,),
-                )
+                self._raise_controller_writer_fence(connection)
                 connection.execute(
                     "UPDATE review_records_metadata SET records_schema_version = ?, min_writer_build = ? "
                     "WHERE singleton = 1",
@@ -2338,6 +2338,15 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("controller SQLite minimum writer build metadata is invalid")
         if self.writer_build < min_writer_build:
             raise ReviewRecordsError(f"controller SQLite database requires writer build {min_writer_build}")
+
+    @staticmethod
+    def _raise_controller_writer_fence(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "UPDATE controller_metadata SET min_writer_build = "
+            "CASE WHEN min_writer_build < ? THEN ? ELSE min_writer_build END "
+            "WHERE singleton = 1",
+            (WRITER_BUILD, WRITER_BUILD),
+        )
 
     def _require_compatible(self, connection: sqlite3.Connection) -> None:
         self._require_controller_compatible(connection)

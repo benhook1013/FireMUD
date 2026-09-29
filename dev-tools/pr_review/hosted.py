@@ -18,8 +18,12 @@ from typing import Any
 
 try:
     from .github import immutable_database_id, is_coderabbit_login, parse_repo
+    from .sqlite_review_records import SqliteReviewRecords
+    from .state import sqlite_state_path, state_path
 except ImportError:  # Loaded directly by repository validation tests.
     from github import immutable_database_id, is_coderabbit_login, parse_repo
+    from sqlite_review_records import SqliteReviewRecords
+    from state import sqlite_state_path, state_path
 
 FULL_COMMAND = "@coderabbitai full review"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
@@ -1238,6 +1242,7 @@ def recover_prepost_reservation(
         current = load_trigger_reservation(record_path, repo, pr_number)
         if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
             raise ValueError("posting reservation changed before pre-POST archival")
+        _finish_recovered_attempt(record_path, repo, pr_number, record)
         os.unlink(record_path)
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -1254,6 +1259,45 @@ def recover_prepost_reservation(
         "reason": reason.strip(),
         "confirmed_not_posted": True,
     }
+
+
+def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dict[str, Any]) -> None:
+    """Close the exact SQLite attempt when recovery proves that POST was never issued."""
+
+    attempt_id = record.get("sqlite_attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return
+    common = _trigger_record_common_for_path(path, repo, pr_number)
+    if common is None:
+        return
+    selected_state = state_path(common)
+    if not selected_state.is_dir():
+        return
+    database = sqlite_state_path(selected_state)
+    try:
+        database_stat = database.stat(follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise ValueError("linked Hosted SQLite attempt database is unavailable during pre-POST recovery") from error
+    if database.is_symlink() or not stat.S_ISREG(database_stat.st_mode):
+        raise ValueError("linked Hosted SQLite attempt database is not a regular file")
+    records = SqliteReviewRecords(database)
+    attempt = records.attempt(attempt_id)
+    if (
+        attempt["source_pr"] != pr_number
+        or attempt["channel"] != "hosted"
+        or attempt["candidate_sha"].casefold() != str(record.get("head_sha", "")).casefold()
+    ):
+        raise ValueError("linked Hosted SQLite attempt does not match the recovered reservation")
+    if attempt["state"] == "failed" and attempt["run_id"] is None:
+        return
+    if attempt["state"] != "started":
+        raise ValueError("linked Hosted SQLite attempt conflicts with confirmed no-POST recovery")
+    records.finish_attempt(
+        attempt_id,
+        state="failed",
+        finished_at=utc_now(),
+        diagnostic="Hosted POST was confirmed not issued during pre-POST recovery",
+    )
 
 
 def _substantive(body: str) -> bool:
