@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
+from pr_review.sqlite_review_records import (
+    FindingObservation,
+    ReviewRecordsError,
+    SqliteReviewRecords,
+    _archive_artifact,
+)
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import FindingRoute
 
@@ -72,6 +77,30 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(SqliteStateStore(self.database).status()["min_writer_build"], WRITER_BUILD)
         with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
             old_writer.update(lambda state: state)
+
+    def test_archived_json_rejects_non_finite_numbers(self) -> None:
+        for kind, content in (
+            ("cli_events", '{"type":"finding","score":NaN}\n'),
+            ("hosted_review", '{"score":Infinity}'),
+        ):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ReviewRecordsError, "JSON"):
+                _archive_artifact(kind, content)
+
+    def test_attempt_write_and_read_database_errors_are_wrapped(self) -> None:
+        self.bootstrap()
+        with patch.object(
+            self.records, "_write_connection", side_effect=sqlite3.OperationalError("write failed")
+        ), self.assertRaisesRegex(ReviewRecordsError, "start_attempt") as raised:
+            self.records.start_attempt(
+                attempt_id="attempt-write-error", source_pr=2890, channel="cli"
+            )
+        self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
+
+        with patch.object(
+            self.records, "_connect", side_effect=sqlite3.DatabaseError("read failed")
+        ), self.assertRaisesRegex(ReviewRecordsError, "attempt_history") as raised:
+            self.records.attempt_history(2890)
+        self.assertIsInstance(raised.exception.__cause__, sqlite3.DatabaseError)
 
     def test_attempt_archives_complete_json_events_and_redacts_credentials(self) -> None:
         self.bootstrap()

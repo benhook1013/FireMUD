@@ -1097,15 +1097,19 @@ def run_cli_review(
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 if records is not None:
                     attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                    records.start_attempt(
-                        attempt_id=run_id,
-                        source_pr=target.snapshot.number,
-                        channel="cli",
-                        candidate_sha=candidate_sha,
-                        started_at=attempt_started_at,
-                        metadata=metadata,
-                    )
-                    attempt_started = True
+                    try:
+                        records.start_attempt(
+                            attempt_id=run_id,
+                            source_pr=target.snapshot.number,
+                            channel="cli",
+                            candidate_sha=candidate_sha,
+                            started_at=attempt_started_at,
+                            metadata=metadata,
+                        )
+                    except (ReviewRecordsError, OSError):
+                        records = None
+                    else:
+                        attempt_started = True
                 # Hosted posting and CLI preflight share request.lock. Release it
                 # only after the candidate and durable capture are pinned; the
                 # repository-wide CLI lock remains held through provider execution.
@@ -1151,6 +1155,8 @@ def run_cli_review(
                     _atomic_json(capture_dir / "metadata.json", metadata)
                     with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                         legacy_file.write(f"review_duration_seconds={duration}\n")
+                    _write_capture_complete_marker(capture_dir)
+                    provider_result_saved = True
                     if records is not None:
                         records.finish_attempt(
                             run_id, state="timed_out",

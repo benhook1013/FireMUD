@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -52,6 +53,25 @@ _RECORDS_TABLES = {
 
 class ReviewRecordsError(ValueError):
     """Raised when review records are invalid or the database is incompatible."""
+
+
+def _translate_database_errors(method):
+    """Keep SQLite failures at review-record boundaries in the public error type."""
+
+    @functools.wraps(method)
+    def wrapped(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except ReviewRecordsError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError(f"SQLite failure in {method.__name__}") from exc
+
+    return wrapped
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number {value} is not allowed")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -214,7 +234,7 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
         try:
             for line in content.splitlines():
                 if line.strip():
-                    event = json.loads(line)
+                    event = json.loads(line, parse_constant=_reject_json_constant)
                     if not isinstance(event, dict):
                         raise ValueError("non-object event")
                     events.append(event)
@@ -223,8 +243,8 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
         value: Any = events
     else:
         try:
-            value = json.loads(content)
-        except json.JSONDecodeError as exc:
+            value = json.loads(content, parse_constant=_reject_json_constant)
+        except ValueError as exc:
             raise ReviewRecordsError(f"{kind} must be JSON") from exc
 
     def scrub(item: Any) -> tuple[Any, int]:
@@ -361,6 +381,7 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot migrate SQLite review records") from exc
 
+    @_translate_database_errors
     def start_attempt(
         self,
         *,
@@ -407,6 +428,7 @@ class SqliteReviewRecords:
             )
         return {"attempt_id": attempt_id, "state": "started", "idempotent_replay": False}
 
+    @_translate_database_errors
     def finish_attempt(
         self,
         attempt_id: str,
@@ -482,6 +504,7 @@ class SqliteReviewRecords:
                 )
         return {"attempt_id": attempt_id, "state": state, "idempotent_replay": False}
 
+    @_translate_database_errors
     def attempt_history(self, pr: int) -> list[dict[str, Any]]:
         """Return bounded metadata for all attempts on one PR, without private artifacts."""
 
@@ -503,6 +526,7 @@ class SqliteReviewRecords:
             for row in rows
         ]
 
+    @_translate_database_errors
     def attempt(self, attempt_id: str) -> dict[str, Any]:
         """Read one attempt for exact retry or a direct subagent-pass command."""
 
@@ -535,6 +559,7 @@ class SqliteReviewRecords:
             "metadata": metadata,
         }
 
+    @_translate_database_errors
     def attempt_artifacts(self, attempt_id: str) -> dict[str, str]:
         """Read private archived evidence for exact recovery, outside ordinary history."""
 
@@ -548,6 +573,7 @@ class SqliteReviewRecords:
             ).fetchall()
         return {kind: content for kind, content in rows}
 
+    @_translate_database_errors
     def link_attempt_run(
         self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None
     ) -> None:
@@ -572,6 +598,7 @@ class SqliteReviewRecords:
                 "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id)
             )
 
+    @_translate_database_errors
     def complete_attempt_run(
         self,
         attempt_id: str,
@@ -605,6 +632,7 @@ class SqliteReviewRecords:
                 )
         return {"attempt": finished, "run": recorded}
 
+    @_translate_database_errors
     def recover_completed_attempt_run(
         self,
         attempt_id: str,
@@ -722,6 +750,7 @@ class SqliteReviewRecords:
         return {"run_id": run_id, "checkpoint_id": checkpoint_id, "provider_id": provider_id,
                 "idempotent_replay": replay}
 
+    @_translate_database_errors
     def archive_imported_artifacts(
         self, run_id: str, artifacts: Mapping[str, str]
     ) -> dict[str, Any]:
@@ -839,6 +868,7 @@ class SqliteReviewRecords:
             "checkpoint_id": checkpoint_id, "kinds": sorted(archived), "idempotent_replay": replay,
         }
 
+    @_translate_database_errors
     def cli_source_decisions(self, attempt_id: str) -> dict[int, tuple[str, str]] | None:
         """Read exact per-finding CLI decisions, or None for a legacy file-only run."""
 
