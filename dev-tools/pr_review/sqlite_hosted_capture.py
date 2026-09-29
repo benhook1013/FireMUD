@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
+from .sqlite_finding_text import _first_line, _safe_finding_detail
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
 
@@ -985,15 +986,17 @@ def _findings_for_completed_result(
         if comment_id is None or comment_id in seen_ids or not isinstance(body, str):
             raise HostedCaptureError("Hosted review finding has incomplete immutable identity")
         seen_ids.add(comment_id)
-        title = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        title = _first_line(body) or ""
         if not title:
             title = f"CodeRabbit review comment {comment_id}"
         title = title[:300]
+        detail = _safe_finding_detail(body)
         try:
             observations.append(
                 FindingObservation(
                     source_finding_key=f"hosted-comment:{comment_id}",
                     title=title,
+                    detail=detail,
                 )
             )
         except ReviewRecordsError:
@@ -1003,6 +1006,7 @@ def _findings_for_completed_result(
                 FindingObservation(
                     source_finding_key=f"hosted-comment:{comment_id}",
                     title=f"CodeRabbit review comment {comment_id}",
+                    detail=detail,
                 )
             )
 

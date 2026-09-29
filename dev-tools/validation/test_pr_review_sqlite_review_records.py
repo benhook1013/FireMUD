@@ -86,6 +86,17 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaisesRegex(ReviewRecordsError, "JSON"):
                 _archive_artifact(kind, content)
 
+    def test_cli_event_archive_splits_only_on_ascii_newlines_and_accepts_crlf(self) -> None:
+        first = {"type": "finding", "body": "before\u2028middle\u2029after"}
+        second = {"type": "complete", "status": "review_completed"}
+        content = json.dumps(first, ensure_ascii=False) + "\r\n" + json.dumps(second) + "\n"
+
+        archived, source_digest, redactions = _archive_artifact("cli_events", content)
+
+        self.assertEqual([json.loads(line) for line in archived.splitlines()], [first, second])
+        self.assertEqual(source_digest, hashlib.sha256(content.encode("utf-8")).hexdigest())
+        self.assertEqual(redactions, 0)
+
     def test_attempt_write_and_read_database_errors_are_wrapped(self) -> None:
         self.bootstrap()
         with patch.object(

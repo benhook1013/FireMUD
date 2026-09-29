@@ -11,8 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store  # noqa: I001
-
+from pr_review import hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records, sqlite_store
 
 REPO = "owner/repo"
 PR = 42
@@ -345,7 +344,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertFalse(run["finalized"])
         finding = self.records.history(PR)["findings"][0]
         self.assertEqual(finding["source_finding_key"], "hosted-comment:202")
-        self.assertEqual(finding["title"], "**Check the boundary before using this value.**")
+        self.assertEqual(finding["title"], "Check the boundary before using this value.")
 
         with sqlite3.connect(self.database) as connection:
             artifacts = dict(
@@ -357,6 +356,103 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(json.loads(artifacts["hosted_review"])[0]["customField"], "preserved review JSON")
         archived_thread = json.loads(artifacts["hosted_comments"])["review_threads"][0]
         self.assertEqual(archived_thread["comments"]["nodes"][0]["customField"], "preserved comment JSON")
+
+    def test_live_finding_projection_matches_import_headline_and_redacted_detail(self) -> None:
+        body = (
+            "**[P1] Bug**\n\n"
+            "**Check the current route target before recording the decision.**\n\n"
+            "Keep the audit note, but redact token=ghp_" + "A" * 30 + " from the detail."
+        )
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(
+                comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]
+            ),
+        )
+
+        finding = self.records.history(PR)["findings"][0]
+        self.assertEqual(
+            finding["title"],
+            sqlite_provider_imports._first_line(body),
+        )
+        self.assertEqual(
+            finding["detail"],
+            sqlite_provider_imports._safe_finding_detail(body),
+        )
+        self.assertEqual(finding["title"], "Check the current route target before recording the decision.")
+        self.assertNotIn("ghp_", finding["detail"])
+        self.assertIn("[redacted credential]", finding["detail"])
+
+    def test_live_finding_uses_safe_fallback_for_secret_headline(self) -> None:
+        body = "**Bearer unsafe-value**\nDetails include token=ghp_" + "A" * 30
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(
+                comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]
+            ),
+        )
+
+        finding = self.records.history(PR)["findings"][0]
+        self.assertEqual(finding["title"], "CodeRabbit review comment 202")
+        self.assertNotIn("unsafe-value", finding["detail"])
+        self.assertNotIn("ghp_", finding["detail"])
+        self.assertIn("[redacted credential]", finding["detail"])
 
     def test_nonterminal_observation_keeps_the_attempt_open(self) -> None:
         active = {

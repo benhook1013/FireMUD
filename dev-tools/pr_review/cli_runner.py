@@ -1111,7 +1111,7 @@ def run_cli_review(
                             started_at=attempt_started_at,
                             metadata=metadata,
                         )
-                    except (ReviewRecordsError, OSError):
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                         records = None
                     else:
                         attempt_started = True
@@ -1320,10 +1320,12 @@ def run_cli_review(
                         run_id, state="failed", diagnostic="CLI setup or capture failed",
                         artifacts={"cli_diagnostic": str(error)},
                     )
-                except (ReviewRecordsError, OSError) as archive_error:
+                except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
                     # Keep the original provider failure while surfacing the
                     # separate archive failure to the caller.
-                    error.add_note(f"SQLite review-attempt archival also failed: {archive_error}")
+                    add_note = getattr(error, "add_note", None)
+                    if callable(add_note):
+                        add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             if hosted_lock_handle is not None:

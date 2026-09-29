@@ -232,7 +232,8 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
     if kind == "cli_events":
         events = []
         try:
-            for line in content.splitlines():
+            for line in content.split("\n"):
+                line = line.removesuffix("\r")
                 if line.strip():
                     event = json.loads(line, parse_constant=_reject_json_constant)
                     if not isinstance(event, dict):

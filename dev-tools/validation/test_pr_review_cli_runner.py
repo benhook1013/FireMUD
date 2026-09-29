@@ -510,6 +510,7 @@ class CliReviewRunnerTests(unittest.TestCase):
         for failure in (
             ReviewRecordsError("SQLite attempt start failed"),
             OSError("attempt database unavailable"),
+            sqlite3.DatabaseError("SQLite connection failed"),
         ):
             with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -537,6 +538,39 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
                 self.assertTrue((result.capture_dir / "capture-complete").is_file())
                 self.assertEqual(records.attempt_history(42), [])
+
+    def test_setup_error_survives_sqlite_archival_database_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+
+            with (
+                patch.object(
+                    cli_runner,
+                    "_verify_target_still_current",
+                    side_effect=ReviewRunnerError("target changed during setup"),
+                ),
+                patch.object(
+                    records,
+                    "finish_attempt",
+                    side_effect=sqlite3.DatabaseError("archive database unavailable"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "target changed during setup"),
+            ):
+                run_cli_review(
+                    target(), github=FakeGitHub(), source_root=root,
+                    runner=commands, records=records,
+                )
+
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
+            self.assertIn("target changed during setup", (capture_dir / "error").read_text())
 
     def test_provider_result_survives_sqlite_completion_failures(self):
         cases = (
