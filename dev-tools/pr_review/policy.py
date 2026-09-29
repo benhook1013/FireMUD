@@ -381,6 +381,7 @@ def completion_status(
     channel: Channel | str,
     evidence: Sequence[Evidence | Mapping[str, Any]],
     *,
+    taper_history: Sequence[Evidence | Mapping[str, Any]] | None = None,
     reconciliation: ReconciliationStatus | str | None = None,
     other_channel_head: str | None = None,
 ) -> ReviewStatus:
@@ -429,25 +430,29 @@ def completion_status(
         # whose old-head evidence predates the corrected-state annotation; it
         # must not manufacture corrected evidence for unrelated histories.
         retained_equivalent_history = latest_judgment.decision == "retain"
-    taper_history = fresh_taper_history(state, selected, history)
-    required = required_taper(state, selected, taper_history)
+    effective_taper_history = (
+        taper_history
+        if taper_history is not None
+        else fresh_taper_history(state, selected, history)
+    )
+    required = required_taper(state, selected, effective_taper_history)
     if retained_equivalent_history:
         # Preserve a taper already proved before identity moved, while letting
         # an explicit retain count uncorrected results only on its exact patch.
         taper_complete = taper_satisfied(
             selected,
-            taper_history,
+            effective_taper_history,
             required,
             require_corrected_state=True,
         ) or taper_satisfied(
             selected,
-            taper_history,
+            effective_taper_history,
             required,
             allow_uncorrected_state=True,
             retained_patch_id=latest.patch_id,
         )
     else:
-        taper_complete = taper_satisfied(selected, taper_history, required)
+        taper_complete = taper_satisfied(selected, effective_taper_history, required)
     if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value and not (
         selected == Channel.CLI and latest.current_candidate_descendant_proven
     ):
@@ -650,6 +655,7 @@ def select_review_target(
             state,
             selected,
             history,
+            taper_history=taper_values,
             reconciliation=reconciliation_by_pr.get(pr),
             other_channel_head=other_channel_heads.get(pr),
         )

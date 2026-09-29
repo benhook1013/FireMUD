@@ -749,10 +749,37 @@ class ControllerTests(unittest.TestCase):
         allocation = controller.status()["prs"][0]["allocations"]["hosted"]
         self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
         self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertTrue(allocation["reopens_taper"])
         self.assertEqual(allocation["minimum_additional_completed"], 1)
         self.assertEqual(allocation["maximum_additional_completed"], 1)
+        self.assertEqual(allocation["completed_count"], 0)
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "READY")
         self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
+        self.assertEqual(evidence[(1, "hosted")][0]["head"], HEAD_2)
+        active_review = {
+            "pr": 1,
+            "head": HEAD_3,
+            "checkpoint": "active-hosted-review",
+            "active_review": True,
+        }
+        evidence[(1, "hosted")].append(active_review)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HELD")
+        evidence[(1, "hosted")].remove(active_review)
+
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                head=HEAD_3,
+                checkpoint="hosted-fresh-allocation-result",
+                channel="hosted",
+            )
+        )
+        completed = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(completed["status"], "CAP_TAPERED")
+        self.assertEqual(completed["completed_count"], 1)
+        self.assertTrue(completed["taper_complete"])
+        self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
     def test_bounded_hosted_judgment_override_requires_fresh_taper(self):
