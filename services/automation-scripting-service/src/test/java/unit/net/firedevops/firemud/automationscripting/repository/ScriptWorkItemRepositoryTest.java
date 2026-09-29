@@ -243,6 +243,64 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void broadNonPendingQueryTreatsNullNextEligibilityAsImmediatelyEligible() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByStatusOrderByCreatedAtAscIdAsc(
+        "EVALUATING", Instant.parse("2026-08-01T00:00:00Z"), PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("status", "next_eligible_at", "is null", " or ", "<=", "order by"));
+  }
+
+  @Test
+  void pointerNonPendingQueryTreatsNullNextEligibilityAsImmediatelyEligible() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        List.of(99L, 100L),
+        "EVALUATING",
+        Instant.parse("2026-08-01T00:00:00Z"),
+        PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "\"id\" in",
+                        "status",
+                        "next_eligible_at",
+                        "is null",
+                        " or ",
+                        "<=",
+                        "order by"));
+  }
+
+  @Test
   void insertRejectsAConflictingPluginFencePair() {
     ScriptWorkItemRepository repository =
         new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));

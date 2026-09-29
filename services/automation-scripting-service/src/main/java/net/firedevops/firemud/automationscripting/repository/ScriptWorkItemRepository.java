@@ -343,7 +343,10 @@ public class ScriptWorkItemRepository {
     Condition eligibility =
         "PENDING_EVALUATION".equals(status)
             ? retryEligibilityCondition(eligibleAt)
-            : SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt));
+            : SCRIPT_WORK_ITEMS
+                .NEXT_ELIGIBLE_AT
+                .isNull()
+                .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt)));
     return fetchManyPaged(
         SCRIPT_WORK_ITEMS.STATUS.eq(status).and(eligibility),
         pageable,
@@ -384,7 +387,10 @@ public class ScriptWorkItemRepository {
     Condition eligibility =
         "PENDING_EVALUATION".equals(status)
             ? retryEligibilityCondition(eligibleAt)
-            : SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt));
+            : SCRIPT_WORK_ITEMS
+                .NEXT_ELIGIBLE_AT
+                .isNull()
+                .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt)));
     return fetchManyPaged(
         SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)).and(eligibility),
         pageable,

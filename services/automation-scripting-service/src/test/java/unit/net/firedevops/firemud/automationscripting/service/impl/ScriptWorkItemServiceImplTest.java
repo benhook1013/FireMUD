@@ -745,7 +745,7 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void replayPublishesQueuePointerOnlyAfterTransactionCommit() {
+  void replayRegistersOneSynchronizationAndPublishesQueuePointerOnceAfterTransactionCommit() {
     ReplayQueueFixture fixture = replayQueueFixture(101L);
     TransactionSynchronizationManager.initSynchronization();
     try {
@@ -753,11 +753,13 @@ class ScriptWorkItemServiceImplTest {
           replay(fixture.service(), fixture.workItem().getId());
 
       assertThat(result.replayedCount()).isEqualTo(1L);
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
       verify(fixture.automationQueueService(), never()).enqueueWorkItem(fixture.workItem());
 
       TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
 
-      verify(fixture.automationQueueService()).enqueueWorkItem(fixture.workItem());
+      verify(fixture.automationQueueService(), Mockito.times(1))
+          .enqueueWorkItem(fixture.workItem());
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -830,6 +832,7 @@ class ScriptWorkItemServiceImplTest {
           replay(fixture.service(), fixture.workItem().getId());
 
       assertThat(result.replayedCount()).isEqualTo(1L);
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
       TransactionSynchronizationManager.getSynchronizations()
           .getFirst()
           .afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
@@ -1004,7 +1007,7 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void cancellationContinuesAcrossBoundedPagesUntilNoEligibleRowsRemain() {
+  void cancellationContinuesAfterFullPageAndStopsAfterShortPage() {
     List<ScriptWorkItem> firstPage =
         IntStream.rangeClosed(1, 100).mapToObj(id -> cancelableWorkItem(id, "patch-1")).toList();
     List<ScriptWorkItem> secondPage = List.of(cancelableWorkItem(101L, "patch-1"));
@@ -1013,7 +1016,7 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
                 "tenant-1", "patch-1", "game-1", "region-1", List.of("PENDING_EVALUATION")))
-        .thenReturn(firstPage, secondPage, List.of());
+        .thenReturn(firstPage, secondPage);
     ScriptWorkItemService service =
         service(
             workItemRepository,

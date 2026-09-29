@@ -158,6 +158,10 @@ class ScriptWorkItemExecutionServiceImplTest {
   @Test
   void clearsAuthorityUnavailableRetryStateAfterFenceRecovers() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     GameSessionControlPlaneClient gameSessionClient =
@@ -169,23 +173,42 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofSeconds(1)));
     item.setAuthorityUnavailableCount(3);
     item.setNextEligibleAt(Instant.now().minus(Duration.ofSeconds(1)));
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"onCommand\": {\"emitCommands\": []}}");
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(new ScriptEventAudit()));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
     ScriptWorkItemExecutionService service =
-        fenceExecutionService(
+        new ScriptWorkItemExecutionServiceImpl(
             workItemService,
+            definitionRepository,
+            handoffService,
             workItemRepository,
             auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            null,
+            null,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
 
-    service.processPendingWorkItems(1);
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
+    assertThat(result.completedCount()).isEqualTo(1);
     assertThat(item.getAuthorityUnavailableSince()).isNull();
     assertThat(item.getAuthorityUnavailableCount()).isZero();
     assertThat(item.getNextEligibleAt()).isNull();
-    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    Mockito.verify(definitionRepository)
+        .findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
   }
 
   @Test
