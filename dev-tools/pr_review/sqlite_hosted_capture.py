@@ -103,7 +103,7 @@ def record_hosted_terminal_result(
         else "rate_limited"
         if result.state == "rate_limited"
         else "failed"
-        if result.state in {"failed", "noop"}
+        if result.state in {"failed", "failed_incomplete_coverage", "noop"}
         else "timed_out"
         if result.state == "timed_out"
         else "ambiguous"

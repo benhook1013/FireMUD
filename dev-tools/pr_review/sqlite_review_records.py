@@ -216,7 +216,7 @@ def _redact_archive_text(value: str) -> tuple[str, int]:
     def redact(match: re.Match[str]) -> str:
         nonlocal redactions
         redactions += 1
-        return "[redacted credential]"
+        return _REDACTED_CREDENTIAL
 
     for pattern in _SECRET_PATTERNS:
         value = pattern.sub(redact, value)

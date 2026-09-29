@@ -294,6 +294,31 @@ def _import_one(
                             )
                 return result
 
+            def decision_target_projection(
+                history: Mapping[str, Any], run_id: str
+            ) -> dict[str, tuple[Any, ...]]:
+                keys = {
+                    item["finding_id"]: item["source_finding_key"]
+                    for item in history["findings"] if item["run_id"] == run_id
+                }
+                routes = {item["route_id"]: item for item in history["routes"]}
+                result: dict[str, tuple[Any, ...]] = {}
+                for decision in history["decisions"]:
+                    if (
+                        decision["run_id"] != run_id
+                        or decision["scope"] != "source"
+                        or decision["finding_id"] not in keys
+                    ):
+                        continue
+                    route_id = decision["route_id"]
+                    route = routes.get(route_id) if route_id is not None else None
+                    result[keys[decision["finding_id"]]] = (
+                        decision["target_pr"],
+                        route["target_pr"] if route is not None else None,
+                        route_id is None or route is not None,
+                    )
+                return result
+
             expected_observations = observation_projection(probe_history, imported["run_id"])
             expected_decisions = decision_projection(
                 probe_history, imported["run_id"], corrected=False
@@ -306,6 +331,7 @@ def _import_one(
             )
             current_observations = observation_projection(stored_history, attempt["run_id"])
             current_decisions = decision_projection(stored_history, attempt["run_id"])
+            stored_decision_targets = decision_target_projection(stored_history, attempt["run_id"])
             current_counts = {
                 "found": len(current_observations),
                 "accepted": sum(item[0] == "accepted" for item in current_observations.values()),
@@ -324,13 +350,27 @@ def _import_one(
                     "matching provider attempt conflicts with captured run identity or counts"
                 )
             if (
-                original_observations != expected_observations
-                or original_decisions != expected_decisions
+                {
+                    key: value[0] for key, value in original_observations.items()
+                }
+                != {
+                    key: value[0] for key, value in expected_observations.items()
+                }
+                or {
+                    key: (value[0], value[2]) for key, value in original_decisions.items()
+                }
+                != {
+                    key: (value[0], value[2]) for key, value in expected_decisions.items()
+                }
                 or set(current_observations) != set(current_decisions)
                 or any(
                     current_observations[key][0] != current_decisions[key][0]
                     for key in current_observations
                     if key in current_decisions
+                )
+                or any(
+                    not route_present or decision_target != route_target
+                    for decision_target, route_target, route_present in stored_decision_targets.values()
                 )
             ):
                 raise SqliteRecordsRepairError(
@@ -600,8 +640,24 @@ def repair_provider_checkpoints(
                 checkpoint=checkpoint,
                 imported=imported,
             )
+            actual_counts = {
+                "found": imported["counts"].get("found"),
+                "accepted": imported["counts"].get("accepted"),
+                "routed": imported["counts"].get("routed"),
+            }
+            actual_artifact_kinds = sorted(artifacts)
+            actual_artifact_sha256 = {
+                kind: hashlib.sha256(content.encode("utf-8")).hexdigest()
+                for kind, content in sorted(artifacts.items())
+            }
             item = {
                 **expected,
+                "provider_id": provider_id,
+                "run_id": imported["run_id"],
+                "counts": actual_counts,
+                "checkpoint_fingerprint": fingerprint,
+                "artifact_kinds": actual_artifact_kinds,
+                "artifact_sha256": actual_artifact_sha256,
                 "action": "already_imported" if imported.get("idempotent_replay") else "imported",
                 "origin_linked": False,
                 "artifacts_archived": False,
@@ -610,15 +666,12 @@ def repair_provider_checkpoints(
             if (
                 provider_id != expected["provider_id"]
                 or imported["run_id"] != expected["run_id"]
-                or imported["counts"] != expected["counts"]
+                or actual_counts != expected["counts"]
                 or fingerprint != expected["checkpoint_fingerprint"]
-                or sorted(artifacts) != expected["artifact_kinds"]
-                or {
-                    kind: hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    for kind, content in sorted(artifacts.items())
-                }
-                != expected["artifact_sha256"]
+                or actual_artifact_kinds != expected["artifact_kinds"]
+                or actual_artifact_sha256 != expected["artifact_sha256"]
             ):
+                item["action"] = "drifted"
                 return {
                     "api_version": _API_VERSION,
                     "status": "partial",

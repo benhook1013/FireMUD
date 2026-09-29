@@ -742,6 +742,87 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 self.assertEqual(records.attempt(attempt_id)["state"], expected_attempt_state)
                 self.assertEqual(records.history(PR)["runs"], [])
 
+    def test_sync_records_incomplete_coverage_as_failed_and_replays_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory) / "git-common"
+            records = self.new_records(Path(directory) / "controller.sqlite3")
+            attempt_id = "hosted-sync-incomplete-coverage"
+            trigger_at = "2026-09-29T01:00:00Z"
+            response_at = "2026-09-29T01:02:00Z"
+            trigger_record = self.trigger_record(
+                trigger_id=701,
+                created_at=trigger_at,
+                posting_started_at="2026-09-29T00:59:00Z",
+                attempt_id=attempt_id,
+            )
+            self.write_trigger_record(common, trigger_record)
+            response = {
+                "databaseId": 702,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Full review finished with incomplete file coverage.",
+                "createdAt": response_at,
+                "updatedAt": response_at,
+            }
+            payload = self.payload(
+                comments=[
+                    self.trigger_comment(trigger_id=701, created_at=trigger_at),
+                    response,
+                ]
+            )
+            terminal = hosted.TriggerState(
+                "failed_incomplete_coverage",
+                True,
+                True,
+                REPO,
+                PR,
+                HEAD,
+                HEAD,
+                701,
+                trigger_at,
+                trigger_record["trigger"]["url"],
+                "full",
+                702,
+                response_at,
+                None,
+                None,
+                "CodeRabbit finished after explicitly reporting incomplete file coverage",
+                duration_seconds=120,
+            )
+
+            with (
+                patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch,
+                patch.object(sqlite_hosted_capture.hosted, "trigger_state", return_value=terminal),
+            ):
+                first = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+
+            fetch.assert_called_once_with(REPO, PR)
+            self.assertEqual(len(first["synced"]), 1)
+            self.assertEqual(len(first["ambiguous"]), 0)
+            self.assertEqual(len(first["pending"]), 0)
+            self.assertEqual(len(first["errors"]), 0)
+            self.assertEqual(first["synced"][0]["state"], "failed_incomplete_coverage")
+            self.assertEqual(records.attempt(attempt_id)["state"], "failed")
+            self.assertEqual(records.history(PR)["runs"], [])
+
+            with patch.object(
+                sqlite_hosted_capture.github,
+                "fetch_pull_request",
+                side_effect=AssertionError("terminal replay must not refetch GitHub"),
+            ) as replay_fetch:
+                second = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+
+            replay_fetch.assert_not_called()
+            self.assertEqual(len(second["synced"]), 1)
+            self.assertEqual(len(second["ambiguous"]), 0)
+            self.assertEqual(len(second["pending"]), 0)
+            self.assertEqual(len(second["errors"]), 0)
+            self.assertEqual(second["synced"][0]["state"], "failed")
+            self.assertTrue(second["synced"][0]["idempotent_replay"])
+
     def test_sync_isolates_bad_records_and_reuses_one_payload_per_pr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory) / "git-common"

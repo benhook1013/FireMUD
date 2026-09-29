@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_review_records
+from pr_review import sqlite_backup, sqlite_review_records
+from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_review_records import (
     AttemptNotFound,
     FindingObservation,
@@ -647,6 +648,24 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                            ("jwt-token", "eyJabcdefgh.eyJabcdefgh.eyJabcdefgh")):
             with self.subTest(value=value), self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
                 FindingObservation(key, value)
+
+    def test_safe_finding_detail_normalizes_c0_controls_before_recording(self) -> None:
+        detail = _safe_finding_detail("before\x1b[31mafter\x00token=ghp_" + "A" * 30)
+
+        self.assertEqual(detail, "before [31mafter token=[redacted credential]")
+        self.assertFalse(any(ord(character) < 0x20 for character in detail))
+        self.assertEqual(FindingObservation("control-text", "title", detail=detail).detail, detail)
+
+    def test_redacted_archive_artifact_uses_sentinel_and_passes_backup_screening(self) -> None:
+        marker = "[redacted test credential]"
+        content = json.dumps({"body": "token=ghp_" + "A" * 30}) + "\n"
+
+        with patch.object(sqlite_review_records, "_REDACTED_CREDENTIAL", marker):
+            archived, _source_digest, redactions = _archive_artifact("cli_events", content)
+
+        self.assertEqual(json.loads(archived)["body"], "token=" + marker)
+        self.assertEqual(redactions, 1)
+        sqlite_backup._screen_json_artifact("cli_events", archived)
 
     def test_routed_source_finding_cannot_be_changed_into_an_orphan_route(self) -> None:
         self.bootstrap()

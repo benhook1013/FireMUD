@@ -138,8 +138,13 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             (capture_dir / name).write_bytes(contents)
         return files
 
-    def record_cli_attempt(self, *, disposition: str = "routed") -> None:
-        run_id = "run.Repair1"
+    def record_cli_attempt(
+        self,
+        *,
+        run_id: str = "run.Repair1",
+        disposition: str = "routed",
+        target_pr: int | None = None,
+    ) -> None:
         self.records.start_attempt(
             attempt_id=run_id,
             source_pr=PR,
@@ -178,6 +183,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             f"cli-run:{run_id}:finding:1",
             decision_id="decision.repair-attempt",
             decision=disposition,  # type: ignore[arg-type]
+            target_pr=target_pr,
             actor="backfill-reviewer",
             reason="owner PR #2879",
             decided_at="2026-09-27T12:00:00Z",
@@ -412,6 +418,54 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 1)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 3)
 
+    def test_apply_reports_actual_drifted_item_without_false_origin_or_archive(self) -> None:
+        self.cli_capture("run.Drift1")
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Drift1 -->", comment_id=16, accepted=0, routed=1
+        )
+        original_import_one = sqlite_records_repair._import_one
+        calls = 0
+
+        def mutate_after_preflight(*args: object, **kwargs: object) -> tuple[dict[str, object], str]:
+            nonlocal calls
+            result = original_import_one(*args, **kwargs)
+            calls += 1
+            if calls == 1:
+                (self.common / "coderabbit-review-logs" / "run.Drift1" / "stderr").unlink()
+            return result
+
+        with patch.object(sqlite_records_repair, "_import_one", side_effect=mutate_after_preflight):
+            report = repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                dry_run=False,
+            )
+
+        self.assertEqual(report["status"], "partial")
+        self.assertEqual(report["error"], "source evidence changed after preflight; exact imported run is retained for audit")
+        self.assertEqual(len(report["items"]), 1)
+        item = report["items"][0]
+        self.assertEqual(item["action"], "drifted")
+        self.assertEqual(item["provider_id"], "run:run.Drift1")
+        self.assertIsInstance(item["run_id"], str)
+        self.assertEqual(item["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        self.assertEqual(
+            item["checkpoint_fingerprint"],
+            sqlite_provider_imports._checkpoint_fingerprint(checkpoint),
+        )
+        self.assertEqual(item["artifact_kinds"], ["cli_events", "metadata"])
+        self.assertEqual(set(item["artifact_sha256"]), {"cli_events", "metadata"})
+        self.assertFalse(item["origin_linked"])
+        self.assertFalse(item["artifacts_archived"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM review_runs").fetchone()[0], 1)
+
     def test_replay_after_source_decision_correction_keeps_origin_and_current_counts(self) -> None:
         self.hosted_capture()
         checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
@@ -499,6 +553,62 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         )
         self.assertEqual(replay["items"][0]["run_id"], "run.Repair1")
         self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_repair_links_cli_attempt_when_stored_route_target_is_not_in_capture(self) -> None:
+        self.cli_capture("run.Target1")
+        self.record_cli_attempt(run_id="run.Target1", target_pr=2879)
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.Target1 -->", comment_id=17, accepted=0, routed=1
+        )
+
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
+        )
+
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["action"], "already_imported")
+        self.assertTrue(report["items"][0]["origin_linked"])
+        self.assertEqual(self.records.history(PR)["routes"][0]["target_pr"], 2879)
+        with sqlite3.connect(self.database) as connection:
+            origin = connection.execute("SELECT provider_id, run_id FROM provider_origins").fetchone()
+        self.assertEqual(origin, ("run:run.Target1", "run.Target1"))
+
+    def test_repair_rejects_tampered_stored_route_target(self) -> None:
+        self.cli_capture("run.TargetTamper")
+        self.record_cli_attempt(run_id="run.TargetTamper", target_pr=2879)
+        route_id = self.records.history(PR)["routes"][0]["route_id"]
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE routes SET target_pr = ? WHERE route_id = ?",
+                (2880, route_id),
+            )
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.TargetTamper -->", comment_id=18, accepted=0, routed=1
+        )
+
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^matching provider attempt conflicts with captured finding or decision evidence$",
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                dry_run=False,
+            )
+
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
 
     def test_repair_links_corrected_automatic_cli_attempt_before_repair(self) -> None:
         self.cli_capture(decision_text="1\taccepted\towner PR #2879\n")

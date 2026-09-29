@@ -49,7 +49,7 @@ def _safe_finding_detail(value: Any) -> str:
 
     if not isinstance(value, str):
         return ""
-    normalized = " ".join(value.split())
+    normalized = " ".join(re.sub(r"[\x00-\x1f]", " ", value).split())
     redacted, _ = _redact_archive_text(normalized)
     return redacted[:1000].rstrip()
 
