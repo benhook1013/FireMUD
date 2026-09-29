@@ -11,6 +11,8 @@
   --fire: #b71d35;
   --ember: #e85137;
   --blush: #fff0eb;
+  --red-ink: #963149;
+  --red-soft: #f0e0e6;
   --plum: #7042a0;
   --plum-wash: #f2ebf8;
 }
@@ -60,7 +62,7 @@ header.mast {
   overflow-wrap: anywhere;
 }
 .refresh-time, .mast-meta {
-  color: #f0e0e6;
+  color: var(--red-soft);
   font-size: .78rem;
   line-height: 1.2;
 }

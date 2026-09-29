@@ -553,7 +553,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<span class="sub front-fact-value">87 files · <span class="additions">+5,023</span> / '
                       '<span class="deletions">−531</span> lines</span>', front_evidence)
         self.assertIn('<span class="front-controller-state">Hosted request status unknown · CLI new request blocked</span>', front_evidence)
-        self.assertIn('.front-fact-value .additions { color: #237451; } .front-fact-value .deletions, .front-fact-value .files-over-warning { color: #a13047; }', result)
+        self.assertIn('.front-fact-value .additions { color: #237451; } .front-fact-value .deletions, .front-fact-value .files-over-warning { color: var(--red-ink); }', result)
         self.assertNotIn('front-fact', front_copy)
         self.assertLess(front_evidence.index('<div class="front-facts">'), front_evidence.index('<div class="activity-grid">'))
         self.assertNotIn('At the review front', front)

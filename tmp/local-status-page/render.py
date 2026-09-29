@@ -1813,17 +1813,17 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
 :root.age-pending .relative-age, :root.age-pending .round-age[datetime] {{ visibility: hidden; }}
 :root {{ color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #e5e7eb; color: #252a32; }}
 * {{ box-sizing: border-box; }} body {{ margin: 0; overflow-x: hidden; }} main {{ max-width: 1160px; margin: auto; padding: 2rem 1.25rem 4rem; }}
-header {{ background: #8e2941; color: #f7f2f4; padding: 2.4rem 1.25rem; }}
+header {{ background: var(--smoke); color: #fff; padding: 2.4rem 1.25rem; }}
 .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem; }}
 .repo-link {{ color: #f7dce4; font-size: .86rem; font-weight: 650; white-space: nowrap; }} .repo-link:hover {{ color: #fff; }}
 h1 {{ font-size: clamp(2rem, 4vw, 3rem); margin: .75rem 0 .5rem; letter-spacing: -.04em; }} h2 {{ margin: 0 0 1rem; font-size: 1.4rem; }} h3 {{ margin: 0; font-size: 1.12rem; }}
 p {{ line-height: 1.5; }} .eyebrow {{ text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; color: #f2d3dc; }}
-header p {{ color: #f0e0e6; max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: #efd5dd; }}
-.refresh-form {{ position: absolute; right: calc(100% + .7rem); top: calc(50% - 1.05rem); width: 4.25rem; height: 2.1rem; margin: 0; color: #f0e0e6; font-size: .74rem; }}
+header p {{ color: var(--red-soft); max-width: 58ch; margin-bottom: 0; }} .generated {{ color: #66707c; font-size: .8rem; }} header .generated {{ color: var(--red-soft); }}
+.refresh-form {{ position: absolute; right: calc(100% + .7rem); top: calc(50% - 1.05rem); width: 4.25rem; height: 2.1rem; margin: 0; color: var(--red-soft); font-size: .74rem; }}
 .refresh-slot {{ display: flex; align-items: center; width: 100%; height: 100%; }}
-.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 1.65rem; border: 1px solid #f0e0e6; border-radius: 7px; padding: .1rem .375rem; background: #f0e9ed; color: #8e2941; font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: pre-line; text-align: center; }}
+.refresh-form button {{ display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 1.65rem; border: 1px solid var(--red-soft); border-radius: 7px; padding: .1rem .375rem; background: #f0e9ed; color: var(--smoke); font: inherit; line-height: 1.2; font-weight: 700; cursor: pointer; white-space: pre-line; text-align: center; }}
 .refresh-form.loading button {{ height: 2.1rem; }}
-.refresh-time {{ display: block; margin-top: .55rem; color: #f0e0e6; font-size: .78rem; line-height: 1.2; }}
+.refresh-time {{ display: block; margin-top: .55rem; color: var(--red-soft); font-size: .78rem; line-height: 1.2; }}
 .refresh-form button:hover {{ background: #e5dbe0; }}
 .refresh-form button:disabled {{ cursor: wait; opacity: .75; }}
 .refresh-progress {{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }}
@@ -1833,24 +1833,24 @@ section {{ margin-top: 2rem; }} .section-note {{ margin: -.35rem 0 1rem; color: 
 .overview {{ list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }}
 .overview li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); background: #f1f2f4; border: 1px solid #cbd0d7; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 12px #252b390c; }}
 .overview li.merged {{ background: #dbcbe2; }}
-.overview .stage-order {{ grid-row: 1 / span 2; background: #8e2941; color: #f7f2f4; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
+.overview .stage-order {{ grid-row: 1 / span 2; background: var(--smoke); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; padding-top: .85rem; }}
 .overview h3 {{ line-height: 1.25; padding: .8rem .9rem 0; }} .overview p {{ margin: .45rem 0 0; padding: 0 .9rem .8rem; font-size: .9rem; }}
 .stack {{ list-style: none; padding: 0; margin: 0; overflow: hidden; }} .stack li {{ display: grid; grid-template-columns: 2.5rem minmax(0,1fr); gap: 0 1rem; align-items: start; border-bottom: 1px solid #d5d9df; }} .stack li:last-child {{ border: 0; }}
 .stack li.merged {{ background: #dbcbe2; }}
 .stack li.closed {{ background: #e8eaed; }}
-.order {{ align-self: stretch; background: #8e2941; color: #f7f2f4; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
-a {{ color: #963149; text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #742138; }}
+.order {{ align-self: stretch; background: var(--smoke); color: #fff; font-size: .78rem; font-weight: 700; text-align: center; padding-top: .9rem; }} .pr-main {{ min-width: 0; padding: .85rem 1rem .85rem 0; }}
+a {{ color: var(--red-ink); text-decoration-thickness: 1px; text-underline-offset: 3px; }} a:hover {{ color: #742138; }}
 .pr-main > a {{ color: #252a32; font-weight: 650; }} .pr-main > a:hover {{ color: #742138; }} .sub {{ display: block; margin-top: .25rem; color: #626b77; font-size: .78rem; overflow-wrap: anywhere; }}
-.sub .files-over-warning, .sub .deletions {{ color: #a13047; font-weight: 650; }} .sub .additions {{ color: #237451; font-weight: 650; }}
+.sub .files-over-warning, .sub .deletions {{ color: var(--red-ink); font-weight: 650; }} .sub .additions {{ color: #237451; font-weight: 650; }}
 .fresh {{ color: #626b77; font-size: .72rem; white-space: nowrap; }} code {{ font-family: ui-monospace, SFMono-Regular, monospace; }}
-.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; min-width: 0; }} .card {{ min-width: 0; overflow: hidden; }} .card-top {{ display: flex; flex-direction: column; align-items: stretch; gap: .35rem; background: var(--smoke); color: #f7f8f9; padding: .85rem 1rem; }} .card-top .fresh {{ align-self: flex-end; color: #f1dce1; }}
+.cards {{ display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; min-width: 0; }} .card {{ min-width: 0; overflow: hidden; }} .card-top {{ display: flex; flex-direction: column; align-items: stretch; gap: .35rem; background: var(--smoke); color: #fff; padding: .85rem 1rem; }} .card-top .fresh {{ align-self: flex-end; color: var(--red-soft); }}
 .lane-topline {{ display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; min-width: 0; }} .lane-topline h3 {{ min-width: 0; margin: 0; }}
 .lane-state {{ display: inline-flex; flex: 0 0 auto; align-items: center; gap: .35rem; padding: .26rem .42rem; border: 1px solid #777e87; border-radius: 4px; background: #454a51; color: #fff; font-size: .58rem; font-weight: 850; letter-spacing: .06em; line-height: 1.1; }}
-.lane-state-running {{ border-color: #f07865; }} .lane-state-running .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: #ff654d; box-shadow: 0 0 0 2px #754239; }}
+.lane-state-running {{ border-color: var(--ember); }} .lane-state-running .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: var(--ember); box-shadow: 0 0 0 2px var(--smoke); }}
 .lane-state-paused .lane-state-icon {{ width: .48rem; height: .48rem; border-left: 2px solid #dfe2e6; border-right: 2px solid #dfe2e6; }}
 .lane-content {{ padding: .8rem 1rem 1rem; }} .lane-content ul {{ margin: 0; padding-left: 1.1rem; }} .lane-task {{ font-size: .91rem; font-weight: 650; line-height: 1.45; }}
 .lane-content li + li {{ margin-top: .3rem; }} .lane-queued, .lane-blocker {{ margin-top: .75rem; padding-top: .65rem; border-top: 1px solid #d9dfe1; font-size: .8rem; line-height: 1.4; }}
-.lane-content h4 {{ margin: 0 0 .25rem; color: #515a63; font-size: .66rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }} .lane-blocker h4 {{ color: #9c2939; }}
+.lane-content h4 {{ margin: 0 0 .25rem; color: #515a63; font-size: .66rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }} .lane-blocker h4 {{ color: var(--red-ink); }}
 footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 @media (max-width: 760px) {{ .cards {{ grid-template-columns: 1fr; }} .card .task {{ min-height: 0; }} .card-top {{ flex-wrap: wrap; }} }}
 {ACTIVITY_CSS}
@@ -1867,8 +1867,8 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
 .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 .front-fact-value, .front-controller-state, .front-controller-unavailable {{ color: var(--ink); font-size: .78rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }}
-.front-fact-value .additions {{ color: #237451; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: #a13047; }}
-.front-controller-unavailable {{ color: #f1dfe1; font-weight: 600; }}
+.front-fact-value .additions {{ color: #237451; }} .front-fact-value .deletions, .front-fact-value .files-over-warning {{ color: var(--red-ink); }}
+.front-controller-unavailable {{ color: var(--red-ink); font-weight: 600; }}
 .front-evidence {{ background: var(--fire); padding: clamp(1.35rem,3vw,2.5rem); display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: .8rem; }}
 @media (min-width: 901px) {{ .front-copy {{ padding: 1.7rem 2.15rem 2.15rem; }} .front-evidence {{ padding: 1.65rem; }} }}
 .front-evidence > .activity-grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; margin-top: 0; }}
@@ -1876,7 +1876,7 @@ footer {{ color: #66707c; font-size: .8rem; margin-top: 2.5rem; }}
 .front-evidence .independent-review {{ background: #fff; border-color: #f4c9c7; color: var(--ink); }}
 .front-evidence .activity-top strong {{ color: #37414a; }}
 .front-evidence .activity-caption {{ color: #57636c; }}
-.front-evidence .round-pill {{ background: #fff; color: #423039; }}
+.front-evidence .round-pill {{ background: #fff; color: var(--ink); }}
 .front-evidence .round-pill.zero-accepted {{ background: #ad3b55; color: #fff; }}
 .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 2.8rem 0 1rem; }}
 .section-head h2 {{ margin: 0; }}
