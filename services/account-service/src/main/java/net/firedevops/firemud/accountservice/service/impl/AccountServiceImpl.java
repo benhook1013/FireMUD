@@ -1238,6 +1238,12 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
+        RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
+        if (!isPublicProductionRealm(currentRealm)) {
+          throw new AuthenticationException(
+              "REALM_ACCESS_DENIED",
+              "The selected non-public realm does not have an active access grant");
+        }
         logger.info(
             "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
             bootstrapContext.accountId(),
@@ -1960,8 +1966,9 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean hasRealmAccessGrant(
       Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    return accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-        accountId, tenantId, worldSlug, realmSlug);
+    // The retained four-field row cannot prove the current playtest lifecycle and state generation.
+    // Keep legacy grant records for write/history paths, but do not use them as REST authority.
+    return false;
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
