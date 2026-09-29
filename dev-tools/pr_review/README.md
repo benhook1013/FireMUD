@@ -58,7 +58,7 @@ dev-tools/pr-review records routes --status all --source-pr <number>
 dev-tools/pr-review records routes --unassigned
 ```
 
-`records routes` defaults to open routes and lists assigned and unassigned routes when no assignment filter is supplied. Use `--status open|resolved|all` to choose outstanding routes, terminal routes (`accepted_fixed` or `rejected`), or both. `--target-pr` filters by current receiving PR, `--source-pr` filters by the PR where the finding was raised, and `--unassigned` selects routes without a current target. Source and target filters can be combined; `--target-pr` and `--unassigned` are mutually exclusive. Every query includes structured SQLite routes and migrated controller routes, with the controller's current route taking precedence over a same-ID SQLite shadow before filters are applied. Omitting `--status` preserves the existing open-only worklist behavior.
+`records routes` defaults to open routes and lists assigned and unassigned routes when no assignment filter is supplied. Use `--status open|resolved|all` to choose outstanding routes, terminal routes (`accepted_fixed` or `rejected`), or both. `--target-pr` filters by current receiving PR, `--source-pr` filters by the PR where the finding was raised, and `--unassigned` selects routes without a current target. Source and target filters can be combined; `--target-pr` and `--unassigned` are mutually exclusive. Structured routes include their latest finding title, so the worklist can be triaged without opening every source PR. Every query includes structured SQLite routes and migrated controller routes, with the controller's current route taking precedence over a same-ID SQLite shadow before filters are applied. Omitting `--status` preserves the existing open-only worklist behavior.
 
 Receiving owners use `records route decide` and `records route resolve` (or `records route retarget`) for routes whose origin is `review_records`; those target decisions do not rewrite source counts. Routes whose origin is `legacy_controller` remain owned by the controller, including any SQLite shadow row with the same route ID. Update those routes with the canonical `dev-tools/pr-review decide route` command; SQLite target-side writes reject legacy-owned IDs and direct operators to that command. Provider history and independent manual/subagent runs are records, not CodeRabbit policy input: they never grant, reset, block, or substitute for either channel's taper. Keep the private database free of credentials and raw secret material.
 
@@ -74,8 +74,8 @@ columns, SQLite integrity, logical controller state, and indexed review-history
 and route-worklist readback. It screens persisted text for common credential
 and raw-secret shapes before transfer. That screening is deliberately bounded:
 it catches known patterns, not every possible encoding or semantically sensitive
-value, so operators must still keep credentials and raw captures out of this
-database.
+value, so operators must still keep credentials and unredacted source captures
+out of this database. The controller stores bounded, redacted provider artifacts.
 
 The remote login must be a dedicated, unprivileged account restricted by the
 server to SFTP with no shell, forwarding, or unrelated file access. Provision

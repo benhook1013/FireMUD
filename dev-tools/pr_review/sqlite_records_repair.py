@@ -652,6 +652,7 @@ def archive_incomplete_checkpoint(
     artifacts = {
         "metadata": _artifact_text({
             "checkpoint": checkpoint.as_json(), "missing_reason": missing_reason,
+            "archive_scope": "exact-checkpoint-and-linked-review",
         }),
     }
     if checkpoint.type == "Hosted":
@@ -675,10 +676,14 @@ def archive_incomplete_checkpoint(
         }])
         if len(parsed) != 1 or _checkpoint_fingerprint(parsed[0]) != _checkpoint_fingerprint(checkpoint):
             raise SqliteRecordsRepairError("public Hosted checkpoint changed during historical repair")
-        artifacts["hosted_review"] = _artifact_text(pull["reviews"]["nodes"])
+        linked_reviews = [
+            review for review in pull["reviews"]["nodes"]
+            if github.immutable_database_id(review) == checkpoint.hosted_review_id
+        ]
+        artifacts["hosted_review"] = _artifact_text(linked_reviews)
         artifacts["hosted_comments"] = _artifact_text({
-            "comments": pull["comments"]["nodes"],
-            "review_threads": pull["reviewThreads"]["nodes"],
+            "comments": [item],
+            "review_threads": [],
         })
     else:
         try:

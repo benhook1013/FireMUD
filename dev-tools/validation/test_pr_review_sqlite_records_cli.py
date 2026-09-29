@@ -128,6 +128,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
             {route["source_pr"] for route in default_listing["result"]["routes"]},
             {2700, 2701},
         )
+        self.assertEqual(
+            {route["title"] for route in default_listing["result"]["routes"]},
+            {"cli-open-target", "cli-open-unassigned"},
+        )
         code, resolved_listing = self.invoke(
             "routes", "--status", "resolved", "--database", str(self.database)
         )

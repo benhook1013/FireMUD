@@ -236,6 +236,49 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(captured["state"], "completed")
         self.assertEqual(self.records.attempt(self.attempt_id)["run_id"], self.attempt_id)
 
+    def test_old_cumulative_comments_do_not_overflow_new_result_archive(self) -> None:
+        old_comment = {
+            "databaseId": 99,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "old review text " + "x" * (9 * 1024 * 1024),
+            "createdAt": "2026-09-28T01:00:00Z",
+            "updatedAt": "2026-09-28T01:00:00Z",
+        }
+        reply = {
+            "databaseId": 102,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-29T01:01:00Z",
+            "updatedAt": "2026-09-29T01:04:00Z",
+            "url": "https://github.example/owner/repo/pull/42#issuecomment-102",
+        }
+        summary = {
+            "databaseId": 103,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {HEAD[:12]} and {HEAD}."
+            ),
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+        }
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records, attempt_id=self.attempt_id, repo=REPO, source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(comments=[old_comment, self.trigger_comment(), reply, summary]),
+        )
+        self.assertEqual(captured["state"], "completed")
+        with sqlite3.connect(self.database) as connection:
+            archive = connection.execute(
+                "SELECT content FROM review_artifacts WHERE attempt_id = ? AND kind = 'hosted_comments'",
+                (self.attempt_id,),
+            ).fetchone()[0]
+        self.assertLess(len(archive), 8 * 1024 * 1024)
+        self.assertEqual(
+            [item["databaseId"] for item in json.loads(archive)["comments"]],
+            [101, 102, 103],
+        )
+
     def test_completed_review_records_its_attributed_inline_finding(self) -> None:
         review = {
             "databaseId": 201,
@@ -732,6 +775,36 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             self.assertTrue(report["synced"][0]["recovered_from_archive"])
             self.assertEqual(records.attempt(attempt_id)["run_id"], attempt_id)
             self.assertEqual(records.history(PR)["runs"][0]["counts"]["found"], 0)
+
+    def test_sync_archives_durable_timeout_as_non_counting_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory) / "git-common"
+            records = self.new_records(Path(directory) / "controller.sqlite3")
+            attempt_id = "hosted-sync-timeout"
+            record = self.trigger_record(trigger_id=951, attempt_id=attempt_id)
+            record["status"] = "timed_out"
+            record["timeout"] = {
+                "at": "2026-09-29T02:00:00Z",
+                "observed_state": "awaiting_response",
+                "observed_response_id": None,
+                "reason": hosted.TIMEOUT_REASON,
+            }
+            self.write_trigger_record(common, record)
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=PR, candidate_sha=HEAD,
+                started_at=TRIGGER_AT, metadata={"repository": REPO},
+            )
+            with patch.object(
+                sqlite_hosted_capture.github, "fetch_pull_request",
+                return_value=self.payload(comments=[self.trigger_comment(trigger_id=951)]),
+            ):
+                report = sqlite_hosted_capture.sync_hosted_pending(
+                    records, REPO, common=common, pr_number=PR
+                )
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(len(report["ambiguous"]), 1, report)
+            self.assertEqual(records.attempt(attempt_id)["state"], "timed_out")
+            self.assertEqual(records.history(PR)["runs"], [])
 
     def test_incomplete_github_page_is_refused_without_finishing_attempt(self) -> None:
         payload = self.payload(comments=[self.trigger_comment()])

@@ -31,6 +31,7 @@ from . import evidence, hosted
 from . import github as github_api
 from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
+from .sqlite_provider_imports import _cli_headline
 from .sqlite_review_records import (
     FindingObservation,
     ReviewRecordsError,
@@ -1181,13 +1182,7 @@ def run_cli_review(
                         observations = []
                         for index, finding in enumerate(parsed_findings, 1):
                             instructions = finding.get("codegenInstructions")
-                            parts = (
-                                instructions.splitlines() if isinstance(instructions, str)
-                                else [line for item in instructions if isinstance(item, str)
-                                      for line in item.splitlines()]
-                                if isinstance(instructions, list) else []
-                            )
-                            title = next((part.strip() for part in parts if part.strip()), "")[:180]
+                            title = _cli_headline(instructions) or ""
                             title, _ = _redact_archive_text(title)
                             observations.append(FindingObservation(
                                 source_finding_key=f"cli-run:{run_id}:finding:{index}",

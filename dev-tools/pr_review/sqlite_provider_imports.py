@@ -535,12 +535,19 @@ def _import_reply_only_hosted_checkpoint(
         source_decisions={},
     )
     _preflight_text(actor, decisions)
+    window = sqlite_hosted_capture.archive_window(
+        pull_request,
+        record,
+        finished_at=response["updatedAt"],
+        response_id=checkpoint.hosted_review_id,
+        checkpoint_id=str(checkpoint.comment_id) if checkpoint.comment_id is not None else None,
+    )
     archive_artifacts = {
-        "hosted_review": _artifact_json(pull_request["reviews"]["nodes"]),
+        "hosted_review": _artifact_json(window["reviews"]),
         "hosted_comments": _artifact_json(
             {
-                "comments": public_comments,
-                "review_threads": pull_request["reviewThreads"]["nodes"],
+                "comments": window["comments"],
+                "review_threads": window["review_threads"],
             }
         ),
         "metadata": _artifact_json(
@@ -856,11 +863,20 @@ def _cli_headline(value: Any) -> str | None:
         candidates = [line for item in value if isinstance(item, str) for line in item.splitlines()]
     else:
         return None
-    headline = next((line.strip() for line in candidates if line.strip()), None)
+    # CodeRabbit often prepends our safety reminder and a file/line locator to
+    # its actual finding. Those are poor worklist titles, especially for a
+    # routed finding that a different PR owner needs to triage.
+    headline = None
+    for index, line in enumerate(candidates):
+        if line.strip().startswith("Review comment at @"):
+            headline = next((item.strip() for item in candidates[index + 1:] if item.strip()), None)
+            break
+    if headline is None:
+        headline = next((line.strip() for line in candidates if line.strip()), None)
     if headline is None:
         return None
-    # CLI codegen instructions are full provider prompts. Store only their
-    # first bounded headline; never persist the remaining raw instructions.
+    # CLI codegen instructions are full provider prompts. Store only a bounded
+    # headline here; the redacted source artifact is archived separately.
     return headline[:180].rstrip()
 
 

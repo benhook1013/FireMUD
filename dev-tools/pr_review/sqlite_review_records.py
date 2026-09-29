@@ -1979,6 +1979,15 @@ class SqliteReviewRecords:
                 connection.execute("BEGIN")
                 self._require_compatible(connection)
                 controller_state = self._controller_state(connection) if include_legacy_routes else None
+                route_select = (
+                    "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
+                    "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
+                    "routes.updated_at, "
+                    "(SELECT o.title FROM finding_observations o JOIN review_runs r USING (run_id) "
+                    "WHERE o.finding_id = routes.finding_id "
+                    "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1) "
+                    "FROM routes JOIN findings USING (finding_id)"
+                )
                 if include_legacy_routes:
                     # Read every shadow row before filtering. A legacy route
                     # with the same stable ID may have moved or reached a
@@ -1986,10 +1995,8 @@ class SqliteReviewRecords:
                     # must see the authoritative legacy record before any
                     # status or assignment filters are applied.
                     rows = connection.execute(
-                        "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-                        "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
-                        "routes.updated_at FROM routes JOIN findings USING (finding_id) "
-                        "ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id"
+                        route_select + " ORDER BY COALESCE(routes.target_pr, 0), "
+                        "routes.source_pr, routes.route_id"
                     )
                 else:
                     conditions = []
@@ -2008,10 +2015,7 @@ class SqliteReviewRecords:
                         conditions.append("routes.target_pr IS NULL")
                     where = " WHERE " + " AND ".join(conditions) if conditions else ""
                     rows = connection.execute(
-                        "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-                        "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, "
-                        "routes.updated_at FROM routes JOIN findings USING (finding_id)"
-                        + where
+                        route_select + where
                         + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id",
                         parameters,
                     )
@@ -2028,6 +2032,7 @@ class SqliteReviewRecords:
                         "assignment": "unassigned" if row[5] is None else "incoming",
                         "created_at": row[7],
                         "updated_at": row[8],
+                        "title": row[9],
                     }
                     for row in rows
                 ]
@@ -2172,6 +2177,7 @@ class SqliteReviewRecords:
             "source_review": route.source_review,
             "source_finding": route.source_finding,
             "source_finding_key": route.source_finding,
+            "title": None,
             "observations": list(route.observations),
             "target_pr": route.target_pr,
             "status": route.status,

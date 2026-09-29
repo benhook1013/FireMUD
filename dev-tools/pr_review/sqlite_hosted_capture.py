@@ -103,10 +103,17 @@ def record_hosted_terminal_result(
         if result.state == "rate_limited"
         else "failed"
         if result.state in {"failed", "noop"}
+        else "timed_out"
+        if result.state == "timed_out"
         else "ambiguous"
     )
+    terminal_observed_at = (
+        record["timeout"]["at"]
+        if result.state == "timed_out" and record.get("status") == "timed_out"
+        else observed_at
+    )
     finish_time, response_review, response_comment = _terminal_event(
-        result, pull_request, observed_at=observed_at
+        result, pull_request, observed_at=terminal_observed_at
     )
     trigger_id = str(record["trigger"]["id"])
     # Schema v5 has one provider-result identity field for both GitHub review
@@ -167,6 +174,13 @@ def record_hosted_terminal_result(
     checkpoint_id = (
         _checkpoint_id(pull_request, result.response_id) if provider_response_id is not None else None
     )
+    window = archive_window(
+        pull_request,
+        record,
+        finished_at=finish_time,
+        response_id=result.response_id,
+        checkpoint_id=checkpoint_id,
+    )
     capture_metadata = {
         "state": result.state,
         "terminal": result.terminal,
@@ -180,13 +194,11 @@ def record_hosted_terminal_result(
         "observed_at": finish_time,
     }
     artifacts = {
-        "hosted_review": _json(pull_request["reviews"]["nodes"]),
-        "hosted_comments": _json(
-            {
-                "comments": pull_request["comments"]["nodes"],
-                "review_threads": pull_request["reviewThreads"]["nodes"],
-            }
-        ),
+        "hosted_review": _json(window["reviews"]),
+        "hosted_comments": _json({
+            "comments": window["comments"],
+            "review_threads": window["review_threads"],
+        }),
         "metadata": _json(capture_metadata),
     }
     finish_fields = {
@@ -608,7 +620,7 @@ def sync_hosted_pending(
                 bucket = "ambiguous" if result["state"] in {"ambiguous", "unattributed"} else "pending"
                 entry["reason"] = result.get("reason")
                 report[bucket].append(entry)
-            elif result["state"] in {"ambiguous", "unattributed", "retired"}:
+            elif result["state"] in {"ambiguous", "unattributed", "retired", "timed_out"}:
                 report["ambiguous"].append(entry)
             else:
                 entry["idempotent_replay"] = result.get("idempotent_replay", False)
@@ -749,10 +761,19 @@ def _validate_trigger_record(
         "posted",
         "posted_boundary_changed",
         "posted_boundary_unverified",
+        "timed_out",
         "retired",
     }:
         raise HostedCaptureError("Hosted trigger record has no verified posted request")
     head = record.get("head_sha")
+    if record.get("status") == "timed_out":
+        timeout = record.get("timeout")
+        if (
+            not isinstance(timeout, Mapping)
+            or hosted.parse_timestamp(timeout.get("at")) is None
+            or timeout.get("reason") != hosted.TIMEOUT_REASON
+        ):
+            raise HostedCaptureError("Hosted timeout record has invalid terminal evidence")
     if not isinstance(head, str) or not hosted.EXACT_SHA.fullmatch(head):
         raise HostedCaptureError("Hosted trigger record has no exact candidate head")
     trigger = record.get("trigger")
@@ -823,6 +844,66 @@ def _complete_pull_request(payload: dict[str, Any], source_pr: int) -> dict[str,
     except (KeyError, TypeError, RuntimeError) as exc:
         raise HostedCaptureError(f"complete GitHub review history is unavailable: {exc}") from exc
     return pull_request
+
+
+def archive_window(
+    pull_request: dict[str, Any],
+    record: Mapping[str, Any],
+    *,
+    finished_at: str,
+    response_id: int | None = None,
+    checkpoint_id: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Retain complete review evidence in this request window, not old PR history."""
+
+    started = hosted.parse_timestamp(record["trigger"]["created_at"])
+    finished = hosted.parse_timestamp(finished_at)
+    if started is None or finished is None or finished < started:
+        raise HostedCaptureError("Hosted archive window has invalid timestamps")
+    trigger_id = record["trigger"]["id"]
+    preserved_ids = {trigger_id, response_id}
+    if checkpoint_id is not None:
+        preserved_ids.add(int(checkpoint_id))
+
+    def in_window(value: Any) -> bool:
+        parsed = hosted.parse_timestamp(value)
+        return parsed is not None and started < parsed <= finished
+
+    comments = []
+    for item in pull_request["comments"]["nodes"]:
+        body = item.get("body")
+        author = item.get("author")
+        login = author.get("login") if isinstance(author, dict) else None
+        if github.immutable_database_id(item) in preserved_ids or (
+            in_window(item.get("createdAt"))
+            and (
+                github.is_coderabbit_login(login)
+                or (isinstance(body, str) and hosted.normalize_command(body) == hosted.FULL_COMMAND)
+            )
+        ):
+            comments.append(item)
+    reviews = [
+        item for item in pull_request["reviews"]["nodes"]
+        if github.immutable_database_id(item) == response_id
+        or (
+            in_window(item.get("submittedAt"))
+            and github.is_coderabbit_login(
+                item.get("author", {}).get("login")
+                if isinstance(item.get("author"), dict) else None
+            )
+        )
+    ]
+    review_threads = []
+    for thread in pull_request["reviewThreads"]["nodes"]:
+        nodes = thread["comments"]["nodes"]
+        if not nodes:
+            continue
+        first = nodes[0]
+        author = first.get("author")
+        login = author.get("login") if isinstance(author, dict) else None
+        if in_window(first.get("createdAt")) and github.is_coderabbit_login(login):
+            review_threads.append(thread)
+    return {"reviews": reviews, "comments": comments, "review_threads": review_threads}
 
 
 def _terminal_event(
