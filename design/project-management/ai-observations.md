@@ -114,3 +114,8 @@ Entry format:
   - Context: #2879 had a long interval between CLI checkpoints while its private captures included a nine-second rate-limited attempt.
   - Observation: seven successful captures matched seven public CLI checkpoints; the failed attempt had an exit status and a provider limit but no review result. Completed-result pills alone did not explain the gap.
   - Expected pattern: keep failed attempts separate from review and taper counts, expose only coarse non-counting status from private captures, and compare successful captures with public checkpoints before claiming a result was lost.
+
+- `2026-09-29`: Workflow output moved into a helper needs every contract consumer updated
+  - Context: the dev-demo recovery warning was moved from a raw job-summary write into the canonical summary helper to satisfy the stricter summary validator; the first CI run then failed because a separate workflow contract still searched for the warning text inline in YAML.
+  - Observation: the rendered helper output retained the exact operator guidance, but a source-text assertion did not follow the new output owner.
+  - Expected pattern: when moving workflow output into a helper, update both the direct syntax validator and repository-level workflow contracts to verify the exact invocation and rendered helper result; run the full focused workflow contract before publication.
