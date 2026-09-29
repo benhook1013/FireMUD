@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -173,7 +174,8 @@ class SessionResumptionFlowTest {
                 .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -195,7 +197,7 @@ class SessionResumptionFlowTest {
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(entityManagementClient.listCharactersByAccount(
             Mockito.anyString(),
@@ -465,7 +467,8 @@ class SessionResumptionFlowTest {
                 .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:01:00Z")
+                .setMembershipAuthorityGeneration(2L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
