@@ -81,6 +81,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final int REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH = 256;
   private static final int REPLAY_REASON_MAX_LENGTH = 256;
   private final AtomicLong retentionBlockedRows = new AtomicLong();
+  private final AtomicLong retentionDeadLetterBlockedRows = new AtomicLong();
   private final MeterRegistry meterRegistry;
 
   private final ScriptWorkItemRepository workItemRepository;
@@ -132,6 +133,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.meterRegistry = meterRegistry;
     Gauge.builder("automation_retention_blocked_rows", retentionBlockedRows, AtomicLong::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "automation_retention_dead_letter_blocked_rows",
+            retentionDeadLetterBlockedRows,
+            AtomicLong::get)
         .register(meterRegistry);
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.automationQueueService = automationQueueService;
@@ -304,6 +310,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             STATUS_CANCELED,
             now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS));
     long deadLetteredDeleted = 0L;
+    long deadLetteredBlocked =
+        workItemRepository.countTerminalRowsBlockedByEvidence(
+            STATUS_DEAD_LETTERED,
+            now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
     long blocked =
         workItemRepository.countTerminalRowsBlockedByEvidence(
                 STATUS_HANDED_OFF,
@@ -311,9 +321,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             + workItemRepository.countTerminalRowsBlockedByEvidence(
                 STATUS_CANCELED,
                 now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS))
-            + workItemRepository.countTerminalRowsBlockedByEvidence(
-                STATUS_DEAD_LETTERED,
-                now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
+            + deadLetteredBlocked;
+    retentionDeadLetterBlockedRows.set(deadLetteredBlocked);
     retentionBlockedRows.set(blocked);
     return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
   }
@@ -1283,13 +1292,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .map(ScriptWorkItemServiceImpl::parseWorkItemId)
             .sorted()
             .toList();
-    Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
-    for (Long id : requestedIds) {
-      workItemRepository
-          .findByIdForUpdate(id)
-          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
-          .ifPresent(item -> lockedById.put(id, item));
-    }
+    Map<Long, ScriptWorkItem> lockedById =
+        workItemRepository
+            .findByTenantIdAndIdInForUpdateOrderByIdAsc(normalizedTenantId, requestedIds)
+            .stream()
+            .filter(item -> normalizedTenantId.equals(item.getTenantId()))
+            .collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
     return requestedIds.stream().map(lockedById::get).filter(Objects::nonNull).toList();
   }
 

@@ -116,6 +116,28 @@ for canary_alert in "${canary_alerts[@]}"; do
   fi
 done
 
+dead_letter_retention_alert_rule="$(awk '
+  /^[[:space:]]*- alert: AutomationDeadLetterRetentionBlocked$/ { in_rule = 1 }
+  in_rule { print }
+  in_rule && /^[[:space:]]*- alert:/ && $0 !~ /AutomationDeadLetterRetentionBlocked/ { exit }
+' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
+if [[ -z "${dead_letter_retention_alert_rule//[[:space:]]/}" ]]; then
+  echo "shared Prometheus rules are missing AutomationDeadLetterRetentionBlocked" >&2
+  exit 1
+fi
+if ! grep -Fqx -- "          expr: automation_retention_dead_letter_blocked_rows > 0" <<<"$dead_letter_retention_alert_rule"; then
+  echo "AutomationDeadLetterRetentionBlocked must use the distinct dead-letter blocked-row gauge with a > 0 threshold" >&2
+  exit 1
+fi
+if ! grep -Fqx -- "          for: 5m" <<<"$dead_letter_retention_alert_rule"; then
+  echo "AutomationDeadLetterRetentionBlocked must retain its five-minute hold" >&2
+  exit 1
+fi
+if grep -Fq -- "expr: automation_retention_blocked_rows" <<<"$dead_letter_retention_alert_rule"; then
+  echo "AutomationDeadLetterRetentionBlocked must not use the aggregate retention gauge" >&2
+  exit 1
+fi
+
 python3 - "$ROOT_DIR" <<'PY'
 import copy
 from collections import Counter

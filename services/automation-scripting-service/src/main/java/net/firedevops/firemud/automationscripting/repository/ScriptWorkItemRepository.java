@@ -601,6 +601,19 @@ public class ScriptWorkItemRepository {
         .fetch(this::toEntity);
   }
 
+  /** Selects explicitly requested work items for one tenant while holding their row locks. */
+  public List<ScriptWorkItem> findByTenantIdAndIdInForUpdateOrderByIdAsc(
+      String tenantId, Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.in(ids)))
+        .orderBy(SCRIPT_WORK_ITEMS.ID.asc())
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
   public ScriptWorkItem save(ScriptWorkItem entity) {
     requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
@@ -1078,7 +1091,6 @@ public class ScriptWorkItemRepository {
     record.setStatus(entity.getStatus());
     record.setCancelReason(entity.getCancelReason());
     record.setAuthorityUnavailableRetryCount(entity.getAuthorityUnavailableRetryCount());
-    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());

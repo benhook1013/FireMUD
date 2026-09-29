@@ -352,7 +352,8 @@ class ScriptWorkItemServiceImplTest {
     Instant retryEligibilityAt = Instant.now().plusSeconds(3600);
     item.setNextEligibleAt(retryEligibilityAt);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(90L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(90L)))
+        .thenReturn(List.of(item));
     ScriptWorkItemService service = replayService(workItemRepository);
 
     ScriptWorkItemService.ReplayResult result =
@@ -371,7 +372,37 @@ class ScriptWorkItemServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
     assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(4);
     assertThat(item.getNextEligibleAt()).isEqualTo(retryEligibilityAt);
-    verify(workItemRepository).findByIdForUpdate(90L);
+    verify(workItemRepository).findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(90L));
+  }
+
+  @Test
+  void replayDoesNotExposeWorkItemOwnedByAnotherTenant() {
+    ScriptWorkItem item = replayableRuntimeWorkItem(91L);
+    item.setTenantId("tenant-2");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("tenant-1", List.of(91L)))
+        .thenReturn(List.of(item));
+    ScriptWorkItemService service = replayService(workItemRepository);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "tenant-1", "", "", List.of("91"), "", 0L, 0L, 0, "req-91", "", ""));
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> assertThat(replay.rejectionReason()).isEqualTo("not_found_or_not_owned"));
+    verify(workItemRepository).findByTenantIdAndIdInForUpdateOrderByIdAsc("tenant-1", List.of(91L));
+    verify(workItemRepository, never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
   }
 
   @Test
@@ -444,7 +475,8 @@ class ScriptWorkItemServiceImplTest {
     when(auditRepository.findByWorkItemId(95L)).thenReturn(Optional.of(audit));
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(95L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(95L)))
+        .thenReturn(List.of(item));
     ScriptDeadLetterReplayRepository replayRepository =
         Mockito.mock(ScriptDeadLetterReplayRepository.class);
     when(replayRepository.insertOrGet(
@@ -566,8 +598,8 @@ class ScriptWorkItemServiceImplTest {
     contradictory.setFailureGeneration(4L);
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(96L)).thenReturn(Optional.of(item));
-    when(workItemRepository.findByIdForUpdate(97L)).thenReturn(Optional.of(contradictory));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(96L, 97L)))
+        .thenReturn(List.of(item, contradictory));
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(96L)).thenReturn(Optional.empty());
     ScriptEventAudit contradictoryAudit = new ScriptEventAudit();
@@ -666,8 +698,9 @@ class ScriptWorkItemServiceImplTest {
             Mockito.anyString(),
             Mockito.any(Instant.class));
     InOrder lockOrder = Mockito.inOrder(workItemRepository);
-    lockOrder.verify(workItemRepository).findByIdForUpdate(96L);
-    lockOrder.verify(workItemRepository).findByIdForUpdate(97L);
+    lockOrder
+        .verify(workItemRepository)
+        .findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(96L, 97L));
   }
 
   @Test
@@ -1059,6 +1092,7 @@ class ScriptWorkItemServiceImplTest {
   void claimsPendingItemsForEvaluationInStableOrder() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setStatus("PENDING_EVALUATION");
+    assertThat(item.getNextEligibleAt()).isNull();
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ArgumentCaptor<Instant> eligibleAtCaptor = ArgumentCaptor.forClass(Instant.class);
@@ -1222,9 +1256,13 @@ class ScriptWorkItemServiceImplTest {
     service.cleanupTerminalWorkItems();
     assertThat(meterRegistry.get("automation_retention_blocked_rows").gauge().value())
         .isEqualTo(6.0);
+    assertThat(meterRegistry.get("automation_retention_dead_letter_blocked_rows").gauge().value())
+        .isEqualTo(2.0);
 
     service.cleanupTerminalWorkItems();
     assertThat(meterRegistry.get("automation_retention_blocked_rows").gauge().value()).isZero();
+    assertThat(meterRegistry.get("automation_retention_dead_letter_blocked_rows").gauge().value())
+        .isZero();
   }
 
   @Test
@@ -1263,7 +1301,6 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptOutboxProperties properties = outboxProperties();
     properties.setDeadLetterMaxRows(1);
-    when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(2L);
     ScriptWorkItemService service =
         service(
             workItemRepository,
@@ -1278,7 +1315,9 @@ class ScriptWorkItemServiceImplTest {
             gameDesignClient());
 
     assertThat(service.cleanupTerminalWorkItems().deadLetteredDeleted()).isZero();
-    verify(workItemRepository, never()).countByStatus("DEAD_LETTERED");
+    verify(workItemRepository, never())
+        .deleteByStatusAndUpdatedAtBefore(Mockito.eq("DEAD_LETTERED"), Mockito.any(Instant.class));
+    verify(workItemRepository, never()).deleteOldestByStatus(Mockito.anyString(), Mockito.anyInt());
   }
 
   @Test
@@ -2988,7 +3027,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findByIdForUpdate(77L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(77L)))
+        .thenReturn(List.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
@@ -3047,7 +3087,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findByIdForUpdate(78L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(78L)))
+        .thenReturn(List.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
@@ -3210,7 +3251,8 @@ class ScriptWorkItemServiceImplTest {
     audit.setFinalReason("authority_unavailable");
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(workItemId)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(workItemId)))
+        .thenReturn(List.of(item));
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(workItemId)).thenReturn(Optional.of(audit));
     ScriptDeadLetterReplayRepository replayRepository =
@@ -3317,7 +3359,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(workItemRepository.findByIdForUpdate(77L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(77L)))
+        .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
@@ -3415,7 +3458,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findByIdForUpdate(79L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(79L)))
+        .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(79L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
@@ -3516,7 +3560,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findByIdForUpdate(88L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(88L)))
+        .thenReturn(List.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(88L)).thenReturn(Optional.of(audit));
     when(readinessProjectionService.getProjection("1", "patch-1"))
@@ -3574,7 +3619,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findByIdForUpdate(89L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(89L)))
+        .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(89L)).thenReturn(Optional.empty());
     when(readinessProjectionService.getProjection("1", "patch-old"))
         .thenReturn(
@@ -3622,7 +3668,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findByIdForUpdate(90L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(90L)))
+        .thenReturn(List.of(item));
     when(readinessProjectionService.getProjection("1", "patch-1"))
         .thenReturn(
             Optional.of(
@@ -3898,8 +3945,9 @@ class ScriptWorkItemServiceImplTest {
                         "retry")))
         .isInstanceOf(ScriptWorkItemServiceImpl.ReplayIdempotencyConflictException.class)
         .hasMessage("control_plane_request_id already records a different replay request");
-    verify(workItemRepository).findByIdForUpdate(101L);
-    verify(workItemRepository, never()).findByIdForUpdate(102L);
+    verify(workItemRepository).findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(101L));
+    verify(workItemRepository, never())
+        .findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(102L));
   }
 
   @Test
@@ -3953,7 +4001,8 @@ class ScriptWorkItemServiceImplTest {
       String currentScope, long currentPointerVersion, String rejectionReason) {
     ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(93L));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(93L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(93L)))
+        .thenReturn(List.of(item));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -4005,7 +4054,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItem item = replayableRuntimeWorkItem(94L);
     item.setPlayableStateScope("SHARED");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(94L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(94L)))
+        .thenReturn(List.of(item));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -4180,7 +4230,8 @@ class ScriptWorkItemServiceImplTest {
     audit.setFinalReason(reason);
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(id)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(id)))
+        .thenReturn(List.of(item));
     when(workItemRepository.claimDeadLetterForReplay(
             Mockito.anyLong(),
             Mockito.anyString(),
@@ -4308,7 +4359,8 @@ class ScriptWorkItemServiceImplTest {
     audit.setFinalReason("authority_unavailable");
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByIdForUpdate(id)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByTenantIdAndIdInForUpdateOrderByIdAsc("1", List.of(id)))
+        .thenReturn(List.of(item));
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(id)).thenReturn(Optional.of(audit));
     ScriptDeadLetterReplayRepository replayRepository =
