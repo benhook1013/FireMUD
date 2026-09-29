@@ -11,6 +11,7 @@ previewStack:
     versionId: ""
     afterBaselineId: "0"
     limit: 100
+    # Operator-supplied audit claim; correlate the Job invocation with trusted deployment audit.
     actorIdentity: ""
     image: ""
     expectedSource:

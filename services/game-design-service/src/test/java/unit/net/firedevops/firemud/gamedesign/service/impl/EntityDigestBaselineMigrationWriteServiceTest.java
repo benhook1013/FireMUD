@@ -9,10 +9,13 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import net.firedevops.firemud.gamedesign.entity.EntityDigestBaselineMigrationAudit;
 import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
+import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.EntityDigestBaselineMigrationAuditRepository;
 import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class EntityDigestBaselineMigrationWriteServiceTest {
   @Mock private RecordedParticipantDigestRepository baselineRepository;
   @Mock private EntityDigestBaselineMigrationAuditRepository auditRepository;
+  @Mock private VersionRepository versionRepository;
 
   private EntityDigestBaselineMigrationWriteService service;
   private RecordedParticipantDigest source;
@@ -31,7 +35,9 @@ class EntityDigestBaselineMigrationWriteServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new EntityDigestBaselineMigrationWriteService(baselineRepository, auditRepository);
+    service =
+        new EntityDigestBaselineMigrationWriteService(
+            baselineRepository, auditRepository, versionRepository);
     LocalDateTime time = LocalDateTime.parse("2026-09-26T01:02:03.123456");
     source = baseline(1, "old", time.minusDays(1), "publish:old", "verify:old");
     replacement = baseline(2, "new", time.minusDays(1), "publish:old", "verify:old");
@@ -39,7 +45,26 @@ class EntityDigestBaselineMigrationWriteServiceTest {
   }
 
   @Test
+  void draftAtGuardedWriteBoundaryPreventsBaselineAndAuditWrites() {
+    Version draft = new Version();
+    draft.setVersionState(VersionLifecycleState.DRAFT);
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+        .thenReturn(java.util.Optional.of(draft));
+
+    assertThrows(
+        EntityDigestBaselineMigrationWriteService.DraftVersionException.class,
+        () -> service.commit(source, replacement, audit));
+
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
+    verify(auditRepository, never()).insert(any());
+  }
+
+  @Test
   void compareAndSetAndAuditAreBothRequiredForCommit() {
+    Version version = new Version();
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+        .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(1);
 
@@ -51,6 +76,10 @@ class EntityDigestBaselineMigrationWriteServiceTest {
 
   @Test
   void changedRowPreventsAuditInsert() {
+    Version version = new Version();
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+        .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(0);
 

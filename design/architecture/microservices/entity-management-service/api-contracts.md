@@ -71,7 +71,7 @@ Entity Management must also expose a read-only design-time synchronization surfa
 
 - `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. Entity Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
 - Response returns `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}` as described in [`world-editing-tools.md`](../game-design-service/world-editing-tools.md).
-- Current drift: the digest handler has no owner/method authorization or exact Game Design publication binding beyond shared bearer parsing. The target workload, tenant/scope/request/workflow/digest context and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
+- Current implementation: the exact `GetDraftDesignDigest` method is JWT-exempt only for its mTLS-authenticated owner-to-owner call; the handler applies `PublicationReadGuard` to the caller, tenant, scope, and publication binding before returning digest evidence. The target workload, tenant/scope/request/workflow/digest context and denial contract remain canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity). Live served-certificate and consumer-convergence proof is still required.
 
 ## Digest Input Manifest
 

@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.EntityDigestBaselineMigrationAuditRepository;
 import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -117,13 +118,35 @@ public class EntityDigestBaselineMigrationService {
     } else {
       status = ScopeStatus.UNSUPPORTED_SCHEMA;
     }
+    if (rows.size() == 1
+        && Objects.equals(rows.get(0).getDigestSchemaVersion(), SOURCE_SCHEMA_VERSION)
+        && version.getVersionState() == VersionLifecycleState.DRAFT) {
+      status = ScopeStatus.BLOCKED_DRAFT;
+    }
+    ScopeStatus reportedStatus = status;
     return new ScopePreflight(
-        tenantId, versionId, status, rows.stream().map(this::toSummary).toList());
+        tenantId,
+        versionId,
+        status,
+        rows.stream().map(row -> toSummary(row, summaryStatus(row, reportedStatus))).toList());
   }
 
   /** Recomputes and atomically re-records one exact Entity full-version v1 baseline. */
   public MigrationResult migrate(MigrationCommand command) {
     validateCommand(command);
+
+    Version version =
+        versionRepository
+            .findByTenantIdAndId(command.tenantId(), command.versionId())
+            .orElseThrow(() -> rejected("VERSION_MISSING", "tenant/version does not exist"));
+    if (!Objects.equals(version.getTenantId(), command.tenantId())
+        || !Objects.equals(version.getId(), command.versionId())
+        || version.isScriptOnly()) {
+      throw rejected("VERSION_SCOPE_MISMATCH", "version is outside the tenant or is script-only");
+    }
+    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
+      throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
+    }
 
     Optional<EntityDigestBaselineMigrationAudit> priorAudit =
         auditRepository.findByOperationId(command.operationId());
@@ -152,16 +175,6 @@ public class EntityDigestBaselineMigrationService {
     }
     assertSourceMatchesCommand(current, command.expectedSource());
 
-    Version version =
-        versionRepository
-            .findByTenantIdAndId(command.tenantId(), command.versionId())
-            .orElseThrow(() -> rejected("VERSION_MISSING", "tenant/version does not exist"));
-    if (!Objects.equals(version.getTenantId(), command.tenantId())
-        || !Objects.equals(version.getId(), command.versionId())
-        || version.isScriptOnly()) {
-      throw rejected("VERSION_SCOPE_MISMATCH", "version is outside the tenant or is script-only");
-    }
-
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(
             command.tenantId(),
@@ -176,6 +189,11 @@ public class EntityDigestBaselineMigrationService {
     EntityDigestBaselineMigrationAudit audit = auditFor(current, observed, command, migrationTime);
     try {
       writeService.commit(current, replacement, audit);
+    } catch (EntityDigestBaselineMigrationWriteService.DraftVersionException draftAtCommit) {
+      throw rejected(
+          "VERSION_DRAFT",
+          "version became DRAFT before the guarded migration write",
+          draftAtCommit);
     } catch (RuntimeException uncertainWrite) {
       try {
         return readBackCommittedResult(
@@ -479,10 +497,21 @@ public class EntityDigestBaselineMigrationService {
         || row.getBaseVersionId() != null) {
       throw new IllegalStateException("v1 batch query returned a non-Entity full-version row");
     }
-    return toSummary(row);
+    Version version =
+        versionRepository
+            .findByTenantIdAndId(
+                row.getTenantId(), parsePositiveVersionId(row.getId(), row.getScopeValue()))
+            .orElse(null);
+    ScopeStatus status =
+        version == null
+            ? ScopeStatus.BLOCKED_VERSION_MISSING
+            : version.getVersionState() == VersionLifecycleState.DRAFT
+                ? ScopeStatus.BLOCKED_DRAFT
+                : ScopeStatus.V1_REQUIRES_MIGRATION;
+    return toSummary(row, status);
   }
 
-  private BaselineSummary toSummary(RecordedParticipantDigest row) {
+  private BaselineSummary toSummary(RecordedParticipantDigest row, ScopeStatus status) {
     if (row.getId() == null || row.getId() < 1) {
       throw new IllegalStateException("baseline query returned a row without a stable id");
     }
@@ -497,7 +526,21 @@ public class EntityDigestBaselineMigrationService {
         row.getRecordedFromPublishWorkflowId(),
         row.getRecordedAt(),
         row.getLastVerifiedPublishWorkflowId(),
-        row.getLastVerifiedAt());
+        row.getLastVerifiedAt(),
+        status);
+  }
+
+  private ScopeStatus summaryStatus(RecordedParticipantDigest row, ScopeStatus scopeStatus) {
+    if (scopeStatus == ScopeStatus.BLOCKED_DRAFT
+        || scopeStatus == ScopeStatus.AMBIGUOUS_BASELINE
+        || scopeStatus == ScopeStatus.UNSUPPORTED_SCHEMA) {
+      return scopeStatus;
+    }
+    return Objects.equals(row.getDigestSchemaVersion(), TARGET_SCHEMA_VERSION)
+        ? ScopeStatus.V2_ALREADY_RECORDED
+        : Objects.equals(row.getDigestSchemaVersion(), SOURCE_SCHEMA_VERSION)
+            ? ScopeStatus.V1_REQUIRES_MIGRATION
+            : ScopeStatus.UNSUPPORTED_SCHEMA;
   }
 
   private long parsePositiveVersionId(long baselineId, String scopeValue) {
@@ -551,6 +594,8 @@ public class EntityDigestBaselineMigrationService {
 
   public enum ScopeStatus {
     V1_REQUIRES_MIGRATION,
+    BLOCKED_DRAFT,
+    BLOCKED_VERSION_MISSING,
     V2_ALREADY_RECORDED,
     NO_RECORDED_BASELINE,
     AMBIGUOUS_BASELINE,
@@ -597,7 +642,8 @@ public class EntityDigestBaselineMigrationService {
       String recordedFromPublishWorkflowId,
       LocalDateTime recordedAt,
       String lastVerifiedPublishWorkflowId,
-      LocalDateTime lastVerifiedAt) {}
+      LocalDateTime lastVerifiedAt,
+      ScopeStatus status) {}
 
   public record EntityV1Batch(
       long scannedAfterBaselineId,

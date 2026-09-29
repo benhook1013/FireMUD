@@ -79,6 +79,15 @@ public class VersionRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** Reads and locks the exact version row for owner-local guarded lifecycle writes. */
+  public Optional<Version> findByTenantIdAndIdForUpdate(String tenantId, Long id) {
+    return Optional.ofNullable(
+        dsl.selectFrom(VERSION_TABLE)
+            .where(TENANT_ID.eq(tenantId).and(ID.eq(id)))
+            .forUpdate()
+            .fetchOne(this::toEntity));
+  }
+
   /**
    * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
    * reject anything other than one row so duplicate retained scope is fail-closed.

@@ -4,8 +4,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.entity.EntityDigestBaselineMigrationAudit;
 import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.EntityDigestBaselineMigrationAuditRepository;
 import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,12 +19,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class EntityDigestBaselineMigrationWriteService {
   private final RecordedParticipantDigestRepository baselineRepository;
   private final EntityDigestBaselineMigrationAuditRepository auditRepository;
+  private final VersionRepository versionRepository;
 
   public EntityDigestBaselineMigrationWriteService(
       RecordedParticipantDigestRepository baselineRepository,
-      EntityDigestBaselineMigrationAuditRepository auditRepository) {
+      EntityDigestBaselineMigrationAuditRepository auditRepository,
+      VersionRepository versionRepository) {
     this.baselineRepository = baselineRepository;
     this.auditRepository = auditRepository;
+    this.versionRepository = versionRepository;
   }
 
   @Transactional
@@ -31,6 +36,20 @@ public class EntityDigestBaselineMigrationWriteService {
       RecordedParticipantDigest replacement,
       EntityDigestBaselineMigrationAudit audit) {
     validateWriteSet(expectedOld, replacement, audit);
+    long versionId;
+    try {
+      versionId = Long.parseLong(expectedOld.getScopeValue());
+    } catch (RuntimeException invalidScope) {
+      throw new IllegalArgumentException(
+          "migration source has an invalid version scope", invalidScope);
+    }
+    var version =
+        versionRepository
+            .findByTenantIdAndIdForUpdate(expectedOld.getTenantId(), versionId)
+            .orElseThrow(() -> new IllegalStateException("migration version disappeared"));
+    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
+      throw new DraftVersionException();
+    }
     int updated =
         baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(expectedOld, replacement);
     if (updated != 1) {
@@ -38,6 +57,12 @@ public class EntityDigestBaselineMigrationWriteService {
           "Entity v1 baseline changed before the guarded migration write");
     }
     auditRepository.insert(audit);
+  }
+
+  static final class DraftVersionException extends IllegalStateException {
+    private DraftVersionException() {
+      super("mutable DRAFT versions cannot be migrated");
+    }
   }
 
   private void validateWriteSet(
