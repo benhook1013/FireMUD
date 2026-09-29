@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import stat
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ MAX_STDERR_BYTES = 4096
 MAX_ERROR_BYTES = 4096
 MAX_RECOVERY_STDOUT_BYTES = 8 * 1024 * 1024
 MAX_RECOVERY_STDERR_BYTES = 128 * 1024
+ORPHANED_CAPTURE_MIN_AGE_SECONDS = 10 * 60
 
 
 class _UnrecordableCapture(ValueError):
@@ -223,6 +225,11 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
         if recovery is None:
             try:
                 recovery = _reconcile_failed_capture(records, directory)
+            except (OSError, ValueError, UnicodeError, OverflowError):
+                recovery = None
+        if recovery is None:
+            try:
+                recovery = _reconcile_incomplete_native_capture(records, directory)
             except (OSError, ValueError, UnicodeError, OverflowError):
                 recovery = None
         if recovery is not None:
@@ -538,6 +545,97 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
             "action": "conflict",
             "pr": attempt["source_pr"],
             "reason": "failed capture could not finish the exact started attempt",
+        }
+    return {"action": "terminally_classified", "pr": attempt["source_pr"]}
+
+
+def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[str, Any] | None:
+    """Fail closed on an exact native attempt whose capture never completed."""
+
+    try:
+        attempt = records.attempt(directory.name)
+    except ReviewRecordsError as error:
+        if str(error) == "review attempt does not exist":
+            return None
+        return {"action": "conflict", "pr": 0, "reason": "existing attempt could not be read"}
+    if attempt["state"] != "started" or attempt["channel"] != "cli":
+        return None
+
+    metadata_path = directory / "metadata.json"
+    try:
+        metadata = _read_capture_json(metadata_path, MAX_METADATA_BYTES, "metadata")
+        if metadata.get("run_id") != directory.name or metadata.get("kind") != "cli":
+            return None
+        original_metadata = {
+            key: value for key, value in metadata.items()
+            if key not in {"duration_seconds", "exit_status", "timed_out"}
+        }
+        if original_metadata != attempt["metadata"]:
+            return None
+        pr = _capture_pr(metadata.get("pull_request"))
+        candidate_sha = metadata.get("candidate_sha")
+        if pr != attempt["source_pr"] or candidate_sha != attempt["candidate_sha"]:
+            return None
+
+        marker_path = directory / "capture-complete"
+        if marker_path.exists() or marker_path.is_symlink():
+            return None
+        error_path = directory / "error"
+        exit_path = directory / "exit-status"
+        if error_path.is_symlink() or exit_path.is_symlink():
+            return None
+        terminal_path = error_path if error_path.is_file() else exit_path if exit_path.is_file() else None
+        if terminal_path is None:
+            metadata_age = time.time() - metadata_path.stat().st_mtime
+            if metadata_age < ORPHANED_CAPTURE_MIN_AGE_SECONDS:
+                return None
+            finished_at = _capture_finished_at(metadata_path)
+            summary = "CLI runner ended without a terminal capture record"
+            exit_status = None
+            state = "failed"
+            detail = ""
+        elif terminal_path == error_path:
+            finished_at = _capture_finished_at(error_path)
+            summary = "CLI setup or capture failed"
+            exit_status = None
+            state = "failed"
+            detail = _read_diagnostic_prefix(error_path)
+        else:
+            exit_text = _read_capture_text(exit_path, MAX_EXIT_STATUS_BYTES, "exit status").strip()
+            finished_at = _capture_finished_at(exit_path)
+            if exit_text == "timeout":
+                state = "timed_out"
+                exit_status = None
+                summary = "CodeRabbit CLI timed out before a complete result"
+            elif re.fullmatch(r"-?[0-9]{1,9}", exit_text):
+                exit_status = int(exit_text)
+                state = "failed"
+                summary = (
+                    "CodeRabbit CLI exited successfully without a complete capture"
+                    if exit_status == 0
+                    else "CodeRabbit CLI exited before a complete capture"
+                )
+            else:
+                return None
+            detail = _read_diagnostic_prefix(directory / "stderr")
+    except _UnrecordableCapture:
+        return None
+
+    diagnostic, _ = _redact_archive_text(f"{summary}: {detail}" if detail else summary)
+    diagnostic = diagnostic[:1000].rstrip()
+    try:
+        records.finish_attempt(
+            directory.name,
+            state=state,
+            finished_at=finished_at,
+            exit_status=exit_status,
+            diagnostic=diagnostic,
+        )
+    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+        return {
+            "action": "conflict",
+            "pr": attempt["source_pr"],
+            "reason": "incomplete capture could not finish the exact started attempt",
         }
     return {"action": "terminally_classified", "pr": attempt["source_pr"]}
 

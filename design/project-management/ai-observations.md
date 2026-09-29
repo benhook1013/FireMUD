@@ -105,10 +105,6 @@ Entry format:
   - Observation: the controller parsed `routed` from those checkpoints but omitted it from completed review history, so status returned an unknown third count. The page's separate evidence fallback also failed when an unrelated queued PR had unavailable identity, leaving the omission silent.
   - Expected pattern: carry explicit checkpoint fields through the status projection, test modern and legacy checkpoint shapes together, and verify the rendered latest-five results against public checkpoints. A failure to enrich one PR must not silently turn its known three-count results into legacy two-count results.
 
-- `2026-09-29`: Review-record growth must not silently stop SQLite recovery copies
-  - Context: the hourly review-state backup failed after new structured findings introduced long, hyphenated identifiers containing words such as `bearer` and `key`.
-  - Observation: the backup's generic secret heuristic rejected typed identifiers that the records writer had already accepted. The job exposed only a generic `BackupError`, and its last successful off-machine copy became stale while the live database continued changing.
-  - Expected pattern: exercise backup and exact restore against representative live record shapes after importer or schema changes, keep credential screening specific to the field's meaning, and monitor the age of the last successful remote readback rather than the timer's enabled state alone.
 - `2026-09-28`: Manual Hosted requests need explicit attribution before checkpoint credit
   - Context: a human-posted full-review command on #2879 produced a completed CodeRabbit review and a public checkpoint, but the controller had no private trigger record and omitted the round from counted history.
   - Observation: the public command and review IDs uniquely identified the completed round; a checkpoint alone did not establish the controller's request-time attribution.
@@ -118,3 +114,13 @@ Entry format:
   - Context: #2879 had a long interval between CLI checkpoints while its private captures included a nine-second rate-limited attempt.
   - Observation: seven successful captures matched seven public CLI checkpoints; the failed attempt had an exit status and a provider limit but no review result. Completed-result pills alone did not explain the gap.
   - Expected pattern: keep failed attempts separate from review and taper counts, expose only coarse non-counting status from private captures, and compare successful captures with public checkpoints before claiming a result was lost.
+
+- `2026-09-29`: Review-record growth must not silently stop SQLite recovery copies
+  - Context: the hourly review-state backup failed after new structured findings introduced long, hyphenated identifiers containing words such as `bearer` and `key`.
+  - Observation: the backup's generic secret heuristic rejected typed identifiers that the records writer had already accepted. The job exposed only a generic `BackupError`, and its last successful off-machine copy became stale while the live database continued changing.
+  - Expected pattern: exercise backup and exact restore against representative live record shapes after importer or schema changes, keep credential screening specific to the field's meaning, and monitor the age of the last successful remote readback rather than the timer's enabled state alone.
+
+- `2026-09-29`: Hosted sentinel identity checks must tolerate GitHub bot suffixes
+  - Context: a Hosted sentinel missed an attributable result because it matched exact `coderabbitai` while GitHub returned `coderabbitai[bot]`.
+  - Observation: hand-coded exact login filters can miss provider results that the controller can attribute correctly.
+  - Expected pattern: use canonical controller attribution and readback, or match bot identity robustly; do not narrate unchanged waits.

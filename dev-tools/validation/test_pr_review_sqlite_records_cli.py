@@ -45,7 +45,25 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.invoke("bootstrap", "--database", str(self.database))
         records = SqliteReviewRecords(self.database)
         capture_root = self.database.parent / "pr-review" / "runs"
-        capture_root.mkdir(parents=True)
+        run_id = "run." + "e" * 32
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "d" * 40,
+        }
+        capture = capture_root / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(json.dumps(started_metadata), encoding="utf-8")
+        (capture / "error").write_text("setup failed\n", encoding="utf-8")
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="d" * 40,
+            metadata=started_metadata,
+        )
         lock_path = self.database.parent / "pr-review" / "cli.lock"
         lock_path.touch(mode=0o600)
 
@@ -59,6 +77,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
 
         self.assertFalse(result["available"])
         self.assertIn("CLI review is active", result["reason"])
+        self.assertEqual(records.attempt(run_id)["state"], "started")
 
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
@@ -415,6 +434,116 @@ class ReviewRecordsCliTest(unittest.TestCase):
         cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
 
         self.assertEqual(records.attempt(beyond_prefix_id)["state"], "failed")
+
+    def test_reconciles_native_setup_error_when_sqlite_finish_failed(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "5" * 32
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "f" * 40,
+            "candidate_files": 2,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="f" * 40,
+            started_at="2026-09-29T01:00:00Z",
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(json.dumps(started_metadata), encoding="utf-8")
+        (capture / "error").write_text("preflight failed; " + "detail " * 1000, encoding="utf-8")
+        completed_epoch = 1_790_000_000
+        os.utime(capture / "error", (completed_epoch, completed_epoch))
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["finished_at"], datetime.fromtimestamp(
+            completed_epoch, timezone.utc
+        ).isoformat(timespec="seconds").replace("+00:00", "Z"))
+        attempt_summary = next(
+            item for item in records.attempt_history(2885) if item["attempt_id"] == run_id
+        )
+        self.assertLessEqual(len(attempt_summary["diagnostic"]), 1000)
+        self.assertTrue(attempt_summary["diagnostic"].startswith("CLI setup or capture failed:"))
+        self.assertEqual(records.history(2885)["runs"], [])
+
+    def test_reconciles_old_native_attempt_killed_without_terminal_file_as_failed(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "6" * 32
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "a" * 40,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="a" * 40,
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        metadata_path = capture / "metadata.json"
+        metadata_path.write_text(json.dumps(started_metadata), encoding="utf-8")
+        started_epoch = 1_700_000_000
+        os.utime(metadata_path, (started_epoch, started_epoch))
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["finished_at"], datetime.fromtimestamp(
+            started_epoch, timezone.utc
+        ).isoformat(timespec="seconds").replace("+00:00", "Z"))
+        attempt_summary = next(
+            item for item in records.attempt_history(2885) if item["attempt_id"] == run_id
+        )
+        self.assertIn("without a terminal capture record", attempt_summary["diagnostic"])
+        self.assertEqual(records.history(2885)["runs"], [])
+
+    def test_incomplete_native_capture_metadata_mismatch_stays_started(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "7" * 32
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "b" * 40,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="b" * 40,
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(
+            json.dumps({**started_metadata, "pull_request": 2886}), encoding="utf-8"
+        )
+        (capture / "error").write_text("setup failed\n", encoding="utf-8")
+
+        cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(records.attempt(run_id)["state"], "started")
 
     def test_migrate_keeps_native_attempt_started_when_failure_capture_is_not_exact(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
