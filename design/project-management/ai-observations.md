@@ -104,3 +104,8 @@ Entry format:
   - Context: the #2828 delivery page reverted to two-number review pills even though recent public checkpoints recorded `found / accepted / routed`.
   - Observation: the controller parsed `routed` from those checkpoints but omitted it from completed review history, so status returned an unknown third count. The page's separate evidence fallback also failed when an unrelated queued PR had unavailable identity, leaving the omission silent.
   - Expected pattern: carry explicit checkpoint fields through the status projection, test modern and legacy checkpoint shapes together, and verify the rendered latest-five results against public checkpoints. A failure to enrich one PR must not silently turn its known three-count results into legacy two-count results.
+
+- `2026-09-29`: Review-record growth must not silently stop SQLite recovery copies
+  - Context: the hourly review-state backup failed after new structured findings introduced long, hyphenated identifiers containing words such as `bearer` and `key`.
+  - Observation: the backup's generic secret heuristic rejected typed identifiers that the records writer had already accepted. The job exposed only a generic `BackupError`, and its last successful off-machine copy became stale while the live database continued changing.
+  - Expected pattern: exercise backup and exact restore against representative live record shapes after importer or schema changes, keep credential screening specific to the field's meaning, and monitor the age of the last successful remote readback rather than the timer's enabled state alone.
