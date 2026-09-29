@@ -112,7 +112,12 @@ public class WorldsCommandHandler {
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
       return RealmBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot;
+    try {
+      catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
     if (selection instanceof WorldSelectorResolution.Invalid) {
@@ -571,7 +576,13 @@ public class WorldsCommandHandler {
     } catch (NumberFormatException ex) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
-    if (!worldCatalog.hasValidPublicProductionRealm(tenantId)) {
+    boolean hasPublicProductionRealm;
+    try {
+      hasPublicProductionRealm = worldCatalog.hasValidPublicProductionRealm(tenantId);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (!hasPublicProductionRealm) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     String requestId = joinScope.requestId();
@@ -695,7 +706,13 @@ public class WorldsCommandHandler {
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
       return CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    GameplayWorldCatalog.DiscoverySnapshot catalogSnapshot;
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog;
+    try {
+      catalogSnapshot = worldCatalog.readDiscoverySnapshot();
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
     if (selection instanceof WorldSelectorResolution.Invalid) {
@@ -708,8 +725,11 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
-    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
-        worldCatalog.readRealmDiscoverySnapshot(world);
+    try {
+      currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
     RealmSelectorResolution realmSelection =
         resolveLobbyRealm(sessionContext, world, realmSelector, currentRealmCatalog);
     if (realmSelection instanceof RealmSelectorResolution.Unavailable) {
@@ -734,9 +754,15 @@ public class WorldsCommandHandler {
     }
 
     GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
+    boolean currentPointerMatches;
+    try {
+      currentPointerMatches = worldCatalog.matchesCurrentAdmissionPointer(world, realm);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
     if (!worldCatalog.hasValidPublicProductionRealm(catalogSnapshot, world)
         || !hasCompleteSelectedRealmPointerEvidence(realm)
-        || !worldCatalog.matchesCurrentAdmissionPointer(world, realm)) {
+        || !currentPointerMatches) {
       return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
 

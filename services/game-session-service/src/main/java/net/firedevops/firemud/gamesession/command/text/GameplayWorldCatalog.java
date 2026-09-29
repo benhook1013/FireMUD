@@ -249,9 +249,9 @@ public final class GameplayWorldCatalog {
       return resolveWorld(selector, visibleWorlds, visibleWorlds)
           .filter(world -> hasValidPublicProductionRealm(world, catalogState));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
     if (pointers == null) {
-      throw new AuthorityPointerUnavailableException(
+      throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
@@ -288,9 +288,11 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return visibleRealms(world).stream()
-        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    List<RealmView> matches =
+        visibleRealms(world).stream()
+            .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   // Admission may resolve hidden realms, but callers must still perform membership and grant
@@ -300,10 +302,12 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return world.realms().stream()
-        .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
-        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    List<RealmView> matches =
+        world.realms().stream()
+            .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
+            .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   boolean hasRealmForAdmission(WorldView world, String selector) {
@@ -594,9 +598,9 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return visibleWorlds();
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
     if (pointers == null) {
-      throw new AuthorityPointerUnavailableException(
+      throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
@@ -623,9 +627,9 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm identity is unavailable");
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
     if (pointers == null) {
-      throw new AuthorityPointerUnavailableException(
+      throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
@@ -662,7 +666,7 @@ public final class GameplayWorldCatalog {
       return false;
     }
     if (authorityPointerSupplier != null) {
-      List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+      List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
       if (pointers == null
           || pointers.stream().anyMatch(pointer -> !hasCompleteAuthorityPointer(pointer))) {
         return false;
@@ -786,9 +790,9 @@ public final class GameplayWorldCatalog {
       List<WorldView> worlds = normalizeWorlds(worldSupplier.get());
       return new CatalogState(worlds, publicProductionCounts(worlds));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
     if (pointers == null) {
-      throw new AuthorityPointerUnavailableException(
+      throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
     return catalogStateFromPointers(pointers);
@@ -797,6 +801,26 @@ public final class GameplayWorldCatalog {
   private static CatalogState catalogStateFromPointers(
       List<GameplayAdmissionPointerSnapshot> pointers) {
     return new CatalogState(toWorlds(pointers), publicProductionCountsFromPointers(pointers));
+  }
+
+  private List<GameplayAdmissionPointerSnapshot> readAuthorityPointers() {
+    if (authorityPointerSupplier == null) {
+      throw new AuthorityPointerReadUnavailableException(
+          "Authoritative gameplay pointer list is unavailable");
+    }
+    try {
+      List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+      if (pointers == null) {
+        throw new AuthorityPointerReadUnavailableException(
+            "Authoritative gameplay pointer list is unavailable");
+      }
+      return pointers;
+    } catch (AuthorityPointerReadUnavailableException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw new AuthorityPointerReadUnavailableException(
+          "Authoritative gameplay pointer list is unavailable", ex);
+    }
   }
 
   private Map<Long, Long> publicProductionCounts(List<WorldView> worlds) {
@@ -865,7 +889,8 @@ public final class GameplayWorldCatalog {
       world.tenantIds.add(pointer.tenantId());
       world
           .realmsBySlug
-          .computeIfAbsent(pointer.realmSlug(), ignored -> new ArrayList<>())
+          .computeIfAbsent(
+              pointer.realmSlug().toLowerCase(Locale.ROOT), ignored -> new ArrayList<>())
           .add(pointer);
     }
     return normalizeWorlds(
@@ -913,9 +938,22 @@ public final class GameplayWorldCatalog {
         && !pointer.characterCreationPolicy().isBlank();
   }
 
-  public static final class AuthorityPointerUnavailableException extends RuntimeException {
+  public static class AuthorityPointerUnavailableException extends RuntimeException {
     public AuthorityPointerUnavailableException(String message) {
       super(message);
+    }
+  }
+
+  /** Indicates the authority read itself failed, distinct from malformed or ambiguous data. */
+  public static final class AuthorityPointerReadUnavailableException
+      extends AuthorityPointerUnavailableException {
+    public AuthorityPointerReadUnavailableException(String message) {
+      super(message);
+    }
+
+    public AuthorityPointerReadUnavailableException(String message, RuntimeException cause) {
+      super(message);
+      initCause(cause);
     }
   }
 

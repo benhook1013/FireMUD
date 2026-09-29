@@ -1585,6 +1585,52 @@ class WorldsCommandHandlerTest {
     Mockito.verifyNoInteractions(entityManagementClient);
   }
 
+  @Test
+  void directRealmJoinAndCharacterCommandsMapPointerReadOutageWithoutAccountOrEntityCalls() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AtomicReference<Boolean> unavailable = new AtomicReference<>(false);
+    Mockito.when(authorityService.listPointers())
+        .thenAnswer(
+            invocation -> {
+              if (unavailable.get()) {
+                throw new IllegalStateException("pointer authority unavailable");
+              }
+              return List.of(authorityPointer("demo", "production", 22L, 1L, true));
+            });
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope-a")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            new GameplayWorldCatalog(authorityService),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    Mockito.clearInvocations(accountClient, entityManagementClient);
+    unavailable.set(true);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("AUTH_UNAVAILABLE"));
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("AUTH_UNAVAILABLE"));
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("AUTH_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+
+    Mockito.doReturn(null).when(authorityService).listPointers();
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("AUTH_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
   private WorldsCommandHandler authenticatedHandler(
       GameplayCatalogProperties properties, AccountClient accountClient) {
     return new WorldsCommandHandler(

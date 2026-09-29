@@ -180,17 +180,17 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
+    String sessionId = resolveTransportSessionId(session);
+    if (!StringUtils.hasText(sessionId)) {
+      session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
+      session.close(CloseStatus.BAD_DATA);
+      return;
+    }
     TextCommand command = parser.parse(message.getPayload());
     try (CombinedLoggingContext ignored =
         command.type() == TextCommandType.LOGOUT
             ? openRuntimeLoggingContext(session)
             : openLoggingContext(session)) {
-      String sessionId = resolveTransportSessionId(session);
-      if (!StringUtils.hasText(sessionId)) {
-        session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
-        session.close(CloseStatus.BAD_DATA);
-        return;
-      }
       boolean requiresSoloTick = parseSoloTick(session);
       if (command.type() == TextCommandType.NOOP) {
         return;

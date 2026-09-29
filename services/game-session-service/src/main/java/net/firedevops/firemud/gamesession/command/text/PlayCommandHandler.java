@@ -178,8 +178,20 @@ public class PlayCommandHandler {
       }
 
       ResolvedPlaySelection requestedSelection = maybeSelection.orElseThrow();
-      GameplayWorldCatalog.DiscoverySnapshot currentCatalog =
-          gameplayWorldCatalog.readDiscoverySnapshot();
+      GameplayWorldCatalog.DiscoverySnapshot currentCatalog;
+      try {
+        currentCatalog = gameplayWorldCatalog.readDiscoverySnapshot();
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return failure(
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+            "error.play.authority-unavailable",
+            Map.of(),
+            tenantTag,
+            null,
+            null,
+            ex);
+      }
       WorldSelectorResolution worldSelection =
           resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);
       if (worldSelection instanceof WorldSelectorResolution.Unavailable) {
@@ -316,7 +328,15 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
-      if (!gameplayWorldCatalog.matchesCurrentAdmissionPointer(selectedWorld, selectedRealm)) {
+      boolean currentPointerMatches;
+      try {
+        currentPointerMatches =
+            gameplayWorldCatalog.matchesCurrentAdmissionPointer(selectedWorld, selectedRealm);
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return admissionPointerUnavailableFailure(
+            selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
+      }
+      if (!currentPointerMatches) {
         return admissionPointerUnavailableFailure(
             selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
       }

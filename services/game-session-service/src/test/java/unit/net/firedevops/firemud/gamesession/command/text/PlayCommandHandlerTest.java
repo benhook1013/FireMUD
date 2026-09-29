@@ -474,6 +474,46 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playMapsPointerAuthorityReadFailureBeforeAccountOrEntityAdmissionReads() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authorityService.listPointers()).thenThrow(new IllegalStateException("authority down"));
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authorityService),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @Test
   void playRejectsModerationPolicyDeniedAdmission() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");

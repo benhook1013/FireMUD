@@ -68,6 +68,35 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void visibleWorldsTreatsRealmSlugCaseCollisionsAsAmbiguous() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
+                pointer("demo", "Demo World", "PRODUCTION", "Other Live Realm", 1L, 12L, 8L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
+    assertThat(catalog.publicProductionRealmCardinality(1L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
+  }
+
+  @Test
+  void pointerReadFailureIsDistinctFromMalformedOrAmbiguousAuthority() {
+    when(authorityService.listPointers())
+        .thenThrow(new IllegalStateException("authority down"))
+        .thenReturn(null);
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::readDiscoverySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(catalog::readDiscoverySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
   void reverseRuntimeLookupFailsClosedWhenMultipleVisibleRealmsShareRuntimeTarget() {
     when(authorityService.listPointers())
         .thenReturn(
