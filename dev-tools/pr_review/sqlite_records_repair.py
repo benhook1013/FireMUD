@@ -15,7 +15,6 @@ origin-link contract.
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import hashlib
 import json
 import os
@@ -36,12 +35,6 @@ _PROVIDER_ID = re.compile(r"^(?:review|trigger|run):[A-Za-z0-9._-]{1,80}$")
 
 class SqliteRecordsRepairError(ValueError):
     """Raised when source evidence or its attribution is not safe to repair."""
-
-
-def _checkpoint_fingerprint(checkpoint: evidence.Checkpoint) -> str:
-    value = dataclasses.asdict(checkpoint)
-    encoded = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _validate_request(
@@ -97,7 +90,7 @@ def _validate_request(
         ):
             raise SqliteRecordsRepairError("checkpoint routed count is invalid")
 
-        fingerprint = _checkpoint_fingerprint(checkpoint)
+        fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
         prior = by_comment.get(comment_id)
         if prior is not None:
             if prior[0] != fingerprint:
@@ -326,141 +319,33 @@ def _artifact_text(value: Any) -> str:
 
 def _capture_artifacts(
     *,
-    repo: str,
-    pr_number: int,
     checkpoint: evidence.Checkpoint,
-    common: Path | None,
     imported: Mapping[str, Any],
 ) -> dict[str, str]:
     """Collect the validated source capture as bounded imported artifacts."""
 
-    fingerprint = _checkpoint_fingerprint(checkpoint)
     supplied = imported.get("archive_artifacts")
-    if supplied is not None:
-        if not isinstance(supplied, Mapping) or any(
-            not isinstance(kind, str) or not isinstance(content, str)
-            for kind, content in supplied.items()
-        ):
-            raise SqliteRecordsRepairError("canonical importer returned malformed archive artifacts")
-        artifacts = dict(supplied)
-        provider_id = _provider_id(checkpoint, dict(imported))
-        allowed = (
-            {"cli_events", "cli_raw_output", "cli_diagnostic", "metadata"}
-            if checkpoint.type == "CLI"
-            else {"hosted_review", "hosted_comments", "metadata"}
-        )
-        if (
-            not artifacts
-            or set(artifacts) - allowed
-            or "metadata" not in artifacts
-            or (checkpoint.type == "CLI" and "cli_events" not in artifacts)
-            or (
-                checkpoint.type == "Hosted"
-                and "hosted_comments" not in artifacts
-            )
-            or (
-                checkpoint.type == "Hosted"
-                and provider_id.startswith("review:")
-                and "hosted_review" not in artifacts
-            )
-        ):
-            raise SqliteRecordsRepairError("canonical importer returned incomplete provider archive artifacts")
-        return artifacts
-
-    if checkpoint.type == "CLI":
-        capture = evidence.load_cli_capture(checkpoint, repo, pr_number, common)
-        if not capture.source_identity:
-            raise SqliteRecordsRepairError("validated CLI capture has no exact source directory")
-        directory = Path(capture.source_identity)
-        stdout = _bounded_capture_text(directory, "stdout", 8 * 1024 * 1024, required=True)
-        legacy_metadata = _bounded_capture_text(directory, "metadata", 128 * 1024, required=True)
-        metadata_json = _bounded_capture_text(directory, "metadata.json", 128 * 1024)
-        exit_status = _bounded_capture_text(directory, "exit-status", 64, required=True)
-        stderr = _bounded_capture_text(directory, "stderr", 128 * 1024)
-        duration = _bounded_capture_text(directory, "review-duration-seconds", 64)
-        decisions = _bounded_capture_text(directory, "decisions.tsv", 128 * 1024)
-        rejections = _bounded_capture_text(directory, "rejections.tsv", 128 * 1024)
-        if stdout is None or legacy_metadata is None or exit_status is None:
-            raise SqliteRecordsRepairError("validated CLI capture is missing a required artifact")
-        try:
-            parsed_metadata: Any = json.loads(metadata_json) if metadata_json is not None else None
-        except json.JSONDecodeError as exc:
-            raise SqliteRecordsRepairError("CLI metadata.json is malformed") from exc
-        metadata_artifact = {
-            "capture_format": "firemud-cli-capture/v1",
-            "run_id": checkpoint.run_id,
-            "repository": repo.casefold(),
-            "pull_request": pr_number,
-            "checkpoint": checkpoint.as_json(),
-            "checkpoint_fingerprint": fingerprint,
-            "metadata_json": parsed_metadata,
-            "metadata_json_sha256": (
-                hashlib.sha256(metadata_json.encode("utf-8")).hexdigest()
-                if metadata_json is not None
-                else None
-            ),
-            "legacy_metadata_text": legacy_metadata if metadata_json is None else None,
-            "legacy_metadata_sha256": hashlib.sha256(legacy_metadata.encode("utf-8")).hexdigest(),
-            "exit_status": exit_status,
-            "review_duration_seconds": duration,
-            "decisions_tsv": decisions,
-            "rejections_tsv": rejections,
-            "capture_source_directory": directory.name,
-        }
-        artifacts = {
-            "cli_events": stdout,
-            "metadata": _artifact_text(metadata_artifact),
-        }
-        if stderr is not None:
-            artifacts["cli_diagnostic"] = stderr
-        return artifacts
-
-    review_id = checkpoint.hosted_review_id
-    if review_id is None:
-        raise SqliteRecordsRepairError(
-            "canonical Hosted import did not expose a review ID for its capture archive"
-        )
-    capture = evidence.load_hosted_capture(repo, pr_number, review_id, common)
-    candidates = evidence._hosted_snapshot_candidates(repo, pr_number, review_id, common)
-    existing_paths = list(dict.fromkeys(
-        path.resolve() for path in candidates if path.is_file() and not path.is_symlink()
-    ))
-    if len(existing_paths) != 1:
-        raise SqliteRecordsRepairError(
-            "Hosted capture archive is missing or has multiple candidate snapshots"
-        )
-    snapshot_path = existing_paths[0]
-    snapshot_text = _bounded_capture_text(snapshot_path.parent, snapshot_path.name, 12 * 1024 * 1024, required=True)
-    if snapshot_text is None:
-        raise SqliteRecordsRepairError("Hosted capture snapshot is missing")
-    try:
-        snapshot = json.loads(snapshot_text)
-    except json.JSONDecodeError as exc:
-        raise SqliteRecordsRepairError("Hosted capture snapshot is malformed") from exc
-    if not isinstance(snapshot, dict):
-        raise SqliteRecordsRepairError("Hosted capture snapshot is not an object")
-    decisions_text = _bounded_capture_text(snapshot_path.parent, "decisions.tsv", 128 * 1024)
-    metadata_artifact = {
-        "capture_format": "firemud-hosted-capture/v1",
-        "repository": repo.casefold(),
-        "pull_request": pr_number,
-        "review_id": review_id,
-        "checkpoint": checkpoint.as_json(),
-        "checkpoint_fingerprint": fingerprint,
-        "snapshot_sha256": hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest(),
-        "decision_file_present": capture.decision_file_present,
-        "decisions_tsv": decisions_text,
-        "decisions": {
-            str(key): {"disposition": value[0], "reason": value[1]}
-            for key, value in sorted(capture.decisions.items())
-        },
-        "unlinked_decisions": capture.unlinked_decisions,
-    }
-    return {
-        "hosted_review": _artifact_text(snapshot.get("review")),
-        "hosted_comments": _artifact_text(snapshot.get("comments")),
-        "metadata": _artifact_text(metadata_artifact),
-    }
+    if not isinstance(supplied, Mapping):
+        raise SqliteRecordsRepairError("canonical importer omitted archive artifacts")
+    if any(not isinstance(kind, str) or not isinstance(content, str) for kind, content in supplied.items()):
+        raise SqliteRecordsRepairError("canonical importer returned malformed archive artifacts")
+    artifacts = dict(supplied)
+    provider_id = _provider_id(checkpoint, dict(imported))
+    allowed = (
+        {"cli_events", "cli_raw_output", "cli_diagnostic", "metadata"}
+        if checkpoint.type == "CLI"
+        else {"hosted_review", "hosted_comments", "metadata"}
+    )
+    if (
+        not artifacts
+        or set(artifacts) - allowed
+        or "metadata" not in artifacts
+        or (checkpoint.type == "CLI" and "cli_events" not in artifacts)
+        or (checkpoint.type == "Hosted" and "hosted_comments" not in artifacts)
+        or (checkpoint.type == "Hosted" and provider_id.startswith("review:") and "hosted_review" not in artifacts)
+    ):
+        raise SqliteRecordsRepairError("canonical importer returned incomplete provider archive artifacts")
+    return artifacts
 
 
 def _archive_artifacts(records: SqliteReviewRecords, run_id: str, artifacts: Mapping[str, str]) -> Any:
@@ -532,7 +417,7 @@ def _preview(
                     f"({other_comment}, {checkpoint.comment_id})"
                 )
             provider_origins[provider_id] = checkpoint.comment_id or 0
-            fingerprint = _checkpoint_fingerprint(checkpoint)
+            fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
             _link_origin(
                 clone,
                 repo=repo,
@@ -543,10 +428,7 @@ def _preview(
                 run_id=imported["run_id"],
             )
             artifacts = _capture_artifacts(
-                repo=repo,
-                pr_number=pr_number,
                 checkpoint=checkpoint,
-                common=common,
                 imported=imported,
             )
             _archive_artifacts(clone, imported["run_id"], artifacts)
@@ -660,12 +542,9 @@ def repair_provider_checkpoints(
                 summary_dispositions=summary_dispositions,
                 hosted_payload=hosted_payload,
             )
-            fingerprint = _checkpoint_fingerprint(checkpoint)
+            fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
             artifacts = _capture_artifacts(
-                repo=repo,
-                pr_number=pr_number,
                 checkpoint=checkpoint,
-                common=common,
                 imported=imported,
             )
             item = {
@@ -774,7 +653,7 @@ def archive_incomplete_checkpoint(
             "created_at": item.get("createdAt"), "updated_at": item.get("updatedAt"),
             "author_login": ((item.get("author") or {}).get("login")),
         }])
-        if len(parsed) != 1 or _checkpoint_fingerprint(parsed[0]) != _checkpoint_fingerprint(checkpoint):
+        if len(parsed) != 1 or sqlite_provider_imports._checkpoint_fingerprint(parsed[0]) != sqlite_provider_imports._checkpoint_fingerprint(checkpoint):
             raise SqliteRecordsRepairError("public Hosted checkpoint changed during historical repair")
         linked_reviews = [
             review for review in pull["reviews"]["nodes"]
@@ -802,7 +681,7 @@ def archive_incomplete_checkpoint(
             if stderr is not None:
                 artifacts["cli_diagnostic"] = stderr
 
-    fingerprint = _checkpoint_fingerprint(checkpoint)
+    fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
     target = records
     with tempfile.TemporaryDirectory(prefix="pr-review-gap-preview-") as scratch:
         clone = _clone_records(records, Path(scratch) / "records.sqlite3")

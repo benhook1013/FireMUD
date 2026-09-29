@@ -480,7 +480,7 @@ def _import_reply_only_hosted_checkpoint(
         trigger_comment = next(
             (item for item in public_comments if github.immutable_database_id(item) == trigger_id), None
         )
-        trigger_author = (trigger_comment or {}).get("author", {}).get("login")
+        trigger_author = ((trigger_comment or {}).get("author") or {}).get("login")
         if (
             not isinstance(trigger_id, int)
             or isinstance(trigger_id, bool)

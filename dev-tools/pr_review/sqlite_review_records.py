@@ -379,6 +379,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("attempt channel is invalid")
         if candidate_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha):
             raise ReviewRecordsError("attempt candidate SHA is invalid")
+        started_at_was_supplied = started_at is not None
         started_at = _timestamp(started_at, "attempt start")
         metadata_json, _, redactions = _archive_artifact("metadata", _json(dict(metadata or {})))
         if redactions:
@@ -391,7 +392,12 @@ class SqliteReviewRecords:
             ).fetchone()
             expected = (source_pr, channel, candidate_sha, "started", started_at, metadata_json)
             if existing is not None:
-                if tuple(existing) != expected:
+                existing_content = tuple(existing)
+                expected_content = expected
+                if not started_at_was_supplied:
+                    existing_content = existing_content[:4] + existing_content[5:]
+                    expected_content = expected_content[:4] + expected_content[5:]
+                if existing_content != expected_content:
                     raise ReviewRecordsError("attempt ID already has different content or is terminal")
                 return {"attempt_id": attempt_id, "state": "started", "idempotent_replay": True}
             connection.execute(
@@ -421,6 +427,7 @@ class SqliteReviewRecords:
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         if state not in {"completed", "failed", "rate_limited", "timed_out", "ambiguous"}:
             raise ReviewRecordsError("terminal attempt state is invalid")
+        finished_at_was_supplied = finished_at is not None
         finished_at = _timestamp(finished_at, "attempt finish")
         if duration_seconds is not None and (type(duration_seconds) is not int or duration_seconds < 0):
             raise ReviewRecordsError("attempt duration is invalid")
@@ -454,7 +461,12 @@ class SqliteReviewRecords:
                         "WHERE attempt_id = ?", (attempt_id,)
                     )
                 }
-                if tuple(existing) != expected or stored != archived:
+                existing_content = tuple(existing)
+                expected_content = expected
+                if not finished_at_was_supplied:
+                    existing_content = existing_content[:1] + existing_content[2:]
+                    expected_content = expected_content[:1] + expected_content[2:]
+                if existing_content != expected_content or stored != archived:
                     raise ReviewRecordsError("terminal attempt replay has different content")
                 return {"attempt_id": attempt_id, "state": state, "idempotent_replay": True}
             connection.execute(
@@ -875,48 +887,55 @@ class SqliteReviewRecords:
         actor = _bounded_text(actor, "actor", maximum=100)
         reason = _bounded_text(reason, "correction reason", maximum=300)
         decided_at = _timestamp(decided_at, "correction time")
-        with self._write_connection() as connection:
-            row = connection.execute(
-                "SELECT o.finding_id, o.disposition, r.finalized FROM finding_observations o "
-                "JOIN findings f USING (finding_id) JOIN review_runs r USING (run_id) "
-                "WHERE o.run_id = ? AND f.source_finding_key = ?",
-                (run_id, source_finding_key),
-            ).fetchone()
-            if row is None:
-                raise ReviewRecordsError("source finding was not observed in that run")
-            finding_id, old_decision, finalized = row
-            if old_decision not in {"accepted", "rejected"}:
-                raise ReviewRecordsError("routed and unresolved source findings need owner adjudication")
-            initial = connection.execute(
-                "SELECT decision_id FROM decisions WHERE decision_scope = 'source' "
-                "AND run_id = ? AND finding_id = ?",
-                (run_id, finding_id),
-            ).fetchone()
-            latest = connection.execute(
-                "SELECT correction_id FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
-                "ORDER BY sequence DESC LIMIT 1", (run_id, finding_id),
-            ).fetchone()
-            if initial is None or supersedes_id != (latest or initial)[0]:
-                raise ReviewRecordsError("correction does not name the latest exact decision")
-            if connection.execute(
-                "SELECT 1 FROM source_decision_corrections WHERE correction_id = ?", (correction_id,)
-            ).fetchone():
-                raise ReviewRecordsError("correction ID is already used")
-            connection.execute(
-                "INSERT INTO source_decision_corrections "
-                "(correction_id, supersedes_id, run_id, finding_id, decision, target_pr, actor, reason, decided_at) "
-                "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
-                (correction_id, supersedes_id, run_id, finding_id, decision, actor, reason, decided_at),
-            )
-            connection.execute(
-                "UPDATE finding_observations SET disposition = ? WHERE run_id = ? AND finding_id = ?",
-                (decision, run_id, finding_id),
-            )
-            counts = self._current_run_counts(connection, run_id)
-            connection.execute(
-                "UPDATE review_runs SET found_count = ?, accepted_count = ?, routed_count = ? WHERE run_id = ?",
-                (*counts, run_id),
-            )
+        try:
+            with self._write_connection() as connection:
+                row = connection.execute(
+                    "SELECT o.finding_id, o.disposition, r.finalized FROM finding_observations o "
+                    "JOIN findings f USING (finding_id) JOIN review_runs r USING (run_id) "
+                    "WHERE o.run_id = ? AND f.source_finding_key = ?",
+                    (run_id, source_finding_key),
+                ).fetchone()
+                if row is None:
+                    raise ReviewRecordsError("source finding was not observed in that run")
+                finding_id, old_decision, finalized = row
+                if old_decision not in {"accepted", "rejected"}:
+                    raise ReviewRecordsError("routed and unresolved source findings need owner adjudication")
+                initial = connection.execute(
+                    "SELECT decision_id FROM decisions WHERE decision_scope = 'source' "
+                    "AND run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone()
+                latest = connection.execute(
+                    "SELECT correction_id FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
+                    "ORDER BY sequence DESC LIMIT 1", (run_id, finding_id),
+                ).fetchone()
+                if initial is None or supersedes_id != (latest or initial)[0]:
+                    raise ReviewRecordsError("correction does not name the latest exact decision")
+                if connection.execute(
+                    "SELECT 1 FROM source_decision_corrections WHERE correction_id = ?", (correction_id,)
+                ).fetchone():
+                    raise ReviewRecordsError("correction ID is already used")
+                connection.execute(
+                    "INSERT INTO source_decision_corrections "
+                    "(correction_id, supersedes_id, run_id, finding_id, decision, target_pr, actor, reason, decided_at) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                    (correction_id, supersedes_id, run_id, finding_id, decision, actor, reason, decided_at),
+                )
+                connection.execute(
+                    "UPDATE finding_observations SET disposition = ? WHERE run_id = ? AND finding_id = ?",
+                    (decision, run_id, finding_id),
+                )
+                counts = self._current_run_counts(connection, run_id)
+                connection.execute(
+                    "UPDATE review_runs SET found_count = ?, accepted_count = ?, routed_count = ? WHERE run_id = ?",
+                    (*counts, run_id),
+                )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("source decision conflicts with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record SQLite source decision") from exc
         return {
             "correction_id": correction_id, "run_id": run_id, "prior_decision_id": supersedes_id,
             "decision": decision, "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},

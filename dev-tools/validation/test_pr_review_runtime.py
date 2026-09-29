@@ -3699,22 +3699,59 @@ class RuntimeTest(unittest.TestCase):
             posting["sqlite_attempt_id"] = attempt_id
             path.write_text(json.dumps(posting), encoding="utf-8")
             args = self._prepost_recovery_args()
+            first_live_head = "d" * 40
+            first_payload = self._payload()
+            first_payload["data"]["repository"]["pullRequest"]["headRefOid"] = first_live_head
             with (
                 patch.object(hosted, "_finish_recovered_attempt", side_effect=OSError("temporary SQL failure")),
                 self.assertRaisesRegex(OSError, "temporary SQL failure"),
             ):
-                self._dispatch_prepost_recovery(path, args)
+                self._dispatch_prepost_recovery(path, args, first_payload)
             audit_path = next(path.parent.glob("prepost-abandoned-*.json"))
             original_audit = audit_path.read_bytes()
             self.assertTrue(path.exists())
             self.assertEqual(records.attempt(attempt_id)["state"], "started")
 
-            result, status = self._dispatch_prepost_recovery(path, args)
+            retry_payload = self._payload()
+            retry_payload["data"]["repository"]["pullRequest"]["headRefOid"] = "e" * 40
+            result, status = self._dispatch_prepost_recovery(path, args, retry_payload)
             self.assertEqual(status, 0)
             self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertEqual(result["current_head_sha"], "e" * 40)
             self.assertFalse(path.exists())
             self.assertEqual(audit_path.read_bytes(), original_audit)
+            self.assertEqual(json.loads(original_audit)["recovery"]["live_head_sha"], first_live_head)
             self.assertEqual(records.attempt(attempt_id)["state"], "failed")
+
+    def test_prepost_recovery_rejects_a_malformed_archived_live_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-invalid-audit-head"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = attempt_id
+            path.write_text(json.dumps(posting), encoding="utf-8")
+            with (
+                patch.object(hosted, "_finish_recovered_attempt", side_effect=OSError("temporary SQL failure")),
+                self.assertRaisesRegex(OSError, "temporary SQL failure"),
+            ):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            audit_path = next(path.parent.glob("prepost-abandoned-*.json"))
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit["recovery"]["live_head_sha"] = "not-a-sha"
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "existing pre-POST recovery audit conflicts with the reservation"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertTrue(path.exists())
+            self.assertEqual(records.attempt(attempt_id)["state"], "started")
 
     def test_confirmed_prepost_recovery_allows_optional_sql_start_to_be_absent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

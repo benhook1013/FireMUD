@@ -1282,8 +1282,18 @@ def _matching_prepost_audit(path: Path, record: dict[str, Any], expected: dict[s
     if (
         archived_record != expected_record
         or not isinstance(archived_recovery, dict)
-        or {key: value for key, value in archived_recovery.items() if key not in {"at", "reason"}}
-        != {key: value for key, value in expected_recovery.items() if key not in {"at", "reason"}}
+        or not isinstance(archived_recovery.get("live_head_sha"), str)
+        or not EXACT_SHA.fullmatch(archived_recovery["live_head_sha"])
+        or {
+            key: value
+            for key, value in archived_recovery.items()
+            if key not in {"at", "reason", "live_head_sha"}
+        }
+        != {
+            key: value
+            for key, value in expected_recovery.items()
+            if key not in {"at", "reason", "live_head_sha"}
+        }
         or parse_timestamp(archived_recovery.get("at")) is None
         or not isinstance(archived_recovery.get("reason"), str)
         or not archived_recovery["reason"]

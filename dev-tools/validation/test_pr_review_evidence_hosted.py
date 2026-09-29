@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,8 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as cli_module
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import ReviewResult
+from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_store import SqliteStateStore
 
 REPO = "owner/repo"
 PR = 42
@@ -480,6 +483,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         rejection_text: str | None = None,
         accepted: int = 0,
         routed: int | None = None,
+        records: SqliteReviewRecords | None = None,
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -514,7 +518,46 @@ class GithubAndEvidenceTests(unittest.TestCase):
             None,
             routed=routed,
         )
-        return evidence.load_cli_capture(checkpoint, REPO, PR, common)
+        return evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_historical_cli_decisions_fall_back_when_records_schema_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            capture = self._cli_capture(
+                common,
+                decision_text="1\trejected\tpre-cutover decision\n",
+                records=records,
+            )
+            self.assertEqual(capture.decisions, {1: ("rejected", "pre-cutover decision")})
+            decision_path = common / "coderabbit-review-logs" / "run.Decision" / "decisions.tsv"
+            decision_path.write_text("malformed readable decision\n", encoding="utf-8")
+            checkpoint = evidence.Checkpoint(
+                1, "2026-09-23T00:00:00Z", "CLI", 1, 0, HEAD[:12], 1,
+                False, None, "run.Decision", None,
+            )
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "malformed at line 1"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_cli_capture_reports_records_schema_mismatch_with_migration_guidance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
+                )
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                self._cli_capture(
+                    common,
+                    decision_text="1\trejected\tpre-cutover decision\n",
+                    records=records,
+                )
 
     def _hosted_capture_snapshot(self, common: Path) -> Path:
         review_id = 99

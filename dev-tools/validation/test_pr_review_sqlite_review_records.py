@@ -119,6 +119,79 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "different content"):
             self.records.finish_attempt("run.archive-1", **{**finish_args, "duration_seconds": 61})
 
+    def test_omitted_attempt_timestamps_are_ignored_only_for_exact_replays(self) -> None:
+        self.bootstrap()
+        attempt_id = "run.omitted-timestamps"
+        first_start = self.records.start_attempt(
+            attempt_id=attempt_id,
+            source_pr=2890,
+            channel="cli",
+            candidate_sha="a" * 40,
+            metadata={"published_head": "a" * 40},
+        )
+        self.assertFalse(first_start["idempotent_replay"])
+        stored_start = self.records.attempt(attempt_id)["started_at"]
+        self.assertTrue(
+            self.records.start_attempt(
+                attempt_id=attempt_id,
+                source_pr=2890,
+                channel="cli",
+                candidate_sha="a" * 40,
+                metadata={"published_head": "a" * 40},
+            )["idempotent_replay"]
+        )
+        self.assertEqual(self.records.attempt(attempt_id)["started_at"], stored_start)
+        with self.assertRaisesRegex(ReviewRecordsError, "different content or is terminal"):
+            self.records.start_attempt(
+                attempt_id=attempt_id,
+                source_pr=2890,
+                channel="cli",
+                candidate_sha="a" * 40,
+                started_at="2026-09-29T01:00:00Z",
+                metadata={"published_head": "a" * 40},
+            )
+
+        first_finish = self.records.finish_attempt(
+            attempt_id, state="failed", diagnostic="provider closed"
+        )
+        self.assertFalse(first_finish["idempotent_replay"])
+        stored_finish = self.records.attempt(attempt_id)["finished_at"]
+        self.assertTrue(
+            self.records.finish_attempt(
+                attempt_id, state="failed", diagnostic="provider closed"
+            )["idempotent_replay"]
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "terminal attempt replay has different content"):
+            self.records.finish_attempt(
+                attempt_id,
+                state="failed",
+                finished_at="2026-09-29T02:00:00Z",
+                diagnostic="provider closed",
+            )
+        self.assertEqual(self.records.attempt(attempt_id)["finished_at"], stored_finish)
+
+    def test_correct_source_decision_wraps_sqlite_write_failures(self) -> None:
+        self.bootstrap()
+        for error, message in (
+            (
+                sqlite3.IntegrityError("injected constraint failure"),
+                "source decision conflicts with existing immutable records",
+            ),
+            (sqlite3.OperationalError("injected write failure"), "cannot record SQLite source decision"),
+        ):
+            with self.subTest(error=type(error).__name__), patch.object(
+                self.records, "_write_connection", side_effect=error
+            ), self.assertRaisesRegex(ReviewRecordsError, message):
+                self.records.correct_source_decision(
+                    "run.correction-sql-error",
+                    "cli-run:run.correction-sql-error:finding:1",
+                    supersedes_id="original",
+                    correction_id="correction",
+                    decision="accepted",
+                    actor="reviewer",
+                    reason="corrected",
+                )
+
     def test_v4_upgrade_is_atomic_and_fences_older_writers(self) -> None:
         self.bootstrap()
         with sqlite3.connect(self.database) as connection:
@@ -163,7 +236,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.assertEqual(connection.execute(
                 "SELECT records_schema_version FROM review_records_metadata"
             ).fetchone()[0], 6)
-        with self.assertRaisesRegex(Exception, "requires writer build 4"):
+        with self.assertRaisesRegex(Exception, rf"requires writer build {WRITER_BUILD}\b"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
 
     def test_current_version_migration_repairs_controller_writer_fence(self) -> None:

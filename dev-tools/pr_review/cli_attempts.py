@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -156,6 +158,11 @@ def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, 
             recovery = _reconcile_successful_capture(records, directory)
         except (OSError, ValueError, UnicodeError, OverflowError):
             recovery = None
+        if recovery is None:
+            try:
+                recovery = _reconcile_failed_capture(records, directory)
+            except (OSError, ValueError, UnicodeError, OverflowError):
+                recovery = None
         if recovery is not None:
             action = recovery["action"]
             if action == "conflict":
@@ -203,6 +210,15 @@ def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, 
             existing = None
 
         if existing is not None:
+            if existing.get("source_pr") != pr or existing.get("channel") != "cli":
+                conflicts.append({"run_id": run_id, "reason": "attempt identity or source fingerprint conflicts"})
+                continue
+            if (
+                existing.get("state") in {"completed", "failed", "rate_limited", "timed_out", "ambiguous"}
+                and existing.get("metadata", {}).get("origin") != "legacy_private_capture"
+            ):
+                already_imported.append({"run_id": run_id, "pr": str(pr)})
+                continue
             if any(existing.get(key) != expected[key] for key in ("source_pr", "channel", "candidate_sha", "metadata")):
                 conflicts.append({"run_id": run_id, "reason": "attempt identity or source fingerprint conflicts"})
                 continue
@@ -367,6 +383,103 @@ def _reconcile_successful_capture(records: Any, directory: Path) -> dict[str, An
     return {"action": "recovered", "pr": capture["pr"]}
 
 
+def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] | None:
+    """Finish a native started attempt from its exact durable failed capture."""
+
+    try:
+        attempt = records.attempt(directory.name)
+    except ReviewRecordsError as error:
+        if str(error) == "review attempt does not exist":
+            return None
+        return {"action": "conflict", "pr": 0, "reason": "existing attempt could not be read"}
+    if attempt["state"] != "started" or attempt["channel"] != "cli":
+        return None
+
+    try:
+        metadata = _read_capture_json(directory / "metadata.json", MAX_METADATA_BYTES, "metadata")
+        if metadata.get("run_id") != directory.name or metadata.get("kind") != "cli":
+            return None
+        if metadata.get("capture_completion_marker") != "capture-complete":
+            return None
+        original_metadata = {
+            key: value for key, value in metadata.items()
+            if key not in {"duration_seconds", "exit_status", "timed_out"}
+        }
+        if original_metadata != attempt["metadata"]:
+            return None
+        pr = _capture_pr(metadata.get("pull_request"))
+        candidate_sha = metadata.get("candidate_sha")
+        if (
+            pr != attempt["source_pr"]
+            or candidate_sha != attempt["candidate_sha"]
+        ):
+            return None
+        marker = _read_capture_text(directory / "capture-complete", 128, "completion marker")
+        if marker != f"{directory.name}\n":
+            return None
+        exit_path = directory / "exit-status"
+        exit_text = _read_capture_text(exit_path, MAX_EXIT_STATUS_BYTES, "exit status").strip()
+        if exit_text == "0":
+            return None
+        if exit_text == "timeout":
+            state = "timed_out"
+            exit_status = None
+            if metadata.get("exit_status") is not None:
+                return None
+        elif re.fullmatch(r"-?[0-9]{1,9}", exit_text):
+            exit_status = int(exit_text)
+            if exit_status == 0 or metadata.get("exit_status") != exit_status:
+                return None
+            state = "failed"
+        else:
+            return None
+        if (state == "timed_out" and metadata.get("timed_out") is not True) or (
+            state != "timed_out" and metadata.get("timed_out") not in (None, False)
+        ):
+            return None
+        stderr = _read_diagnostic_prefix(directory / "stderr")
+        if metadata.get("duration_seconds") is not None:
+            duration_text = _read_capture_text(
+                directory / "review-duration-seconds", MAX_EXIT_STATUS_BYTES, "review duration"
+            ).strip()
+            if not re.fullmatch(r"[0-9]{1,9}", duration_text):
+                return None
+            duration = int(duration_text)
+            if metadata["duration_seconds"] != duration:
+                return None
+        else:
+            duration = None
+        finished_at = _capture_finished_at(exit_path)
+    except _UnrecordableCapture:
+        return None
+
+    if state != "timed_out" and "rate limit exceeded" in stderr.casefold():
+        state = "rate_limited"
+        summary = "CodeRabbit CLI was rate limited"
+    elif state == "timed_out":
+        summary = "CodeRabbit CLI timed out before a complete result"
+    else:
+        summary = "CodeRabbit CLI exited nonzero"
+    diagnostic, _ = _redact_archive_text(f"{summary}: {stderr}" if stderr else summary)
+    diagnostic = diagnostic[:1000].rstrip()
+    try:
+        records.finish_attempt(
+            directory.name,
+            state=state,
+            finished_at=finished_at,
+            duration_seconds=duration,
+            exit_status=exit_status,
+            diagnostic=diagnostic,
+        )
+    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+        return {
+            "action": "conflict",
+            "pr": attempt["source_pr"],
+            "reason": "failed capture could not finish the exact started attempt",
+        }
+    return {"action": "terminally_classified", "pr": attempt["source_pr"]}
+
+
 def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, Any]:
     metadata_path = directory / "metadata.json"
     stdout_path = directory / "stdout"
@@ -462,6 +575,24 @@ def _read_capture_text(path: Path, limit: int, description: str) -> str:
         return value.decode("utf-8")
     except UnicodeDecodeError as error:
         raise _UnrecordableCapture(f"capture {description} is not UTF-8") from error
+
+
+def _read_diagnostic_prefix(path: Path) -> str:
+    """Read only a safe, bounded stderr prefix; oversized evidence is truncated."""
+
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return ""
+        with os.fdopen(descriptor, "rb") as diagnostic_file:
+            descriptor = None
+            return diagnostic_file.read(MAX_STDERR_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _read_capture_json(path: Path, limit: int, description: str) -> dict[str, Any]:

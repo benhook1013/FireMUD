@@ -1,9 +1,11 @@
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -258,6 +260,175 @@ class ReviewRecordsCliTest(unittest.TestCase):
         history = SqliteReviewRecords(self.database).history(2883)
         self.assertEqual(len(history["attempts"]), 1)
         self.assertEqual(history["attempts"][0]["state"], "rate_limited")
+
+    def test_migrate_recognizes_matching_terminal_native_cli_attempt(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "9" * 32
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(json.dumps({"pull_request": 2884}), encoding="utf-8")
+        (capture / "exit-status").write_text("1\n", encoding="utf-8")
+        (capture / "stderr").write_text("Provider rejected the request", encoding="utf-8")
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2884,
+            channel="cli",
+            metadata={"source": "native-cli"},
+        )
+        records.finish_attempt(run_id, state="failed", diagnostic="native CLI failure")
+
+        code, response = self.invoke("migrate", "--database", str(self.database))
+
+        self.assertEqual(code, 0)
+        reconciliation = response["result"]["legacy_cli_attempts"]
+        self.assertEqual(reconciliation["imported"], [])
+        self.assertEqual(reconciliation["already_imported"], [{"run_id": run_id, "pr": "2884"}])
+        self.assertEqual(reconciliation["conflicts"], [])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["metadata"], {"source": "native-cli"})
+        self.assertEqual(attempt["state"], "failed")
+
+    def test_migrate_does_not_classify_native_attempt_with_mismatched_owner_or_channel(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        root = self.database.parent / "pr-review" / "runs"
+        records = SqliteReviewRecords(self.database)
+        mismatches = (("a", 2885, "cli"), ("b", 2884, "hosted"))
+        for marker, source_pr, channel in mismatches:
+            run_id = "run." + marker * 32
+            capture = root / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(json.dumps({"pull_request": 2884}), encoding="utf-8")
+            (capture / "exit-status").write_text("1\n", encoding="utf-8")
+            (capture / "stderr").write_text("Provider rejected the request", encoding="utf-8")
+            records.start_attempt(
+                attempt_id=run_id,
+                source_pr=source_pr,
+                channel=channel,
+                metadata={"source": "native-cli"},
+            )
+            records.finish_attempt(run_id, state="failed", diagnostic="native failure")
+
+        code, response = self.invoke("migrate", "--database", str(self.database))
+
+        self.assertEqual(code, 0)
+        reconciliation = response["result"]["legacy_cli_attempts"]
+        self.assertEqual(reconciliation["already_imported"], [])
+        self.assertEqual(reconciliation["imported"], [])
+        self.assertEqual(
+            {item["run_id"] for item in reconciliation["conflicts"]},
+            {"run." + "a" * 32, "run." + "b" * 32},
+        )
+
+    def test_migrate_finishes_native_started_attempt_from_exact_failed_capture(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "2" * 32
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "d" * 40,
+            "candidate_files": 3,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="d" * 40,
+            started_at="2026-09-29T01:00:00Z",
+            metadata=started_metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        final_metadata = {**started_metadata, "duration_seconds": 7, "exit_status": 23}
+        (capture / "metadata.json").write_text(json.dumps(final_metadata), encoding="utf-8")
+        (capture / "exit-status").write_text("23\n", encoding="utf-8")
+        (capture / "stderr").write_text(
+            "Rate limit exceeded; " + "diagnostic " * 1000,
+            encoding="utf-8",
+        )
+        (capture / "review-duration-seconds").write_text("7\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+        completed_epoch = 1_790_000_000
+        os.utime(capture / "exit-status", (completed_epoch, completed_epoch))
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
+        attempt = records.attempt(run_id)
+        attempt_summary = records.attempt_history(2885)[0]
+        expected_finished = datetime.fromtimestamp(completed_epoch, timezone.utc).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z")
+        self.assertEqual(attempt["finished_at"], expected_finished)
+        self.assertEqual(attempt["state"], "rate_limited")
+        self.assertEqual(attempt_summary["exit_status"], 23)
+        self.assertLessEqual(len(attempt_summary["diagnostic"]), 1000)
+        self.assertTrue(attempt_summary["diagnostic"].startswith("CodeRabbit CLI was rate limited:"))
+
+        beyond_prefix_id = "run." + "4" * 32
+        beyond_prefix_metadata = {**started_metadata, "run_id": beyond_prefix_id}
+        records.start_attempt(
+            attempt_id=beyond_prefix_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="d" * 40,
+            started_at="2026-09-29T01:00:00Z",
+            metadata=beyond_prefix_metadata,
+        )
+        beyond_prefix = self.database.parent / "pr-review" / "runs" / beyond_prefix_id
+        beyond_prefix.mkdir(parents=True)
+        (beyond_prefix / "metadata.json").write_text(
+            json.dumps({**beyond_prefix_metadata, "duration_seconds": 3, "exit_status": 1}),
+            encoding="utf-8",
+        )
+        (beyond_prefix / "exit-status").write_text("1\n", encoding="utf-8")
+        (beyond_prefix / "stderr").write_text(
+            "x" * cli_attempts.MAX_STDERR_BYTES + "Rate limit exceeded",
+            encoding="utf-8",
+        )
+        (beyond_prefix / "review-duration-seconds").write_text("3\n", encoding="utf-8")
+        (beyond_prefix / "capture-complete").write_text(f"{beyond_prefix_id}\n", encoding="utf-8")
+
+        cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(records.attempt(beyond_prefix_id)["state"], "failed")
+
+    def test_migrate_keeps_native_attempt_started_when_failure_capture_is_not_exact(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "3" * 32
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "d" * 40,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="d" * 40,
+            started_at="2026-09-29T01:00:00Z",
+            metadata=metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(
+            json.dumps({**metadata, "pull_request": 2886, "exit_status": 1, "duration_seconds": 2}),
+            encoding="utf-8",
+        )
+        (capture / "exit-status").write_text("1\n", encoding="utf-8")
+        (capture / "stderr").write_text("provider failed", encoding="utf-8")
+        (capture / "review-duration-seconds").write_text("2\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+
+        cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(records.attempt(run_id)["state"], "started")
 
     def test_failed_cli_attempt_reads_only_bounded_stderr_prefix_for_rate_limit_classification(self) -> None:
         root = self.database.parent / "pr-review" / "runs"

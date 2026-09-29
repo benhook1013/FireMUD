@@ -6,12 +6,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 import pr_review.evidence  # noqa: I001
 import pr_review.hosted
+import pr_review.runtime
 import pr_review.sqlite_provider_imports
 import pr_review.sqlite_review_records
 import pr_review.sqlite_store
@@ -214,7 +217,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         decisions_path.write_text("701\taccepted\tchanged decision reason\n", encoding="utf-8")
         with self.assertRaisesRegex(
             pr_review.sqlite_provider_imports.ProviderImportError,
-            "different immutable content|decision",
+            "^existing source decision conflicts with this completed import$",
         ):
             pr_review.sqlite_provider_imports.import_hosted_checkpoint(
                 self.records,
@@ -558,6 +561,41 @@ class SqliteProviderImportsTest(unittest.TestCase):
             hosted_payload=payload,
         )
         self.assertEqual(historical["provider_id"], "trigger:101")
+
+        payload["data"]["repository"]["pullRequest"]["headRefOid"] = HEAD
+        trigger_comment["author"] = None
+        terminal_state = SimpleNamespace(
+            state="completed",
+            terminal=True,
+            attributed=True,
+            head_sha=HEAD,
+            response_id=202,
+            duration_seconds=60,
+            as_dict=dict,
+        )
+        with (
+            patch.object(pr_review.hosted, "trigger_state", return_value=terminal_state),
+            patch.object(
+                pr_review.runtime.LiveEvidence,
+                "_hosted_zero_reply_proof",
+                return_value={},
+            ),
+            self.assertRaisesRegex(
+                pr_review.sqlite_provider_imports.ProviderImportError,
+                "Hosted checkpoint author does not match the exact external trigger author",
+            ),
+        ):
+            pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+                hosted_payload=payload,
+            )
+        trigger_comment["author"] = {"login": "ben"}
 
         response_comment["updatedAt"] = response_created
         with self.assertRaisesRegex(

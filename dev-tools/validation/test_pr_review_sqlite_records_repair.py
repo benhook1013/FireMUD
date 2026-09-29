@@ -202,7 +202,10 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             missing_reason="original capture is unavailable", common=self.common,
             dry_run=False,
         )
-        with self.assertRaisesRegex(Exception, "conflicts"):
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^historical gap conflicts with existing checkpoint evidence$",
+        ):
             archive_incomplete_checkpoint(
                 self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
                 missing_reason="different claim", common=self.common,
@@ -241,6 +244,41 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         for name, contents in cli_files.items():
             self.assertEqual(
                 (self.common / "coderabbit-review-logs" / "run.Repair1" / name).read_bytes(), contents
+            )
+
+    def test_repair_requires_canonical_importer_archive_artifacts(self) -> None:
+        checkpoint = self.checkpoint(
+            "CLI", "<!-- firemud-cli-run: run.RepairNoArchive -->", comment_id=12
+        )
+
+        def import_without_archive(records: SqliteReviewRecords, **kwargs: object) -> dict[str, object]:
+            checkpoint_arg = kwargs["checkpoint"]
+            assert isinstance(checkpoint_arg, evidence.Checkpoint)
+            result = records.import_completed_run(
+                run_id=checkpoint_arg.run_id or "",
+                source_pr=PR,
+                channel="cli",
+                findings=[],
+                source_decisions=[],
+                source_head=HEAD,
+                reviewer="CodeRabbit CLI",
+                scope="broad",
+                started_at=checkpoint_arg.created_at,
+                finished_at=checkpoint_arg.created_at,
+            )
+            return {**result, "provider_id": f"run:{checkpoint_arg.run_id}"}
+
+        with (
+            patch.object(sqlite_provider_imports, "import_cli_checkpoint", side_effect=import_without_archive),
+            self.assertRaisesRegex(SqliteRecordsRepairError, "omitted archive artifacts"),
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
             )
 
     def test_apply_archives_capture_and_origin_then_replays_exactly(self) -> None:
@@ -485,7 +523,8 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            SqliteRecordsRepairError, "accepted count|identity or counts|finding or decision"
+            SqliteRecordsRepairError,
+            "^CLI checkpoint accepted count does not match linked findings decisions$",
         ):
             repair_provider_checkpoints(
                 self.records,
@@ -507,7 +546,10 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         first = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->", comment_id=10)
         second = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->", comment_id=12)
 
-        with self.assertRaisesRegex(SqliteRecordsRepairError, "multiple checkpoint comments"):
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^provider identity review:700 is attributed by multiple checkpoint comments \\(10, 12\\)$",
+        ):
             repair_provider_checkpoints(
                 self.records,
                 repo=REPO,
@@ -536,7 +578,10 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             scope="broad",
         )
 
-        with self.assertRaisesRegex(SqliteRecordsRepairError, "conflicts|different|already"):
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^existing source decision conflicts with this completed import$",
+        ):
             repair_provider_checkpoints(
                 self.records,
                 repo=REPO,
