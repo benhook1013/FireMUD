@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, cli_attempts, github, hosted, sqlite_hosted_capture, sqlite_records_repair, stack
+from . import acceptance, cli_attempts, github, hosted, hosted_wait, sqlite_hosted_capture, sqlite_records_repair, stack
 from . import evidence as evidence_module
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot
@@ -299,6 +299,15 @@ def _parser() -> argparse.ArgumentParser:
         if name == "cli":
             sub.add_argument("--allow-unreconciled", action="store_true")
             sub.add_argument("--reason")
+
+    wait = commands.add_parser("wait", help="observe one existing review request without posting another")
+    wait_commands = wait.add_subparsers(dest="wait_command", required=True)
+    wait_hosted = wait_commands.add_parser("hosted", help="wait for one exact Hosted trigger to become terminal")
+    wait_hosted.add_argument("--pr", required=True, type=_positive_int)
+    wait_hosted.add_argument("--trigger-id", required=True, type=_positive_int)
+    wait_hosted.add_argument("--poll-seconds", type=_positive_int, default=hosted_wait.DEFAULT_POLL_SECONDS)
+    wait_hosted.add_argument("--max-wait-minutes", type=_positive_int, default=90)
+    wait_hosted.add_argument("--repo", help="owner/name; defaults to the current GitHub repository")
 
     evidence = commands.add_parser("evidence", help="show review evidence")
     evidence.add_argument("pr", nargs="?", type=_positive_int)
@@ -1110,6 +1119,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     if args.command == "records":
         return _dispatch_records(args)
 
+    if args.command == "wait":
+        if args.acceptance_fixture is not None or args.state_path is not None:
+            raise CliError("wait commands do not accept acceptance-fixture options")
+        return hosted_wait.wait_for_hosted(
+            github.infer_repo(args.repo), args.pr, args.trigger_id,
+            poll_seconds=args.poll_seconds,
+            max_wait_seconds=args.max_wait_minutes * 60,
+            on_change=lambda state: print(f"Hosted #{args.pr} trigger {args.trigger_id}: {state}", file=sys.stderr, flush=True),
+        )
+
     controller, fixture = _controller(args)
     if args.command == "stack":
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
@@ -1544,7 +1563,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         result, exit_status = _dispatch(args)
-        print(_render(result, args.command == "records" or getattr(args, "as_json", False)))
+        print(_render(result, args.command in {"records", "wait"} or getattr(args, "as_json", False)))
         return exit_status
     except (CliError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
