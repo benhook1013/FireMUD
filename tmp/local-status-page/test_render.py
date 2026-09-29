@@ -727,6 +727,37 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('<strong>Hosted CodeRabbit</strong><span>2 completed</span>',
                       page.render_activity_cards(review["queue"][42], NOW))
 
+    @patch.object(page, "_public_evidence_reader")
+    def test_unmerged_identity_only_row_gets_both_review_cards(self, evidence_reader):
+        review = {"available": True, "queue": {43: {
+            "head": HEAD, "detail_level": "identity_only",
+            "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
+        }}}
+        evidence_reader.return_value = lambda number, repo: {
+            "checkpoints": [{
+                "type": "CLI", "correction": False, "comment_id": 123,
+                "run_id": "run.abc", "raw_found": 1, "accepted": 0, "routed": 1,
+                "reviewed_sha": HEAD[:9], "created_at": "2026-09-24T10:00:00Z",
+            }],
+            "unparsed_candidates": 0,
+        }
+        page.enrich_merged_review_history(
+            Path("/tmp/pr-review"), review, {"available": True, "lifecycle": {43: "OPEN"}}
+        )
+        cards = page.render_activity_cards(review["queue"][43], NOW)
+        self.assertIn('Hosted CodeRabbit</strong><span>0 completed', cards)
+        self.assertIn('CLI CodeRabbit</strong><span>1 completed', cards)
+        self.assertIn('1/0/1', cards)
+
+        evidence_reader.return_value = lambda number, repo: {
+            "checkpoints": [], "unparsed_candidates": 1,
+        }
+        review["queue"][43].pop("review_activity")
+        page.enrich_merged_review_history(
+            Path("/tmp/pr-review"), review, {"available": True, "lifecycle": {43: "OPEN"}}
+        )
+        self.assertIn('history unavailable', page.render_activity_cards(review["queue"][43], NOW))
+
     def test_queue_status_badges_require_explicit_controller_evidence(self):
         data = self.fixture()
         data["stack"].extend({**data["stack"][0], "number": number} for number in range(43, 47))

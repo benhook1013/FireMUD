@@ -29,7 +29,7 @@ TIMING_LINE = re.compile(
     r"^STATUS_PAGE_TIMING stage=([a-z_]+) elapsed_seconds=([0-9]{1,3}(?:\.[0-9]{1,3})?) outcome=(ok|failed)$"
 )
 RENDER_TIMING_STAGES = frozenset({
-    "controller_status", "github_listing", "routed_enrichment", "merged_history",
+    "controller_status", "github_listing", "routed_enrichment", "queue_history",
     "records_history", "html_render",
 })
 

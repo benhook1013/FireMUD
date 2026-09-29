@@ -52,7 +52,7 @@ MAX_RECORD_TEXT_LENGTH = 500
 MAX_REVIEW_ROUNDS = 100
 MAX_REVIEW_DETAIL_RECORD_HTML_CHARS = 250_000
 TIMING_STAGE_NAMES = frozenset({
-    "controller_status", "github_listing", "routed_enrichment", "merged_history",
+    "controller_status", "github_listing", "routed_enrichment", "queue_history",
     "records_history", "html_render",
 })
 ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
@@ -662,7 +662,7 @@ def enrich_public_routed_counts(tool: Path | None, review: dict) -> None:
 
 
 def enrich_merged_review_history(tool: Path | None, review: dict, github: dict) -> None:
-    """Restore display-only merged history omitted by the windowed status view.
+    """Restore display-only review history omitted by the windowed status view.
 
     Public checkpoints remain historical display evidence here. They never
     change controller status, eligibility, or taper decisions.
@@ -675,41 +675,59 @@ def enrich_merged_review_history(tool: Path | None, review: dict, github: dict) 
         return
     prs = [
         number for number, item in queue.items()
-        if github.get("lifecycle", {}).get(number) == "MERGED"
-        and isinstance(item, dict)
-        and isinstance(item.get("review_activity"), dict)
-        and (item.get("detail_level") == "identity_only" or any(
+        if isinstance(item, dict)
+        and (item.get("detail_level") == "identity_only" or (
+            github.get("lifecycle", {}).get(number) == "MERGED"
+            and isinstance(item.get("review_activity"), dict)
+            and any(
             isinstance(item["review_activity"].get(channel), dict)
             and item["review_activity"][channel].get("total") == 0
             for channel in ("hosted", "cli")
+            )
         ))
     ]
     if not prs:
         return
     try:
         reader = _public_evidence_reader(str(tool.resolve()))
-    except Exception as error:
-        raise RuntimeError("merged review checkpoint parser is unavailable") from error
+    except Exception:
+        reader = None
 
-    def fetch(number: int) -> tuple[int, dict]:
-        document = reader(number, repo=REPO)
-        if (not isinstance(document, dict) or not isinstance(document.get("checkpoints"), list)
-                or document.get("unparsed_candidates") != 0):
-            raise RuntimeError(f"merged PR #{number} has incomplete public review checkpoints")
+    def fetch(number: int) -> tuple[int, dict | None]:
+        if reader is None:
+            return number, None
+        try:
+            document = reader(number, repo=REPO)
+        except Exception:
+            return number, None
+        if not isinstance(document, dict) or not isinstance(document.get("checkpoints"), list):
+            return number, None
         return number, document
 
     with ThreadPoolExecutor(max_workers=min(8, len(prs))) as pool:
         for future in as_completed([pool.submit(fetch, number) for number in prs]):
             number, document = future.result()
             item = queue[number]
-            activity = item["review_activity"]
+            activity = item.setdefault("review_activity", {})
+            if not isinstance(activity, dict):
+                activity = item["review_activity"] = {}
+            for channel in ("hosted", "cli"):
+                if not isinstance(activity.get(channel), dict):
+                    activity[channel] = {"total": 0, "recent": []}
+            if document is None:
+                for channel in ("hosted", "cli"):
+                    activity[channel]["_history_unavailable"] = True
+                continue
+            incomplete = document.get("unparsed_candidates") != 0
             current_head = item.get("head", "")
             for channel, checkpoint_type, marker in (
                 ("hosted", "Hosted", "hosted_review_id"),
                 ("cli", "CLI", "run_id"),
             ):
                 status = activity.get(channel)
-                if not isinstance(status, dict) or status.get("total") != 0:
+                if incomplete:
+                    status["_history_unavailable"] = True
+                if status.get("total") != 0:
                     continue
                 checkpoints = []
                 for checkpoint in document["checkpoints"]:
@@ -1430,16 +1448,21 @@ def render_activity_cards(queue_item: dict | None, now: datetime) -> str:
                     or any(isinstance(result, dict) and result.get("_routed_count_unavailable") is True
                            for result in recent)):
                 notes.append("routed counts unavailable for some recent results")
+            incomplete_history = activity.get("_history_unavailable") is True
+            if incomplete_history:
+                notes.append("public review history incomplete")
             activity_note = (
                 f'<p class="activity-note">{safe(" · ".join(notes))}</p>' if notes else ""
             )
             total = activity.get("total", 0)
             if type(total) is not int or total < 0:
                 total = 0
+            total_label = (f"at least {total} recorded" if incomplete_history and total
+                           else "history unavailable" if incomplete_history else f"{total} completed")
             activity_cards.append(
                 f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
-                f'<span>{safe(total)} completed</span></div>'
-                f'<div class="round-pills">{"".join(pills) if pills else "None yet"}</div>{activity_note}</div>'
+                f'<span>{safe(total_label)}</span></div>'
+                f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
             )
     return f'<div class="activity-grid">{"".join(activity_cards)}</div>' if activity_cards else ""
 
@@ -1983,7 +2006,7 @@ def main() -> None:
         enrich_public_routed_counts(review_tool, review)
     if not github["available"] and args.output.exists():
         raise RuntimeError("GitHub PR details unavailable; existing page preserved")
-    with _TimedStage("merged_history"):
+    with _TimedStage("queue_history"):
         enrich_merged_review_history(review_tool, review, github)
     now = datetime.now(timezone.utc)
     data = controller_stack(data, review, github, now)
