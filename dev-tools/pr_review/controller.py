@@ -3961,7 +3961,7 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
-            if decision.target is None and not selection_complete:
+            if (decision.target is None or decision.deferred_terminal) and not selection_complete:
                 result[channel.value] = {
                     "channel": channel.value,
                     "pr": None,

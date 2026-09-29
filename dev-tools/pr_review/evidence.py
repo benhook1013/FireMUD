@@ -624,7 +624,7 @@ def _load_cli_capture(
     from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
     from .state import sqlite_state_path, state_path
 
-    selected_state = state_path(common)
+    selected_state = state_path(common if common is not None else git_common_dir())
     if selected_state.is_dir():
         try:
             sql_decisions = SqliteReviewRecords(sqlite_state_path(selected_state)).cli_source_decisions(
