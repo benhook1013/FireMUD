@@ -275,13 +275,11 @@ public class TextCommandInterpreter {
             .findDefinition(command.commandId())
             .orElseGet(
                 () ->
-                    TextCommandDefinition.extensionDefinition(
-                        command.type(), command.commandId()));
+                    TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
     TextCommandInterpretationResult result =
         dispatcher.dispatch(
             TextCommandDispatchGroup.SESSION,
-            new TextCommandDispatchRequest(
-                sessionId, command, requiresSoloTick, Optional.empty()));
+            new TextCommandDispatchRequest(sessionId, command, requiresSoloTick, Optional.empty()));
     return withResolvedCommand(result, command, definition);
   }
 

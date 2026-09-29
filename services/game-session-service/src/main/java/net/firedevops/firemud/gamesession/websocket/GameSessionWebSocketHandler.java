@@ -249,8 +249,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           outputs,
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
-      maybeRenderFreshReconnectLook(
-          session, sessionId, command, interpretation, maybeContext);
+      maybeRenderFreshReconnectLook(session, sessionId, command, interpretation, maybeContext);
     }
   }
 

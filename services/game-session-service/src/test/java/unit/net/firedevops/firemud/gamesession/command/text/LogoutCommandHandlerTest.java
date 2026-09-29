@@ -51,10 +51,13 @@ class LogoutCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
     assertThat(result.commandResult().errorMessage()).isEqualTo("You are not logged in.");
-    assertThat(result.outputs()).singleElement().satisfies(output -> {
-      assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
-      assertThat(output.text()).isEqualTo("ERROR NOT_LOGGED_IN You are not logged in.");
-    });
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
+              assertThat(output.text()).isEqualTo("ERROR NOT_LOGGED_IN You are not logged in.");
+            });
     verify(sessionContextService).findBySessionId(41L);
     verifyNoMoreInteractions(sessionContextService);
   }
@@ -97,11 +100,15 @@ class LogoutCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("LOGOUT_UNAVAILABLE");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo("Logout is temporarily unavailable. Please try again.");
-    assertThat(result.outputs()).singleElement().satisfies(output -> {
-      assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
-      assertThat(output.text())
-          .isEqualTo("ERROR LOGOUT_UNAVAILABLE Logout is temporarily unavailable. Please try again.");
-    });
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
+              assertThat(output.text())
+                  .isEqualTo(
+                      "ERROR LOGOUT_UNAVAILABLE Logout is temporarily unavailable. Please try again.");
+            });
   }
 
   private static TextCommand logoutCommand() {

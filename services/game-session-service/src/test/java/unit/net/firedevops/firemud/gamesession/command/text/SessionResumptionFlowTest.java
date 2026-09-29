@@ -437,8 +437,7 @@ class SessionResumptionFlowTest {
     Mockito.verify(scriptEventPublisher, Mockito.never())
         .publishCommandEvent(Mockito.any(), Mockito.any());
     Mockito.verify(scriptEventPublisher, Mockito.never())
-        .publishRegionExitEvent(
-            Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     Mockito.verify(firstPartyConnectContextRegistry, Mockito.never()).unregister(1L);
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
   }

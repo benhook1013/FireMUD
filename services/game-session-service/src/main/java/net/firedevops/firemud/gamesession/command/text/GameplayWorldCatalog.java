@@ -235,10 +235,7 @@ public final class GameplayWorldCatalog {
     List<WorldView> catalogWorlds = catalogState.worlds();
     List<WorldView> visibleWorlds =
         catalogWorlds.stream().filter(this::hasVisibleRealmEntries).toList();
-    return resolveWorld(
-        selector,
-        visibleWorlds,
-        discoverableWorlds(visibleWorlds, catalogState));
+    return resolveWorld(selector, visibleWorlds, discoverableWorlds(visibleWorlds, catalogState));
   }
 
   public Optional<WorldView> resolveWorldFromAuthoritySnapshot(String selector) {
@@ -516,8 +513,7 @@ public final class GameplayWorldCatalog {
             .map(RealmView::tenantId)
             .distinct()
             .allMatch(
-                tenantId ->
-                    snapshot.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L);
+                tenantId -> snapshot.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L);
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
@@ -583,9 +579,7 @@ public final class GameplayWorldCatalog {
   }
 
   public List<WorldView> visibleWorlds() {
-    return readCatalogState().worlds().stream()
-        .filter(this::hasVisibleRealmEntries)
-        .toList();
+    return readCatalogState().worlds().stream().filter(this::hasVisibleRealmEntries).toList();
   }
 
   /**
@@ -673,10 +667,6 @@ public final class GameplayWorldCatalog {
     return List.copyOf(entries);
   }
 
-  private List<WorldView> discoverableWorlds() {
-    return discoverableWorlds(readCatalogState());
-  }
-
   private List<WorldView> discoverableWorlds(CatalogState catalogState) {
     List<WorldView> catalogWorlds = catalogState.worlds();
     List<WorldView> visibleWorlds =
@@ -695,7 +685,8 @@ public final class GameplayWorldCatalog {
     List<RealmView> publicProductionRealms =
         visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
     return publicProductionRealms.size() == 1
-        && hasValidPublicProductionRealm(catalogState, publicProductionRealms.getFirst().tenantId());
+        && hasValidPublicProductionRealm(
+            catalogState, publicProductionRealms.getFirst().tenantId());
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
@@ -729,8 +720,7 @@ public final class GameplayWorldCatalog {
   }
 
   private boolean hasValidPublicProductionRealm(CatalogState catalogState, long tenantId) {
-    return tenantId > 0L
-        && catalogState.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L;
+    return tenantId > 0L && catalogState.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L;
   }
 
   private CatalogState readCatalogState() {
