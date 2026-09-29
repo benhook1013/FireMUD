@@ -162,16 +162,26 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupRejectsPinnedPatchWithoutAnExactPositiveBase() {
-    IllegalArgumentException error =
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                service.scheduleFollowup(
-                    scheduleRequest(7L, 8L, 4L, 25L, "followup-1", "effect-1", null)));
+    for (Long scriptPatchBaseVersionId : new Long[] {null, 0L, -1L}) {
+      IllegalArgumentException error =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.scheduleFollowup(
+                      scheduleRequest(
+                          7L,
+                          8L,
+                          4L,
+                          25L,
+                          "followup-1",
+                          "effect-1",
+                          scriptPatchBaseVersionId)));
 
-    assertEquals(
-        "script_patch_base_version_id must be positive when script_patch_version is present",
-        error.getMessage());
+      assertEquals(
+          "script_patch_base_version_id must be positive when script_patch_version is present",
+          error.getMessage());
+    }
+
     verifyNoInteractions(coordinatorRepository, followupRepository);
   }
 
