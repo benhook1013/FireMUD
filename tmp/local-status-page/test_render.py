@@ -164,7 +164,7 @@ class StatusPageTest(unittest.TestCase):
         self.assertIn('justify-content: space-between; gap: .75rem; width: 100%; min-width: 0;', result)
         self.assertIn(page.SHARED_CSS, result)
         self.assertIn('--smoke: #a51f27;', result)
-        self.assertIn('--fire: #b71d35;', result)
+        self.assertIn('--fire: #c3262d;', result)
         self.assertIn('.lane-content { padding: .8rem 1rem 1rem;', result)
         self.assertIn('.queue-stage > h3 { margin: .3rem 1rem 0 0; color: #37414a; font-size: 1.05rem; font-weight: 850;', result)
         self.assertIn('.cards { grid-template-columns: minmax(0,1fr); width: 100%; }', result)
