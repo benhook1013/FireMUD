@@ -75,12 +75,39 @@ class SqliteBackupTest(unittest.TestCase):
             "run.backupfixture", state="completed", finished_at="2026-09-29T01:01:00Z",
             artifacts={"cli_events": '{"type":"complete","status":"review_completed"}\n'},
         )
+        records.import_completed_run(
+            run_id="backup-provider-run", source_pr=123, channel="cli",
+            findings=(), source_decisions=(), reviewer="CodeRabbit CLI",
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        records.link_provider_origin(
+            repository="benhook1013/firemud", source_pr=123, channel="cli",
+            provider_id="run.backupfixture", checkpoint_id=123456,
+            checkpoint_fingerprint="a" * 64, run_id="backup-provider-run",
+        )
+        records.archive_imported_artifacts(
+            "backup-provider-run", {"cli_events": '{"type":"complete","status":"review_completed"}\n'}
+        )
+        records.record_historical_gap(
+            repository="benhook1013/firemud", source_pr=124, channel="hosted",
+            checkpoint_id=123457, checkpoint_fingerprint="b" * 64,
+            checkpoint={"comment_id": 123457, "body": "Historical checkpoint"},
+            artifacts={"hosted_comments": json.dumps({"body": "Public review summary"})},
+            missing_reason="Private decision capture never existed",
+        )
 
     def _assert_fixture_records(self, path: Path) -> None:
         history = SqliteReviewRecords(path).history(123)
-        self.assertEqual([run["run_id"] for run in history["runs"]], ["backup-fixture-run"])
+        self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
+                         ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
         self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
+        self.assertEqual(history["provider_origins"][0]["checkpoint_id"], 123456)
+        self.assertEqual(history["imported_artifacts"][0]["kind"], "cli_events")
+        gap_history = SqliteReviewRecords(path).history(124)
+        self.assertEqual(gap_history["runs"], [])
+        self.assertEqual(gap_history["historical_gaps"][0]["checkpoint_id"], 123457)
+        self.assertEqual(gap_history["historical_gap_artifacts"][0]["kind"], "hosted_comments")
         with sqlite3.connect(path) as connection:
             self.assertEqual(connection.execute(
                 "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"

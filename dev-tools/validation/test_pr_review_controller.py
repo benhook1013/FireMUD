@@ -3747,9 +3747,21 @@ class ControllerTests(unittest.TestCase):
         before = self.make(before_values, before_evidence, heads=before_heads)
         before.set_stack(ordered)
         self._enable_batch_status(before, before_values)
+        remote_head_calls_before = before.git.remote_heads_calls
 
         before_report = before.status_overview()
 
+        self.assertEqual(before.git.remote_heads_calls - remote_head_calls_before, 1)
+        self.assertEqual(
+            set(before_report["detail_window"]["timing_ms"]),
+            {"deep_pr_fetch", "local_anchors"},
+        )
+        self.assertTrue(
+            all(
+                isinstance(value, (int, float)) and value >= 0
+                for value in before_report["detail_window"]["timing_ms"].values()
+            )
+        )
         self.assertEqual(before_report["detail_window"]["deep_prs"], [1, 2, 3, 4])
         self.assertEqual(before_report["prs"][4]["evidence_status"], "unknown")
         self.assertEqual(before_report["prs"][4]["channels"], {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"})

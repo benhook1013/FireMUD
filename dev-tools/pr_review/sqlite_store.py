@@ -25,7 +25,7 @@ from typing import Any
 from .state import ReviewState, StateError, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 3
+WRITER_BUILD = 4
 STATUS_VERSION = 1
 CUTOVER_VERSION = 1
 _METADATA_TABLE = "controller_metadata"

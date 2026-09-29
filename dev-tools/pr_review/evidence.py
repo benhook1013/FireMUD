@@ -12,7 +12,10 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .sqlite_review_records import SqliteReviewRecords
 
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
@@ -566,6 +569,7 @@ def _load_cli_capture(
     common: Path | None,
     *,
     validate_checkpoint_decisions: bool,
+    records: SqliteReviewRecords | None = None,
 ) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
@@ -625,11 +629,12 @@ def _load_cli_capture(
     from .state import sqlite_state_path, state_path
 
     selected_state = state_path(common if common is not None else git_common_dir())
-    if selected_state.is_dir():
+    selected_records = records
+    if selected_records is None and selected_state.is_dir():
+        selected_records = SqliteReviewRecords(sqlite_state_path(selected_state))
+    if selected_records is not None:
         try:
-            sql_decisions = SqliteReviewRecords(sqlite_state_path(selected_state)).cli_source_decisions(
-                checkpoint.run_id
-            )
+            sql_decisions = selected_records.cli_source_decisions(checkpoint.run_id)
         except ReviewRecordsError as exc:
             raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
         if sql_decisions is not None:
@@ -690,7 +695,10 @@ def _load_cli_capture(
     return capture
 
 
-def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
+def load_cli_capture(
+    checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None,
+    *, records: SqliteReviewRecords | None = None,
+) -> CaptureData:
     """Load a public checkpoint's capture and require its decisions to match."""
 
     return _load_cli_capture(
@@ -699,6 +707,7 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         pr_number,
         common,
         validate_checkpoint_decisions=True,
+        records=records,
     )
 
 

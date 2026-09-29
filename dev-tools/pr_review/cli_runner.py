@@ -1148,13 +1148,33 @@ def run_cli_review(
                     try:
                         parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
                     except evidence.EvidenceError:
-                        result_state = "failed"
+                        result_state = (
+                            "rate_limited"
+                            if "rate limit exceeded" in stderr.casefold()
+                            else "failed"
+                        )
                         artifacts["cli_raw_output"] = stdout
-                        diagnostic = "CodeRabbit CLI did not return a complete JSON review"
+                        diagnostic = (
+                            "CodeRabbit CLI was rate limited before a complete result"
+                            if result_state == "rate_limited"
+                            else "CodeRabbit CLI did not return a complete JSON review"
+                        )
                     else:
-                        result_state = "completed" if process.returncode == 0 else "failed"
+                        result_state = (
+                            "completed"
+                            if process.returncode == 0
+                            else "rate_limited"
+                            if "rate limit exceeded" in stderr.casefold()
+                            else "failed"
+                        )
                         artifacts["cli_events"] = stdout
-                        diagnostic = "" if process.returncode == 0 else "CodeRabbit CLI exited nonzero"
+                        diagnostic = (
+                            ""
+                            if result_state == "completed"
+                            else "CodeRabbit CLI was rate limited"
+                            if result_state == "rate_limited"
+                            else "CodeRabbit CLI exited nonzero"
+                        )
                     records.finish_attempt(
                         run_id, state=result_state, duration_seconds=duration,
                         exit_status=process.returncode, diagnostic=diagnostic,

@@ -194,6 +194,8 @@ class FakeCommands:
         timeout_review=False,
         timeout_git=False,
         review_output="review output\n",
+        review_stderr="",
+        review_returncode=0,
         parent_is_ancestor=True,
         merge_base=None,
         merge_conflict=False,
@@ -213,6 +215,8 @@ class FakeCommands:
         self.timeout_review = timeout_review
         self.timeout_git = timeout_git
         self.review_output = review_output
+        self.review_stderr = review_stderr
+        self.review_returncode = review_returncode
         self.parent_is_ancestor = parent_is_ancestor
         self.merge_base = merge_base or PARENT
         self.merge_conflict = merge_conflict
@@ -237,7 +241,7 @@ class FakeCommands:
             time.sleep(self.delay)
             with self.guard:
                 self.active -= 1
-            return CompletedProcess(args, 0, self.review_output, "")
+            return CompletedProcess(args, self.review_returncode, self.review_output, self.review_stderr)
         if args and args[0] == "git" and "-C" in args:
             if self.timeout_git:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial git\n", stderr=b"timed out\n")
@@ -427,6 +431,29 @@ class CliReviewRunnerTests(unittest.TestCase):
                     "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)
                 )}
             self.assertEqual(kinds, {"cli_events", "cli_diagnostic", "metadata"})
+
+    def test_sqlite_records_rate_limit_without_taper_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(), github=FakeGitHub(), source_root=root,
+                runner=FakeCommands(
+                    root,
+                    review_output="provider interrupted\n",
+                    review_stderr="Rate limit exceeded; retry later\n",
+                    review_returncode=1,
+                ),
+                records=records,
+            )
+            attempts = records.attempt_history(result.pull_request)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "rate_limited")
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
 
     def test_cli_review_accepts_111_changed_files(self):
         files = [f"src/File{index}.java" for index in range(111)]

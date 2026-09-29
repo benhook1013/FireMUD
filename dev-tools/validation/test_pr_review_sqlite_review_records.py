@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
@@ -98,6 +99,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE review_artifacts")
             connection.execute("DROP TABLE review_attempts")
             connection.execute("DROP TABLE source_decision_corrections")
+            connection.execute("DROP TABLE provider_origins")
+            connection.execute("DROP TABLE imported_artifacts")
+            connection.execute("DROP TABLE historical_gap_artifacts")
+            connection.execute("DROP TABLE historical_provider_gaps")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 4, min_writer_build = 2")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
         old_writer = SqliteStateStore(self.database, writer_build=2)
@@ -110,7 +115,141 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(connection.execute(
                 "SELECT records_schema_version FROM review_records_metadata"
-            ).fetchone()[0], 5)
+            ).fetchone()[0], 6)
+
+    def test_v5_upgrade_preserves_attempts_and_fences_previous_writer(self) -> None:
+        self.bootstrap()
+        self.records.start_attempt(attempt_id="run.previous-v5", source_pr=2893, channel="cli")
+        self.records.finish_attempt("run.previous-v5", state="rate_limited")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DROP TABLE imported_artifacts")
+            connection.execute("DROP TABLE provider_origins")
+            connection.execute("DROP TABLE historical_gap_artifacts")
+            connection.execute("DROP TABLE historical_provider_gaps")
+            connection.execute(
+                "UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3"
+            )
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 3")
+        self.records.migrate()
+        self.records.migrate()
+        self.assertEqual(self.records.attempt_history(2893)[0]["state"], "rate_limited")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT records_schema_version FROM review_records_metadata"
+            ).fetchone()[0], 6)
+        with self.assertRaisesRegex(Exception, "requires writer build 4"):
+            SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
+
+    def test_history_batch_uses_one_read_snapshot_across_prs(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        original_history = self.records.history
+
+        def read_then_write(pr, **kwargs):
+            selected = original_history(pr, **kwargs)
+            if pr == 2890:
+                self.records.record_run(
+                    run_id="later-run", source_pr=2893, channel="subagent",
+                    findings=(), started_at="2026-09-29T01:00:00Z",
+                    finished_at="2026-09-29T01:01:00Z",
+                )
+            return selected
+
+        with patch.object(self.records, "history", side_effect=read_then_write):
+            batch = self.records.history_batch((2890, 2893))
+        self.assertEqual(batch[2893]["runs"], [])
+        self.assertEqual(len(self.records.history(2893)["runs"]), 1)
+
+    def test_provider_origin_is_durable_idempotent_and_conflict_checked(self) -> None:
+        self.bootstrap()
+        self.records.import_completed_run(
+            run_id="provider-clean-1", source_pr=2893, channel="hosted",
+            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        origin = {
+            "repository": "BenHook1013/FireMUD", "source_pr": 2893,
+            "channel": "hosted", "provider_id": "trigger:987654321",
+            "checkpoint_id": 123456789, "checkpoint_fingerprint": "a" * 64,
+            "run_id": "provider-clean-1",
+        }
+        self.assertFalse(self.records.link_provider_origin(**origin)["idempotent_replay"])
+        self.assertTrue(self.records.link_provider_origin(**origin)["idempotent_replay"])
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            self.records.link_provider_origin(**{**origin, "checkpoint_id": 123456790})
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            self.records.link_provider_origin(**{**origin, "checkpoint_fingerprint": "b" * 64})
+        artifact = {"hosted_comments": json.dumps({"reply": "Full review finished", "symbol": "X" * 60})}
+        self.assertFalse(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
+        self.assertTrue(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
+        with self.assertRaisesRegex(ReviewRecordsError, "conflict"):
+            self.records.archive_imported_artifacts(
+                "provider-clean-1", {"hosted_comments": json.dumps({"reply": "different"})}
+            )
+        self.assertEqual(self.records.history(2893)["provider_origins"][0]["repository"],
+                         "benhook1013/firemud")
+        self.assertEqual(self.records.history(2893)["imported_artifacts"][0]["kind"], "hosted_comments")
+
+    def test_historical_gap_preserves_evidence_without_run_and_can_be_superseded(self) -> None:
+        self.bootstrap()
+        self.records.record_historical_gap(
+            repository="benhook1013/firemud", source_pr=2894, channel="cli",
+            checkpoint_id=123456790, checkpoint_fingerprint="d" * 64,
+            checkpoint={"comment_id": 123456790, "body": "Only surviving source"},
+            artifacts={}, missing_reason="Original CLI event capture unavailable",
+        )
+        self.assertEqual(self.records.history(2894)["historical_gap_artifacts"], [])
+        gap = {
+            "repository": "BenHook1013/FireMUD", "source_pr": 2893, "channel": "hosted",
+            "checkpoint_id": 123456789, "checkpoint_fingerprint": "a" * 64,
+            "checkpoint": {"body": "Review checkpoint", "comment_id": 123456789},
+            "artifacts": {"hosted_comments": json.dumps({
+                "body": "finding visible", "credential": "Bearer synthetic-secret-value",
+            })},
+            "missing_reason": "Private decision capture never existed",
+        }
+        self.assertFalse(self.records.record_historical_gap(**gap)["idempotent_replay"])
+        self.assertTrue(self.records.record_historical_gap(**gap)["idempotent_replay"])
+        history = self.records.history(2893)
+        self.assertEqual(history["runs"], [])
+        self.assertEqual(history["attempts"], [])
+        self.assertEqual(history["historical_gaps"][0]["checkpoint"], gap["checkpoint"])
+        self.assertEqual(history["historical_gaps"][0]["missing_reason"], gap["missing_reason"])
+        self.assertIsNone(history["historical_gaps"][0]["superseded_by_run_id"])
+        self.assertNotIn("Bearer", history["historical_gap_artifacts"][0]["content"])
+        self.assertEqual(history["historical_gap_artifacts"][0]["redactions"], 1)
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            self.records.record_historical_gap(**{**gap, "missing_reason": "Different reason"})
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            self.records.record_historical_gap(**{**gap, "artifacts": {
+                "hosted_comments": '{"body":"different"}',
+            }})
+        with self.assertRaisesRegex(ReviewRecordsError, "size limit"):
+            self.records.record_historical_gap(**{**gap, "artifacts": {
+                "hosted_review": "x" * (4 * 1024 * 1024 + 1),
+            }})
+        self.records.import_completed_run(
+            run_id="recovered-run", source_pr=2893, channel="hosted",
+            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "historical checkpoint evidence"):
+            self.records.link_provider_origin(
+                repository=gap["repository"], source_pr=2893, channel="hosted",
+                provider_id="trigger:987654321", checkpoint_id=gap["checkpoint_id"],
+                checkpoint_fingerprint="c" * 64, run_id="recovered-run",
+            )
+        self.records.link_provider_origin(
+            repository=gap["repository"], source_pr=2893, channel="hosted",
+            provider_id="trigger:987654321", checkpoint_id=gap["checkpoint_id"],
+            checkpoint_fingerprint=gap["checkpoint_fingerprint"], run_id="recovered-run",
+        )
+        recovered = self.records.history(2893)
+        self.assertEqual(recovered["historical_gaps"][0]["superseded_by_run_id"], "recovered-run")
+        self.assertEqual(len(recovered["historical_gap_artifacts"]), 1)
+        with self.assertRaisesRegex(ReviewRecordsError, "attributed provider origin"):
+            self.records.record_historical_gap(**gap)
 
     def test_cli_decision_correction_is_append_only_and_exact_prior(self) -> None:
         self.bootstrap()

@@ -38,7 +38,67 @@ class ReviewRecordsCliTest(unittest.TestCase):
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
-    def test_history_exposes_failed_cli_attempt_without_counting_success_or_raw_output(self) -> None:
+    def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        code, started = self.invoke(
+            "subagent", "start", "--pr", "2893", "--run-id", "subagent.review-1",
+            "--reviewer", "Luna independent pass", "--scope", "broad",
+            "--head", "a" * 40, "--database", str(self.database),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(started["result"]["state"], "started")
+        items = (
+            {"title": "Bound the retry", "detail": "Exact candidate is retained", "decision": "accepted",
+             "reason": "Owned by this PR"},
+            {"title": "Another owner must repair proof", "decision": "routed",
+             "reason": "Belongs to target", "target_pr": 2895},
+        )
+        arguments = ["subagent", "complete", "--run-id", "subagent.review-1", "--actor", "Overseer"]
+        for item in items:
+            arguments.extend(("--finding-json", json.dumps(item)))
+        arguments.extend(("--database", str(self.database)))
+        code, completed = self.invoke(*arguments)
+        self.assertEqual(code, 0)
+        self.assertEqual(completed["result"]["run"]["counts"], {"found": 2, "accepted": 1, "routed": 1})
+        code, replay = self.invoke(*arguments)
+        self.assertEqual(code, 0)
+        self.assertTrue(replay["result"]["run"]["idempotent_replay"])
+        history = SqliteReviewRecords(self.database).history(2893)
+        self.assertEqual(history["attempts"][0]["state"], "completed")
+        self.assertEqual(history["runs"][0]["channel"], "subagent")
+        self.assertEqual(len(history["findings"]), 2)
+        self.assertEqual(history["routes"][0]["target_pr"], 2895)
+
+    def test_failed_subagent_pass_has_no_completed_run(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        self.invoke("subagent", "start", "--pr", "2893", "--run-id", "subagent.failed-1",
+                    "--reviewer", "Luna", "--scope", "narrow", "--database", str(self.database))
+        code, result = self.invoke("subagent", "fail", "--run-id", "subagent.failed-1",
+                                   "--reason", "model unavailable", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["result"]["state"], "failed")
+        history = SqliteReviewRecords(self.database).history(2893)
+        self.assertEqual(history["runs"], [])
+        self.assertEqual(history["attempts"][0]["state"], "failed")
+
+    def test_batch_history_keeps_each_pr_history_and_attempts_separate(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(attempt_id="run.failed-1", source_pr=2890, channel="cli")
+        records.finish_attempt("run.failed-1", state="failed", diagnostic="provider closed")
+        code, response = self.invoke(
+            "history-batch", "--pr", "2890", "--pr", "2893", "--database", str(self.database)
+        )
+        self.assertEqual(code, 0)
+        histories = response["result"]["prs"]
+        self.assertEqual(list(histories), ["2890", "2893"])
+        self.assertEqual(histories["2890"]["attempts"][0]["attempt_id"], "run.failed-1")
+        self.assertEqual(histories["2893"]["attempts"], [])
+        code, _ = self.invoke("history-batch", "--pr", "2890", "--pr", "2890",
+                              "--database", str(self.database))
+        self.assertNotEqual(code, 0)
+
+    def test_history_exposes_only_sqlite_failed_cli_attempt_without_counting_result(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         root = self.database.parent / "pr-review" / "runs"
         failed = root / ("run." + "a" * 32)
@@ -50,6 +110,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
         (failed / "stderr").write_text("Error: Rate limit exceeded; private provider details")
         (successful / "exit-status").write_text("0\n")
 
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(attempt_id=failed.name, source_pr=2879, channel="cli")
+        records.finish_attempt(failed.name, state="rate_limited", diagnostic="provider rate limit")
+
         code, response = self.invoke("history", "--pr", "2879", "--database", str(self.database))
 
         self.assertEqual(code, 0)
@@ -59,6 +123,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual("rate_limited", attempts["attempts"][0]["outcome"])
         self.assertEqual(failed.name, attempts["attempts"][0]["run_id"])
         self.assertNotIn("private provider details", str(response))
+
+        # Old capture directories are migration input, never a live history source.
+        (failed / "exit-status").unlink()
+        code, after = self.invoke("history", "--pr", "2879", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(after["result"]["cli_attempts"], attempts)
 
     def test_failed_cli_attempt_reads_only_bounded_stderr_prefix_for_rate_limit_classification(self) -> None:
         root = self.database.parent / "pr-review" / "runs"
@@ -428,9 +498,9 @@ class ReviewRecordsCliTest(unittest.TestCase):
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload),
             patch.object(
-                cli.sqlite_provider_imports,
-                "import_hosted_checkpoint",
-                return_value={"channel": "hosted", "idempotent_replay": False},
+                cli.sqlite_records_repair,
+                "repair_provider_checkpoints",
+                return_value={"status": "complete", "items": []},
             ) as importer,
         ):
             output = io.StringIO()
@@ -445,12 +515,127 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(json.loads(output.getvalue())["api_version"], 1)
         args, kwargs = importer.call_args
-        self.assertIs(args[0], records)
+        self.assertEqual(args, (records,))
         self.assertEqual(kwargs["repo"], "owner/repo")
         self.assertEqual(kwargs["pr_number"], 2828)
-        self.assertEqual(kwargs["checkpoint"].comment_id, 123)
-        self.assertEqual(kwargs["checkpoint"].hosted_review_id, 998)
+        self.assertEqual(kwargs["checkpoints"][0].comment_id, 123)
+        self.assertEqual(kwargs["checkpoints"][0].hosted_review_id, 998)
         self.assertEqual(kwargs["actor"], "operator")
+        self.assertEqual(kwargs["hosted_payload"], payload)
+        self.assertFalse(kwargs["dry_run"])
+
+    def test_provider_repair_previews_exact_checkpoints_and_applies_only_when_requested(self) -> None:
+        first = {
+            "id": "comment-123", "databaseId": 123,
+            "body": "Hosted: 0 found / 0 accepted / 0 routed · abcdef0",
+            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "author": {"login": "coderabbitai[bot]"},
+        }
+        second = {
+            "id": "comment-124", "databaseId": 124,
+            "body": "CLI: 1 found / 0 accepted / 1 routed · abcdef0",
+            "createdAt": "2026-09-28T02:02:03Z", "updatedAt": "2026-09-28T02:02:03Z",
+            "author": {"login": "coderabbitai[bot]"},
+        }
+        payload = {"data": {"repository": {"pullRequest": {
+            "number": 2828, "comments": {"nodes": [first, second]},
+        }}}}
+        records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
+        with (
+            patch.object(cli, "_records_store", return_value=records),
+            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+            patch.object(cli.github, "fetch_pull_request", return_value=payload) as fetch,
+            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
+                         return_value={"status": "preview", "items": []}) as repair,
+        ):
+            code, _ = self.invoke(
+                "repair-provider", "--pr", "2828", "--checkpoint-id", "123",
+                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+            )
+        self.assertEqual(code, 0)
+        fetch.assert_called_once()
+        self.assertEqual([item.comment_id for item in repair.call_args.kwargs["checkpoints"]], [123])
+        self.assertEqual(repair.call_args.kwargs["hosted_payload"], payload)
+        self.assertTrue(repair.call_args.kwargs["dry_run"])
+
+        with (
+            patch.object(cli, "_records_store", return_value=records),
+            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+            patch.object(cli.github, "fetch_pull_request", return_value=payload),
+            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
+                         return_value={"status": "complete", "items": []}) as repair,
+        ):
+            code, _ = self.invoke(
+                "repair-provider", "--pr", "2828", "--all", "--apply",
+                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual([item.comment_id for item in repair.call_args.kwargs["checkpoints"]], [123, 124])
+        self.assertFalse(repair.call_args.kwargs["dry_run"])
+
+        with (
+            patch.object(cli, "_records_store", return_value=records),
+            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+            patch.object(cli.github, "fetch_pull_request", return_value=payload),
+            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
+                         return_value={"status": "preview", "items": []}) as repair,
+        ):
+            code, result = self.invoke(
+                "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
+                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["result"]["status"], "preview")
+        self.assertEqual(repair.call_count, 2)
+        self.assertEqual([call.kwargs["checkpoints"][0].comment_id for call in repair.call_args_list], [123, 124])
+
+    def test_hosted_sync_does_not_use_controller_or_post_a_review(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        with (
+            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+            patch.object(cli.sqlite_hosted_capture, "sync_hosted_pending",
+                         return_value={"synced": 1, "pending": 0, "errors": []}) as sync,
+            patch.object(cli.github, "fetch_pull_request", side_effect=AssertionError("sync helper owns evidence")),
+        ):
+            code, result = self.invoke("sync-hosted", "--pr", "2893", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["result"]["synced"], 1)
+        self.assertEqual(sync.call_args.kwargs["repo"], "owner/repo")
+        self.assertEqual(sync.call_args.kwargs["pr_number"], 2893)
+
+    def test_repair_all_archives_incomplete_old_checkpoint_without_claiming_run(self) -> None:
+        checkpoint = {
+            "databaseId": 123,
+            "body": "Hosted: 1 found / 1 accepted / 0 routed · abcdef0",
+            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "author": {"login": "ben"},
+        }
+        payload = {"data": {"repository": {"pullRequest": {
+            "number": 2828, "comments": {"nodes": [checkpoint]},
+        }}}}
+        records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
+        output = io.StringIO()
+        with (
+            patch.object(cli, "_records_store", return_value=records),
+            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+            patch.object(cli.github, "fetch_pull_request", return_value=payload),
+            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
+                         side_effect=cli.sqlite_records_repair.SqliteRecordsRepairError("old decisions missing")),
+            patch.object(cli.sqlite_records_repair, "archive_incomplete_checkpoint",
+                         return_value={"status": "incomplete_preview", "checkpoint_id": 123}) as gap,
+            contextlib.redirect_stdout(output),
+        ):
+            status = cli.main([
+                "records", "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
+                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+            ])
+        self.assertEqual(status, 2)
+        result = json.loads(output.getvalue())["result"]
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["items"][0]["status"], "incomplete")
+        self.assertEqual(result["items"][0]["missing_evidence"], "old decisions missing")
+        self.assertTrue(gap.call_args.kwargs["dry_run"])
+
 
     def test_provider_import_requires_explicit_schema_bootstrap_before_reading_provider_state(self) -> None:
         with patch.object(cli.github, "fetch_pull_request") as fetch:

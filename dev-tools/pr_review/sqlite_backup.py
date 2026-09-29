@@ -89,10 +89,22 @@ _EXPECTED_COLUMNS = {
         "sequence", "correction_id", "supersedes_id", "run_id", "finding_id", "decision",
         "target_pr", "actor", "reason", "decided_at",
     ),
+    "provider_origins": (
+        "repository", "source_pr", "channel", "provider_id", "checkpoint_id",
+        "checkpoint_fingerprint", "run_id",
+    ),
+    "imported_artifacts": ("run_id", "kind", "content", "source_sha256", "redactions"),
+    "historical_provider_gaps": (
+        "repository", "source_pr", "channel", "checkpoint_id", "checkpoint_fingerprint",
+        "checkpoint_json", "checkpoint_source_sha256", "checkpoint_redactions", "missing_reason",
+    ),
+    "historical_gap_artifacts": (
+        "repository", "source_pr", "checkpoint_id", "kind", "content", "source_sha256", "redactions",
+    ),
 }
 _EXPECTED_INDEXES = {
     "review_runs_source_pr_idx", "routes_target_status_idx", "review_attempts_pr_idx",
-    "source_corrections_finding_idx",
+    "source_corrections_finding_idx", "provider_origins_source_idx", "historical_gaps_source_idx",
 }
 _TEXT_COLUMNS = {
     "controller_metadata": (),
@@ -110,6 +122,13 @@ _TEXT_COLUMNS = {
     "source_decision_corrections": (
         "correction_id", "supersedes_id", "run_id", "finding_id", "decision", "actor", "reason", "decided_at",
     ),
+    "provider_origins": ("repository", "channel", "provider_id", "checkpoint_fingerprint", "run_id"),
+    "imported_artifacts": ("run_id", "kind", "content", "source_sha256"),
+    "historical_provider_gaps": (
+        "repository", "channel", "checkpoint_fingerprint", "checkpoint_json",
+        "checkpoint_source_sha256", "missing_reason",
+    ),
+    "historical_gap_artifacts": ("repository", "kind", "content", "source_sha256"),
 }
 
 
@@ -442,7 +461,8 @@ def _validate_database(path: Path, label: str) -> None:
                     "SELECT source_pr FROM review_runs UNION SELECT source_pr FROM review_attempts "
                     "UNION SELECT decision_pr FROM decisions "
                     "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
-                    "UNION SELECT resolution_pr FROM resolutions"
+                    "UNION SELECT resolution_pr FROM resolutions "
+                    "UNION SELECT source_pr FROM historical_provider_gaps"
                 )
             }
         for pr in sorted(prs):
@@ -465,11 +485,26 @@ def _validate_database(path: Path, label: str) -> None:
                         "SELECT COUNT(*) FROM source_decision_corrections c "
                         "JOIN review_runs r USING (run_id) WHERE r.source_pr = ?", (pr,)
                     ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM provider_origins WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM imported_artifacts a JOIN review_runs r USING (run_id) "
+                        "WHERE r.source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM historical_provider_gaps WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM historical_gap_artifacts WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
                 )
             actual = (
                 len(history["runs"]), len(history["findings"]),
                 len(history["decisions"]), len(history["routes"]), len(history["attempts"]),
-                len(history["corrections"]),
+                len(history["corrections"]), len(history["provider_origins"]),
+                len(history["imported_artifacts"]), len(history["historical_gaps"]),
+                len(history["historical_gap_artifacts"]),
             )
             if actual != expected:
                 raise BackupError("indexed review-history readback does not match persisted record counts")

@@ -9,13 +9,14 @@ import os
 import re
 import stat
 import subprocess
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import evidence, github, hosted
+from . import evidence, github, hosted, sqlite_hosted_capture
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
@@ -110,7 +111,12 @@ class LiveGitHub:
 class LiveEvidence:
     """Map complete live comments plus private captures into policy evidence."""
 
-    def __init__(self, repo: str, live: LiveGitHub, state_store: StateStore | ControllerStateStore | None = None) -> None:
+    def __init__(
+        self,
+        repo: str,
+        live: LiveGitHub,
+        state_store: StateStore | ControllerStateStore | None = None,
+    ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
@@ -1732,10 +1738,12 @@ class HostedRunner:
         repo: str,
         live: LiveGitHub,
         state_store: StateStore | ControllerStateStore | None = None,
+        records: SqliteReviewRecords | None = None,
     ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
+        self.records = records
 
     @staticmethod
     def _timestamp(value: str) -> datetime:
@@ -1751,6 +1759,54 @@ class HostedRunner:
         if not isinstance(login, str) or not login.strip() or github.is_coderabbit_login(login):
             raise ControllerError("authenticated GitHub user has no trusted login identity")
         return login
+
+    def _capture_terminal_attempt(
+        self,
+        pr: int,
+        record: Mapping[str, Any],
+        payload: dict[str, Any],
+        record_path: Path,
+    ) -> str | None:
+        """Best-effort archive of a terminal result already read for admission."""
+
+        attempt_id = record.get("sqlite_attempt_id")
+        if self.records is None or not isinstance(attempt_id, str) or not attempt_id:
+            return None
+        try:
+            sqlite_hosted_capture.record_hosted_terminal_result(
+                self.records,
+                attempt_id=attempt_id,
+                repo=self.repo,
+                source_pr=pr,
+                trigger_record=record,
+                payload=payload,
+                current_record_path=record_path,
+            )
+        except Exception as exc:  # noqa: BLE001 - archive failures cannot block review admission
+            # This history write is secondary to the terminal observation
+            # already used for admission and must not block the next request.
+            return f"SQLite Hosted terminal capture failed ({type(exc).__name__})."
+        return None
+
+    def _finish_unposted_attempt(self, attempt_id: str) -> None:
+        """Best-effort close a registered attempt if its reservation was not written."""
+
+        if self.records is None:
+            return
+        try:
+            attempt = self.records.attempt(attempt_id)
+            if attempt["state"] != "started":
+                return
+            self.records.finish_attempt(
+                attempt_id,
+                state="failed",
+                finished_at=hosted.utc_now(),
+                diagnostic="Hosted POST was not issued because its durable reservation could not be written",
+            )
+        except Exception:  # noqa: BLE001 - preserve the primary reservation failure
+            # The reservation write failure remains primary. A later explicit
+            # records sync can inspect this attempt and its durable trigger.
+            return
 
     @staticmethod
     def _base_advanced(target: ReviewTarget, current: PullRequestSnapshot) -> bool:
@@ -2259,6 +2315,7 @@ class HostedRunner:
             except OSError as exc:
                 raise ControllerError(f"could not acquire the Hosted request lock for PR #{pr}") from exc
             archive_current_path: Path | None = None
+            sqlite_capture_warnings: list[str] = []
             current_records = hosted.current_trigger_record_paths(self.repo, pr)
             if len(current_records) > 1:
                 raise ControllerError("multiple current Hosted reservations require operator resolution")
@@ -2276,6 +2333,10 @@ class HostedRunner:
                             f"existing Hosted posting reservation cannot be adopted safely: {exc}"
                         ) from exc
                 state = hosted.trigger_state(self.repo, pr, payload, record, current_path)
+                if state.terminal is True:
+                    capture_warning = self._capture_terminal_attempt(pr, record, payload, current_path)
+                    if capture_warning is not None:
+                        sqlite_capture_warnings.append(capture_warning)
                 if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                     raise ControllerError(f"existing Hosted trigger requires resolution: {state.state}")
                 if state.state == "rate_limited":
@@ -2312,6 +2373,9 @@ class HostedRunner:
                 "posting_started_at": posting_started_at,
                 "posting_actor_login": posting_actor,
             }
+            sqlite_attempt_id = uuid.uuid4().hex if self.records is not None else None
+            if sqlite_attempt_id is not None:
+                posting["sqlite_attempt_id"] = sqlite_attempt_id
             # Establish a durable post-reservation boundary before issuing
             # POST.  Do all live identity and comment-floor checks while the
             # request lock is held, then write one complete reservation.  A
@@ -2365,11 +2429,45 @@ class HostedRunner:
                 raise ControllerError(
                     f"could not establish the Hosted pre-POST comment identity floor: {exc}"
                 ) from exc
+            sqlite_attempt_started = False
+            if self.records is not None and sqlite_attempt_id is not None:
+                try:
+                    sqlite_hosted_capture.start_hosted_attempt(
+                        self.records,
+                        attempt_id=sqlite_attempt_id,
+                        source_pr=pr,
+                        candidate_sha=target.snapshot.head_sha,
+                        started_at=posting_started_at,
+                        metadata={
+                            "repository": self.repo,
+                            "anchor": anchor,
+                            "posting_actor": posting_actor,
+                        },
+                    )
+                    sqlite_attempt_started = True
+                except Exception as exc:  # noqa: BLE001 - optional capture cannot block provider POST
+                    # SQLite is optional for provider posting. Keep the ID in
+                    # the reservation so explicit sync can adopt or backfill it.
+                    sqlite_capture_warnings.append(
+                        f"SQLite Hosted attempt start failed ({type(exc).__name__})."
+                    )
             if archive_current_path is not None:
                 trigger_id = (record.get("trigger") or {}).get("id")
                 archive = archive_current_path.with_name(f"trigger-{trigger_id}.json")
-                os.replace(archive_current_path, archive)
-            hosted.atomic_write_json(path, posting)
+                try:
+                    os.replace(archive_current_path, archive)
+                    hosted.atomic_write_json(path, posting)
+                except Exception as exc:
+                    if sqlite_attempt_started and sqlite_attempt_id is not None:
+                        self._finish_unposted_attempt(sqlite_attempt_id)
+                    raise ControllerError("could not establish the durable Hosted posting reservation") from exc
+            else:
+                try:
+                    hosted.atomic_write_json(path, posting)
+                except Exception as exc:
+                    if sqlite_attempt_started and sqlite_attempt_id is not None:
+                        self._finish_unposted_attempt(sqlite_attempt_id)
+                    raise ControllerError("could not establish the durable Hosted posting reservation") from exc
             try:
                 completed = subprocess.run(
                     [
@@ -2452,7 +2550,7 @@ class HostedRunner:
                 raise ControllerError("pull request or effective parent changed across the Hosted posting boundary")
             if status == "posted_boundary_unverified":
                 raise ControllerError("Hosted posting boundary could not be fully verified after POST")
-            return {
+            result = {
                 "channel": "hosted",
                 "pr": pr,
                 "head": before.head_sha,
@@ -2461,6 +2559,9 @@ class HostedRunner:
                 "status": status,
                 "anchor": anchor,
             }
+            if sqlite_capture_warnings:
+                result["sqlite_capture_warnings"] = sqlite_capture_warnings
+            return result
 
 
 def default_controller(repo: str | None = None) -> ReviewController:
@@ -2468,10 +2569,10 @@ def default_controller(repo: str | None = None) -> ReviewController:
     repository = github.repository_metadata(selected)
     live = LiveGitHub(selected)
     store = ControllerStateStore()
+    records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
     observations = LiveEvidence(selected, live, store)
     git_provider = DefaultGitProvider()
-    records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
-    hosted_runner = HostedRunner(selected, live, store)
+    hosted_runner = HostedRunner(selected, live, store, records=records)
 
     def cli_adapter(target: ReviewTarget, **kwargs: Any) -> Any:
         return run_cli_review(target, github=live, records=records, **kwargs)

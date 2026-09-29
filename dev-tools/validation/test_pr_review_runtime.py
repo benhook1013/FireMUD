@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
-from pr_review import evidence, github, hosted
+from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
 from pr_review.controller import ControllerError, StaleReviewTarget, _review_activity
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
@@ -757,11 +757,27 @@ class RuntimeTest(unittest.TestCase):
             "user": {"login": "maintainer"},
         }
         post_timeout: list[float] = []
+        post_saw_started_attempt: list[bool] = []
+        event_order: list[str] = []
+
+        start_attempt = sqlite_hosted_capture.start_hosted_attempt
+        write_trigger_record = hosted.atomic_write_json
+
+        def start_with_observation(*args, **kwargs):
+            result = start_attempt(*args, **kwargs)
+            event_order.append("sqlite-start")
+            return result
+
+        def write_with_observation(write_path, payload):
+            if payload.get("status") == "posting":
+                event_order.append("reservation")
+            return write_trigger_record(write_path, payload)
 
         def gh_call(args, **kwargs):
             if args == ["gh", "api", "user"]:
                 output = {"login": "maintainer"}
             else:
+                event_order.append("post")
                 post_timeout.append(kwargs["timeout"])
                 expected = [
                     "gh",
@@ -774,11 +790,75 @@ class RuntimeTest(unittest.TestCase):
                 ]
                 if args != expected:
                     raise AssertionError(f"unexpected GitHub command: {args!r}")
+                post_saw_started_attempt.append(
+                    any(item["channel"] == "hosted" and item["state"] == "started" for item in records.attempt_history(42))
+                )
                 output = comment
             return CompletedProcess(args, 0, json.dumps(output), "")
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(
+                    sqlite_hosted_capture,
+                    "start_hosted_attempt",
+                    side_effect=start_with_observation,
+                ),
+                patch.object(hosted, "atomic_write_json", side_effect=write_with_observation),
+                patch(
+                    "pr_review.runtime.subprocess.run",
+                    side_effect=gh_call,
+                ),
+            ):
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(result["trigger_comment_id"], 123)
+            self.assertEqual(record["anchor"]["child_head"], HEAD)
+            self.assertEqual(record["anchor"]["parent_head"], BASE)
+            self.assertEqual(record["anchor"]["patch_id"], PATCH)
+            self.assertEqual(record["posting_comment_id_floor"], 0)
+            self.assertEqual(len(record["sqlite_attempt_id"]), 32)
+            self.assertEqual(records.attempt_history(42)[0]["state"], "started")
+            self.assertEqual(post_saw_started_attempt, [True])
+            self.assertEqual(event_order, ["sqlite-start", "reservation", "post"])
+            self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_hosted_attempt_start_failure_does_not_block_the_single_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 124,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/124",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                post_calls.append(args)
+                output = comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
             with (
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
@@ -786,18 +866,218 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=Path(directory)),
                 patch(
-                    "pr_review.runtime.subprocess.run",
-                    side_effect=gh_call,
+                    "pr_review.runtime.sqlite_hosted_capture.start_hosted_attempt",
+                    side_effect=RuntimeError("injected archive failure"),
                 ),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
             ):
-                result = HostedRunner("owner/repo", live)(target, expect_pr=42)
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(len(post_calls), 1)
             record = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(result["trigger_comment_id"], 123)
-            self.assertEqual(record["anchor"]["child_head"], HEAD)
-            self.assertEqual(record["anchor"]["parent_head"], BASE)
-            self.assertEqual(record["anchor"]["patch_id"], PATCH)
-            self.assertEqual(record["posting_comment_id_floor"], 0)
-            self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+            self.assertEqual(record["status"], "posted")
+            self.assertEqual(len(record["sqlite_attempt_id"]), 32)
+            self.assertTrue(result["sqlite_capture_warnings"])
+            self.assertEqual(records.attempt_history(42), [])
+
+    def test_hosted_reservation_write_failure_marks_attempt_failed_and_never_posts(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        records: sqlite_review_records.SqliteReviewRecords
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args != ["gh", "api", "user"]:
+                post_calls.append(args)
+            return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+
+        def fail_reservation(_path, payload):
+            if payload.get("status") == "posting":
+                raise OSError("injected reservation write failure")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(hosted, "atomic_write_json", side_effect=fail_reservation),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "durable Hosted posting reservation"),
+            ):
+                HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(post_calls, [])
+            self.assertFalse(path.exists())
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIsNone(attempts[0]["run_id"])
+
+    def test_next_hosted_request_captures_prior_terminal_attempt_before_archiving(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        prior_record = self._trigger_record(created="2026-09-23T00:00:00Z")
+        prior_record["sqlite_attempt_id"] = "prior-hosted-attempt"
+        payload = self._payload(
+            comments=[],
+            reviews=[
+                {
+                    "databaseId": 901,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+                    "state": "COMMENTED",
+                    "submittedAt": "2026-09-23T00:02:00Z",
+                    "commit": {"oid": HEAD},
+                }
+            ],
+        )
+        post_comment = {
+            "id": 999,
+            "created_at": "2026-09-29T01:00:00Z",
+            "html_url": "https://example.test/999",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_saw_prior_completed: list[bool] = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._bind_trigger(common, payload, prior_record)
+            records = self._new_review_records(common / "controller.sqlite3")
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id="prior-hosted-attempt",
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+                metadata={"repository": "owner/repo"},
+            )
+
+            def gh_call(args, **kwargs):
+                if args == ["gh", "api", "user"]:
+                    output = {"login": "maintainer"}
+                else:
+                    prior = records.attempt_history(42)[0]
+                    post_saw_prior_completed.append(prior["state"] == "completed")
+                    output = post_comment
+                return CompletedProcess(args, 0, json.dumps(output), "")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(post_saw_prior_completed, [True])
+            prior = records.attempt_history(42)[0]
+            self.assertEqual(prior["state"], "completed")
+            self.assertEqual(prior["run_id"], "prior-hosted-attempt")
+            self.assertTrue(records.history(42)["runs"][0]["finalized"])
+            self.assertTrue(path.with_name("trigger-10.json").exists())
+
+    def test_status_history_does_not_mutate_hosted_attempt_records(self) -> None:
+        scenarios = (
+            (
+                "rate-limited",
+                [
+                    {
+                        "databaseId": 11,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Review rate limited. Next reviews available in: 20 minutes.",
+                        "createdAt": "2026-09-23T00:01:00Z",
+                        "updatedAt": "2026-09-23T00:01:00Z",
+                    }
+                ],
+                "rate_limited",
+            ),
+            (
+                "ambiguous",
+                [
+                    {
+                        "databaseId": 12,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Full review finished.",
+                        "createdAt": "2026-09-23T00:01:00Z",
+                        "updatedAt": "2026-09-23T00:01:00Z",
+                    },
+                    {
+                        "databaseId": 13,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Additional provider output without a head-bound result.",
+                        "createdAt": "2026-09-23T00:02:00Z",
+                        "updatedAt": "2026-09-23T00:02:00Z",
+                    },
+                ],
+                "ambiguous",
+            ),
+        )
+
+        for suffix, responses, expected_state in scenarios:
+            with self.subTest(state=expected_state), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._new_review_records(common / "controller.sqlite3")
+                attempt_id = f"hosted-{suffix}"
+                trigger_record = self._trigger_record(created="2026-09-23T00:00:00Z")
+                trigger_record["sqlite_attempt_id"] = attempt_id
+                sqlite_hosted_capture.start_hosted_attempt(
+                    records,
+                    attempt_id=attempt_id,
+                    source_pr=42,
+                    candidate_sha=HEAD,
+                    started_at="2026-09-23T00:00:00Z",
+                )
+                comments = [
+                    *responses,
+                ]
+                payload = self._payload(comments=comments)
+                payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+                self._bind_trigger(common, payload, trigger_record)
+                live = LiveGitHub("owner/repo")
+                snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    patch.object(live, "pull_request", return_value=snapshot),
+                    patch.object(evidence, "git_common_dir", return_value=common),
+                ):
+                    history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+                attempt = records.attempt_history(42)[0]
+                self.assertEqual(attempt["state"], "started")
+                self.assertIsNone(attempt["run_id"])
+                self.assertEqual(records.history(42)["runs"], [])
+                self.assertIsInstance(history, list)
+
+    @staticmethod
+    def _new_review_records(path: Path) -> sqlite_review_records.SqliteReviewRecords:
+        sqlite_store.SqliteStateStore(path).update(lambda state: state)
+        records = sqlite_review_records.SqliteReviewRecords(path)
+        records.bootstrap()
+        return records
 
     def test_hosted_request_refuses_latest_untracked_manual_command_before_reserving(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)

@@ -19,6 +19,7 @@ import dataclasses
 import fcntl
 import re
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -596,10 +597,11 @@ class ReviewController:
         anchor: AnchorFacts,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Return only observations not captured by the exact legacy transition."""
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         transition = self._legacy_transition_for(state, pr, anchor)
         if transition is None:
             return [self._clear_untrusted_non_counting(value) for value in history]
@@ -618,6 +620,7 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Project exact legacy observations as non-counting policy history.
 
@@ -627,7 +630,7 @@ class ReviewController:
         deliberately left visible to policy and can still block review.
         """
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
@@ -647,6 +650,8 @@ class ReviewController:
         pr: int,
         channel: policy.Channel,
         history_cache: dict[tuple[int, str], list[Any]] | None,
+        *,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Read one channel history once during a composed status invocation."""
 
@@ -654,7 +659,14 @@ class ReviewController:
             return _history(self._evidence_provider, pr, channel)
         key = (pr, channel.value)
         if key not in history_cache:
-            history_cache[key] = _history(self._evidence_provider, pr, channel)
+            started = time.perf_counter() if phase_timings is not None else 0.0
+            try:
+                history_cache[key] = _history(self._evidence_provider, pr, channel)
+            finally:
+                if phase_timings is not None:
+                    phase_timings["deep_evidence_history_ms"] = phase_timings.get(
+                        "deep_evidence_history_ms", 0.0
+                    ) + (time.perf_counter() - started) * 1000
         return history_cache[key]
 
     @staticmethod
@@ -1057,8 +1069,10 @@ class ReviewController:
         refresh_prs: set[int] | None = None,
         evidence_prs: set[int] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
-        remote_heads = self.git.remote_heads()
+        remote_heads = remote_head_snapshot if remote_head_snapshot is not None else self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(
             state,
             remote_heads,
@@ -1165,7 +1179,15 @@ class ReviewController:
             if not self._current_branches_match(state, live, baseline, pr, remote_heads):
                 continue
             try:
-                current = self._anchor(pr, live[pr], link)
+                anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                try:
+                    current = self._anchor(pr, live[pr], link)
+                finally:
+                    if phase_timings is not None:
+                        phase_timings["local_anchors_ms"] = (
+                            phase_timings.get("local_anchors_ms", 0.0)
+                            + (time.perf_counter() - anchor_started) * 1000
+                        )
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                 continue
@@ -1194,7 +1216,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is not None:
@@ -1331,7 +1358,14 @@ class ReviewController:
             current = anchors.get(pr)
             if current is None:
                 try:
-                    current = self._anchor(pr, live[pr], link)
+                    anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        current = self._anchor(pr, live[pr], link)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["local_anchors_ms"] = phase_timings.get(
+                                "local_anchors_ms", 0.0
+                            ) + (time.perf_counter() - anchor_started) * 1000
                 except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                     reason = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                     anchor_failures[pr] = reason
@@ -1343,7 +1377,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is None:
@@ -4303,6 +4342,8 @@ class ReviewController:
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         review_target_prs: Sequence[int] | None = None,
         review_target_selection_complete: bool = False,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         if history_cache is None:
             history_cache = {}
@@ -4320,7 +4361,14 @@ class ReviewController:
         if live_identity_cache is not None:
             for pr in evidence_prs or ():
                 if pr not in live_identity_cache:
-                    live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    identity_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                                "deep_pr_identity_ms", 0.0
+                            ) + (time.perf_counter() - identity_started) * 1000
             selected_live_identities = dict(live_identities or {})
             selected_live_identities.update(live_identity_cache)
             refresh_prs = set()
@@ -4330,13 +4378,20 @@ class ReviewController:
             refresh_prs=refresh_prs,
             evidence_prs=evidence_prs,
             history_cache=history_cache,
+            remote_head_snapshot=remote_head_snapshot,
+            phase_timings=phase_timings,
         )
         values: list[dict[str, Any]] = []
         histories = {
             channel: {
                 pr: (
                     self._policy_history(
-                        state, pr, channel, reconciliation, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        reconciliation,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                     if evidence_prs is None or pr in evidence_prs
                     else []
@@ -4701,6 +4756,7 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] = {}
         live_identity_cache: dict[int, Any] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        phase_timings: dict[str, float] = {}
         target_scan_prs: list[int] = []
         while deep_prs:
             frontier = max(state.ordered_prs.index(pr) for pr in deep_prs)
@@ -4726,6 +4782,8 @@ class ReviewController:
                     stop_audit_cache=stop_audit_cache,
                     review_target_prs=target_scan_prs,
                     review_target_selection_complete=target_scan_complete,
+                    remote_head_snapshot=remote_heads,
+                    phase_timings=phase_timings,
                 )
             except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
                 deep_error = str(error)
@@ -4877,6 +4935,14 @@ class ReviewController:
                 "tail_evidence": "not fetched; identity-only rows are informational and never indicate completion",
                 "active_targets": sorted(active_targets),
                 "active_target_scan": active_scan_status,
+                "timing_ms": {
+                    "deep_pr_fetch": round(
+                        phase_timings.get("deep_pr_identity_ms", 0.0)
+                        + phase_timings.get("deep_evidence_history_ms", 0.0),
+                        1,
+                    ),
+                    "local_anchors": round(phase_timings.get("local_anchors_ms", 0.0), 1),
+                },
                 **({"active_target_error": active_scan_error} if active_scan_error else {}),
                 **({"deep_error": deep_error} if deep_error else {}),
             },
