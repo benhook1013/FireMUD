@@ -41,8 +41,8 @@ public class GameplayAdmissionPointerRepository {
    * Serializes the empty-store bootstrap check and seed writes across Game Session pods.
    *
    * <p>The caller must invoke this inside the transaction that performs the subsequent count and
-   * any seed writes so PostgreSQL retains the advisory lock through commit or rollback. Non-Postgres
-   * dialects skip the lock for local test compatibility.
+   * any seed writes so PostgreSQL retains the advisory lock through commit or rollback.
+   * Non-Postgres dialects skip the lock for local test compatibility.
    */
   public void lockForBootstrap() {
     lockAdvisoryTransaction(BOOTSTRAP_ADVISORY_LOCK_KEY);

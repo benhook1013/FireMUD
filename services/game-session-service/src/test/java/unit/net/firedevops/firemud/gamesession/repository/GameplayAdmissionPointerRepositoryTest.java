@@ -132,8 +132,7 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerEvent secondSaved = repository.save(laterWriteWithSkewedClock);
 
       var audit =
-          repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
-              7L, "demo", "production");
+          repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(7L, "demo", "production");
 
       assertEquals(secondSaved.getId(), audit.getFirst().getId());
       assertEquals(firstSaved.getId(), audit.get(1).getId());

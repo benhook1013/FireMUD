@@ -35,9 +35,8 @@ public class GameplayAdmissionPointerEventRepository {
         .fetch(this::toEntity);
   }
 
-  public List<GameplayAdmissionPointerEvent>
-      findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
-          Long tenantId, String worldSlug, String realmSlug) {
+  public List<GameplayAdmissionPointerEvent> findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
+      Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
             GAMEPLAY_ADMISSION_POINTER_EVENT

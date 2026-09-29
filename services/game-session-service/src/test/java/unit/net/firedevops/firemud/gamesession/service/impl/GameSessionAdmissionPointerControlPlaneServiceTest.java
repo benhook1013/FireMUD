@@ -63,9 +63,8 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
     when(pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc())
         .thenReturn(List.of(currentPointer));
-    when(
-            eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
-                1L, "demo", "production"))
+    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
+            1L, "demo", "production"))
         .thenReturn(List.of(retainedPreV7Event));
 
     DatabaseGameplayAdmissionPointerAuthorityService authorityService =
