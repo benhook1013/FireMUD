@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamedesign.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -114,7 +113,9 @@ class AutomationScriptingClientTest {
     client.initialize();
 
     assertThatThrownBy(
-            () -> client.notifyScriptVersionUpdate("tenant-1", 7L, "patch-7", java.util.List.of()))
+            () ->
+                client.notifyScriptVersionUpdate(
+                    "tenant-1", 7L, "patch-7", java.util.List.of("script-a")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SCRIPT_PATCH_NOTIFICATION_REJECTED");
     var requestCaptor = org.mockito.ArgumentCaptor.forClass(NotifyScriptVersionUpdateRequest.class);
@@ -123,7 +124,7 @@ class AutomationScriptingClientTest {
     assertThat(request.getTenantId()).isEqualTo("tenant-1");
     assertThat(request.getBaseVersionId()).isEqualTo(7L);
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-7");
-    assertThat(request.getAffectedScriptsList()).isEmpty();
+    assertThat(request.getAffectedScriptsList()).containsExactly("script-a");
   }
 
   @Test
@@ -173,12 +174,16 @@ class AutomationScriptingClientTest {
     client.initialize();
 
     for (Long baseVersionId : java.util.Arrays.asList(null, 0L, -1L)) {
-      assertThatIllegalArgumentException()
-          .isThrownBy(
+      assertThatThrownBy(
               () ->
                   client.notifyScriptVersionUpdate(
-                      "tenant-1", baseVersionId, "patch-7", java.util.List.of()));
+                      "tenant-1", baseVersionId, "patch-7", java.util.List.of("script-a")))
+          .isInstanceOf(AutomationScriptingClient.PreDispatchValidationException.class);
     }
+    assertThatThrownBy(
+            () -> client.notifyScriptVersionUpdate("tenant-1", 7L, "patch-7", java.util.List.of()))
+        .isInstanceOf(AutomationScriptingClient.PreDispatchValidationException.class)
+        .hasMessageContaining("affectedScripts");
 
     verify(stub, never()).notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class));
   }

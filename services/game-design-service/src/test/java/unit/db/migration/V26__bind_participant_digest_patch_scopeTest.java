@@ -154,7 +154,8 @@ class V26__bind_participant_digest_patch_scopeTest {
         .isEqualTo(expected);
     assertThat(
             readMigrationDoc(
-                repositoryRoot.resolve("services/game-design-service/src/test/java/unit/db/migration")))
+                repositoryRoot.resolve(
+                    "services/game-design-service/src/test/java/unit/db/migration")))
         .isEqualTo(expected);
   }
 

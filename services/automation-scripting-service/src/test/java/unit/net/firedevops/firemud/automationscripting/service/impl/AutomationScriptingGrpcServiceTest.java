@@ -759,6 +759,52 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void notifyScriptVersionUpdateReportsRejectedReadinessWithoutReportingSuccess() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.when(versionService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")))
+        .thenReturn(false);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> ref = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("patch_readiness_not_current", ref.get().getError().getMessage());
+    Mockito.verify(versionService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+  }
+
+  @Test
   void notifyScriptVersionUpdateRejectsEmptyAffectedScriptsWithoutReportingSuccess() {
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     AutomationScriptingGrpcService service =
