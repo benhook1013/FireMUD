@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -71,6 +72,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         bootstrap_manifest: str,
         summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
         smoke_condition: str = "${{ success() }}",
+        recovery_summary_run: str = (
+            'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh '
+            'recovery-warning >> "$GITHUB_STEP_SUMMARY"'
+        ),
     ) -> None:
         workflow = {
             "jobs": {
@@ -89,6 +94,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                             "name": "Summarize dev-demo access",
                             "run": summary_run,
                         },
+                        {
+                            "name": "Warn about Game Design recovery after staged deploy failure",
+                            "run": recovery_summary_run,
+                        },
                     ]
                 }
             }
@@ -99,12 +108,69 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self.validator.yaml.safe_dump(workflow, sort_keys=False),
             encoding="utf-8",
         )
+        helper_path = (
+            root / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+        )
+        helper_path.parent.mkdir(parents=True)
+        helper_path.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ ${1:-} == recovery-warning ]]; then\n"
+            "  echo '### Game Design recovery'\n"
+            "fi\n",
+            encoding="utf-8",
+        )
 
     def test_validate_workflow_accepts_valid_bootstrap_manifest_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
             self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_raw_game_design_recovery_summary_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                recovery_summary_run=(
+                    '{ echo "### Game Design recovery"; '
+                    'echo "Repair Game Design before retrying."; } '
+                    '>> "$GITHUB_STEP_SUMMARY"'
+                ),
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "Game Design recovery summary must use the canonical helper mode",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_unallowlisted_game_design_recovery_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                recovery_summary_run=(
+                    'bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh '
+                    'unknown-mode >> "$GITHUB_STEP_SUMMARY"'
+                ),
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "unsupported helper mode; allowed modes: recovery-warning"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_recovery_warning_helper_mode_preserves_operator_guidance(self):
+        helper = ROOT / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+        result = subprocess.run(
+            ["bash", str(helper), "recovery-warning"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("### Game Design recovery", result.stdout)
+        self.assertIn("participant-first Helm upgrade", result.stdout)
+        self.assertIn("Deployment, Pods, Service, and EndpointSlices", result.stdout)
 
     def test_validate_workflow_rejects_bootstrap_credentials_in_summary_writer(self):
         with tempfile.TemporaryDirectory() as directory:

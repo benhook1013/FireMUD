@@ -468,12 +468,7 @@ jobs:
       - name: Warn about Game Design recovery after staged deploy failure
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
         run: |
-          {
-            echo ""
-            echo "### Game Design recovery"
-            echo ""
-            echo "**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained) because the staged dev-demo deploy did not complete. Inspect and repair the Game Design Deployment, Pods, Service, and EndpointSlices before retrying."
-          } >> "$GITHUB_STEP_SUMMARY"
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh recovery-warning >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if dev-demo rollout did not complete
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}

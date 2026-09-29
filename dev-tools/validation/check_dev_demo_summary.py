@@ -17,6 +17,13 @@ from pathlib import Path
 import yaml
 
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/dev-demo.yml")
+GAME_DESIGN_RECOVERY_STEP_NAME = (
+    "Warn about Game Design recovery after staged deploy failure"
+)
+GAME_DESIGN_RECOVERY_HELPER = (
+    "./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+)
+ALLOWED_GAME_DESIGN_RECOVERY_SUMMARY_MODES = frozenset({"recovery-warning"})
 ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset(
     {"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"}
 )
@@ -486,6 +493,36 @@ def _find_step(deploy_job: dict, name: str) -> dict:
     if step is None:
         raise AssertionError(f"dev-demo-deploy job missing required step {name!r}")
     return step
+
+
+def _validate_game_design_recovery_summary(deploy_job: dict) -> None:
+    step = _find_step(deploy_job, GAME_DESIGN_RECOVERY_STEP_NAME)
+    run = step.get("run")
+    if not isinstance(run, str):
+        raise AssertionError(
+            "dev-demo Game Design recovery summary must use the canonical helper mode"
+        )
+    try:
+        tokens = shlex.split(run)
+    except ValueError as exc:
+        raise AssertionError(
+            "dev-demo Game Design recovery summary must use the canonical helper mode"
+        ) from exc
+    if (
+        len(tokens) != 5
+        or tokens[0] != "bash"
+        or tokens[1] != GAME_DESIGN_RECOVERY_HELPER
+        or tokens[3:] != [">>", "$GITHUB_STEP_SUMMARY"]
+    ):
+        raise AssertionError(
+            "dev-demo Game Design recovery summary must use the canonical helper mode"
+        )
+    if tokens[2] not in ALLOWED_GAME_DESIGN_RECOVERY_SUMMARY_MODES:
+        allowed = ", ".join(sorted(ALLOWED_GAME_DESIGN_RECOVERY_SUMMARY_MODES))
+        raise AssertionError(
+            "dev-demo Game Design recovery summary uses an unsupported helper mode; "
+            f"allowed modes: {allowed}"
+        )
 
 
 def _cleanup_function_end_index(lines: list[str], function_start: int) -> int | None:
@@ -974,6 +1011,7 @@ def validate_workflow(root: Path) -> None:
     bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
     smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
     _validate_smoke_condition(smoke_step.get("if"))
+    _validate_game_design_recovery_summary(deploy_job)
     bootstrap_manifest = bootstrap_step.get("run")
     if not isinstance(bootstrap_manifest, str):
         raise AssertionError("dev-demo bootstrap step run must be a string")

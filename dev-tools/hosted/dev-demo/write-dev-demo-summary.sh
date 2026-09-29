@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == recovery-warning ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo "usage: $0 recovery-warning" >&2
+    exit 1
+  fi
+  cat <<'EOF'
+
+### Game Design recovery
+
+**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained) because the staged dev-demo deploy did not complete. Inspect and repair the Game Design Deployment, Pods, Service, and EndpointSlices before retrying.
+EOF
+  exit 0
+fi
+
 if [[ $# -lt 5 ]]; then
   echo "usage: $0 <mode> <head_sha> <image_tag> <hostname> <telnet_port> [failure_stage]" >&2
   exit 1
