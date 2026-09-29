@@ -811,7 +811,10 @@ public class PlayCommandHandler {
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
     if (!response.getMembershipExists() || !response.getGameplayAdmissionAllowed()) {
-      if (isPublicProductionRealm(selectedRealm)) {
+      boolean membershipRequiresExplicitJoin =
+          !response.getMembershipExists()
+              || "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState());
+      if (isPublicProductionRealm(selectedRealm) && membershipRequiresExplicitJoin) {
         GetTenantEntitlementsForRuntimeResponse entitlementResponse =
             accountClient.getTenantEntitlementsForRuntime(
                 Long.toString(selectedRealm.tenantId()), requestId);

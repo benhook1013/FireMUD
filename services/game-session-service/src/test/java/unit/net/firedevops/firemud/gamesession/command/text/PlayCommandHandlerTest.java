@@ -1168,6 +1168,48 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playActiveNonAdmittingMembershipDoesNotSuggestJoinOrBind() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("demo")
+                    .build()));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipVersion(2L)
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.world-access-denied");
+    Mockito.verify(accountClient, never())
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
+  }
+
+  @Test
   void playNonPublicRealmRequiresExistingAdmissibleMembership() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
