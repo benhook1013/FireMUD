@@ -39,6 +39,7 @@ SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$"
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+MAX_CAPTURE_FINDINGS = 200
 SUMMARY_MARKERS = {
     "outside_diff": ("Outside diff range comments", "Outside the diff"),
     "duplicate": ("Duplicate comments",),
@@ -538,27 +539,38 @@ def _read_metadata(path: Path) -> dict[str, str]:
 
 
 def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stdout = _read_capture_text(path, "stdout")
+    try:
+        return parse_capture_events(stdout)
+    except EvidenceError as exc:
+        raise CaptureInvalid(str(exc)) from exc
+
+
+def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Parse and validate the newline-delimited events from a successful CLI capture."""
+
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    lines = _capture_lines(_read_capture_text(path, "stdout"))
-    for number, line in enumerate(lines, 1):
+    for number, line in enumerate(_capture_lines(value), 1):
         if not line.strip():
             continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise CaptureInvalid(f"linked capture stdout has invalid JSON at line {number}") from exc
+            raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
-            raise CaptureInvalid(f"linked capture stdout has a non-object event at line {number}")
+            raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
         if event.get("type") == "finding":
             findings.append(event)
         elif event.get("type") == "complete":
             completes.append(event)
     if len(completes) != 1 or completes[0].get("status") != "review_completed":
-        raise CaptureInvalid("linked capture has no unique successful completion")
+        raise EvidenceError("linked capture has no unique successful completion")
     complete = completes[0]
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
-        raise CaptureInvalid("linked capture completion does not match findings/files")
+        raise EvidenceError("linked capture completion does not match findings/files")
+    if len(findings) > MAX_CAPTURE_FINDINGS:
+        raise EvidenceError("linked capture contains too many findings")
     return findings, complete
 
 

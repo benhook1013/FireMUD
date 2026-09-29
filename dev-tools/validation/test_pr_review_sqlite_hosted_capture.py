@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -120,6 +121,23 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records = sqlite_review_records.SqliteReviewRecords(path)
         records.bootstrap()
         return records
+
+    def test_checkpoint_id_matches_hosted_type_case_insensitively_and_exact_review_id(self) -> None:
+        checkpoints = [
+            SimpleNamespace(type="hOsTeD", hosted_review_id=102, comment_id=801),
+            SimpleNamespace(type="HOSTED", hosted_review_id=103, comment_id=802),
+            SimpleNamespace(type="CLI", hosted_review_id=103, comment_id=803),
+        ]
+        with patch.object(
+            sqlite_hosted_capture.evidence,
+            "parse_checkpoint_comments",
+            return_value=(checkpoints, None),
+        ):
+            checkpoint_id = sqlite_hosted_capture._checkpoint_id(
+                {"comments": {"nodes": []}}, 103
+            )
+
+        self.assertEqual(checkpoint_id, "802")
 
     def test_edited_zero_finding_completion_is_attributed_and_archived(self) -> None:
         summary = {

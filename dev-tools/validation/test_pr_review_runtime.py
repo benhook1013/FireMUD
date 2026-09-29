@@ -2294,6 +2294,44 @@ class RuntimeTest(unittest.TestCase):
             self.assertTrue(all(item["held"] for item in captures))
             self.assertEqual({item["head"] for item in captures}, {HEAD})
 
+    def test_cli_history_holds_checkpoint_when_capture_context_is_unavailable(self):
+        run_id = "run.ContextUnavailable"
+        checkpoint = {
+            "databaseId": 44,
+            "body": (
+                f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
+                f"<!-- firemud-cli-run: {run_id} -->"
+            ),
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([checkpoint])
+        live = LiveGitHub("owner/repo")
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(
+                evidence,
+                "resolve_cli_capture_context",
+                side_effect=evidence.EvidenceError("capture context cannot be read"),
+            ),
+            patch.object(evidence, "load_cli_capture") as load_capture,
+            patch.object(evidence, "discover_cli_captures") as discover_captures,
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+
+        checkpoint_rows = [item for item in history if item.get("comment_id") == 44]
+        self.assertEqual(len(checkpoint_rows), 1)
+        row = checkpoint_rows[0]
+        self.assertFalse(row["completed"])
+        self.assertFalse(row["attributable"])
+        self.assertTrue(row["held"])
+        self.assertFalse(row["capture_context_available"])
+        self.assertIn("context is unavailable", row["reason"])
+        load_capture.assert_not_called()
+        discover_captures.assert_not_called()
+
     def test_history_fallback_normalizes_live_snapshot_head(self):
         live = LiveGitHub("owner/repo")
         payload = self._payload()

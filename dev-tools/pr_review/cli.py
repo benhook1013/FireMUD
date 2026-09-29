@@ -948,7 +948,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         result = sqlite_hosted_capture.sync_hosted_pending(
             store, repo=github.infer_repo(args.repo), pr_number=args.pr,
         )
-        return {"api_version": 1, "result": result}, 0
+        unresolved = any(result.get(bucket) for bucket in ("pending", "ambiguous", "errors"))
+        return {"api_version": 1, "result": result}, 2 if unresolved else 0
     if args.records_command == "source":
         if args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import evidence
 from .sqlite_provider_imports import _cli_finding_title
 from .sqlite_review_records import (
     AttemptNotFound,
@@ -788,35 +789,24 @@ def _read_capture_json(path: Path, limit: int, description: str) -> dict[str, An
 
 
 def _parse_successful_stdout(stdout: str) -> list[dict[str, Any]]:
-    findings: list[dict[str, Any]] = []
-    completes: list[dict[str, Any]] = []
-    for number, line in enumerate(_capture_lines(stdout), 1):
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            raise _UnrecordableCapture(f"capture stdout JSON is invalid at line {number}") from error
-        if not isinstance(event, dict):
-            raise _UnrecordableCapture(f"capture stdout event at line {number} is not an object")
-        if event.get("type") == "finding":
-            findings.append(event)
-        elif event.get("type") == "complete":
-            completes.append(event)
-    if len(completes) != 1 or completes[0].get("status") != "review_completed":
-        raise _UnrecordableCapture("capture has no unique successful completion")
-    complete = completes[0]
-    if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
-        raise _UnrecordableCapture("capture completion does not match its findings")
-    if len(findings) > 200:
-        raise _UnrecordableCapture("capture contains too many findings")
+    try:
+        findings, _ = evidence.parse_capture_events(stdout)
+    except evidence.EvidenceError as error:
+        message = str(error)
+        invalid_json = re.fullmatch(r"linked capture stdout has invalid JSON at line ([0-9]+)", message)
+        non_object = re.fullmatch(r"linked capture stdout has a non-object event at line ([0-9]+)", message)
+        if invalid_json:
+            message = f"capture stdout JSON is invalid at line {invalid_json.group(1)}"
+        elif non_object:
+            message = f"capture stdout event at line {non_object.group(1)} is not an object"
+        else:
+            message = message.removeprefix("linked ")
+            message = message.replace(
+                "completion does not match findings/files",
+                "completion does not match its findings",
+            )
+        raise _UnrecordableCapture(message) from error
     return findings
-
-
-def _capture_lines(value: str) -> list[str]:
-    """Split capture records on literal newlines while accepting trailing CR."""
-
-    return [line.removesuffix("\r") for line in value.split("\n")]
 
 
 def _capture_finished_at(path: Path) -> str:

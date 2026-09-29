@@ -435,6 +435,12 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(attempts[0]["attempt_id"], result.run_id)
             self.assertEqual(commands.attempt_states_at_review_invocation, ["started"])
             self.assertEqual(attempts[0]["state"], "completed")
+            attempt = records.attempt(result.run_id)
+            run = records.history(result.pull_request)["runs"][0]
+            self.assertTrue(attempt["finished_at"].endswith("Z"))
+            self.assertEqual(attempt["finished_at"], run["finished_at"])
+            self.assertEqual(attempts[0]["duration_seconds"], result.duration_seconds)
+            self.assertEqual(attempt["metadata"]["candidate_sha"], result.candidate_sha)
             with sqlite3.connect(database) as connection:
                 kinds = {row[0] for row in connection.execute(
                     "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)

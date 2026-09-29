@@ -1238,6 +1238,7 @@ def run_cli_review(
                 if records is not None:
                     try:
                         if result_state == "completed":
+                            completed_at = hosted.utc_now()
                             observations = []
                             for index, finding in enumerate(parsed_findings, 1):
                                 instructions = finding.get("codegenInstructions")
@@ -1252,6 +1253,7 @@ def run_cli_review(
                                 run_id,
                                 finish={
                                     "state": result_state,
+                                    "finished_at": completed_at,
                                     "duration_seconds": duration,
                                     "exit_status": process.returncode,
                                     "diagnostic": diagnostic,
@@ -1266,7 +1268,7 @@ def run_cli_review(
                                     "reviewer": "CodeRabbit CLI",
                                     "scope": "broad",
                                     "started_at": attempt_started_at,
-                                    "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                    "finished_at": completed_at,
                                 },
                                 finalize_empty=not observations,
                             )

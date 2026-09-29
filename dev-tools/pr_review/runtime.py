@@ -1469,8 +1469,12 @@ class LiveEvidence:
         emitted_hosted_response_ids: set[int] = set()
         cli_common: Path | None = None
         cli_records: Any = None
+        cli_context_error: evidence.EvidenceError | None = None
         if channel == "cli":
-            cli_common, cli_records = evidence.resolve_cli_capture_context()
+            try:
+                cli_common, cli_records = evidence.resolve_cli_capture_context()
+            except evidence.EvidenceError as error:
+                cli_context_error = error
         for checkpoint in checkpoints:
             if checkpoint.type.casefold() != channel:
                 continue
@@ -1485,12 +1489,13 @@ class LiveEvidence:
             provisional = False
             anchor: dict[str, Any] = {}
             if channel == "cli":
-                try:
-                    capture = evidence.load_cli_capture(
-                        checkpoint, self.repo, pr, cli_common, records=cli_records
-                    )
-                except evidence.EvidenceError:
-                    capture = None
+                if cli_context_error is None:
+                    try:
+                        capture = evidence.load_cli_capture(
+                            checkpoint, self.repo, pr, cli_common, records=cli_records
+                        )
+                    except evidence.EvidenceError:
+                        capture = None
                 if capture is not None:
                     if checkpoint.run_id:
                         public_cli_run_ids.add(checkpoint.run_id)
@@ -1535,11 +1540,19 @@ class LiveEvidence:
                     "correction": checkpoint.correction,
                     "corrected_state": completed and exact_head == head,
                     "provisional": provisional,
-                    "reason": capture.metadata.get("reason", "") if channel == "cli" and capture is not None else "",
+                    "reason": (
+                        "CLI capture context is unavailable; checkpoint attribution cannot be verified"
+                        if cli_context_error is not None
+                        else capture.metadata.get("reason", "")
+                        if channel == "cli" and capture is not None
+                        else ""
+                    ),
+                    **({"held": True, "capture_context_available": False}
+                       if cli_context_error is not None else {}),
                     **anchor,
                 }
             )
-        if channel == "cli":
+        if channel == "cli" and cli_context_error is None:
             for capture in evidence.discover_cli_captures(
                 self.repo, pr, cli_common, records=cli_records
             ):

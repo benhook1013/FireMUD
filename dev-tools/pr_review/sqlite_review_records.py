@@ -240,6 +240,8 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
     source_digest = hashlib.sha256(encoded).hexdigest()
     if kind in {"cli_diagnostic", "cli_raw_output"}:
         stored, count = _redact_archive_text(content)
+        if len(stored.encode("utf-8")) > limits[kind]:
+            raise ReviewRecordsError(f"{kind} exceeds its evidence size limit")
         return stored, source_digest, count
     if kind == "cli_events":
         events = []
@@ -299,6 +301,8 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
             stored = _json(scrubbed)
     except RecursionError as exc:
         raise ReviewRecordsError(f"{kind} JSON is too deeply nested") from exc
+    if len(stored.encode("utf-8")) > limits[kind]:
+        raise ReviewRecordsError(f"{kind} exceeds its evidence size limit")
     return stored, source_digest, redactions
 
 

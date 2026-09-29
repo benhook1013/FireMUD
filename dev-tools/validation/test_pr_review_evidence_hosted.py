@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import evidence, github, hosted, sqlite_review_records
+from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
@@ -474,6 +474,84 @@ class GithubAndEvidenceTests(unittest.TestCase):
             (run / "exit-status").write_text("0\n")
             with self.assertRaises(evidence.CaptureInvalid):
                 evidence.load_cli_capture(checkpoint, REPO, PR, Path(directory))
+
+    def test_cli_capture_stdout_parsers_share_successful_event_rules(self):
+        events = (
+            json.dumps({"type": "finding", "message": "before\u2028after"}, ensure_ascii=False),
+            json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+            ),
+        )
+        stdout = "\r\n".join(events) + "\r\n"
+        parsed = evidence.parse_capture_events(stdout)
+
+        with tempfile.TemporaryDirectory() as directory:
+            stdout_path = Path(directory) / "stdout"
+            stdout_path.write_text(stdout, encoding="utf-8")
+
+            self.assertEqual(evidence._parse_capture_stdout(stdout_path), parsed)
+            self.assertEqual(cli_attempts._parse_successful_stdout(stdout), parsed[0])
+
+    def test_cli_capture_stdout_parsers_reject_the_same_invalid_events(self):
+        complete = {
+            "type": "complete",
+            "status": "review_completed",
+            "findings": 0,
+            "reviewedFiles": ["a"],
+        }
+        malformed_events = (
+            ("invalid JSON", '{"type":"finding"}\nnot-json', "invalid JSON at line 2", "JSON is invalid at line 2"),
+            ("non-object", "[]\n", "non-object event at line 1", "event at line 1 is not an object"),
+            ("missing completion", '{"type":"other"}\n', "no unique successful completion", "no unique successful completion"),
+            (
+                "duplicate completion",
+                json.dumps(complete) + "\n" + json.dumps(complete) + "\n",
+                "no unique successful completion",
+                "no unique successful completion",
+            ),
+            (
+                "finding count mismatch",
+                json.dumps({**complete, "findings": 1}) + "\n",
+                "does not match findings/files",
+                "does not match its findings",
+            ),
+            (
+                "invalid reviewed files",
+                json.dumps({**complete, "reviewedFiles": "a"}) + "\n",
+                "does not match findings/files",
+                "does not match its findings",
+            ),
+        )
+        too_many_findings = [
+            json.dumps({"type": "finding", "message": str(index)})
+            for index in range(evidence.MAX_CAPTURE_FINDINGS + 1)
+        ]
+        over_limit_complete = {
+            "type": "complete",
+            "status": "review_completed",
+            "findings": len(too_many_findings),
+            "reviewedFiles": ["a"],
+        }
+        malformed_events += (
+            (
+                "finding limit",
+                "\n".join([*too_many_findings, json.dumps(over_limit_complete)]) + "\n",
+                "contains too many findings",
+                "contains too many findings",
+            ),
+        )
+
+        for label, stdout, evidence_error, recovery_error in malformed_events:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                stdout_path = Path(directory) / "stdout"
+                stdout_path.write_text(stdout, encoding="utf-8")
+
+                with self.assertRaisesRegex(evidence.EvidenceError, evidence_error):
+                    evidence.parse_capture_events(stdout)
+                with self.assertRaisesRegex(evidence.CaptureInvalid, evidence_error):
+                    evidence._parse_capture_stdout(stdout_path)
+                with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
+                    cli_attempts._parse_successful_stdout(stdout)
 
     def test_cli_capture_preserves_unicode_line_separators_inside_json_strings(self):
         with tempfile.TemporaryDirectory() as directory:

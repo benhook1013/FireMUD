@@ -1297,24 +1297,25 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(repair.call_count, 2)
         self.assertEqual([call.kwargs["checkpoints"][0].comment_id for call in repair.call_args_list], [123, 124])
 
-    def test_hosted_sync_does_not_use_controller_or_post_a_review(self) -> None:
+    def test_hosted_sync_returns_failure_status_for_pending_ambiguous_or_errors(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
-        with (
-            patch.object(cli.github, "infer_repo", return_value="owner/repo"),
-            patch.object(cli.sqlite_hosted_capture, "sync_hosted_pending",
-                         return_value={
-                             "synced": [{"pr": 2893}],
-                             "pending": [],
-                             "ambiguous": [{"pr": 2893}],
-                             "errors": [],
-                         }) as sync,
-            patch.object(cli.github, "fetch_pull_request", side_effect=AssertionError("sync helper owns evidence")),
-        ):
-            code, result = self.invoke("sync-hosted", "--pr", "2893", "--database", str(self.database))
-        self.assertEqual(code, 0)
-        self.assertEqual(len(result["result"]["synced"]), 1)
-        self.assertEqual(sync.call_args.kwargs["repo"], "owner/repo")
-        self.assertEqual(sync.call_args.kwargs["pr_number"], 2893)
+        reports = (
+            ({"synced": [{"pr": 2893}], "pending": [{"pr": 2893}], "ambiguous": [], "errors": []}, 2),
+            ({"synced": [{"pr": 2893}], "pending": [], "ambiguous": [{"pr": 2893}], "errors": []}, 2),
+            ({"synced": [{"pr": 2893}], "pending": [], "ambiguous": [], "errors": [{"pr": 2893}]}, 2),
+            ({"synced": [{"pr": 2893}], "pending": [], "ambiguous": [], "errors": []}, 0),
+        )
+        for report, expected_status in reports:
+            with (
+                patch.object(cli.github, "infer_repo", return_value="owner/repo"),
+                patch.object(cli.sqlite_hosted_capture, "sync_hosted_pending", return_value=report) as sync,
+                patch.object(cli.github, "fetch_pull_request", side_effect=AssertionError("sync helper owns evidence")),
+            ):
+                code, result = self.invoke("sync-hosted", "--pr", "2893", "--database", str(self.database))
+            self.assertEqual(code, expected_status)
+            self.assertEqual(result["result"], report)
+            self.assertEqual(sync.call_args.kwargs["repo"], "owner/repo")
+            self.assertEqual(sync.call_args.kwargs["pr_number"], 2893)
 
     def test_repair_all_archives_incomplete_old_checkpoint_without_claiming_run(self) -> None:
         checkpoint = {

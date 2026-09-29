@@ -1070,7 +1070,11 @@ def _checkpoint_id(pull_request: dict[str, Any], review_id: int | None) -> str |
         checkpoints, _ = evidence.parse_checkpoint_comments(comments)
     except evidence.EvidenceError:
         return None
-    matches = [item for item in checkpoints if item.type == "Hosted" and item.hosted_review_id == review_id]
+    matches = [
+        item
+        for item in checkpoints
+        if item.type.casefold() == "hosted" and item.hosted_review_id == review_id
+    ]
     return str(matches[0].comment_id) if len(matches) == 1 and matches[0].comment_id is not None else None
 
 

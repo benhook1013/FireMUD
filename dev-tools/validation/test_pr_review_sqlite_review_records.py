@@ -91,6 +91,20 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaisesRegex(ReviewRecordsError, "JSON"):
                 _archive_artifact(kind, content)
 
+    def test_archived_text_rejects_redaction_expansion_over_stored_byte_limit(self) -> None:
+        content = "secret=x " * 12_000
+        self.assertLessEqual(len(content.encode("utf-8")), 128 * 1024)
+
+        with self.assertRaisesRegex(ReviewRecordsError, "cli_diagnostic exceeds its evidence size limit"):
+            _archive_artifact("cli_diagnostic", content)
+
+    def test_archived_json_rejects_normalization_expansion_over_stored_byte_limit(self) -> None:
+        content = json.dumps({"body": "é" * 700_000}, ensure_ascii=False)
+        self.assertLessEqual(len(content.encode("utf-8")), 4 * 1024 * 1024)
+
+        with self.assertRaisesRegex(ReviewRecordsError, "hosted_review exceeds its evidence size limit"):
+            _archive_artifact("hosted_review", content)
+
     def test_archived_json_parse_recursion_is_wrapped_without_leaking_raw_error(self) -> None:
         for kind, content, message in (
             ("cli_events", "{}\n", "CLI events must be JSON objects, one per line"),
