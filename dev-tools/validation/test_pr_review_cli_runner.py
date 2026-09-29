@@ -787,7 +787,9 @@ class CliReviewRunnerTests(unittest.TestCase):
                 patch.object(
                     records, "finish_attempt", side_effect=ReviewRecordsError("SQLite finish failed")
                 ),
-                self.assertRaisesRegex(ReviewRecordsError, "SQLite finish failed"),
+                self.assertRaisesRegex(
+                    ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"
+                ),
             ):
                 run_cli_review(
                     target(), github=FakeGitHub(), source_root=root,
@@ -800,6 +802,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             capture_dir = run_dirs[0]
             self.assertEqual((capture_dir / "capture-complete").read_text(), f"{capture_dir.name}\n")
             self.assertTrue(json.loads((capture_dir / "metadata.json").read_text())["timed_out"])
+            self.assertEqual(records.attempt(capture_dir.name)["state"], "started")
 
     def test_nul_path_output_preserves_multiple_paths_and_timeout_configuration(self):
         files = ["src/Representative.java", "src/path with spaces\n.txt"]

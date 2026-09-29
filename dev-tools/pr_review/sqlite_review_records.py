@@ -402,7 +402,11 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("attempt candidate SHA is invalid")
         started_at_was_supplied = started_at is not None
         started_at = _timestamp(started_at, "attempt start")
-        metadata_json, _, redactions = _archive_artifact("metadata", _json(dict(metadata or {})))
+        try:
+            serialized_metadata = _json(dict(metadata or {}))
+        except (TypeError, ValueError) as exc:
+            raise ReviewRecordsError("attempt metadata must be JSON") from exc
+        metadata_json, _, redactions = _archive_artifact("metadata", serialized_metadata)
         if redactions:
             raise ReviewRecordsError("attempt metadata contains credential-shaped material")
         with self._write_connection() as connection:
@@ -1925,22 +1929,28 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
-                attempts = [
-                    {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2],
-                     "state": row[3], "started_at": row[4], "finished_at": row[5],
-                     "duration_seconds": row[6], "exit_status": row[7], "trigger_id": row[8],
-                     "provider_review_id": row[9], "checkpoint_id": row[10], "run_id": row[11],
-                     "diagnostic": row[12],
-                     "origin": json.loads(row[13]).get("origin"),
-                     "legacy_outcome": json.loads(row[13]).get("legacy_outcome")}
-                    for row in connection.execute(
-                        "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
-                        "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
-                        "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
-                        "ORDER BY started_at, attempt_id",
-                        (pr,),
+                attempts = []
+                for row in connection.execute(
+                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
+                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
+                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
+                    "ORDER BY started_at, attempt_id",
+                    (pr,),
+                ):
+                    try:
+                        metadata = json.loads(row[13])
+                    except json.JSONDecodeError as exc:
+                        raise ReviewRecordsError("review attempt metadata is malformed") from exc
+                    if not isinstance(metadata, dict):
+                        raise ReviewRecordsError("review attempt metadata is not an object")
+                    attempts.append(
+                        {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2],
+                         "state": row[3], "started_at": row[4], "finished_at": row[5],
+                         "duration_seconds": row[6], "exit_status": row[7], "trigger_id": row[8],
+                         "provider_review_id": row[9], "checkpoint_id": row[10], "run_id": row[11],
+                         "diagnostic": row[12], "origin": metadata.get("origin"),
+                         "legacy_outcome": metadata.get("legacy_outcome")}
                     )
-                ]
                 corrections = [
                     {"correction_id": row[0], "supersedes_id": row[1], "run_id": row[2],
                      "finding_id": row[3], "decision": row[4], "target_pr": row[5],

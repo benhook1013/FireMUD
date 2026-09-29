@@ -102,6 +102,36 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.records.attempt_history(2890)
         self.assertIsInstance(raised.exception.__cause__, sqlite3.DatabaseError)
 
+    def test_start_attempt_rejects_nonserializable_metadata_as_review_records_error(self) -> None:
+        self.bootstrap()
+        with self.assertRaisesRegex(ReviewRecordsError, "metadata must be JSON") as raised:
+            self.records.start_attempt(
+                attempt_id="attempt-invalid-metadata", source_pr=2890, channel="cli",
+                metadata={"unsupported": object()},
+            )
+        self.assertIsInstance(raised.exception.__cause__, TypeError)
+
+    def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
+        self.bootstrap()
+        self.records.start_attempt(
+            attempt_id="attempt-corrupt-metadata", source_pr=2890, channel="cli"
+        )
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                ("{", "attempt-corrupt-metadata"),
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "metadata is malformed"):
+            self.records.history(2890)
+
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                ("[]", "attempt-corrupt-metadata"),
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "metadata is not an object"):
+            self.records.history(2890)
+
     def test_attempt_archives_complete_json_events_and_redacts_credentials(self) -> None:
         self.bootstrap()
         start = self.records.start_attempt(

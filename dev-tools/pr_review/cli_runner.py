@@ -1163,14 +1163,18 @@ def run_cli_review(
                     _write_capture_complete_marker(capture_dir)
                     provider_result_saved = True
                     if records is not None:
-                        records.finish_attempt(
-                            run_id, state="timed_out",
-                            duration_seconds=duration,
-                            diagnostic="CodeRabbit CLI timed out before a complete result",
-                            artifacts={"cli_raw_output": stdout, "cli_diagnostic": stderr,
-                                       "metadata": json.dumps(metadata, sort_keys=True)},
-                        )
-                        attempt_finished = True
+                        try:
+                            records.finish_attempt(
+                                run_id, state="timed_out",
+                                duration_seconds=duration,
+                                diagnostic="CodeRabbit CLI timed out before a complete result",
+                                artifacts={"cli_raw_output": stdout, "cli_diagnostic": stderr,
+                                           "metadata": json.dumps(metadata, sort_keys=True)},
+                            )
+                        except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                            pass
+                        else:
+                            attempt_finished = True
                     raise ReviewRunnerError(
                         f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
                     ) from error
