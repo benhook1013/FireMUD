@@ -357,7 +357,20 @@ public class PlayCommandHandler {
                 selectedTenantTag,
                 selection.characterSelector());
         if (authorityFailure.isPresent()) {
-          return authorityFailure.get();
+          PlayCommandHandlingResult failure = authorityFailure.orElseThrow();
+          if (!gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld)
+              && isDefinitivePrivateWorldDenial(failure)) {
+            return failure(
+                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+                "error.play.selection-required",
+                Map.of(),
+                tenantTag,
+                null,
+                null,
+                null);
+          }
+          return failure;
         }
 
         String character = selection.characterSelector();
@@ -931,6 +944,11 @@ public class PlayCommandHandler {
         Long.toString(selectedRealm.gameInstanceId()),
         Long.toString(requestedCharacterId),
         null);
+  }
+
+  private boolean isDefinitivePrivateWorldDenial(PlayCommandHandlingResult result) {
+    return GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE.equals(
+        result.commandResult().errorCode());
   }
 
   private PlayCommandHandlingResult publicProductionAdmissionDeniedFailure(

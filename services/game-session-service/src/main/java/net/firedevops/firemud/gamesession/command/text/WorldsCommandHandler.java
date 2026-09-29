@@ -131,15 +131,6 @@ public class WorldsCommandHandler {
     }
 
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
-    if (connectScopeSessionStore == null) {
-      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
-    }
-    try {
-      connectScopeSessionStore.clearWorldScopes(sessionContext, worldTenantId(world), world.slug());
-    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
-        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
-      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
-    }
     if (!worldCatalog.hasValidPublicProductionRealm(catalogSnapshot, world)) {
       return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
@@ -197,6 +188,21 @@ public class WorldsCommandHandler {
       }
       visibleEntries.add(realmEntry(visibleEntries.size() + 1, realm));
       responseRealms.add(realm);
+    }
+
+    // A private-only world is retained for granted admission, but a denied selector must be
+    // indistinguishable from an unknown world and must not write lobby scope state.
+    if (responseRealms.isEmpty() && !worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)) {
+      return RealmBrowseResult.invalidSelector();
+    }
+    if (connectScopeSessionStore == null) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    }
+    try {
+      connectScopeSessionStore.clearWorldScopes(sessionContext, worldTenantId(world), world.slug());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
     }
 
     try {
@@ -829,6 +835,10 @@ public class WorldsCommandHandler {
             : mapNonPublicCharacterAuthorization(
                 authorizeNonPublicRealm(sessionContext, world, realm, requestId));
     if (authorization != CharacterBrowseAuthorization.AUTHORIZED) {
+      if (!worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
+          && authorization.isDefinitiveAccessDenial()) {
+        return CharacterBrowseResult.invalidWorld();
+      }
       return CharacterBrowseResult.failure(authorization.code());
     }
 
@@ -1021,6 +1031,12 @@ public class WorldsCommandHandler {
 
     private String code() {
       return code;
+    }
+
+    private boolean isDefinitiveAccessDenial() {
+      return this == DENIED
+          || this == PUBLIC_PRODUCTION_ADMISSION_DENIED
+          || this == NON_PUBLIC_ENROLLMENT_REQUIRED;
     }
   }
 

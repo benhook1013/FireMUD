@@ -522,6 +522,22 @@ public final class GameplayWorldCatalog {
                 tenantId -> snapshot.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L);
   }
 
+  /**
+   * Returns whether a world is represented by the public WORLDS discovery projection.
+   *
+   * <p>Private-only worlds remain in the catalog so an account with a matching grant can resolve
+   * them for admission. Callers handling a selector must not use that broader admission catalog as
+   * proof that an ungranted private world is discoverable.
+   */
+  public boolean isPubliclyDiscoverable(DiscoverySnapshot snapshot, WorldView world) {
+    Objects.requireNonNull(snapshot, "snapshot must not be null");
+    if (world == null) {
+      return false;
+    }
+    return hasPublicDiscoveryRealm(
+        world, new CatalogState(snapshot.visibleWorlds(), snapshot.publicProductionCounts()));
+  }
+
   public boolean requiresExplicitRealmSelection(WorldView world) {
     return visibleRealms(world).size() > 1;
   }

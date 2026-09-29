@@ -1433,7 +1433,8 @@ class PlayCommandHandlerTest {
                 "PLAY sandbox preview Emberline"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
   }
 
   @Test
@@ -1507,7 +1508,7 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1557,7 +1558,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),
@@ -1565,6 +1566,52 @@ class PlayCommandHandlerTest {
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
+  }
+
+  @Test
+  void privateOnlyWorldPlayDenialMatchesUnknownAndGrantedAccessStillWorks() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setEvaluatedAt(evaluatedAtNow())
+                .build(),
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("sandbox"),
+            Mockito.eq("preview"),
+            Mockito.anyString()))
+        .thenReturn(validGrant());
+
+    PlayCommandHandlingResult denied = handler.handle("1", previewRealmPlayCommand());
+    PlayCommandHandlingResult unknown =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("unknown"), "PLAY unknown"));
+    PlayCommandHandlingResult granted = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(denied.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(unknown.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(granted.commandResult()).isEqualTo(CommandEnqueueResult.success());
   }
 
   @Test
@@ -1583,7 +1630,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
@@ -1610,7 +1657,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
