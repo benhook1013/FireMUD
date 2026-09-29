@@ -41,6 +41,10 @@ class AccountRuntimeStubServerTest {
                 .build();
         assertThat(stub.getTenantMembershipForRuntime(request).getMembershipLifecycleState())
             .isEqualTo("ACTIVE");
+        var activeMembership = stub.getTenantMembershipForRuntime(request);
+        assertThat(activeMembership.getMembershipAuthorityGeneration()).isPositive();
+        assertThat(java.time.Instant.parse(activeMembership.getEvaluatedAt()))
+            .isAfter(java.time.Instant.now().minusSeconds(5));
 
         server.denyGameplayAdmission();
         var inactive = stub.getTenantMembershipForRuntime(request);

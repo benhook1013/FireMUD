@@ -40,7 +40,6 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
-  private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -177,7 +176,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setMembershipLifecycleState(membershipLifecycleState.get())
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(exists ? 1L : 0L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setMembershipAuthorityGeneration(1L)
+            .setEvaluatedAt(Instant.now().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -194,7 +194,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRealmSlug(request.getRealmSlug())
             .setGranted(realmAccessGranted.get())
             .setGrantVersion(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(Instant.now().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -210,7 +210,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(Instant.now().toString())
             .build());
     responseObserver.onCompleted();
   }
