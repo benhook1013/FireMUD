@@ -136,3 +136,8 @@ Entry format:
   - Context: Account V25's duplicate-detection preflight requires a PostgreSQL `DO` block and wraps it in `-- [jooq ignore start]` and `-- [jooq ignore stop]` markers.
   - Observation: this qualifies the 2026-09-20 expected pattern: declarative constraints remain preferred when sufficient, but a necessary procedural preflight can be excluded from jOOQ parsing while retaining separate PostgreSQL migration proof.
   - Expected pattern: prefer declarative constraints when sufficient; when procedural preflight is necessary, wrap it in the jOOQ ignore markers, run `generateJooq`, and run separate PostgreSQL migration proof.
+
+- `2026-09-30`: Verify a PR's remote head branch before publishing from an isolated worktree
+  - Context: #2873 was reconciled in a local preparation branch whose name differed from the PR head branch; an initial push mistakenly named #2880's branch as its destination.
+  - Observation: Git rejected that push as non-fast-forward, so no remote branch changed. The local commit was then pushed to #2873's verified `headRefName`.
+  - Expected pattern: read the live PR `headRefName` and exact remote head immediately before each push from an isolated branch; use the verified destination, and treat a non-fast-forward rejection as a stop-and-recheck signal rather than forcing it.
