@@ -190,6 +190,33 @@ class CertificateResourceFactoryTest {
   }
 
   @Test
+  void socialGroupsCertificateUsesExactStableWorkloadIdentity() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory().grpcSocialGroups(plan, properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-grpc-social-groups-service", certificate.getMetadata().getName());
+    assertEquals("pr-42-grpc-social-groups-service", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals(
+        java.util.List.of("spiffe://firemud/ns/pr-42/sa/social-groups-service"),
+        certificateSpec.get("uris"));
+    assertEquals(
+        java.util.List.of(
+            "social-groups-service",
+            "social-groups-service.pr-42",
+            "social-groups-service.pr-42.svc",
+            "social-groups-service.pr-42.svc.cluster.local"),
+        certificateSpec.get("dnsNames"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        certificateSpec.get("usages"));
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
+  @Test
   void certificateFactoryPublicSurfaceContainsOnlyMaterialFactories() {
     var declaredMethods =
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
@@ -200,7 +227,7 @@ class CertificateResourceFactoryTest {
             .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
             .toList();
 
-    assertEquals(7, publicMethods.size());
+    assertEquals(8, publicMethods.size());
     assertEquals(
         java.util.Set.of(
             "ingress",
@@ -209,7 +236,8 @@ class CertificateResourceFactoryTest {
             "tcpProxyBridge",
             "grpcPublication",
             "grpcAccount",
-            "grpcGameSession"),
+            "grpcGameSession",
+            "grpcSocialGroups"),
         publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));

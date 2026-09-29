@@ -1252,6 +1252,7 @@ spec:
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
+import copy
 import pathlib
 import sys
 
@@ -1265,6 +1266,18 @@ documents = [
 ]
 for document in documents:
     document.setdefault("metadata", {})["namespace"] = "firemud"
+game_design = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+)
+social_groups = copy.deepcopy(game_design)
+social_groups["metadata"]["name"] = "social-groups-service"
+social_spec = social_groups["spec"]["template"]["spec"]
+social_spec["containers"][0]["name"] = "social-groups-service"
+social_spec["volumes"][0]["secret"]["secretName"] = "firemud-grpc-social-groups-service"
+documents.append(social_groups)
 path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
 PY
 
@@ -9928,7 +9941,7 @@ publication_documents = [
             }
         },
     }
-    for workload in module.PUBLICATION_GRPC_WORKLOADS
+    for workload in module.SHARED_TRUST_GRPC_WORKLOADS
 ]
 for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
     publication_documents.append(
@@ -9985,6 +9998,11 @@ if module.PUBLICATION_GRPC_WORKLOADS != (
     "automation-scripting-service",
 ):
     raise SystemExit("Account and Game Session changed the five publication-only workload set")
+if module.SHARED_TRUST_GRPC_WORKLOADS != (
+    *module.PUBLICATION_GRPC_WORKLOADS,
+    "social-groups-service",
+):
+    raise SystemExit("Social Groups must have a distinct leaf and the shared CA-only trust projection")
 publication_requirements = module.publication_workload_secret_requirements(
     publication_expected, publication_documents
 )
@@ -9996,7 +10014,7 @@ if {name for name, _, _ in publication_requirements} != (
     expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
     raise SystemExit(
-        "workload Secret requirements do not follow the seven leaf bindings and shared trust binding"
+        "workload Secret requirements do not follow the eight leaf bindings and shared trust binding"
     )
 publication_keys = {name: keys for name, _, keys in publication_requirements}
 if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
@@ -10029,8 +10047,36 @@ def expect_publication_static_failure(description, documents, expected_fragment=
         )
 
 
+social_groups_index = module.SHARED_TRUST_GRPC_WORKLOADS.index("social-groups-service")
+missing_social_groups_documents = copy.deepcopy(publication_documents)
+missing_social_groups_documents.pop(social_groups_index)
+expect_publication_static_failure(
+    "a missing Social Groups workload identity",
+    missing_social_groups_documents,
+    "Expected exactly one rendered Deployment for gRPC workload social-groups-service",
+)
+wrong_social_groups_leaf_documents = copy.deepcopy(publication_documents)
+wrong_social_groups_leaf_documents[social_groups_index]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = "firemud-grpc-game-session-service"
+expect_publication_static_failure(
+    "a reused Social Groups leaf Secret",
+    wrong_social_groups_leaf_documents,
+    "grpc-tls Secret must be firemud-grpc-social-groups-service",
+)
+missing_social_groups_trust_documents = copy.deepcopy(publication_documents)
+missing_social_groups_trust_documents[social_groups_index]["spec"]["template"]["spec"][
+    "volumes"
+].pop()
+expect_publication_static_failure(
+    "a missing Social Groups shared trust projection",
+    missing_social_groups_trust_documents,
+    "Expected exactly one grpc-trust volume",
+)
+
+
 for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
-    workload_index = len(module.PUBLICATION_GRPC_WORKLOADS) + (
+    workload_index = len(module.SHARED_TRUST_GRPC_WORKLOADS) + (
         module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS.index(workload)
     )
     wrong_leaf_documents = copy.deepcopy(publication_documents)

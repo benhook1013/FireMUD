@@ -150,8 +150,12 @@ ACCOUNT_GAME_SESSION_GRPC_WORKLOADS = (
     "account-service",
     "game-session-service",
 )
-GRPC_WORKLOAD_SECRET_CONSUMERS = (
+SHARED_TRUST_GRPC_WORKLOADS = (
     *PUBLICATION_GRPC_WORKLOADS,
+    "social-groups-service",
+)
+GRPC_WORKLOAD_SECRET_CONSUMERS = (
+    *SHARED_TRUST_GRPC_WORKLOADS,
     *ACCOUNT_GAME_SESSION_GRPC_WORKLOADS,
 )
 GRPC_WORKLOAD_LEAF_SECRET_KEYS = {"tls.crt", "tls.key", "ca.crt"}
@@ -973,6 +977,7 @@ def publication_workload_secret_requirements(
     leaf_secret_names: list[str] = []
     for workload in GRPC_WORKLOAD_SECRET_CONSUMERS:
         is_publication_workload = workload in PUBLICATION_GRPC_WORKLOADS
+        uses_shared_trust = workload in SHARED_TRUST_GRPC_WORKLOADS
         workload_label = (
             "publication workload" if is_publication_workload else "gRPC workload"
         )
@@ -1019,11 +1024,11 @@ def publication_workload_secret_requirements(
             raise ValueError(
                 f"Expected exactly one grpc-tls volume for {workload_label} {workload}; found {len(grpc_volumes)}"
             )
-        if is_publication_workload and len(trust_volumes) != 1:
+        if uses_shared_trust and len(trust_volumes) != 1:
             raise ValueError(
                 f"Expected exactly one grpc-trust volume for {workload_label} {workload}; found {len(trust_volumes)}"
             )
-        if not is_publication_workload and trust_volumes:
+        if not uses_shared_trust and trust_volumes:
             raise ValueError(
                 f"Rendered {workload_label} {workload} must mount its CA from the leaf Secret, not grpc-trust"
             )
@@ -1032,7 +1037,7 @@ def publication_workload_secret_requirements(
         secret_name = secret.get("secretName") if isinstance(secret, dict) else None
         expected_leaf_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
         leaf_items = secret.get("items") if isinstance(secret, dict) else None
-        if is_publication_workload:
+        if uses_shared_trust:
             leaf_projection_is_valid = (
                 isinstance(leaf_items, list)
                 and len(leaf_items) == len(expected_leaf_items)
@@ -1061,7 +1066,7 @@ def publication_workload_secret_requirements(
             or secret_name != secret_name.strip()
             or not set(secret).issubset(
                 {"secretName", "defaultMode", "items"}
-                if is_publication_workload
+                if uses_shared_trust
                 else {"secretName", "defaultMode"}
             )
             or set(grpc_volume) != {"name", "secret"}
@@ -1087,7 +1092,7 @@ def publication_workload_secret_requirements(
                 f"{expected_leaf_secret_name}; found {secret_name}"
             )
 
-        if is_publication_workload:
+        if uses_shared_trust:
             trust_volume = trust_volumes[0]
             trust_secret = trust_volume.get("secret")
             trust_secret_name = (
@@ -1192,7 +1197,7 @@ def publication_workload_secret_requirements(
             "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
             "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
             "FIREMUD_GRPC_CA_CERT_PATH": (
-                "/grpc-trust/ca.crt" if is_publication_workload else "/tls/ca.crt"
+                "/grpc-trust/ca.crt" if uses_shared_trust else "/tls/ca.crt"
             ),
         }
         grpc_paths: dict[str, str] = {}
@@ -1237,7 +1242,7 @@ def publication_workload_secret_requirements(
         expected_mounts = {
             "grpc-tls": "/tls",
         }
-        if is_publication_workload:
+        if uses_shared_trust:
             expected_mounts["grpc-trust"] = "/grpc-trust"
         validated_mounts: dict[str, dict[str, Any]] = {}
         for volume_name, mount_path in expected_mounts.items():
@@ -1258,7 +1263,7 @@ def publication_workload_secret_requirements(
                 )
             validated_mounts[volume_name] = mount
 
-        ca_trust_mount = "/grpc-trust" if is_publication_workload else "/tls"
+        ca_trust_mount = "/grpc-trust" if uses_shared_trust else "/tls"
         if any(
             not path_is_under_mount(path, "/tls")
             for path in (
@@ -1290,7 +1295,7 @@ def publication_workload_secret_requirements(
         leaf_secret_names.append(secret_name)
     if len(set(leaf_secret_names)) != len(leaf_secret_names):
         raise ValueError(
-            "Rendered gRPC workload consumers must mount seven distinct grpc-tls Secrets"
+            "Rendered gRPC workload consumers must mount eight distinct grpc-tls Secrets"
         )
     requirements.append(
         (
