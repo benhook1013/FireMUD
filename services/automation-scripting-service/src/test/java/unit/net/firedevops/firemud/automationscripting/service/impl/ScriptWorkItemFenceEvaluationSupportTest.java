@@ -8,6 +8,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 
 class ScriptWorkItemFenceEvaluationSupportTest {
@@ -20,6 +21,20 @@ class ScriptWorkItemFenceEvaluationSupportTest {
             ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(
                 workItem, runtimeState("pin-request-1")))
         .isNull();
+  }
+
+  @Test
+  void rejectsContradictoryRuntimeStateEvenWithEmptyErrorCode() {
+    ScriptWorkItem workItem = runtimeWorkItem();
+    workItem.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThat(
+            ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(
+                workItem,
+                runtimeState("pin-request-1").toBuilder()
+                    .setError(ErrorDetail.newBuilder().build())
+                    .build()))
+        .isEqualTo("script_pin_authority_unavailable");
   }
 
   @Test

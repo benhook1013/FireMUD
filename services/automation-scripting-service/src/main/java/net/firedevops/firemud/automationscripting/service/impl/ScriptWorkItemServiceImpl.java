@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,11 +31,13 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.RequestIdValidation;
@@ -43,6 +46,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRespon
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,6 +57,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ScriptWorkItemServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
@@ -82,6 +88,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptDeadLetterReplayRepository replayRepository;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
+  private final AutomationQueueService automationQueueService;
 
   @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemServiceImpl(
@@ -99,7 +106,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptDeadLetterReplayRepository replayRepository,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       MeterRegistry meterRegistry,
-      ScriptDefinitionRepository scriptDefinitionRepository) {
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      AutomationQueueService automationQueueService) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -117,6 +125,42 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     Gauge.builder("automation_retention_blocked_rows", retentionBlockedRows, AtomicLong::get)
         .register(meterRegistry);
     this.scriptDefinitionRepository = scriptDefinitionRepository;
+    this.automationQueueService = automationQueueService;
+  }
+
+  ScriptWorkItemServiceImpl(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptDeadLetterReplayRepository replayRepository,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      MeterRegistry meterRegistry,
+      ScriptDefinitionRepository scriptDefinitionRepository) {
+    this(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService,
+        replayRepository,
+        gameSessionControlPlaneClient,
+        meterRegistry,
+        scriptDefinitionRepository,
+        null);
   }
 
   @Override
@@ -736,6 +780,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       item = claimed.orElseThrow();
       refreshReadinessProjectionIfNeeded(item);
       rolloutProjectionService.refreshForWorkItem(item);
+      AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, item, LOGGER);
       results.add(
           new ReplayItemResult(requestedId, "retried_evaluation", "", item.getFailureGeneration()));
       persistReplayResult(
@@ -1217,20 +1262,38 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private List<ScriptWorkItem> selectReplayCandidates(
       ReplayDeadLettersCommand command, String normalizedTenantId, int boundedLimit) {
     if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
-      return command.workItemIds().stream()
-          .limit(boundedLimit)
-          .map(ScriptWorkItemServiceImpl::parseWorkItemId)
-          .map(workItemRepository::findById)
-          .flatMap(Optional::stream)
-          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
-          .filter(item -> matchesReplayFilters(item, command))
-          .toList();
+      List<Long> requestedIds =
+          command.workItemIds().stream()
+              .limit(boundedLimit)
+              .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+              .sorted()
+              .toList();
+      Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
+      for (Long id : requestedIds) {
+        workItemRepository
+            .findByIdForUpdate(id)
+            .filter(item -> normalizedTenantId.equals(item.getTenantId()))
+            .filter(item -> matchesReplayFilters(item, command))
+            .ifPresent(item -> lockedById.put(id, item));
+      }
+      return requestedIds.stream().map(lockedById::get).filter(Objects::nonNull).toList();
     }
-    return workItemRepository
-        .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
-        .stream()
-        .filter(item -> matchesReplayFilters(item, command))
+    List<ScriptWorkItem> pageCandidates =
+        workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit));
+    Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
+    for (Long id :
+        pageCandidates.stream().map(ScriptWorkItem::getId).distinct().sorted().toList()) {
+      workItemRepository
+          .findByIdForUpdate(id)
+          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
+          .filter(item -> STATUS_DEAD_LETTERED.equals(item.getStatus()))
+          .filter(item -> matchesReplayFilters(item, command))
+          .ifPresent(item -> lockedById.put(id, item));
+    }
+    return pageCandidates.stream()
+        .map(item -> lockedById.get(item.getId()))
+        .filter(Objects::nonNull)
         .toList();
   }
 
@@ -1297,14 +1360,28 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return "plugin_lifecycle_collaborator_unavailable";
     }
     String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(item.getPluginId());
-    var plugin =
-        pluginRuntimeStateService.getStatus(item.getTenantId(), item.getGameInstanceId(), pluginId);
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> plugin;
+    try {
+      plugin =
+          pluginRuntimeStateService.getStatus(
+              item.getTenantId(), item.getGameInstanceId(), pluginId);
+    } catch (RuntimeException ex) {
+      return "authority_unavailable";
+    }
+    if (plugin == null || plugin.isEmpty()) {
+      return "authority_unavailable";
+    }
+    PluginRuntimeStateService.PluginRuntimeStatus pluginStatus = plugin.orElseThrow();
+    if (pluginStatus.pluginState() == null
+        || pluginStatus.pluginState() == PluginState.PLUGIN_STATE_UNSPECIFIED) {
+      return "authority_unavailable";
+    }
     return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
         item,
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::activePluginVersionId).orElse(""),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginState).orElse(null),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginActivationEpoch).orElse(0L),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::lifecycleRevision).orElse(0L));
+        pluginStatus.activePluginVersionId(),
+        pluginStatus.pluginState(),
+        pluginStatus.pluginActivationEpoch(),
+        pluginStatus.lifecycleRevision());
   }
 
   private void persistReplayResult(

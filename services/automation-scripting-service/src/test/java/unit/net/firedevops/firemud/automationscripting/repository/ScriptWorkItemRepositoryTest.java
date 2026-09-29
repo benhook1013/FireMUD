@@ -30,6 +30,24 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemRepositoryTest {
   @Test
+  void replayCandidateLookupLocksTheParentBeforeReceiptInsertion() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByIdForUpdate(17L)).isEmpty();
+    assertThat(sql.get()).contains("script_work_items", "for update");
+  }
+
+  @Test
   void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
     AtomicReference<String> sql = new AtomicReference<>();
     MockDataProvider provider =

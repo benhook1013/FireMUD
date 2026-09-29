@@ -1052,11 +1052,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     fallback.setId(100L);
     ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[]}");
-    when(automationQueueService.drainIndexedWorkItemPointers(20, 10))
+    when(automationQueueService.drainIndexedWorkItemPointers(20, 9))
         .thenReturn(
             List.of(
                 new AutomationQueueWorkItemPointer(1, 99L, "instance-1", "patch-1", "event-1")));
-    when(workItemService.claimPendingForEvaluation(List.of(99L), 10)).thenReturn(List.of(indexed));
+    when(workItemService.claimPendingForEvaluation(List.of(99L), 9)).thenReturn(List.of(indexed));
     when(workItemService.claimPendingForEvaluation(9)).thenReturn(List.of(fallback));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
@@ -1094,8 +1094,156 @@ class ScriptWorkItemExecutionServiceImplTest {
               assertThat(audit.getFinalReason()).isEqualTo("script_emitted_no_commands");
             });
     Mockito.verifyNoInteractions(handoffService);
-    verify(workItemService).claimPendingForEvaluation(List.of(99L), 10);
+    verify(workItemService).claimPendingForEvaluation(List.of(99L), 9);
     verify(workItemService).claimPendingForEvaluation(9);
+  }
+
+  @Test
+  void reservesDurableScanSlotAcrossSustainedFullIndexedBatches() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem indexed = workItem();
+    indexed.setId(99L);
+    ScriptWorkItem fallback = workItem();
+    fallback.setId(100L);
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[]}");
+    when(automationQueueService.drainIndexedWorkItemPointers(4, 1))
+        .thenReturn(
+            List.of(
+                new AutomationQueueWorkItemPointer(1, 99L, "instance-1", "patch-1", "event-1")));
+    when(workItemService.claimPendingForEvaluation(List.of(99L), 1)).thenReturn(List.of(indexed));
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(fallback));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(Mockito.anyLong()))
+        .thenAnswer(invocation -> Optional.of(new ScriptEventAudit()));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            automationQueueService);
+
+    for (int invocation = 0; invocation < 3; invocation++) {
+      ScriptWorkItemExecutionService.ExecutionBatchResult result =
+          service.processPendingWorkItems(2);
+      assertThat(result.claimedCount()).isEqualTo(2);
+      assertThat(result.completedCount()).isEqualTo(2);
+    }
+
+    verify(automationQueueService, Mockito.times(3)).drainIndexedWorkItemPointers(4, 1);
+    verify(workItemService, Mockito.times(3)).claimPendingForEvaluation(List.of(99L), 1);
+    verify(workItemService, Mockito.times(3)).claimPendingForEvaluation(1);
+    Mockito.verifyNoInteractions(handoffService);
+  }
+
+  @Test
+  void transactionalExecutorScansDurableWorkAcrossSustainedFullIndexedBatches() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
+    TransactionStatus transactionStatus = Mockito.mock(TransactionStatus.class);
+    ScriptWorkItem indexed = workItem();
+    indexed.setId(99L);
+    indexed.setStatus("PENDING_EVALUATION");
+    ScriptWorkItem fallback = workItem();
+    fallback.setId(100L);
+    fallback.setStatus("PENDING_EVALUATION");
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[]}");
+
+    when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
+        .thenReturn(transactionStatus);
+    when(automationQueueService.drainIndexedWorkItemPointers(4, 1))
+        .thenReturn(
+            List.of(
+                new AutomationQueueWorkItemPointer(1, 99L, "instance-1", "patch-1", "event-1")));
+    when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq(List.of(99L)),
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenReturn(List.of(indexed));
+    when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenReturn(List.of(indexed, fallback));
+    Mockito.doAnswer(
+            invocation -> {
+              List<Long> ids = invocation.getArgument(0);
+              ScriptWorkItem candidate = ids.contains(99L) ? indexed : fallback;
+              candidate.setStatus("EVALUATING");
+              return List.of(candidate);
+            })
+        .when(workItemService)
+        .claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(Mockito.anyLong()))
+        .thenAnswer(invocation -> Optional.of(new ScriptEventAudit()));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            automationQueueService,
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            null,
+            null,
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            Mockito.mock(PluginRuntimeStateRepository.class),
+            transactionManager);
+
+    for (int invocation = 0; invocation < 3; invocation++) {
+      ScriptWorkItemExecutionService.ExecutionBatchResult result =
+          service.processPendingWorkItems(2);
+      assertThat(result.claimedCount()).isEqualTo(2);
+      assertThat(result.completedCount()).isEqualTo(2);
+    }
+
+    verify(automationQueueService, Mockito.times(3)).drainIndexedWorkItemPointers(4, 1);
+    verify(workItemRepository, Mockito.times(3))
+        .findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class));
+    verify(workItemService, Mockito.times(3)).claimPendingForEvaluation(List.of(99L), 1);
+    verify(workItemService, Mockito.times(3)).claimPendingForEvaluation(List.of(100L), 1);
+    Mockito.verifyNoInteractions(handoffService);
   }
 
   @Test
@@ -1156,7 +1304,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             })
         .when(transactionManager)
         .commit(transactionStatus);
-    when(automationQueueService.drainIndexedWorkItemPointers(4, 2))
+    when(automationQueueService.drainIndexedWorkItemPointers(4, 1))
         .thenReturn(List.of(new AutomationQueueWorkItemPointer(1, 99L, "7", "patch-1", "event-1")));
     when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
             Mockito.eq(List.of(99L)),

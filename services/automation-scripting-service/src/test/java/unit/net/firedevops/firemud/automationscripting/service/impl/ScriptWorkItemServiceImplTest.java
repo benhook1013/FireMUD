@@ -33,6 +33,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
@@ -55,8 +56,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class ScriptWorkItemServiceImplTest {
   @Test
@@ -322,7 +326,7 @@ class ScriptWorkItemServiceImplTest {
     Instant retryEligibilityAt = Instant.now().plusSeconds(3600);
     item.setNextEligibleAt(retryEligibilityAt);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findById(90L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(90L)).thenReturn(Optional.of(item));
     ScriptWorkItemService service = replayService(workItemRepository);
 
     ScriptWorkItemService.ReplayResult result =
@@ -341,7 +345,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
     assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(4);
     assertThat(item.getNextEligibleAt()).isEqualTo(retryEligibilityAt);
-    verify(workItemRepository).findById(90L);
+    verify(workItemRepository).findByIdForUpdate(90L);
   }
 
   @Test
@@ -413,7 +417,7 @@ class ScriptWorkItemServiceImplTest {
     when(auditRepository.findByWorkItemId(95L)).thenReturn(Optional.of(audit));
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findById(95L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(95L)).thenReturn(Optional.of(item));
     ScriptDeadLetterReplayRepository replayRepository =
         Mockito.mock(ScriptDeadLetterReplayRepository.class);
     when(replayRepository.insertOrGet(
@@ -533,8 +537,8 @@ class ScriptWorkItemServiceImplTest {
     contradictory.setFailureGeneration(4L);
 
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findById(96L)).thenReturn(Optional.of(item));
-    when(workItemRepository.findById(97L)).thenReturn(Optional.of(contradictory));
+    when(workItemRepository.findByIdForUpdate(96L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(97L)).thenReturn(Optional.of(contradictory));
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(96L)).thenReturn(Optional.empty());
     ScriptEventAudit contradictoryAudit = new ScriptEventAudit();
@@ -600,7 +604,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
-                "1", "", "", List.of("96", "97"), "", 0L, 0L, 0, "req-96-97", "admin", "retry"));
+                "1", "", "", List.of("97", "96"), "", 0L, 0L, 0, "req-96-97", "admin", "retry"));
 
     assertThat(result.replayedCount()).isZero();
     assertThat(result.rejectedCount()).isEqualTo(2L);
@@ -631,6 +635,9 @@ class ScriptWorkItemServiceImplTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(Instant.class));
+    InOrder lockOrder = Mockito.inOrder(workItemRepository);
+    lockOrder.verify(workItemRepository).findByIdForUpdate(96L);
+    lockOrder.verify(workItemRepository).findByIdForUpdate(97L);
   }
 
   @Test
@@ -704,6 +711,44 @@ class ScriptWorkItemServiceImplTest {
             "already_recovered",
             "recovery_failed",
             "rejected");
+  }
+
+  @Test
+  void replayPublishesQueuePointerOnlyAfterTransactionCommit() {
+    ReplayQueueFixture fixture = replayQueueFixture(101L);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      ScriptWorkItemService.ReplayResult result =
+          replay(fixture.service(), fixture.workItem().getId());
+
+      assertThat(result.replayedCount()).isEqualTo(1L);
+      verify(fixture.automationQueueService(), never()).enqueueWorkItem(fixture.workItem());
+
+      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+
+      verify(fixture.automationQueueService()).enqueueWorkItem(fixture.workItem());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void replayDoesNotPublishQueuePointerWhenTransactionRollsBack() {
+    ReplayQueueFixture fixture = replayQueueFixture(102L);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      ScriptWorkItemService.ReplayResult result =
+          replay(fixture.service(), fixture.workItem().getId());
+
+      assertThat(result.replayedCount()).isEqualTo(1L);
+      TransactionSynchronizationManager.getSynchronizations()
+          .getFirst()
+          .afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+      verify(fixture.automationQueueService(), never()).enqueueWorkItem(fixture.workItem());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -2849,7 +2894,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(77L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
@@ -2908,7 +2953,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findById(78L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(78L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
@@ -2986,6 +3031,44 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void rejectsReplayWhenPluginAuthorityRowIsMissingAsRetryable() {
+    PluginReplayFixture fixture = pluginReplayFixture(103L);
+    when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.empty());
+
+    assertRetryablePluginAuthority(fixture);
+  }
+
+  @Test
+  void rejectsReplayWhenPluginAuthorityStatusIsUnspecifiedAsRetryable() {
+    PluginReplayFixture fixture = pluginReplayFixture(104L);
+    when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(pluginRuntimeStatus(PluginState.PLUGIN_STATE_UNSPECIFIED)));
+
+    assertRetryablePluginAuthority(fixture);
+  }
+
+  @Test
+  void rejectsReplayWhenPluginAuthorityStatusIsMalformedAsRetryable() {
+    PluginReplayFixture fixture = pluginReplayFixture(106L);
+    when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(pluginRuntimeStatus(null)));
+
+    assertRetryablePluginAuthority(fixture);
+  }
+
+  @Test
+  void recordsReplayReceiptWhenPluginAuthorityReadFails() {
+    PluginReplayFixture fixture = pluginReplayFixture(105L);
+    when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
+        .thenThrow(new IllegalStateException("plugin publication projection unavailable"));
+
+    assertRetryablePluginAuthority(fixture);
+    verify(fixture.replayRepository())
+        .complete(Mockito.eq(1L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class));
+  }
+
+  @Test
   void rejectsReplayWhenPinnedPatchDoesNotMatch() {
     ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     item.setId(77L);
@@ -3005,7 +3088,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(77L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
@@ -3077,7 +3160,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
-    when(workItemRepository.findById(79L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(79L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(79L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
@@ -3177,7 +3260,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findById(88L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(88L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(88L)).thenReturn(Optional.of(audit));
     when(readinessProjectionService.getProjection("1", "patch-1"))
@@ -3235,7 +3318,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findById(89L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(89L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(89L)).thenReturn(Optional.empty());
     when(readinessProjectionService.getProjection("1", "patch-old"))
         .thenReturn(
@@ -3283,7 +3366,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
-    when(workItemRepository.findById(90L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(90L)).thenReturn(Optional.of(item));
     when(readinessProjectionService.getProjection("1", "patch-1"))
         .thenReturn(
             Optional.of(
@@ -3510,8 +3593,8 @@ class ScriptWorkItemServiceImplTest {
                         "retry")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different replay request");
-    verify(workItemRepository).findById(101L);
-    verify(workItemRepository, never()).findById(102L);
+    verify(workItemRepository).findByIdForUpdate(101L);
+    verify(workItemRepository, never()).findByIdForUpdate(102L);
   }
 
   @Test
@@ -3569,7 +3652,7 @@ class ScriptWorkItemServiceImplTest {
       String currentScope, long currentPointerVersion, String rejectionReason) {
     ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(93L));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findById(93L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(93L)).thenReturn(Optional.of(item));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3620,7 +3703,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItem item = replayableRuntimeWorkItem(94L);
     item.setPlayableStateScope("SHARED");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findById(94L)).thenReturn(Optional.of(item));
+    when(workItemRepository.findByIdForUpdate(94L)).thenReturn(Optional.of(item));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3761,6 +3844,221 @@ class ScriptWorkItemServiceImplTest {
         Mockito.mock(PluginRuntimeStateService.class),
         gameDesignClient());
   }
+
+  private static ScriptWorkItemService.ReplayResult replay(
+      ScriptWorkItemService service, long workItemId) {
+    return service.replayDeadLetters(
+        new ScriptWorkItemService.ReplayDeadLettersCommand(
+            "1",
+            "",
+            "",
+            List.of(Long.toString(workItemId)),
+            "",
+            0L,
+            0L,
+            0,
+            "req-replay-" + workItemId,
+            "admin",
+            "retry"));
+  }
+
+  private static ReplayQueueFixture replayQueueFixture(long id) {
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(id));
+    item.setCancelReason("authority_unavailable");
+    item.setFailureGeneration(1L);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalReason("authority_unavailable");
+
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findByIdForUpdate(id)).thenReturn(Optional.of(item));
+    when(workItemRepository.claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("PENDING_EVALUATION");
+              return Optional.of(item);
+            });
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(auditRepository.findByWorkItemId(id)).thenReturn(Optional.of(audit));
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, 7L))
+                .build());
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemServiceImpl service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            replayPinProjectionService(),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            null,
+            gameSessionControlPlaneClient,
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class),
+            automationQueueService);
+    return new ReplayQueueFixture(item, automationQueueService, service);
+  }
+
+  private static ScriptPatchPinProjectionService replayPinProjectionService() {
+    ScriptPatchPinProjectionService service = Mockito.mock(ScriptPatchPinProjectionService.class);
+    when(service.getPinConvergence("1", "game-1"))
+        .thenReturn(
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-1", 7L, 1L, "req-1", 100L, 100L, 0L, false, "", 0L,
+                        "", "", "")),
+                "",
+                ""));
+    return service;
+  }
+
+  private static void assertRetryablePluginAuthority(PluginReplayFixture fixture) {
+    ScriptWorkItemService.ReplayResult result =
+        replay(fixture.service(), fixture.workItem().getId());
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> {
+              assertThat(replay.outcome()).isEqualTo("rejected");
+              assertThat(replay.rejectionReason()).isEqualTo("authority_unavailable");
+            });
+    assertThat(fixture.workItem().getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(fixture.replayRepository())
+        .saveResult(
+            Mockito.eq(1L),
+            Mockito.eq(fixture.workItem().getId()),
+            Mockito.eq(fixture.workItem().getId()),
+            Mockito.eq("rejected"),
+            Mockito.eq("authority_unavailable"),
+            Mockito.eq(""),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(1L),
+            Mockito.eq("ADMISSION"),
+            Mockito.eq("authority_unavailable"),
+            Mockito.any(Instant.class));
+    verify(fixture.workItemRepository(), Mockito.never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
+  }
+
+  private static PluginRuntimeStateService.PluginRuntimeStatus pluginRuntimeStatus(
+      PluginState pluginState) {
+    return new PluginRuntimeStateService.PluginRuntimeStatus(
+        "plugin-v1",
+        "",
+        "region-1",
+        3L,
+        pluginState,
+        "",
+        100L,
+        "req-1",
+        "admin",
+        100L,
+        null,
+        null,
+        1L,
+        1L);
+  }
+
+  private static PluginReplayFixture pluginReplayFixture(long id) {
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(id));
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
+    item.setPluginActivationEpoch(1L);
+    item.setLifecycleRevision(1L);
+    item.setCancelReason("authority_unavailable");
+    item.setFailureGeneration(1L);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalReason("authority_unavailable");
+
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findByIdForUpdate(id)).thenReturn(Optional.of(item));
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(auditRepository.findByWorkItemId(id)).thenReturn(Optional.of(audit));
+    ScriptDeadLetterReplayRepository replayRepository =
+        Mockito.mock(ScriptDeadLetterReplayRepository.class);
+    when(replayRepository.insertOrGet(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class)))
+        .thenAnswer(
+            invocation ->
+                new ScriptDeadLetterReplayRepository.ReplayRequest(
+                    1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
+    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    when(replayRepository.complete(
+            Mockito.eq(1L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
+        .thenReturn(true);
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, 7L))
+                .build());
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            replayPinProjectionService(),
+            rolloutProjectionService(),
+            pluginRuntimeStateService,
+            gameDesignClient(),
+            readinessProjectionService(),
+            replayRepository,
+            gameSessionControlPlaneClient,
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
+    return new PluginReplayFixture(
+        item, workItemRepository, replayRepository, pluginRuntimeStateService, service);
+  }
+
+  private record ReplayQueueFixture(
+      ScriptWorkItem workItem,
+      AutomationQueueService automationQueueService,
+      ScriptWorkItemServiceImpl service) {}
+
+  private record PluginReplayFixture(
+      ScriptWorkItem workItem,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptDeadLetterReplayRepository replayRepository,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      ScriptWorkItemService service) {}
 
   private static ScriptOutboxProperties outboxProperties() {
     return new ScriptOutboxProperties();

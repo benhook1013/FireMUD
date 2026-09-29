@@ -342,22 +342,40 @@ public class ScriptGameplayCommandHandoffServiceImpl
       return null;
     }
     return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
-      case "enqueued" ->
-          new HandoffResult(
-              true, "ENQUEUED", normalize(existing.getGameSessionCommandId()), "", "", "");
-      case "duplicate_noop" ->
-          new HandoffResult(
-              true, "DUPLICATE_NOOP", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "enqueued" -> retainedCommandAcceptance(existing, "ENQUEUED");
+      case "duplicate_noop" -> retainedCommandAcceptance(existing, "DUPLICATE_NOOP");
       case "remote_scheduled" ->
-          new HandoffResult(
-              true,
-              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
-              "",
-              normalize(existing.getRemoteCoordinatorId()),
-              normalize(existing.getRemoteFollowupId()),
-              "");
+          normalize(existing.getRemoteCoordinatorId()).isBlank()
+                  || normalize(existing.getRemoteFollowupId()).isBlank()
+              ? retainedAcceptanceUnavailable()
+              : new HandoffResult(
+                  true,
+                  ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
+                  "",
+                  normalize(existing.getRemoteCoordinatorId()),
+                  normalize(existing.getRemoteFollowupId()),
+                  "");
       default -> null;
     };
+  }
+
+  private static HandoffResult retainedCommandAcceptance(
+      ScriptHandoffEvent existing, String outcome) {
+    String commandId = normalize(existing.getGameSessionCommandId());
+    return commandId.isBlank()
+        ? retainedAcceptanceUnavailable()
+        : new HandoffResult(true, outcome, commandId, "", "", "");
+  }
+
+  private static HandoffResult retainedAcceptanceUnavailable() {
+    return new HandoffResult(
+        false,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        "",
+        "",
+        "",
+        ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
+        "retained accepted handoff lacks durable owner identity");
   }
 
   @Override

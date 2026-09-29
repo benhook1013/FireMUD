@@ -450,10 +450,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       throw new IllegalArgumentException("max_items must be positive");
     }
 
-    List<ScriptWorkItem> indexedCandidates = findIndexedCandidates(maxItems);
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    List<ScriptWorkItem> indexedCandidates = findIndexedCandidates(maxItems, indexedCapacity);
     Set<Long> attemptedWorkItemIds = new HashSet<>();
     BatchCounts counts = new BatchCounts();
-    processCandidates(indexedCandidates, maxItems, attemptedWorkItemIds, counts);
+    processCandidates(indexedCandidates, indexedCapacity, attemptedWorkItemIds, counts);
 
     if (counts.claimedCount < maxItems) {
       int scanLimit =
@@ -467,15 +468,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return new ExecutionBatchResult(counts.claimedCount, counts.completedCount, counts.failedCount);
   }
 
-  private List<ScriptWorkItem> findIndexedCandidates(int maxItems) {
-    if (automationQueueService == null) {
+  private List<ScriptWorkItem> findIndexedCandidates(int maxItems, int indexedCapacity) {
+    if (automationQueueService == null || indexedCapacity <= 0) {
       return List.of();
     }
 
     List<AutomationQueueWorkItemPointer> pointers;
     try {
       pointers =
-          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
     } catch (RuntimeException ex) {
       LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
       meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
@@ -487,7 +489,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return List.of();
     }
     return workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-        workItemIds, STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, maxItems));
+        workItemIds, STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, indexedCapacity));
   }
 
   private void processCandidates(
@@ -550,10 +552,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (automationQueueService == null) {
       return workItemService.claimPendingForEvaluation(maxItems);
     }
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    if (indexedCapacity <= 0) {
+      return workItemService.claimPendingForEvaluation(maxItems);
+    }
     List<AutomationQueueWorkItemPointer> pointers;
     try {
       pointers =
-          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
     } catch (RuntimeException ex) {
       LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
       meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
@@ -562,10 +569,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     List<ScriptWorkItem> queueClaimed =
         workItemService.claimPendingForEvaluation(
             pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).toList(),
-            maxItems);
-    if (queueClaimed.size() >= maxItems) {
-      return queueClaimed;
-    }
+            indexedCapacity);
     List<ScriptWorkItem> fallbackClaimed =
         workItemService.claimPendingForEvaluation(maxItems - queueClaimed.size());
     if (fallbackClaimed.isEmpty()) {

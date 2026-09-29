@@ -898,6 +898,14 @@ public class ScriptWorkItemRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /** Holds the selected parent through the caller's transaction and its replay receipt write. */
+  public Optional<ScriptWorkItem> findByIdForUpdate(Long id) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.ID.eq(id))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
   /**
    * Claims one dead-letter row for replay using the observed row version and failure generation. A
    * competing request therefore gets an empty result instead of overwriting a newer recovery

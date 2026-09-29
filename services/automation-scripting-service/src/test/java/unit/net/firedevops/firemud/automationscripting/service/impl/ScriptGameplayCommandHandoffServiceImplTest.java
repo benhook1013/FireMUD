@@ -508,6 +508,36 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(acceptedEvent.getHandoffOutcome()).isEqualTo(persistedOutcome);
   }
 
+  @ParameterizedTest
+  @CsvSource({"enqueued", "duplicate_noop", "remote_scheduled"})
+  void retainedAcceptedOutcomeWithoutDurableOwnerIdentityFailsClosed(String persistedOutcome) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent retained = new ScriptHandoffEvent();
+    retained.setHandoffOutcome(persistedOutcome);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(retained));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            Mockito.mock(AutomationAdmissionStateService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    verifyNoInteractions(gameSessionClient);
+    verify(handoffEventRepository, never()).save(Mockito.any());
+  }
+
   @Test
   void persistedAcceptedOutcomeSurvivesLaterRuntimeOwnerFence() {
     GameSessionControlPlaneClient gameSessionClient =

@@ -28,9 +28,7 @@ final class ScriptWorkItemFenceEvaluationSupport {
 
   static String validateRuntimeState(
       ScriptWorkItem workItem, GetGameInstanceRuntimeStateResponse runtime) {
-    if (runtime == null
-        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
-        || !runtime.hasRuntimeState()) {
+    if (runtime == null || runtime.hasError() || !runtime.hasRuntimeState()) {
       return "script_pin_authority_unavailable";
     }
     var state = runtime.getRuntimeState();
