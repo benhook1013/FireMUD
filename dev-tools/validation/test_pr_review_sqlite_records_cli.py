@@ -37,7 +37,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             contextlib.redirect_stderr(errors),
         ):
             result = cli.main(["records", *arguments])
-        if result == 0:
+        if output.getvalue():
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
@@ -288,7 +288,8 @@ class ReviewRecordsCliTest(unittest.TestCase):
         (capture / "stderr").write_text("Provider rejected the request", encoding="utf-8")
 
         code, replay = self.invoke("migrate", "--database", str(self.database))
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 2)
+        self.assertEqual(replay["result"]["status"], "migrated_partial")
         report = replay["result"]["legacy_cli_attempts"]
         self.assertEqual(report["imported"], [])
         self.assertEqual(report["already_imported"], [])
@@ -299,6 +300,26 @@ class ReviewRecordsCliTest(unittest.TestCase):
         history = SqliteReviewRecords(self.database).history(2883)
         self.assertEqual(len(history["attempts"]), 1)
         self.assertEqual(history["attempts"][0]["state"], "rate_limited")
+
+    def test_records_migrate_reports_partial_when_cli_capture_reconciliation_is_unavailable(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        unavailable = {
+            "available": False,
+            "reason": "a CLI review is active; legacy captures were not reconciled",
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
+        }
+
+        with patch.object(cli_attempts, "reconcile_legacy_failed_attempts", return_value=unavailable):
+            code, migrated = self.invoke("migrate", "--database", str(self.database))
+
+        self.assertEqual(code, 2)
+        self.assertEqual(migrated["result"]["status"], "migrated_partial")
+        self.assertEqual(migrated["result"]["legacy_cli_attempts"], unavailable)
 
     def test_migrate_recognizes_matching_terminal_native_cli_attempt(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
@@ -350,7 +371,8 @@ class ReviewRecordsCliTest(unittest.TestCase):
 
         code, response = self.invoke("migrate", "--database", str(self.database))
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 2)
+        self.assertEqual(response["result"]["status"], "migrated_partial")
         reconciliation = response["result"]["legacy_cli_attempts"]
         self.assertEqual(reconciliation["already_imported"], [])
         self.assertEqual(reconciliation["imported"], [])

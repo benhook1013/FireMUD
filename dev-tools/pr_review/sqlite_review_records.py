@@ -55,6 +55,14 @@ class ReviewRecordsError(ValueError):
     """Raised when review records are invalid or the database is incompatible."""
 
 
+class AttemptNotFound(ReviewRecordsError):
+    """Raised when an exact attempt ID is not present in the records store."""
+
+
+class RecordsSchemaIncompatible(ReviewRecordsError):
+    """Raised when attempt reads cannot use an unbootstrapped or supported old schema."""
+
+
 def _translate_database_errors(method):
     """Keep SQLite failures at review-record boundaries in the public error type."""
 
@@ -545,7 +553,7 @@ class SqliteReviewRecords:
                 (attempt_id,),
             ).fetchone()
         if row is None:
-            raise ReviewRecordsError("review attempt does not exist")
+            raise AttemptNotFound("review attempt does not exist")
         try:
             metadata = json.loads(row[7])
         except json.JSONDecodeError as exc:
@@ -2458,7 +2466,9 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
-            raise ReviewRecordsError("review-records schema is not bootstrapped; call bootstrap() explicitly")
+            raise RecordsSchemaIncompatible(
+                "review-records schema is not bootstrapped; call bootstrap() explicitly"
+            )
         try:
             row = connection.execute(
                 f"SELECT records_schema_version, controller_schema_version, controller_data_model_version, "
@@ -2470,6 +2480,8 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("review-records metadata row is missing")
         records_version, controller_version, data_model_version, min_writer_build = row
         if records_version != _RECORDS_SCHEMA_VERSION:
+            if records_version in {4, 5}:
+                raise RecordsSchemaIncompatible(f"unsupported review-records schema version {records_version}")
             raise ReviewRecordsError(f"unsupported review-records schema version {records_version}")
         if controller_version != SQLITE_SCHEMA_VERSION:
             raise ReviewRecordsError(f"review records require controller schema {controller_version}")

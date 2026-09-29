@@ -18,11 +18,11 @@ from typing import Any
 
 try:
     from .github import immutable_database_id, is_coderabbit_login, parse_repo
-    from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+    from .sqlite_review_records import AttemptNotFound, RecordsSchemaIncompatible, SqliteReviewRecords
     from .state import sqlite_state_path, state_path
 except ImportError:  # Loaded directly by repository validation tests.
     from github import immutable_database_id, is_coderabbit_login, parse_repo
-    from sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+    from sqlite_review_records import AttemptNotFound, RecordsSchemaIncompatible, SqliteReviewRecords
     from state import sqlite_state_path, state_path
 
 FULL_COMMAND = "@coderabbitai full review"
@@ -1326,13 +1326,8 @@ def _finish_recovered_attempt(path: Path, repo: str, pr_number: int, record: dic
     records = SqliteReviewRecords(database)
     try:
         attempt = records.attempt(attempt_id)
-    except ReviewRecordsError as error:
-        if str(error) in {
-            "review attempt does not exist",
-            "review-records schema is not bootstrapped; call bootstrap() explicitly",
-        }:
-            return
-        raise
+    except (AttemptNotFound, RecordsSchemaIncompatible):
+        return
     if (
         attempt["source_pr"] != pr_number
         or attempt["channel"] != "hosted"

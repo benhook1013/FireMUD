@@ -1100,6 +1100,7 @@ def run_cli_review(
                 )
                 os.chmod(capture_dir / "metadata", 0o600)
                 _atomic_json(capture_dir / "metadata.json", metadata)
+                records_warning = None
                 if records is not None:
                     attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                     try:
@@ -1113,6 +1114,10 @@ def run_cli_review(
                         )
                     except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                         records = None
+                        records_warning = (
+                            "SQLite attempt and source decisions are missing; the durable CLI capture remains. "
+                            "Record decisions.tsv for this run or use the exact repair path before adjudication"
+                        )
                     else:
                         attempt_started = True
                 # Hosted posting and CLI preflight share request.lock. Release it
@@ -1231,7 +1236,6 @@ def run_cli_review(
                 command_exit_status = process.returncode
                 if result_state != "completed" and command_exit_status == 0:
                     command_exit_status = 1
-                records_warning = None
                 if records is not None:
                     try:
                         if result_state == "completed":

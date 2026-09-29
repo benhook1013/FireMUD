@@ -11,7 +11,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.sqlite_review_records import (
+    AttemptNotFound,
     FindingObservation,
+    RecordsSchemaIncompatible,
     ReviewRecordsError,
     SqliteReviewRecords,
     _archive_artifact,
@@ -112,6 +114,56 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         ), self.assertRaisesRegex(ReviewRecordsError, "attempt_history") as raised:
             self.records.attempt_history(2890)
         self.assertIsInstance(raised.exception.__cause__, sqlite3.DatabaseError)
+
+    def test_attempt_missing_has_a_specific_error_type(self) -> None:
+        self.bootstrap()
+
+        with self.assertRaises(AttemptNotFound) as raised:
+            self.records.attempt("missing-attempt")
+
+        self.assertEqual(str(raised.exception), "review attempt does not exist")
+
+    def test_attempt_marks_unbootstrapped_and_v4_v5_records_schemas_incompatible(self) -> None:
+        with self.assertRaises(RecordsSchemaIncompatible):
+            self.records.attempt("attempt-on-unbootstrapped-database")
+
+        self.bootstrap()
+        for schema_version in (4, 5):
+            with self.subTest(schema_version=schema_version), sqlite3.connect(self.database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = ? WHERE singleton = 1",
+                    (schema_version,),
+                )
+            with self.subTest(schema_version=schema_version), self.assertRaises(RecordsSchemaIncompatible):
+                self.records.attempt("attempt-on-old-schema")
+
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
+            )
+        with self.assertRaises(ReviewRecordsError) as raised:
+            self.records.attempt("attempt-on-unknown-schema")
+        self.assertIs(type(raised.exception), ReviewRecordsError)
+
+    def test_attempt_metadata_errors_are_not_schema_incompatibility(self) -> None:
+        self.bootstrap()
+        attempt_id = "attempt-malformed-metadata"
+        self.records.start_attempt(attempt_id=attempt_id, source_pr=2893, channel="hosted")
+        for serialized, expected_error in (
+            ("{", "review attempt metadata is malformed"),
+            ("[]", "review attempt metadata is not an object"),
+        ):
+            with self.subTest(serialized=serialized), sqlite3.connect(self.database) as connection:
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                    (serialized, attempt_id),
+                )
+
+            with self.subTest(serialized=serialized), self.assertRaises(ReviewRecordsError) as raised:
+                self.records.attempt(attempt_id)
+
+            self.assertIs(type(raised.exception), ReviewRecordsError)
+            self.assertEqual(str(raised.exception), expected_error)
 
     def test_start_attempt_rejects_nonserializable_metadata_as_review_records_error(self) -> None:
         self.bootstrap()

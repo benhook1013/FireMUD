@@ -168,6 +168,27 @@ class CaptureInvalid(EvidenceError):
     """A linked private capture is present but cannot be trusted."""
 
 
+_UNRESOLVED_RECORDS = object()
+
+
+def resolve_cli_capture_context(
+    common: Path | None = None,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> tuple[Path, SqliteReviewRecords | None]:
+    """Resolve shared repository and SQLite record context once for CLI reads."""
+
+    from .sqlite_review_records import SqliteReviewRecords as RecordsStore
+    from .state import sqlite_state_path, state_path
+
+    selected_common = common if common is not None else git_common_dir()
+    if records is _UNRESOLVED_RECORDS:
+        selected_state = state_path(selected_common)
+        selected_records = RecordsStore(sqlite_state_path(selected_state)) if selected_state.is_dir() else None
+    else:
+        selected_records = records
+    return selected_common, selected_records
+
+
 def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
     """Return whether a line has explicit summary markup and its marker suffix."""
 
@@ -569,12 +590,13 @@ def _load_cli_capture(
     common: Path | None,
     *,
     validate_checkpoint_decisions: bool,
-    records: SqliteReviewRecords | None = None,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
 ) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
     if checkpoint.duration_invalid:
         raise CaptureInvalid("checkpoint has invalid visible/hidden duration evidence")
+    common, selected_records = resolve_cli_capture_context(common, records)
     roots = private_review_roots(common)
     # Legacy CLI captures are directly below <git-common>/coderabbit-review-logs.
     # New callers may place captures below the firemud review namespace.
@@ -625,13 +647,8 @@ def _load_cli_capture(
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
     # New runs are adjudicated in SQLite. Historical captures retain their
     # existing TSV evidence until the one-time backfill proves each record.
-    from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
-    from .state import sqlite_state_path, state_path
+    from .sqlite_review_records import ReviewRecordsError
 
-    selected_state = state_path(common if common is not None else git_common_dir())
-    selected_records = records
-    if selected_records is None and selected_state.is_dir():
-        selected_records = SqliteReviewRecords(sqlite_state_path(selected_state))
     if selected_records is not None:
         try:
             sql_decisions = selected_records.cli_source_decisions(checkpoint.run_id)
@@ -713,7 +730,7 @@ def _load_cli_capture(
 
 def load_cli_capture(
     checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None,
-    *, records: SqliteReviewRecords | None = None,
+    *, records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
 ) -> CaptureData:
     """Load a public checkpoint's capture and require its decisions to match."""
 
@@ -727,9 +744,16 @@ def load_cli_capture(
     )
 
 
-def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None) -> list[CaptureData]:
+def discover_cli_captures(
+    repo: str,
+    pr_number: int,
+    common: Path | None = None,
+    *,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> list[CaptureData]:
     """Find complete private CLI captures that may not yet have a public checkpoint."""
 
+    common, records = resolve_cli_capture_context(common, records)
     roots = private_review_roots(common)
     candidate_roots = (
         roots[-1],
@@ -786,6 +810,7 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
                         pr_number,
                         common,
                         validate_checkpoint_decisions=False,
+                        records=records,
                     )
                 )
             except (EvidenceError, OSError, ValueError):

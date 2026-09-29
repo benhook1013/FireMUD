@@ -792,10 +792,14 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "migrate":
         store.migrate()
         legacy_attempts = cli_attempts.reconcile_legacy_failed_attempts(store, store.path)
+        complete = legacy_attempts["available"] and not legacy_attempts["conflicts"]
         return {
             "api_version": 1,
-            "result": {"status": "migrated", "legacy_cli_attempts": legacy_attempts},
-        }, 0
+            "result": {
+                "status": "migrated" if complete else "migrated_partial",
+                "legacy_cli_attempts": legacy_attempts,
+            },
+        }, 0 if complete else 2
     if args.records_command == "history":
         history = store.history(args.pr, include_legacy_routes=True)
         history["cli_attempts"] = _failed_cli_attempts_from_history(history)

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import evidence, github, hosted
+from pr_review import evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
@@ -670,6 +670,44 @@ class GithubAndEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(evidence.CaptureInvalid, "complete linked"):
                 evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
+    def test_cli_discovery_resolves_common_dir_and_records_store_once(self):
+        class EmptyRecords:
+            @staticmethod
+            def cli_source_decisions(_run_id):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            captures_root = common / "coderabbit-review-logs"
+            for run_id in ("run.One", "run.Two"):
+                run = captures_root / run_id
+                run.mkdir(parents=True)
+                (run / "metadata").write_text(
+                    f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                    f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                    encoding="utf-8",
+                )
+                (run / "stdout").write_text(
+                    json.dumps(
+                        {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with (
+                patch.object(evidence, "git_common_dir", return_value=common) as resolve_common,
+                patch.object(sqlite_review_records, "SqliteReviewRecords", return_value=EmptyRecords()) as make_records,
+            ):
+                captures = evidence.discover_cli_captures(REPO, PR)
+
+            self.assertEqual(resolve_common.call_count, 1)
+            self.assertEqual(make_records.call_count, 1)
+            self.assertEqual({capture.metadata["run_id"] for capture in captures}, {"run.One", "run.Two"})
+            self.assertTrue(all(capture.source_identity for capture in captures))
+
     def test_cli_duration_evidence_fails_closed_and_valid_duration_checks_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -846,26 +884,88 @@ class GithubAndEvidenceTests(unittest.TestCase):
 
 
 class HostedEvidenceTests(unittest.TestCase):
-    def test_prepost_recovery_ignores_unbootstrapped_records_schema_only(self):
+    def test_prepost_recovery_ignores_only_missing_attempts_and_incompatible_records_schemas(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             selected_state = common / "firemud" / "pr-review-stack.json"
             selected_state.mkdir(parents=True)
             database = common / "firemud" / "pr-review-stack.sqlite3"
             SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
             path = hosted.default_trigger_record_path(REPO, PR, common)
 
             hosted._finish_recovered_attempt(
                 path, REPO, PR, {"sqlite_attempt_id": "unbootstrapped-attempt"}
             )
 
-            with patch.object(
-                hosted.SqliteReviewRecords,
-                "attempt",
-                side_effect=ReviewRecordsError("review attempt has an incompatible state"),
-            ), self.assertRaisesRegex(ReviewRecordsError, "incompatible state"):
+            records.bootstrap()
+            hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": "missing-attempt"})
+            for schema_version in (4, 5):
+                with sqlite3.connect(database) as connection:
+                    connection.execute(
+                        "UPDATE review_records_metadata SET records_schema_version = ? WHERE singleton = 1",
+                        (schema_version,),
+                    )
                 hosted._finish_recovered_attempt(
-                    path, REPO, PR, {"sqlite_attempt_id": "other-records-error"}
+                    path, REPO, PR, {"sqlite_attempt_id": f"attempt-on-v{schema_version}"}
+                )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1"
+                )
+
+            attempt_id = "malformed-hosted-metadata"
+            records.start_attempt(
+                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                    ("{", attempt_id),
+                )
+            with self.assertRaisesRegex(ReviewRecordsError, "metadata is malformed"):
+                hosted._finish_recovered_attempt(
+                    path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
+                )
+
+    def test_prepost_recovery_rejects_mismatched_and_conflicting_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+
+            mismatched_attempts = (
+                ("mismatched-hosted-pr", PR + 1, "hosted", HEAD),
+                ("mismatched-hosted-channel", PR, "cli", HEAD),
+                ("mismatched-hosted-head", PR, "hosted", BASE),
+            )
+            for attempt_id, source_pr, channel, candidate_sha in mismatched_attempts:
+                records.start_attempt(
+                    attempt_id=attempt_id,
+                    source_pr=source_pr,
+                    channel=channel,
+                    candidate_sha=candidate_sha,
+                )
+                with self.subTest(attempt_id=attempt_id), self.assertRaisesRegex(
+                    ValueError, "does not match the recovered reservation"
+                ):
+                    hosted._finish_recovered_attempt(
+                        path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
+                    )
+
+            terminal_id = "completed-hosted-attempt"
+            records.start_attempt(
+                attempt_id=terminal_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            records.finish_attempt(terminal_id, state="completed")
+            with self.assertRaisesRegex(ValueError, "conflicts with confirmed no-POST recovery"):
+                hosted._finish_recovered_attempt(
+                    path, REPO, PR, {"sqlite_attempt_id": terminal_id, "head_sha": HEAD}
                 )
 
     def test_wrong_target_assertion_happens_before_request_preparation(self):

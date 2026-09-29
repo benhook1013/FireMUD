@@ -2246,6 +2246,54 @@ class RuntimeTest(unittest.TestCase):
             history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
             self.assertEqual(HEAD, history[0]["head"])
 
+    def test_cli_history_resolves_common_dir_and_records_store_once_with_attribution(self):
+        class EmptyRecords:
+            @staticmethod
+            def cli_source_decisions(_run_id):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            captures_root = common / "coderabbit-review-logs"
+            for run_id in ("run.HistoryOne", "run.HistoryTwo"):
+                run = captures_root / run_id
+                run.mkdir(parents=True)
+                (run / "metadata").write_text(
+                    f"run_id={run_id}\nrepository=owner/repo\npull_request=42\n"
+                    f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                    encoding="utf-8",
+                )
+                (run / "stdout").write_text(
+                    json.dumps(
+                        {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            payload = self._payload()
+            payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(evidence, "git_common_dir", return_value=common) as resolve_common,
+                patch.object(sqlite_review_records, "SqliteReviewRecords", return_value=EmptyRecords()) as make_records,
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+
+            self.assertEqual(resolve_common.call_count, 1)
+            self.assertEqual(make_records.call_count, 1)
+            captures = [item for item in history if item["checkpoint"].startswith("pending-capture:")]
+            self.assertEqual(
+                {item["checkpoint"] for item in captures},
+                {"pending-capture:run.HistoryOne", "pending-capture:run.HistoryTwo"},
+            )
+            self.assertTrue(all(not item["completed"] and not item["attributable"] for item in captures))
+            self.assertTrue(all(item["held"] for item in captures))
+            self.assertEqual({item["head"] for item in captures}, {HEAD})
+
     def test_history_fallback_normalizes_live_snapshot_head(self):
         live = LiveGitHub("owner/repo")
         payload = self._payload()

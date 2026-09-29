@@ -537,6 +537,10 @@ class CliReviewRunnerTests(unittest.TestCase):
 
                 self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
                 self.assertTrue((result.capture_dir / "capture-complete").is_file())
+                self.assertIn("SQLite attempt and source decisions are missing", result.warning)
+                self.assertIn("durable CLI capture remains", result.warning)
+                self.assertIn("Record decisions.tsv for this run", result.warning)
+                self.assertEqual(result.exit_status, 0)
                 self.assertEqual(records.attempt_history(42), [])
 
     def test_setup_error_survives_sqlite_archival_database_error(self):
