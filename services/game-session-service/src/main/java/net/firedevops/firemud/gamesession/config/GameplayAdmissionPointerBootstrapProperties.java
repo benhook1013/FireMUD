@@ -13,7 +13,7 @@ public class GameplayAdmissionPointerBootstrapProperties {
       new ArrayList<>(
           List.of(
               defaultPointerSeed("demo", "Demo World", 1L, 1L, false),
-              defaultPointerSeed("sandbox", "Builder Sandbox", 1L, 2L, true)));
+              defaultPointerSeed("sandbox", "Builder Sandbox", 2L, 2L, true)));
 
   private static PointerSeed defaultPointerSeed(
       String worldSlug,

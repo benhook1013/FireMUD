@@ -67,6 +67,28 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
+  void defaultPropertiesSeedDistinctTenantsWithoutExplicitPointers() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+
+    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
+        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
+    verify(authorityService, org.mockito.Mockito.times(2)).upsertPointer(mutationCaptor.capture());
+    List<GameplayAdmissionPointerMutation> mutations = mutationCaptor.getAllValues();
+    assertEquals(2, mutations.size());
+    assertEquals("demo", mutations.get(0).worldSlug());
+    assertEquals(1L, mutations.get(0).tenantId());
+    assertEquals(1L, mutations.get(0).gameInstanceId());
+    assertEquals("sandbox", mutations.get(1).worldSlug());
+    assertEquals(2L, mutations.get(1).tenantId());
+    assertEquals(2L, mutations.get(1).gameInstanceId());
+    assertTrue(mutations.stream().allMatch(GameplayAdmissionPointerMutation::visible));
+    assertTrue(
+        mutations.stream().allMatch(GameplayAdmissionPointerMutation::publicProductionRealm));
+  }
+
+  @Test
   void runDoesNothingWhenAuthorityStoreAlreadyHasPointers() throws Exception {
     when(pointerRepository.count()).thenReturn(3L);
 
