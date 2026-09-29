@@ -4837,6 +4837,42 @@ class ReviewController:
                 break
             deep_prs.update(next_target_prs)
 
+        remote_recheck_error = None
+        remote_affected: set[int] = set()
+        if deep_error is None and deep_prs:
+            try:
+                verified_remote_heads = self.git.remote_heads()
+            except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
+                remote_recheck_error = str(error)
+                remote_affected.update(deep_prs)
+            else:
+                relevant_refs: set[str] = set()
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.merged:
+                        continue
+                    relevant_refs.add(item.base_ref)
+                    if item.head_ref:
+                        relevant_refs.add(item.head_ref)
+                changed_refs = {
+                    ref
+                    for ref in relevant_refs
+                    if remote_heads.get(ref) != verified_remote_heads.get(ref)
+                }
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.merged:
+                        continue
+                    if item.base_ref in changed_refs or item.head_ref in changed_refs:
+                        remote_affected.add(pr)
+            changed = True
+            while changed:
+                changed = False
+                for pr in state.ordered_prs:
+                    if links[pr].parent_pr in remote_affected and pr not in remote_affected:
+                        remote_affected.add(pr)
+                        changed = True
+
         scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
         if not scoped_prs and deep_error is None:
             # The configured stack may contain only merged PRs; policy selection
@@ -4848,7 +4884,7 @@ class ReviewController:
             for item in (scoped_report or {}).get("prs", [])
             if isinstance(item, Mapping)
         }
-        mismatch: set[int] = set()
+        mismatch: set[int] = set(remote_affected)
         for pr in scoped_prs:
             if pr not in deep_prs:
                 continue
@@ -4917,7 +4953,11 @@ class ReviewController:
                 )
                 if pr in mismatch or batch_topology_moved:
                     row["reconciliation"] = "UNRECONCILED"
-                    row["reason"] = "live PR identity changed between batch overview and deep reconciliation"
+                    row["reason"] = (
+                        "remote parent or head branch changed during deep reconciliation"
+                        if pr in remote_affected
+                        else "live PR identity changed between batch overview and deep reconciliation"
+                    )
                     row["channels"] = {"hosted": "UNRECONCILED", "cli": "UNRECONCILED"}
                     row["allocations"] = {}
                     row["evidence_status"] = "stale"
@@ -4926,7 +4966,11 @@ class ReviewController:
 
             stale = pr in mismatch or batch_topology_moved or saved_identity_moved
             reason = (
-                "live parent topology or saved review identity moved"
+                (
+                    "remote parent or head branch changed during deep reconciliation"
+                    if pr in remote_affected
+                    else "live parent topology or saved review identity moved"
+                )
                 if stale
                 else "tail review evidence was not deeply checked in this status invocation"
             )
@@ -4980,6 +5024,7 @@ class ReviewController:
                 },
                 **({"active_target_error": active_scan_error} if active_scan_error else {}),
                 **({"deep_error": deep_error} if deep_error else {}),
+                **({"remote_head_recheck_error": remote_recheck_error} if remote_recheck_error else {}),
             },
             "prs": values,
             "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
@@ -4989,9 +5034,18 @@ class ReviewController:
             report["review_targets"] = self._unknown_review_targets(
                 f"deep review evidence is unavailable: {deep_error}"
             )
+        elif remote_recheck_error is not None:
+            report["review_targets"] = self._unknown_review_targets(
+                f"live remote branch heads could not be rechecked after deep reconciliation: {remote_recheck_error}"
+            )
         elif changed_target_pr is not None:
+            changed_reason = (
+                "remote parent or head branch changed during deep reconciliation"
+                if changed_target_pr in remote_affected
+                else "live PR identity changed between batch overview and deep reconciliation"
+            )
             unknown_targets = self._unknown_review_targets(
-                "live PR identity changed between batch overview and deep reconciliation"
+                changed_reason
             )
             positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
             changed_position = positions[changed_target_pr]

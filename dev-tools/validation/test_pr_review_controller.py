@@ -3751,7 +3751,7 @@ class ControllerTests(unittest.TestCase):
 
         before_report = before.status_overview()
 
-        self.assertEqual(before.git.remote_heads_calls - remote_head_calls_before, 1)
+        self.assertEqual(before.git.remote_heads_calls - remote_head_calls_before, 2)
         self.assertEqual(
             set(before_report["detail_window"]["timing_ms"]),
             {"deep_pr_fetch", "local_anchors"},
@@ -3778,6 +3778,50 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
         self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
         self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_status_overview_rechecks_remote_heads_after_deep_reconciliation(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        for pr_number in range(1, 5):
+            hosted = self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
+            evidence[(pr_number, "hosted")] = [hosted]
+            evidence[(pr_number, "cli")] = [
+                {
+                    **hosted,
+                    "channel": "cli",
+                    "checkpoint": f"cli-{pr_number}-{round_number}",
+                }
+                for round_number in range(1, 4)
+            ]
+        self._enable_batch_status(controller, values)
+        original_pull = controller.github.pull_request
+
+        def move_parent_branch_during_deep_fetch(number):
+            value = original_pull(number)
+            if number == 5:
+                controller.git.heads["feature-2"] = "9" * 40
+            return value
+
+        controller.github.pull_request = move_parent_branch_during_deep_fetch
+        remote_calls_before = controller.git.remote_heads_calls
+
+        report = controller.status_overview()
+
+        self.assertEqual(controller.git.remote_heads_calls - remote_calls_before, 2)
+        rows = {item["pr"]: item for item in report["prs"]}
+        self.assertEqual(rows[1]["evidence_status"], "current")
+        self.assertEqual(rows[1]["channels"], {"hosted": "COMPLETE", "cli": "COMPLETE"})
+        for pr_number in range(2, 7):
+            self.assertEqual(rows[pr_number]["evidence_status"], "stale")
+            self.assertEqual(rows[pr_number]["reconciliation"], "UNRECONCILED")
+        for channel in ("hosted", "cli"):
+            self.assertIsNone(report["review_targets"][channel]["pr"])
+            self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+
+        with self.assertRaises(ControllerError):
+            controller.resolve_hosted_target()
 
     def test_status_overview_reports_divergent_controller_selected_targets(self):
         values, heads = _stacked_prs(3)
