@@ -107,6 +107,27 @@ class SqliteControllerEntrypointTest(unittest.TestCase):
         self.assertIsInstance(controller.store, ControllerStateStore)
         self.assertEqual(controller.store.path.name, "pr-review-stack.json")
 
+    def test_stack_show_reads_the_migrated_store_without_github(self) -> None:
+        StateStore(self.state_path).save(ReviewState(ordered_prs=(2828, 2879)))
+        result, _, stderr = self._run_cli(["state", "migrate-sqlite", "--path", str(self.state_path), "--json"])
+        self.assertEqual(result, 0, stderr)
+        with (
+            patch.object(review_cli, "ControllerStateStore", return_value=ControllerStateStore(self.state_path)),
+            patch.object(
+                review_cli.github,
+                "infer_repo",
+                side_effect=AssertionError("stack show must not resolve a GitHub repository"),
+            ),
+            patch.object(
+                review_cli.github,
+                "repository_metadata",
+                side_effect=AssertionError("stack show must not read GitHub repository metadata"),
+            ),
+        ):
+            result, stdout, stderr = self._run_cli(["stack", "show"])
+        self.assertEqual(result, 0, stderr)
+        self.assertIn("ordered_prs=[2828, 2879]", stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

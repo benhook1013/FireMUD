@@ -85,6 +85,7 @@ class ChannelDecision:
     reason: str
     provisional: bool = False
     taper_complete: bool = False
+    deferred_terminal: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -354,6 +355,27 @@ def _blocked(evidence: Evidence, reconciliation: ReconciliationStatus | str | No
     return None
 
 
+def _only_verified_terminal_hosted_ambiguity(values: Sequence[Evidence | Mapping[str, Any]]) -> bool:
+    """Identify a finished, non-counting result that need not idle later PRs."""
+
+    blockers = [value for value in values if _blocked(Evidence.from_value(value), None)]
+    return bool(blockers) and all(
+        isinstance(value, Mapping)
+        and value.get("terminal_ambiguous") is True
+        and value.get("terminal") is True
+        and value.get("attributable") is False
+        and value.get("state") == "ambiguous"
+        and type(value.get("trigger_id")) is int
+        and value["trigger_id"] > 0
+        and type(value.get("response_id")) is int
+        and value["response_id"] > 0
+        and isinstance(value.get("fingerprint"), str)
+        and len(value["fingerprint"]) == 64
+        and all(character in "0123456789abcdef" for character in value["fingerprint"])
+        for value in blockers
+    )
+
+
 def completion_status(
     state: ReviewState,
     channel: Channel | str,
@@ -485,6 +507,7 @@ def select_review_target(
     taper_history_by_pr = taper_history_by_pr or {}
     encountered_human_stop = False
     completed_taper_seen = False
+    deferred_hosted_pr: int | None = None
 
     def completed_taper(pr: int) -> bool:
         values = evidence_by_pr.get(pr, ())
@@ -577,6 +600,18 @@ def select_review_target(
         if taper_complete and blocked in request_blockers:
             blocked = None
         if blocked:
+            if (
+                selected == Channel.HOSTED
+                and blocked in {ReviewStatus.HELD, ReviewStatus.UNSTABLE}
+                and reconciliation_by_pr.get(pr) == ReconciliationStatus.COHERENT
+                and _only_verified_terminal_hosted_ambiguity(history)
+            ):
+                # This PR still needs a counted result or an audited stop for
+                # merge readiness. The provider has finished this request,
+                # however, so later coherent PRs may use the Hosted window.
+                if deferred_hosted_pr is None:
+                    deferred_hosted_pr = pr
+                continue
             return ChannelDecision(
                 selected,
                 pr,
@@ -642,6 +677,14 @@ def select_review_target(
             f"{pr} is the earliest incomplete {selected.value} target",
             latest.provisional or status == ReviewStatus.PROVISIONAL,
             taper_complete,
+        )
+    if deferred_hosted_pr is not None:
+        return ChannelDecision(
+            selected,
+            deferred_hosted_pr,
+            ReviewStatus.HELD,
+            f"{deferred_hosted_pr} has a terminal non-counting Hosted result and no later safe target",
+            deferred_terminal=True,
         )
     if encountered_human_stop:
         return ChannelDecision(

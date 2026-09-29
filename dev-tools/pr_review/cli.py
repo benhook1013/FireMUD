@@ -13,10 +13,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, github, hosted, sqlite_provider_imports
+from . import acceptance, cli_attempts, github, hosted, sqlite_provider_imports, stack
 from . import evidence as evidence_module
 from . import status as status_module
-from .controller import ReviewController
+from .cli_runner import PullRequestSnapshot
+from .controller import LivePullRequest, ReviewController
 from .runtime import default_controller
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from .sqlite_store import SqliteStateStore
@@ -350,6 +351,14 @@ def _parser() -> argparse.ArgumentParser:
     prepost_recovery.add_argument("--reason", required=True)
     prepost_recovery.add_argument("--confirmed-not-posted", action="store_true")
     prepost_recovery.add_argument("--json", action="store_true", dest="as_json")
+    manual_adoption = decide_commands.add_parser(
+        "trigger-adopt-manual",
+        help="audit a completed, uniquely attributable manual Hosted request without posting another",
+    )
+    manual_adoption.add_argument("--pr", required=True, type=_positive_int)
+    manual_adoption.add_argument("--trigger-id", required=True, type=_positive_int)
+    manual_adoption.add_argument("--head", required=True, type=_exact_sha)
+    manual_adoption.add_argument("--json", action="store_true", dest="as_json")
     stuck_recovery = decide_commands.add_parser(
         "trigger-retire-stuck",
         help="retire a stuck trigger after the live PR head advanced",
@@ -376,7 +385,7 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
         fixture = acceptance.load(fixture_path, isolated_state)
         return fixture.controller(), fixture
     if args.command == "stack" and args.stack_command == "show":
-        return ReviewController(), None
+        return ReviewController(store=ControllerStateStore()), None
     return default_controller(), None
 
 
@@ -604,7 +613,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         store.bootstrap()
         return {"api_version": 1, "result": {"status": "bootstrapped"}}, 0
     if args.records_command == "history":
-        return {"api_version": 1, "result": store.history(args.pr, include_legacy_routes=True)}, 0
+        history = store.history(args.pr, include_legacy_routes=True)
+        history["cli_attempts"] = cli_attempts.failed_attempts(_records_database_path(args), args.pr)
+        return {"api_version": 1, "result": history}, 0
     if args.records_command == "routes":
         routes = store.open_routes(
             target_pr=args.target_pr if args.target_pr is not None else None,
@@ -890,6 +901,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             "trigger-recover-prepost",
             "trigger-retire",
             "trigger-retire-stuck",
+            "trigger-adopt-manual",
             "summary-disposition",
         }:
             raise CliError("live-state decisions are unavailable in acceptance fixture mode")
@@ -1034,6 +1046,74 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 args.head,
                 args.reason,
                 args.confirmed_not_posted,
+                lambda: github.fetch_pull_request(controller.repository, args.pr),
+            ), 0
+        if args.decide_command == "trigger-adopt-manual":
+            state = controller.store.load()
+            if args.pr in state.ordered_prs:
+                live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+                candidate = live.get(args.pr)
+                if candidate is None or candidate.head.casefold() != args.head.casefold():
+                    raise CliError("manual Hosted adoption requires the current published PR head")
+                if reconciliation.status_for(args.pr) != stack.ReconciliationStatus.COHERENT:
+                    raise CliError("manual Hosted adoption requires coherent live stack reconciliation")
+                if not isinstance(candidate.head_ref, str) or not candidate.head_ref.strip():
+                    raise CliError("manual Hosted adoption requires a live PR branch identity")
+                anchor = controller._reconciled_anchor(args.pr, candidate, reconciliation)
+                if anchor is None:
+                    raise CliError("manual Hosted adoption requires a verified current parent and patch")
+                anchor_data = anchor.as_dict()
+            else:
+                snapshot = controller.github.pull_request(args.pr)
+                if isinstance(snapshot, PullRequestSnapshot):
+                    candidate = LivePullRequest(
+                        number=snapshot.number,
+                        head=snapshot.head_sha,
+                        base_ref=snapshot.base_ref_name,
+                        base_tip=snapshot.base_sha,
+                        head_ref=snapshot.head_ref_name,
+                        merged=snapshot.merged,
+                        state=snapshot.state.upper(),
+                        mergeable=snapshot.mergeable.upper(),
+                        base_exists=snapshot.base_exists,
+                        changed_files=snapshot.changed_files,
+                        head_repository=snapshot.head_repository,
+                    )
+                elif isinstance(snapshot, LivePullRequest):
+                    candidate = snapshot
+                else:
+                    raise CliError("off-queue manual Hosted adoption requires a complete live PR snapshot")
+                if candidate.number != args.pr or candidate.state.upper() != "OPEN" or candidate.merged:
+                    raise CliError("off-queue manual Hosted adoption requires an open live PR")
+                if candidate.head.casefold() != args.head.casefold():
+                    raise CliError("manual Hosted adoption requires the current published PR head")
+                if candidate.base_exists is not True:
+                    raise CliError("off-queue manual Hosted adoption requires an existing live base branch")
+                if not isinstance(candidate.head_ref, str) or not candidate.head_ref.strip():
+                    raise CliError("manual Hosted adoption requires a live PR branch identity")
+                problem = controller._head_repository_problem(candidate)
+                if problem:
+                    raise CliError(f"off-queue manual Hosted adoption {problem}")
+                remote_heads = controller.git.remote_heads()
+                for ref_name, expected_tip, label in (
+                    (candidate.base_ref, candidate.base_tip, "base"),
+                    (candidate.head_ref, candidate.head, "head"),
+                ):
+                    remote_tip = remote_heads.get(ref_name)
+                    if not isinstance(remote_tip, str) or remote_tip.casefold() != expected_tip.casefold():
+                        raise CliError(
+                            f"off-queue manual Hosted adoption requires the live {label} branch tip to match origin"
+                        )
+                if not controller.git.is_ancestor(candidate.base_tip, candidate.head):
+                    raise CliError("off-queue manual Hosted adoption requires the live base to be an ancestor of the head")
+                link = stack.ParentLink(args.pr, None, candidate.base_ref, candidate.base_tip)
+                anchor_data = controller._anchor(args.pr, candidate, link).as_dict()
+            return hosted.adopt_manual_completed_trigger(
+                controller.repository,
+                args.pr,
+                args.trigger_id,
+                args.head,
+                anchor_data,
                 lambda: github.fetch_pull_request(controller.repository, args.pr),
             ), 0
         if args.decide_command == "trigger-retire":
