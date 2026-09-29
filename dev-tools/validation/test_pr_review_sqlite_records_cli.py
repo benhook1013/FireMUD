@@ -547,6 +547,109 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertTrue(attempt_summary["diagnostic"].startswith("CLI setup or capture failed:"))
         self.assertEqual(records.history(2885)["runs"], [])
 
+    def test_native_capture_diagnostics_normalize_controls_before_terminal_archive(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        root = self.database.parent / "pr-review" / "runs"
+        captures = (
+            ("a", "failed", "\x1b[31mprovider failed\nnext line\x1b[0m"),
+            ("b", "incomplete", "\x1b[33msetup failed\nwith detail\x1b[0m"),
+        )
+        for marker, kind, detail in captures:
+            run_id = "run." + marker * 32
+            metadata = {
+                "run_id": run_id,
+                "kind": "cli",
+                "capture_completion_marker": "capture-complete",
+                "pull_request": 2885,
+                "candidate_sha": marker * 40,
+            }
+            records.start_attempt(
+                attempt_id=run_id,
+                source_pr=2885,
+                channel="cli",
+                candidate_sha=marker * 40,
+                metadata=metadata,
+            )
+            capture = root / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            if kind == "failed":
+                final_metadata = {**metadata, "duration_seconds": 2, "exit_status": 1}
+                (capture / "metadata.json").write_text(json.dumps(final_metadata), encoding="utf-8")
+                (capture / "exit-status").write_text("1\n", encoding="utf-8")
+                (capture / "stderr").write_text(detail, encoding="utf-8")
+                (capture / "review-duration-seconds").write_text("2\n", encoding="utf-8")
+                (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+            else:
+                (capture / "error").write_text(detail, encoding="utf-8")
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(
+            result["terminally_classified"],
+            [{"run_id": "run." + marker * 32, "pr": "2885"} for marker, _, _ in captures],
+        )
+        for marker, _, detail in captures:
+            attempt = records.attempt("run." + marker * 32)
+            self.assertEqual(attempt["state"], "failed")
+            attempt_summary = next(
+                item for item in records.attempt_history(2885)
+                if item["attempt_id"] == "run." + marker * 32
+            )
+            diagnostic = attempt_summary["diagnostic"]
+            self.assertNotIn("\x1b", diagnostic)
+            self.assertNotIn("\n", diagnostic)
+            self.assertIn(detail.split("\x1b", 1)[1].split("\n", 1)[0], diagnostic)
+            self.assertIn("next line" if marker == "a" else "with detail", diagnostic)
+
+    def test_native_successful_capture_recovery_preserves_unicode_line_separators(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "run." + "f" * 32
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "e" * 40,
+            "candidate_files": 1,
+        }
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="e" * 40,
+            metadata=metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(
+            json.dumps({**metadata, "duration_seconds": 2, "exit_status": 0}), encoding="utf-8"
+        )
+        (capture / "exit-status").write_text("0\n", encoding="utf-8")
+        finding_text = "Review comment at @src/Representative.java:1\nKeep\u2028the\u2029line."
+        stdout = (
+            json.dumps({"type": "finding", "codegenInstructions": finding_text}, ensure_ascii=False)
+            + "\n"
+            + json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1,
+                 "reviewedFiles": ["src/Representative.java"]},
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        (capture / "stdout").write_text(stdout, encoding="utf-8")
+        (capture / "stderr").write_text("", encoding="utf-8")
+        (capture / "review-duration-seconds").write_text("2\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+
+        result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
+
+        self.assertEqual(result["recovered"], [{"run_id": run_id, "pr": "2885"}])
+        self.assertEqual(records.attempt(run_id)["state"], "completed")
+        self.assertEqual(records.history(2885)["findings"][0]["title"], "Keep\u2028the\u2029line.")
+
     def test_reconciles_old_native_attempt_killed_without_terminal_file_as_failed(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         run_id = "run." + "6" * 32

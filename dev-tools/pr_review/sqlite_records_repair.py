@@ -228,6 +228,16 @@ def _import_one(
             # projection before linking any public origin or archive rows.
             with tempfile.TemporaryDirectory(prefix="pr-review-attempt-repair-") as scratch:
                 probe = _clone_records(records, Path(scratch) / "records.sqlite3")
+                if checkpoint.type == "CLI" and checkpoint.run_id is not None:
+                    # The legacy capture is the immutable provider evidence.
+                    # Do not let a later source correction replace its decision
+                    # projection while the scratch importer validates it.
+                    with contextlib.closing(sqlite3.connect(probe.path)) as connection:
+                        connection.execute(
+                            "DELETE FROM source_decision_corrections WHERE run_id = ?",
+                            (checkpoint.run_id,),
+                        )
+                        connection.commit()
                 imported = import_checkpoint(probe)
                 probe_history = probe.history(pr_number)
             expected_run = next(
@@ -241,31 +251,31 @@ def _import_one(
             )
             if expected_run is None or stored_run is None:
                 raise SqliteRecordsRepairError("matching attempt has no verifiable completed source run")
-            if (
-                stored_run["source_pr"] != pr_number
-                or stored_run["channel"] != expected_run["channel"]
-                or stored_run["source_head"] != expected_run["source_head"]
-                or attempt["candidate_sha"] != expected_run["source_head"]
-                or stored_run["outcome"] != "completed"
-                or not stored_run["attributable"]
-                or stored_run["counts"] != expected_run["counts"]
-            ):
-                raise SqliteRecordsRepairError(
-                    "matching provider attempt conflicts with captured run identity or counts"
-                )
-
-            def observation_projection(history: Mapping[str, Any], run_id: str) -> dict[str, tuple[Any, ...]]:
+            def observation_projection(
+                history: Mapping[str, Any], run_id: str, *, original: bool = False
+            ) -> dict[str, tuple[Any, ...]]:
                 routes = {item["route_id"]: item for item in history["routes"]}
+                original_decisions = {
+                    item["finding_id"]: item
+                    for item in history["decisions"]
+                    if item["run_id"] == run_id and item["scope"] == "source"
+                }
                 return {
                     item["source_finding_key"]: (
-                        item["disposition"],
-                        routes.get(item["route_id"], {}).get("target_pr")
+                        original_decisions[item["finding_id"]]["decision"]
+                        if original and item["finding_id"] in original_decisions
+                        else item["disposition"],
+                        original_decisions[item["finding_id"]]["target_pr"]
+                        if original and item["finding_id"] in original_decisions
+                        else routes.get(item["route_id"], {}).get("target_pr")
                         if item["route_id"] is not None else None,
                     )
                     for item in history["findings"] if item["run_id"] == run_id
                 }
 
-            def decision_projection(history: Mapping[str, Any], run_id: str) -> dict[str, tuple[Any, ...]]:
+            def decision_projection(
+                history: Mapping[str, Any], run_id: str, *, corrected: bool = True
+            ) -> dict[str, tuple[Any, ...]]:
                 keys = {
                     item["finding_id"]: item["source_finding_key"]
                     for item in history["findings"] if item["run_id"] == run_id
@@ -276,17 +286,52 @@ def _import_one(
                     if item["run_id"] == run_id and item["scope"] == "source"
                     and item["finding_id"] in keys
                 }
-                for correction in history["corrections"]:
-                    if correction["run_id"] == run_id and correction["finding_id"] in keys:
-                        result[keys[correction["finding_id"]]] = (
-                            correction["decision"], correction["target_pr"], correction["reason"]
-                        )
+                if corrected:
+                    for correction in history["corrections"]:
+                        if correction["run_id"] == run_id and correction["finding_id"] in keys:
+                            result[keys[correction["finding_id"]]] = (
+                                correction["decision"], correction["target_pr"], correction["reason"]
+                            )
                 return result
 
-            if observation_projection(stored_history, attempt["run_id"]) != observation_projection(
-                probe_history, imported["run_id"]
-            ) or decision_projection(stored_history, attempt["run_id"]) != decision_projection(
-                probe_history, imported["run_id"]
+            expected_observations = observation_projection(probe_history, imported["run_id"])
+            expected_decisions = decision_projection(
+                probe_history, imported["run_id"], corrected=False
+            )
+            original_observations = observation_projection(
+                stored_history, attempt["run_id"], original=True
+            )
+            original_decisions = decision_projection(
+                stored_history, attempt["run_id"], corrected=False
+            )
+            current_observations = observation_projection(stored_history, attempt["run_id"])
+            current_decisions = decision_projection(stored_history, attempt["run_id"])
+            current_counts = {
+                "found": len(current_observations),
+                "accepted": sum(item[0] == "accepted" for item in current_observations.values()),
+                "routed": sum(item[0] == "routed" for item in current_observations.values()),
+            }
+            if (
+                stored_run["source_pr"] != pr_number
+                or stored_run["channel"] != expected_run["channel"]
+                or stored_run["source_head"] != expected_run["source_head"]
+                or attempt["candidate_sha"] != expected_run["source_head"]
+                or stored_run["outcome"] != "completed"
+                or not stored_run["attributable"]
+                or stored_run["counts"] != current_counts
+            ):
+                raise SqliteRecordsRepairError(
+                    "matching provider attempt conflicts with captured run identity or counts"
+                )
+            if (
+                original_observations != expected_observations
+                or original_decisions != expected_decisions
+                or set(current_observations) != set(current_decisions)
+                or any(
+                    current_observations[key][0] != current_decisions[key][0]
+                    for key in current_observations
+                    if key in current_decisions
+                )
             ):
                 raise SqliteRecordsRepairError(
                     "matching provider attempt conflicts with captured finding or decision evidence"

@@ -347,6 +347,18 @@ class SqliteBackupTest(unittest.TestCase):
                             (original, *parameters),
                         )
 
+    def test_non_text_artifact_content_is_rejected_before_sftp(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = ?",
+                (sqlite3.Binary(b"Bearer synthetic-secret-value"), "run.backupfixture", "cli_events"),
+            )
+
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "artifact kind and content must be text"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
 

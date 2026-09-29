@@ -540,7 +540,7 @@ def _read_metadata(path: Path) -> dict[str, str]:
 def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    lines = _read_capture_text(path, "stdout").splitlines()
+    lines = _capture_lines(_read_capture_text(path, "stdout"))
     for number, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -560,6 +560,12 @@ def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, A
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
         raise CaptureInvalid("linked capture completion does not match findings/files")
     return findings, complete
+
+
+def _capture_lines(value: str) -> list[str]:
+    """Split capture records on literal newlines while accepting trailing CR."""
+
+    return [line.removesuffix("\r") for line in value.split("\n")]
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:

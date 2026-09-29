@@ -441,6 +441,46 @@ class CliReviewRunnerTests(unittest.TestCase):
                 )}
             self.assertEqual(kinds, {"cli_events", "cli_diagnostic", "metadata"})
 
+    def test_runner_accepts_unicode_line_separators_inside_json_finding(self):
+        output = (
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": "Review comment at @src/Representative.java:1\nKeep\u2028the\u2029line.",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output),
+                records=records,
+            )
+
+            self.assertEqual(records.attempt(result.run_id)["state"], "completed")
+            self.assertEqual(records.history(result.pull_request)["findings"][0]["title"], "Keep\u2028the\u2029line.")
+
     def test_successful_capture_recovers_the_original_started_attempt_after_sql_failure(self):
         output = (
             json.dumps({

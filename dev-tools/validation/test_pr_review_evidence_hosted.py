@@ -475,6 +475,16 @@ class GithubAndEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.CaptureInvalid):
                 evidence.load_cli_capture(checkpoint, REPO, PR, Path(directory))
 
+    def test_cli_capture_preserves_unicode_line_separators_inside_json_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = self._cli_capture(
+                Path(directory),
+                decision_text="1\trejected\tduplicate finding\n",
+                finding_text="before\u2028middle\u2029after",
+            )
+
+            self.assertEqual(capture.findings[0]["message"], "before\u2028middle\u2029after")
+
     def _cli_capture(
         self,
         common: Path,
@@ -484,6 +494,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         accepted: int = 0,
         routed: int | None = None,
         records: SqliteReviewRecords | None = None,
+        finding_text: str = "one",
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -493,9 +504,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
             encoding="utf-8",
         )
         (run / "stdout").write_text(
-            json.dumps({"type": "finding", "message": "one"})
+            json.dumps({"type": "finding", "message": finding_text}, ensure_ascii=False)
             + "\n"
-            + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
+            + json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]},
+                ensure_ascii=False,
+            )
             + "\n",
             encoding="utf-8",
         )

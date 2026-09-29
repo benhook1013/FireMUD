@@ -10,6 +10,7 @@ import re
 import sqlite3
 import stat
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -536,8 +537,7 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
         summary = "CodeRabbit CLI timed out before a complete result"
     else:
         summary = "CodeRabbit CLI exited nonzero"
-    diagnostic, _ = _redact_archive_text(f"{summary}: {stderr}" if stderr else summary)
-    diagnostic = diagnostic[:1000].rstrip()
+    diagnostic = _archive_diagnostic(summary, stderr)
     try:
         records.finish_attempt(
             directory.name,
@@ -631,8 +631,7 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
     except _UnrecordableCapture:
         return None
 
-    diagnostic, _ = _redact_archive_text(f"{summary}: {detail}" if detail else summary)
-    diagnostic = diagnostic[:1000].rstrip()
+    diagnostic = _archive_diagnostic(summary, detail)
     try:
         records.finish_attempt(
             directory.name,
@@ -766,6 +765,18 @@ def _read_diagnostic_prefix(path: Path) -> str:
             os.close(descriptor)
 
 
+def _archive_diagnostic(summary: str, detail: str = "") -> str:
+    """Normalize provider controls before redaction and bounded persistence."""
+
+    diagnostic = f"{summary}: {detail}" if detail else summary
+    diagnostic = "".join(
+        " " if unicodedata.category(character) == "Cc" else character
+        for character in diagnostic
+    )
+    diagnostic, _ = _redact_archive_text(diagnostic)
+    return diagnostic[:1000].rstrip()
+
+
 def _read_capture_json(path: Path, limit: int, description: str) -> dict[str, Any]:
     try:
         value = json.loads(_read_capture_text(path, limit, description))
@@ -779,7 +790,7 @@ def _read_capture_json(path: Path, limit: int, description: str) -> dict[str, An
 def _parse_successful_stdout(stdout: str) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    for number, line in enumerate(stdout.splitlines(), 1):
+    for number, line in enumerate(_capture_lines(stdout), 1):
         if not line.strip():
             continue
         try:
@@ -800,6 +811,12 @@ def _parse_successful_stdout(stdout: str) -> list[dict[str, Any]]:
     if len(findings) > 200:
         raise _UnrecordableCapture("capture contains too many findings")
     return findings
+
+
+def _capture_lines(value: str) -> list[str]:
+    """Split capture records on literal newlines while accepting trailing CR."""
+
+    return [line.removesuffix("\r") for line in value.split("\n")]
 
 
 def _capture_finished_at(path: Path) -> str:

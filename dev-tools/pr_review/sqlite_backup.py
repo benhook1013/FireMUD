@@ -553,7 +553,7 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
             if column == "content" and table in _ARTIFACT_TABLES:
                 for kind, value in connection.execute(f'SELECT "kind", "content" FROM "{table}"'):
                     if not isinstance(kind, str) or not isinstance(value, str):
-                        continue
+                        raise BackupError("persisted artifact kind and content must be text")
                     if kind in _JSON_ARTIFACT_KINDS:
                         _screen_json_artifact(kind, value)
                     elif _looks_secret(value):
