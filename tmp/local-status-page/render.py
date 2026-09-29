@@ -1838,7 +1838,7 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         if history_only else
         "Queue order follows the review controller; programme labels and lane notes are maintained in status.json. "
         "The Refresh button updates PR details and publishes the site pages. The queue links to public review details; "
-        "raw captures and credentials are not intentionally embedded."
+        "raw captures and credentials are intentionally excluded from published pages."
     )
     refresh_hash = base64.b64encode(hashlib.sha256(REFRESH_SCRIPT.encode()).digest()).decode()
     age_bootstrap_hash = base64.b64encode(hashlib.sha256(AGE_BOOTSTRAP_SCRIPT.encode()).digest()).decode()
