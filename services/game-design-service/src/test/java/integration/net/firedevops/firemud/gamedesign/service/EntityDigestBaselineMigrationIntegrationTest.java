@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.gamedesign.entity.RecordedParticipantDigest;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.EntityDigestBaselineMigrationAuditRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
@@ -218,6 +220,38 @@ class EntityDigestBaselineMigrationIntegrationTest {
   }
 
   @Test
+  void draftV1ScopeIsReportedBlockedAndMigrationDoesNotReadEntityDigest() {
+    createGame("9301");
+    Version draftVersion = createVersion("9301", 1, VersionLifecycleState.DRAFT);
+    RecordedParticipantDigest baseline = seedEntityBaseline("9301", draftVersion, 1);
+    MigrationCommand command = command("draft-scope-operation", "9301", baseline);
+
+    EntityDigestBaselineMigrationService.EntityV1Batch page =
+        migrationService.enumerateEntityV1Batch(baseline.getId() - 1, 10);
+    assertThat(page.baselines())
+        .filteredOn(summary -> summary.baselineId() == baseline.getId())
+        .singleElement()
+        .extracting(BaselineSummary::status)
+        .isEqualTo(ScopeStatus.BLOCKED_DRAFT);
+    assertThat(migrationService.preflightScope("9301", draftVersion.getId()).status())
+        .isEqualTo(ScopeStatus.BLOCKED_DRAFT);
+
+    assertThatThrownBy(() -> migrationService.migrate(command))
+        .isInstanceOf(EntityDigestBaselineMigrationService.MigrationRejectedException.class)
+        .satisfies(
+            failure ->
+                assertThat(
+                        ((EntityDigestBaselineMigrationService.MigrationRejectedException) failure)
+                            .failureCode())
+                    .isEqualTo("VERSION_DRAFT"));
+    verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
+    assertThat(baselineRepository.findById(baseline.getId()).orElseThrow())
+        .usingRecursiveComparison()
+        .isEqualTo(baseline);
+    assertThat(auditRepository.findByOperationId(command.operationId())).isEmpty();
+  }
+
+  @Test
   void exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain() {
     createGame("9301");
     Version version = createVersion("9301", 1);
@@ -306,9 +340,14 @@ class EntityDigestBaselineMigrationIntegrationTest {
   }
 
   private Version createVersion(String tenantId, int versionNumber) {
+    return createVersion(tenantId, versionNumber, VersionLifecycleState.PUBLISHED);
+  }
+
+  private Version createVersion(String tenantId, int versionNumber, VersionLifecycleState state) {
     Version version = new Version();
     version.setTenantId(tenantId);
     version.setVersionNumber(versionNumber);
+    version.setVersionState(state);
     version.setNotes("Entity baseline migration integration fixture");
     return versionRepository.save(version);
   }
