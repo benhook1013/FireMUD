@@ -1852,7 +1852,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
         .thenAnswer(
             invocation -> {
-              item.setStatus("HANDOFF_IN_FLIGHT");
+              item.setStatus("CANCELED");
               return new ScriptGameplayCommandHandoffService.HandoffResult(
                   false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
             });
@@ -1869,7 +1869,7 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     service.processPendingWorkItems(1);
 
-    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
     assertThat(audit.getFinalStage()).isNull();
     assertThat(audit.getFinalOutcome()).isNull();
     verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
@@ -1958,6 +1958,13 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenReturn(
             new ScriptGameplayCommandHandoffService.HandoffResult(
                 false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE"));
+    ScriptWorkItem persistedWorkItem = new ScriptWorkItem();
+    persistedWorkItem.setId(item.getId());
+    persistedWorkItem.setTenantId(item.getTenantId());
+    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setRowVersion(item.getRowVersion());
+    persistedWorkItem.setNextEligibleAt(eligibleAtBeforeRetry);
+    when(workItemRepository.findById(item.getId())).thenReturn(Optional.of(persistedWorkItem));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(
             invocation -> {
@@ -2000,9 +2007,10 @@ class ScriptWorkItemExecutionServiceImplTest {
           service.processPendingWorkItems(10);
 
       assertThat(result.failedCount()).isEqualTo(1);
-      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
-      assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
-      assertThat(item.getNextEligibleAt()).isEqualTo(eligibleAtBeforeRetry);
+      assertThat(item.getStatus()).isEqualTo("EVALUATING");
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(persistedWorkItem.getAuthorityUnavailableRetryCount()).isZero();
+      assertThat(persistedWorkItem.getNextEligibleAt()).isEqualTo(eligibleAtBeforeRetry);
       assertThat(operations).containsExactly("save:PENDING_EVALUATION", "refresh");
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
 
@@ -2011,6 +2019,63 @@ class ScriptWorkItemExecutionServiceImplTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  @Test
+  void retryableHandoffReadbackRequeuesUsingRolledBackRowVersion() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptWorkItem persistedAfterRollback = new ScriptWorkItem();
+    persistedAfterRollback.setId(item.getId());
+    persistedAfterRollback.setTenantId(item.getTenantId());
+    persistedAfterRollback.setStatus("EVALUATING");
+    persistedAfterRollback.setRowVersion(7);
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("CANCELED");
+              item.setRowVersion(8);
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
+            });
+    when(workItemRepository.findById(item.getId())).thenReturn(Optional.of(persistedAfterRollback));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getRowVersion()).isEqualTo(8);
+    assertThat(persistedAfterRollback.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(persistedAfterRollback.getRowVersion()).isEqualTo(7);
+    ArgumentCaptor<ScriptWorkItem> saved = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).save(saved.capture());
+    assertThat(saved.getValue()).isSameAs(persistedAfterRollback);
+    assertThat(saved.getValue().getRowVersion()).isEqualTo(7);
   }
 
   @Test

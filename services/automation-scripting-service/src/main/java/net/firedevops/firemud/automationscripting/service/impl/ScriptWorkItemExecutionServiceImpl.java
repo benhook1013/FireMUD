@@ -114,7 +114,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private record HandoffExecutionResult(
       String terminalFenceFailure,
       PluginFenceValidation retryableFence,
-      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff) {}
+      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
+      boolean childHandoffAttempted) {}
 
   private record EvaluationFencePrecheck(boolean checked, String failure) {}
 
@@ -535,6 +536,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     String terminalFenceFailure = null;
     PluginFenceValidation retryableFence = null;
+    boolean childHandoffAttempted = false;
     try {
       try {
         handoffService.beginAggregateFanout(workItem);
@@ -543,7 +545,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             "Unable to preflight script handoff fanout for workItemId={}; scheduling retry",
             workItem.getId(),
             ex);
-        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult());
+        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
       }
       for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
         ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
@@ -562,6 +564,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           }
           break;
         }
+        childHandoffAttempted = true;
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
         if (!result.accepted()
@@ -578,7 +581,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } finally {
       handoffService.endAggregateFanout(workItem);
     }
-    return new HandoffExecutionResult(terminalFenceFailure, retryableFence, firstRejectedHandoff);
+    return new HandoffExecutionResult(
+        terminalFenceFailure, retryableFence, firstRejectedHandoff, childHandoffAttempted);
   }
 
   private static ScriptGameplayCommandHandoffService.HandoffResult
@@ -916,7 +920,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-      requeueAfterRetryableFailure(workItem);
+      ScriptWorkItem retryableWorkItem = workItem;
+      if (handoffResult.childHandoffAttempted()) {
+        // A child transaction may mutate the detached entity before rollback, including to
+        // statuses other than HANDOFF_IN_FLIGHT. Requeue only from an authoritative row that
+        // confirms the work item remains EVALUATING; otherwise retain it for reconciliation.
+        retryableWorkItem = workItemRepository.findById(workItem.getId()).orElse(null);
+        if (retryableWorkItem == null || !"EVALUATING".equals(retryableWorkItem.getStatus())) {
+          return false;
+        }
+      }
+      requeueAfterRetryableFailure(retryableWorkItem);
       return false;
     }
     markTerminalSuccess(
