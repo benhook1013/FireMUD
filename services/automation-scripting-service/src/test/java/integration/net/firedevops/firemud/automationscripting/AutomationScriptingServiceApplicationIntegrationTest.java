@@ -175,7 +175,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
                         + port
                         + "/factions/1/reputation?tenantId=1&characterId=2&gameInstanceId=GI-1&playableStateScope=NOPE&delta=1"))
             .header("Authorization", "Bearer " + token)
-            .GET()
+            .method("PATCH", HttpRequest.BodyPublishers.noBody())
             .build();
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());

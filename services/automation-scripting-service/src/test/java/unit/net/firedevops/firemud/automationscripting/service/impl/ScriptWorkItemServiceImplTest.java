@@ -3149,14 +3149,141 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void recordsReplayReceiptWhenPluginAuthorityReadFails() {
+  void propagatesPluginAuthorityReadFailureWithoutCompletingReplayRequest() {
     PluginReplayFixture fixture = pluginReplayFixture(105L);
+    IllegalStateException unavailable =
+        new IllegalStateException("plugin publication projection unavailable");
     when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
-        .thenThrow(new IllegalStateException("plugin publication projection unavailable"));
+        .thenThrow(unavailable);
 
-    assertRetryablePluginAuthority(fixture);
+    assertThatThrownBy(() -> replay(fixture.service(), fixture.workItem().getId()))
+        .isSameAs(unavailable);
+
+    assertThat(fixture.workItem().getStatus()).isEqualTo("DEAD_LETTERED");
     verify(fixture.replayRepository())
-        .complete(Mockito.eq(1L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class));
+        .insertOrGet(
+            Mockito.eq("1"),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    verify(fixture.replayRepository(), Mockito.never())
+        .saveResult(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    verify(fixture.replayRepository(), Mockito.never())
+        .complete(
+            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
+    verify(fixture.workItemRepository(), Mockito.never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
+  }
+
+  @Test
+  void propagatesGameSessionAuthorityReadFailureWithoutCompletingReplayRequest() {
+    long workItemId = 107L;
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(workItemId));
+    item.setCancelReason("authority_unavailable");
+    item.setFailureGeneration(1L);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("infrastructure_error");
+    audit.setFinalReason("authority_unavailable");
+
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findByIdForUpdate(workItemId)).thenReturn(Optional.of(item));
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(auditRepository.findByWorkItemId(workItemId)).thenReturn(Optional.of(audit));
+    ScriptDeadLetterReplayRepository replayRepository =
+        Mockito.mock(ScriptDeadLetterReplayRepository.class);
+    when(replayRepository.insertOrGet(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class)))
+        .thenAnswer(
+            invocation ->
+                new ScriptDeadLetterReplayRepository.ReplayRequest(
+                    1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
+    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    IllegalStateException unavailable = new IllegalStateException("runtime authority unavailable");
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenThrow(unavailable);
+    ScriptWorkItemServiceImpl service =
+        scriptWorkItemService(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            replayPinProjectionService(),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            replayRepository,
+            gameSessionControlPlaneClient,
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class),
+            null);
+
+    assertThatThrownBy(() -> replay(service, workItemId)).isSameAs(unavailable);
+
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(replayRepository)
+        .insertOrGet(
+            Mockito.eq("1"),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    verify(replayRepository, Mockito.never())
+        .saveResult(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    verify(replayRepository, Mockito.never())
+        .complete(
+            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
+    verify(workItemRepository, Mockito.never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
   }
 
   @Test

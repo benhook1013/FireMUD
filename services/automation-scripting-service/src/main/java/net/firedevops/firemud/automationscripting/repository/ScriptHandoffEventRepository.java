@@ -52,7 +52,7 @@ public class ScriptHandoffEventRepository {
     OffsetDateTime current = toOffsetDateTime(now);
     var candidates = SCRIPT_HANDOFF_EVENTS.as("retention_candidates");
     var siblings = SCRIPT_HANDOFF_EVENTS.as("retention_siblings");
-    Condition noIncompleteSibling =
+    Condition noIneligibleSibling =
         notExists(
             org.jooq
                 .impl
@@ -64,7 +64,11 @@ public class ScriptHandoffEventRepository {
                         .TENANT_ID
                         .eq(candidates.TENANT_ID)
                         .and(siblings.WORK_ITEM_ID.eq(candidates.WORK_ITEM_ID))
-                        .and(incompleteHandoffOutcome(siblings.HANDOFF_OUTCOME))));
+                        .and(
+                            incompleteHandoffOutcome(siblings.HANDOFF_OUTCOME)
+                                .or(siblings.OBSERVED_AT.isNull())
+                                .or(siblings.OBSERVED_AT.ge(cutoff))
+                                .or(siblings.RETENTION_HOLD_UNTIL.gt(current)))));
     Condition noIneligibleParent =
         notExists(
             org.jooq
@@ -95,7 +99,7 @@ public class ScriptHandoffEventRepository {
                     .isNull()
                     .or(candidates.RETENTION_HOLD_UNTIL.le(current)))
             .and(nonBlankHandoffOutcome(candidates.HANDOFF_OUTCOME))
-            .and(noIncompleteSibling)
+            .and(noIneligibleSibling)
             .and(noIneligibleParent);
     return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
         .where(

@@ -1101,7 +1101,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("CANCELED");
     assertThat(item.getCancelReason()).isEqualTo(expectedReason);
     assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
-    assertThat(audit.getFinalOutcome()).isEqualTo("stale_execution_fenced");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
     assertThat(audit.getFinalReason()).isEqualTo(expectedReason);
     verify(workItemRepository).save(item);
     verify(auditRepository).save(audit);
@@ -1600,6 +1600,66 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("handoff_accepted");
     assertThat(audit.getFinalReason()).isEqualTo("commands_handed_off");
+  }
+
+  @Test
+  void cancelsWithSpecificReasonWhenExecutionFenceChangesBeforeHandoff() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItem item = workItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    var changedRuntime =
+        runtimeStateResponse().getRuntimeState().toBuilder().setScriptPinEpoch(4L).build();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            runtimeStateResponse(),
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(changedRuntime)
+                .build());
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            null,
+            null,
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class));
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("script_pin_epoch_mismatch");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
+    assertThat(audit.getFinalReason()).isEqualTo("script_pin_epoch_mismatch");
+    Mockito.verifyNoInteractions(handoffService);
   }
 
   @Test

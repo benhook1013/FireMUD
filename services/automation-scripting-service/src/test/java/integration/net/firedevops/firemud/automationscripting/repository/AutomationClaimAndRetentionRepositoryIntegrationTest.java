@@ -1003,6 +1003,43 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void handoffAgeRetentionKeepsOldChildWhileAnySiblingIsTooNewOrHeld() {
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent candidate = retainedHandoff(parent.getId());
+    candidate.setEventId("old-candidate-handoff");
+    candidate = handoffRepository.save(candidate);
+    ScriptHandoffEvent sibling = retainedHandoff(parent.getId());
+    sibling.setEventId("new-sibling-handoff");
+    sibling.setCommandOrdinal(1);
+    sibling.setAutomationDispatchId("dispatch-2");
+    sibling.setObservedAt(Instant.parse("2022-01-01T00:00:00Z"));
+    sibling = handoffRepository.save(sibling);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+
+    dsl.update(SCRIPT_HANDOFF_EVENTS)
+        .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, OLD.atOffset(ZoneOffset.UTC).toLocalDateTime())
+        .where(SCRIPT_HANDOFF_EVENTS.ID.eq(sibling.getId()))
+        .execute();
+    assertThat(handoffRepository.setRetentionHold("tenant-1", sibling.getId(), now.plusSeconds(1)))
+        .isTrue();
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+
+    assertThat(handoffRepository.setRetentionHold("tenant-1", sibling.getId(), null)).isTrue();
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isEqualTo(2L);
+    assertThat(
+            dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(candidate.getId())))
+        .isFalse();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(sibling.getId())))
+        .isFalse();
+  }
+
+  @Test
   void canceledRowCapRetentionLeavesParentWhenChildOutcomeIsWhitespace() {
     ScriptWorkItem parent = retainedWorkItem();
     parent.setScriptEventId("canceled-incomplete-cap");

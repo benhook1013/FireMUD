@@ -652,7 +652,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     String fenceFailure = validateCurrentExecutionFences(workItem);
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
-        cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", fenceFailure, now);
+        cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
       } else {
         requeueAfterAuthorityUnavailable(workItem, fenceFailure, now);
       }
@@ -850,7 +850,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     String handoffFenceFailure = validateCurrentExecutionFences(workItem);
     if (handoffFenceFailure != null) {
       if (isTerminalFenceFailure(handoffFenceFailure)) {
-        cancel(workItem, STAGE_DSL_EVAL, "stale_execution_fenced", handoffFenceFailure, now);
+        cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffFenceFailure, now);
       } else {
         requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, now);
       }

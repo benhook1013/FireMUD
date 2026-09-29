@@ -1308,18 +1308,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     RuntimeScopeKey runtimeScopeKey =
         new RuntimeScopeKey(item.getTenantId(), item.getGameInstanceId(), item.getRegionId());
+    // Transient read failures must escape so this transactional request can be retried by ID;
+    // missing or incoherent authority responses below remain durable fail-closed rejections.
     Optional<GetGameInstanceRuntimeStateResponse> cachedRuntime =
         runtimeStateCache.computeIfAbsent(
             runtimeScopeKey,
-            ignored -> {
-              try {
-                return Optional.ofNullable(
+            ignored ->
+                Optional.ofNullable(
                     gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-                        item.getTenantId(), item.getGameInstanceId(), item.getRegionId()));
-              } catch (RuntimeException ex) {
-                return Optional.empty();
-              }
-            });
+                        item.getTenantId(), item.getGameInstanceId(), item.getRegionId())));
     if (cachedRuntime.isEmpty()) {
       return "script_pin_authority_unavailable";
     }
@@ -1341,14 +1338,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return "plugin_lifecycle_collaborator_unavailable";
     }
     String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(item.getPluginId());
-    Optional<PluginRuntimeStateService.PluginRuntimeStatus> plugin;
-    try {
-      plugin =
-          pluginRuntimeStateService.getStatus(
-              item.getTenantId(), item.getGameInstanceId(), pluginId);
-    } catch (RuntimeException ex) {
-      return "authority_unavailable";
-    }
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> plugin =
+        pluginRuntimeStateService.getStatus(item.getTenantId(), item.getGameInstanceId(), pluginId);
     if (plugin == null || plugin.isEmpty()) {
       return "authority_unavailable";
     }
