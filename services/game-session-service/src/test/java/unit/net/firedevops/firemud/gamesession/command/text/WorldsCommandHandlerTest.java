@@ -525,7 +525,7 @@ class WorldsCommandHandlerTest {
                 .setMembershipVersion(0L)
                 .setMembershipAuthorityGeneration(0L)
                 .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -560,7 +560,7 @@ class WorldsCommandHandlerTest {
                 .setMembershipVersion(0L)
                 .setMembershipAuthorityGeneration(0L)
                 .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -785,6 +785,93 @@ class WorldsCommandHandlerTest {
           .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("ENTITLEMENT_UNAVAILABLE"));
     }
     Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void browseCharactersRejectsInvalidPublicMembershipBeforeReadingRoster() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicProductionProperties(), accountClient);
+
+    for (String evaluatedAt : invalidEvaluationTimes()) {
+      Mockito.when(
+              accountClient.getTenantMembershipForRuntime(
+                  Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+          .thenReturn(activeMembership().toBuilder().setEvaluatedAt(evaluatedAt).build());
+
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("AUTH_UNAVAILABLE"));
+    }
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void browseRealmsAndCharactersRejectInvalidPrivateMembership() {
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
+    properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(false);
+    addPublicProductionAuthority(properties);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    for (String evaluatedAt : invalidEvaluationTimes()) {
+      Mockito.when(
+              accountClient.getTenantMembershipForRuntime(
+                  Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+          .thenReturn(activeMembership().toBuilder().setEvaluatedAt(evaluatedAt).build());
+
+      assertThat(localHandler.browseRealms(authenticatedSession(), "preview"))
+          .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("AUTH_UNAVAILABLE"));
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "preview", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("AUTH_UNAVAILABLE"));
+    }
+    Mockito.verifyNoInteractions(entityManagementClient);
+    Mockito.verify(accountClient, Mockito.never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  @Test
+  void browseRealmsAndCharactersRejectInvalidPrivateGrant() {
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
+    properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(false);
+    addPublicProductionAuthority(properties);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    for (String evaluatedAt : invalidEvaluationTimes()) {
+      Mockito.when(
+              accountClient.getRealmAccessGrantForRuntime(
+                  Mockito.anyString(),
+                  Mockito.anyString(),
+                  Mockito.anyString(),
+                  Mockito.anyString(),
+                  Mockito.anyString()))
+          .thenReturn(grant(true).toBuilder().setEvaluatedAt(evaluatedAt).build());
+
+      assertThat(localHandler.browseRealms(authenticatedSession(), "preview"))
+          .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("AUTH_UNAVAILABLE"));
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "preview", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("AUTH_UNAVAILABLE"));
+    }
+    Mockito.verifyNoInteractions(entityManagementClient);
+    Mockito.verify(accountClient, Mockito.never())
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
   }
 
   @Test
@@ -1510,7 +1597,7 @@ class WorldsCommandHandlerTest {
         .setMembershipVersion(membershipVersion)
         .setMembershipLifecycleState(lifecycleState)
         .setMembershipAuthorityGeneration(membershipAuthorityGeneration)
-        .setEvaluatedAt("2026-03-30T00:00:00Z")
+        .setEvaluatedAt(Instant.now().toString())
         .build();
   }
 
@@ -1537,7 +1624,7 @@ class WorldsCommandHandlerTest {
         .setRealmSlug("production")
         .setGranted(granted)
         .setGrantVersion(granted ? 1L : 0L)
-        .setEvaluatedAt("2026-03-30T00:00:00Z")
+        .setEvaluatedAt(Instant.now().toString())
         .build();
   }
 
@@ -1564,6 +1651,13 @@ class WorldsCommandHandlerTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
+  }
+
+  private List<String> invalidEvaluationTimes() {
+    return List.of(
+        Instant.now().minusSeconds(16).toString(),
+        Instant.now().plusSeconds(30).toString(),
+        "not-an-instant");
   }
 
   private static GameplayCatalogProperties.World world(

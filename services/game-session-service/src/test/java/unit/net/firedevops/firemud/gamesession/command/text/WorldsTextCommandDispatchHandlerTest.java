@@ -96,7 +96,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setMembershipVersion(1L)
                 .setMembershipLifecycleState("ACTIVE")
                 .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -112,7 +112,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setRealmSlug("production")
                 .setGranted(true)
                 .setGrantVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -178,7 +178,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setMembershipVersion(1L)
                 .setMembershipLifecycleState("ACTIVE")
                 .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -258,7 +258,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setMembershipVersion(0L)
                 .setMembershipAuthorityGeneration(0L)
                 .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(

@@ -101,6 +101,33 @@ class DirectTextConnectScopeSessionStoreTest {
   }
 
   @Test
+  void clearingTransportLobbyRemovesScopeAndBoundJoinIdentityBeforeReuse() {
+    SessionContext caller = session(7L, 41L);
+    Instant now = Instant.now();
+    store.replaceWorldScopes(
+        caller,
+        "demo-world",
+        "demo-world",
+        List.of(scopedRealm(caller, "production", "old-scope", now.plusSeconds(600))));
+    String oldRequestId =
+        store.publicProductionScopeForJoin(caller, "demo-world", now).orElseThrow().requestId();
+
+    store.clearSession(caller.sessionId());
+
+    assertThat(store.publicProductionScopeForJoin(caller, "demo-world", now)).isEmpty();
+    assertThat(store.publicProductionScope(caller, "demo-world", now)).isEmpty();
+    store.replaceWorldScopes(
+        caller,
+        "demo-world",
+        "demo-world",
+        List.of(scopedRealm(caller, "production", "new-scope", now.plusSeconds(600))));
+    DirectTextConnectScopeSessionStore.JoinScope newAttempt =
+        store.publicProductionScopeForJoin(caller, "demo-world", now).orElseThrow();
+    assertThat(newAttempt.scope().connectScopeId()).isEqualTo("new-scope");
+    assertThat(newAttempt.requestId()).isNotEqualTo(oldRequestId);
+  }
+
+  @Test
   void storesExactPublicOrdinalSnapshotAndBoundsAccountScopeExpiry() {
     SessionContext caller = session(41L, 7L);
     Instant now = Instant.now();

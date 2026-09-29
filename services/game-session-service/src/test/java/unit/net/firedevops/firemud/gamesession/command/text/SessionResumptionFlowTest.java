@@ -176,7 +176,7 @@ class SessionResumptionFlowTest {
                 .setMembershipVersion(1L)
                 .setMembershipLifecycleState("ACTIVE")
                 .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -483,7 +483,7 @@ class SessionResumptionFlowTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:01:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);

@@ -447,10 +447,10 @@ public class WorldsCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshEntitlementEvaluation(response.getEvaluatedAt());
+        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
   }
 
-  private boolean isFreshEntitlementEvaluation(String evaluatedAt) {
+  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
     if (!StringUtils.hasText(evaluatedAt)) {
       return false;
     }
@@ -483,7 +483,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        && isInstant(response.getEvaluatedAt());
+        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
   }
 
   private boolean isValidGrant(
@@ -499,7 +499,7 @@ public class WorldsCommandHandler {
             realm.tenantId())
         && world.slug().equals(response.getWorldSlug())
         && realm.slug().equals(response.getRealmSlug())
-        && isInstant(response.getEvaluatedAt());
+        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
   }
 
   private boolean hasMatchingAuthorityIdentity(
@@ -508,18 +508,6 @@ public class WorldsCommandHandler {
       return Long.parseLong(accountId) == expectedAccountId
           && Long.parseLong(tenantId) == expectedTenantId;
     } catch (NumberFormatException ex) {
-      return false;
-    }
-  }
-
-  private boolean isInstant(String value) {
-    if (!StringUtils.hasText(value)) {
-      return false;
-    }
-    try {
-      Instant.parse(value);
-      return true;
-    } catch (DateTimeParseException ex) {
       return false;
     }
   }
@@ -892,7 +880,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        || !isInstant(response.getEvaluatedAt())) {
+        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
       return false;
     }
     if (!response.getMembershipExists()) {
