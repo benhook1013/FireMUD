@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -8,6 +9,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -22,6 +27,7 @@ import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleRespon
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class GameSessionRuntimeControlPlaneReadServiceTest {
   @Test
@@ -58,6 +64,54 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
 
     assertEquals("patch-1", state.getPinnedScriptPatchVersion());
     assertEquals(9L, state.getScriptPinEpoch());
+  }
+
+  @Test
+  void runtimeReadOmitsPublicationForUnpinnedInstanceWithoutCallingGameDesign() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", null, null, null, gameDesign);
+
+    var state = service.getGameInstanceRuntimeState(1L, runtimeRequest());
+
+    assertFalse(state.hasPublication());
+    Mockito.verifyNoInteractions(gameDesign);
+  }
+
+  @Test
+  void runtimeReadPublishesStoredPinBaseRatherThanCurrentRuntimeVersion() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-1", 91L))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPatchVersion("patch-1")
+                        .setVersionId(201L)
+                        .setBaseVersionId(91L)
+                        .setPublicationState(
+                            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .build())
+                .build());
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", "patch-1", 9L, 91L, gameDesign);
+
+    var state = service.getGameInstanceRuntimeState(1L, runtimeRequest());
+
+    assertEquals(91L, state.getPinnedScriptPatchBaseVersionId());
+    assertEquals(91L, state.getPublication().getBaseVersionId());
+    Mockito.verify(gameDesign).getPublishedScriptPatchVersion(1L, "patch-1", 91L);
   }
 
   @Test
@@ -398,11 +452,22 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
 
   private GameSessionRuntimeControlPlaneReadService service(
       WorldManagementClient world, String status, String scriptPatchVersion, Long scriptPinEpoch) {
+    return service(world, status, scriptPatchVersion, scriptPinEpoch, null, null);
+  }
+
+  private GameSessionRuntimeControlPlaneReadService service(
+      WorldManagementClient world,
+      String status,
+      String scriptPatchVersion,
+      Long scriptPinEpoch,
+      Long scriptPatchBaseVersionId,
+      GameDesignClient gameDesignClient) {
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
     instance.setScriptPatchVersion(scriptPatchVersion);
+    instance.setScriptPatchBaseVersionId(scriptPatchBaseVersionId);
     instance.setScriptPinEpoch(scriptPinEpoch);
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
@@ -424,7 +489,7 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
         mock(RemoteFollowupRepository.class),
         runtime,
         mock(GameplayAdmissionPointerAuthorityService.class),
-        null,
+        gameDesignClient,
         world);
   }
 

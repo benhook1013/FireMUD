@@ -28,6 +28,7 @@ class TriggerScriptEventRequestFactoryTest {
             "onCommand",
             "v1",
             "patch-7",
+            107L,
             9L,
             "pin-request-9",
             "event-9",
@@ -43,6 +44,7 @@ class TriggerScriptEventRequestFactoryTest {
             .build();
 
     assertEquals("patch-7", request.getScriptPatchVersion());
+    assertEquals(107L, request.getScriptPatchBaseVersionId());
     assertEquals(9L, request.getScriptPinEpoch());
     assertEquals("pin-request-9", request.getScriptPinControlPlaneRequestId());
     assertEquals("world", request.getWorldSlug());
@@ -124,6 +126,7 @@ class TriggerScriptEventRequestFactoryTest {
         "onCommand",
         "v1",
         patchVersion,
+        patchVersion == null || patchVersion.isBlank() ? 0L : 107L,
         epoch,
         ownerRequestId,
         "event-1",

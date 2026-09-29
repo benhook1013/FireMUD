@@ -124,6 +124,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                           "onCommand",
                           "v1",
                           scope.scriptPatchVersion(),
+                          scope.scriptPatchBaseVersionId(),
                           scope.scriptPinEpoch(),
                           scope.scriptPinControlPlaneRequestId(),
                           command.getCommandId(),
@@ -343,6 +344,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                     eventType,
                     "v1",
                     scope.scriptPatchVersion(),
+                    scope.scriptPatchBaseVersionId(),
                     scope.scriptPinEpoch(),
                     scope.scriptPinControlPlaneRequestId(),
                     scriptEventId,
@@ -419,6 +421,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     }
     GameInstance instance = gameInstanceRepository.findById(gameInstanceId).orElse(null);
     String scriptPatchVersion = instance == null ? "" : instance.getScriptPatchVersion();
+    Long scriptPatchBaseVersionId =
+        instance == null ? null : instance.getScriptPatchBaseVersionId();
     long scriptPinEpoch =
         instance == null || instance.getScriptPinEpoch() == null
             ? 0L
@@ -426,10 +430,20 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     String scriptPinControlPlaneRequestId =
         instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
     boolean hasPatch = StringUtils.hasText(scriptPatchVersion);
+    boolean hasBase = scriptPatchBaseVersionId != null && scriptPatchBaseVersionId > 0L;
     boolean hasEpoch = scriptPinEpoch > 0L;
     boolean hasOwnerRequest = StringUtils.hasText(scriptPinControlPlaneRequestId);
-    if (!(hasPatch && hasEpoch && hasOwnerRequest)) {
-      if (hasPatch || hasEpoch || hasOwnerRequest) {
+    if (!(hasPatch && hasBase && hasEpoch && hasOwnerRequest)) {
+      if (hasPatch && !hasBase && hasEpoch && hasOwnerRequest) {
+        meterRegistry
+            .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "missing_base")
+            .increment();
+        LOG.debug(
+            "Skipping script event publish because legacy pin provenance has no positive base version tenantId={} gameInstanceId={} characterId={}",
+            tenantId,
+            gameInstanceId,
+            entityId);
+      } else if (hasPatch || hasBase || hasEpoch || hasOwnerRequest) {
         meterRegistry
             .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "partial_tuple")
             .increment();
@@ -476,6 +490,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         entityId,
         playableStateScope,
         scriptPatchVersion,
+        scriptPatchBaseVersionId,
         scriptPinEpoch,
         scriptPinControlPlaneRequestId,
         resolveRoutingBundle(context, command));
@@ -621,6 +636,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
+      long scriptPatchBaseVersionId,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
