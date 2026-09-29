@@ -57,6 +57,20 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void visibleWorldsSuppressesCaseInsensitiveWorldSlugCollisionsWithinTenant() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L),
+                pointer("DEMO", "Other Demo World", "event", "Event Realm", 7L, 12L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
   void publicBrowseDropsCaseInsensitiveRealmSlugCollisions() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
@@ -164,6 +178,59 @@ class GameplayWorldCatalogTest {
         .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
         .containsExactly("production");
     assertThat(catalog.browseRealms("private-world")).isEmpty();
+  }
+
+  @Test
+  void realmSelectionUsesPublicDefaultWhenVisiblePrivateRealmIsAlsoPresent() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "mixed-world",
+                    "Mixed World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            7L,
+                            11L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW"),
+                        new GameplayWorldCatalog.RealmView(
+                            "private",
+                            "Private Realm",
+                            7L,
+                            17L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("mixed-world").orElseThrow();
+
+    assertThat(catalog.requiresExplicitRealmSelection(world)).isFalse();
+    assertThat(catalog.resolveDefaultRealm(world))
+        .map(GameplayWorldCatalog.RealmView::slug)
+        .contains("production");
+  }
+
+  @Test
+  void realmSelectionRequiresExplicitSelectionForMultiplePrivateRealmsWithoutPublicDefault() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-only",
+                    "Private Only",
+                    List.of(realm("private-a", false), realm("private-b", false)))));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("private-only").orElseThrow();
+
+    assertThat(catalog.requiresExplicitRealmSelection(world)).isTrue();
   }
 
   @Test

@@ -865,12 +865,60 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo(
-            "Selection required. Use PLAY sandbox <realm> [character] or browse REALMS first.");
+            "Selection required. Use PLAY sandbox <character> or browse CHARS sandbox first.");
     assertThat(
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.outputs().get(0), "fr"))
         .isEqualTo(
-            "ERROR PLAY_SELECTION_REQUIRED Sélection requise. Utilisez PLAY sandbox <realm> [character] ou consultez REALMS d’abord.");
+            "ERROR PLAY_SELECTION_REQUIRED Selection requise. Utilisez PLAY sandbox <character> ou consultez CHARS sandbox dabord.");
+  }
+
+  @Test
+  void deniedSameSlugSelectionInAnotherTenantPreservesExistingBinding() {
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0).setTenantId(23L);
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            2L,
+            "R-1",
+            "jwt-token",
+            null,
+            2L,
+            "sandbox",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.eq("23"), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("23")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipVersion(2L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "production", "Emberline"),
+                "PLAY sandbox production Emberline"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
   }
 
   @Test

@@ -143,7 +143,8 @@ public final class GameplayWorldCatalog {
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
-    return visibleRealms(world).size() > 1;
+    List<RealmView> publicRealms = publicVisibleRealms(world);
+    return publicRealms.size() > 1 || (publicRealms.isEmpty() && visibleRealms(world).size() > 1);
   }
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
@@ -294,10 +295,17 @@ public final class GameplayWorldCatalog {
     List<GameplayAdmissionPointerSnapshot> completePointers =
         pointers.stream().filter(GameplayWorldCatalog::hasCompleteAuthorityPointer).toList();
     Map<String, Set<Long>> tenantsByWorldSlug = new LinkedHashMap<>();
+    Map<TenantWorldKey, Set<String>> rawWorldSlugsByTenant = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+      String normalizedWorldSlug = normalizeSlug(pointer.worldSlug());
       tenantsByWorldSlug
-          .computeIfAbsent(normalizeSlug(pointer.worldSlug()), ignored -> new HashSet<>())
+          .computeIfAbsent(normalizedWorldSlug, ignored -> new HashSet<>())
           .add(pointer.tenantId());
+      rawWorldSlugsByTenant
+          .computeIfAbsent(
+              new TenantWorldKey(pointer.tenantId(), normalizedWorldSlug),
+              ignored -> new HashSet<>())
+          .add(pointer.worldSlug());
     }
 
     Map<TenantWorldKey, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
@@ -307,6 +315,9 @@ public final class GameplayWorldCatalog {
         continue;
       }
       TenantWorldKey key = new TenantWorldKey(pointer.tenantId(), normalizedWorldSlug);
+      if (rawWorldSlugsByTenant.get(key).size() > 1) {
+        continue;
+      }
       MutableWorldAccumulator world =
           worlds.computeIfAbsent(
               key,

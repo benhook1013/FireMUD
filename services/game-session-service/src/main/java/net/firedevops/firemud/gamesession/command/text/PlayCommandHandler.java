@@ -716,6 +716,7 @@ public class PlayCommandHandler {
       if (isPublicProductionRealm(selectedRealm)) {
         recordResumeDeniedIfApplicable(
             context,
+            selectedRealm.tenantId(),
             selectedWorld.slug(),
             selectedRealm.slug(),
             selectedRealm.pointerVersion(),
@@ -770,6 +771,7 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     recordResumeDeniedIfApplicable(
         context,
+        selectedRealm.tenantId(),
         selectedWorld.slug(),
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
@@ -827,6 +829,7 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     recordResumeDeniedIfApplicable(
         context,
+        selectedRealm.tenantId(),
         selectedWorld.slug(),
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
@@ -1048,6 +1051,7 @@ public class PlayCommandHandler {
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
+      long requestedTenantId,
       String requestedWorldSlug,
       String requestedRealmSlug,
       long requestedPointerVersion,
@@ -1058,10 +1062,13 @@ public class PlayCommandHandler {
     boolean sameGameplayIdentity =
         context.characterId() > 0
             && requestedCharacterId > 0
+            && context.tenantId() == requestedTenantId
             && context.gameInstanceId() == requestedGameInstanceId
             && context.characterId() == requestedCharacterId;
     boolean sameVisibleRealm =
-        sameSlug(context.worldSlug(), requestedWorldSlug)
+        context.tenantId() == requestedTenantId
+            && context.gameInstanceId() == requestedGameInstanceId
+            && sameSlug(context.worldSlug(), requestedWorldSlug)
             && sameSlug(context.realmSlug(), requestedRealmSlug);
     if (!sameGameplayIdentity && !sameVisibleRealm) {
       return;
