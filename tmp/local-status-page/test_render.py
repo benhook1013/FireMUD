@@ -105,7 +105,9 @@ class StatusPageTest(unittest.TestCase):
         self.assertNotIn("Queue position does not establish review eligibility or merge readiness.", result)
         self.assertIn('<section id="train"><div class="section-head"><h2>Configured review queue</h2>', result)
         self.assertIn('<div class="queue-guide-reading"><h3>Reading reviews</h3><p>Recent reviews are ordered oldest to newest. '
-                      'Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div>', result)
+                      'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>', result)
+        self.assertIn('Merged PRs stay here for two days, with at least the latest two shown. '
+                      '<a href="/queue-history.html">Queue history</a> has the rest.</p>', result)
         self.assertNotIn('Request states are not merge readiness.', result)
         self.assertNotIn('Result pills show raw/useful counts and age', result)
         self.assertIn('<dt>Ready</dt><dd>selected channel may request</dd>', result)

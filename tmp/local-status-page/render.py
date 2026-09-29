@@ -1806,10 +1806,16 @@ def render(data: dict, review: dict, now: datetime, github: dict | None = None, 
         'Within each PR, recent reviews are ordered oldest to newest.'
         if history_only else 'Recent reviews are ordered oldest to newest.'
     )
+    merged_guide = (
+        '' if history_only else
+        '<p>Merged PRs stay here for two days, with at least the latest two shown. '
+        '<a href="/queue-history.html">Queue history</a> has the rest.</p>'
+    )
     queue_guide = (
         f'<div class="queue-guide">{request_guide}'
         f'<div class="{guide_class}"><h3>Reading reviews</h3><p>{review_order_guide} '
-        'Three-number pills mean found (raw) / accepted here (useful) / routed.</p></div></div>'
+        f'Three-number pills mean found (raw) / accepted here (useful) / routed.</p>{merged_guide}'
+        '</div></div>'
     )
     footer_text = (
         "Merged PRs remain in the configured controller queue; this page shows their review history."
