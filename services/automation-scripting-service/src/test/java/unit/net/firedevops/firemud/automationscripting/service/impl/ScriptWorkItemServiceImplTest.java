@@ -360,7 +360,11 @@ class ScriptWorkItemServiceImplTest {
 
     AtomicBoolean durableCompletionCommitted = new AtomicBoolean();
     when(replayRepository.complete(
-            Mockito.eq(42L), Mockito.eq(1L), Mockito.eq(0L), Mockito.any(Instant.class)))
+            Mockito.eq("1"),
+            Mockito.eq(42L),
+            Mockito.eq(1L),
+            Mockito.eq(0L),
+            Mockito.any(Instant.class)))
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
@@ -843,7 +847,11 @@ class ScriptWorkItemServiceImplTest {
                     7L, invocation.getArgument(2), "RUNNING", 0L, 0L));
     when(replayRepository.findResults("1", 7L)).thenReturn(List.of());
     when(replayRepository.complete(
-            Mockito.eq(7L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
+            Mockito.eq("1"),
+            Mockito.eq(7L),
+            Mockito.eq(0L),
+            Mockito.eq(1L),
+            Mockito.any(Instant.class)))
         .thenReturn(true);
     java.util.concurrent.atomic.AtomicReference<String> originalStage =
         new java.util.concurrent.atomic.AtomicReference<>();
@@ -977,7 +985,11 @@ class ScriptWorkItemServiceImplTest {
                     8L, invocation.getArgument(2), "RUNNING", 0L, 0L));
     when(replayRepository.findResults("1", 8L)).thenReturn(List.of());
     when(replayRepository.complete(
-            Mockito.eq(8L), Mockito.eq(0L), Mockito.eq(2L), Mockito.any(Instant.class)))
+            Mockito.eq("1"),
+            Mockito.eq(8L),
+            Mockito.eq(0L),
+            Mockito.eq(2L),
+            Mockito.any(Instant.class)))
         .thenReturn(true);
 
     ScriptPatchPinProjectionService pinProjectionService =
@@ -1113,7 +1125,11 @@ class ScriptWorkItemServiceImplTest {
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
     when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     when(replayRepository.complete(
-            Mockito.eq(1L), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class)))
+            Mockito.eq("1"),
+            Mockito.eq(1L),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class)))
         .thenReturn(true);
     ScriptWorkItemService service =
         scriptWorkItemService(
@@ -3829,7 +3845,11 @@ class ScriptWorkItemServiceImplTest {
             Mockito.any(Instant.class));
     verify(fixture.replayRepository(), Mockito.never())
         .complete(
-            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
     verify(fixture.workItemRepository(), Mockito.never())
         .claimDeadLetterForReplay(
             Mockito.anyLong(),
@@ -3924,7 +3944,11 @@ class ScriptWorkItemServiceImplTest {
             Mockito.any(Instant.class));
     verify(replayRepository, Mockito.never())
         .complete(
-            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
     verify(workItemRepository, Mockito.never())
         .claimDeadLetterForReplay(
             Mockito.anyLong(),
@@ -4002,7 +4026,11 @@ class ScriptWorkItemServiceImplTest {
             Mockito.any(Instant.class));
     verify(fixture.replayRepository(), Mockito.never())
         .complete(
-            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
     verify(fixture.replayRepository(), times(2)).findResults("1", 1L);
   }
 
@@ -5058,7 +5086,11 @@ class ScriptWorkItemServiceImplTest {
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
     when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     when(replayRepository.complete(
-            Mockito.eq(1L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
+            Mockito.eq("1"),
+            Mockito.eq(1L),
+            Mockito.eq(0L),
+            Mockito.eq(1L),
+            Mockito.any(Instant.class)))
         .thenReturn(true);
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);

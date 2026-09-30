@@ -1082,23 +1082,37 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     DSLContext parentCleanupDsl = newDsl("automation-retention-parent-cleanup-race-");
     DSLContext handoffCleanupDsl = newDsl("automation-retention-handoff-cleanup-race-");
-    Future<Long> parentCleanup =
-        executor.submit(
-            () ->
-                parentCleanupDsl.transactionResult(
-                    configuration ->
-                        new ScriptWorkItemRepository(configuration.dsl())
-                            .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now)));
-    Future<Long> handoffCleanup =
-        executor.submit(
-            () ->
-                handoffCleanupDsl.transactionResult(
-                    configuration ->
-                        new ScriptHandoffEventRepository(configuration.dsl())
-                            .deleteExpiredRetentionEvidence(cutoff, now)));
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try {
+      Future<Long> parentCleanup =
+          executor.submit(
+              () ->
+                  parentCleanupDsl.transactionResult(
+                      configuration -> {
+                        ready.countDown();
+                        await(start);
+                        return new ScriptWorkItemRepository(configuration.dsl())
+                            .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now);
+                      }));
+      Future<Long> handoffCleanup =
+          executor.submit(
+              () ->
+                  handoffCleanupDsl.transactionResult(
+                      configuration -> {
+                        ready.countDown();
+                        await(start);
+                        return new ScriptHandoffEventRepository(configuration.dsl())
+                            .deleteExpiredRetentionEvidence(cutoff, now);
+                      }));
 
-    assertThat(get(parentCleanup)).isBetween(0L, 1L);
-    assertThat(get(handoffCleanup)).isBetween(0L, 1L);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(get(parentCleanup)).isBetween(0L, 1L);
+      assertThat(get(handoffCleanup)).isBetween(0L, 1L);
+    } finally {
+      start.countDown();
+    }
     assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isZero();
     assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isZero();
   }

@@ -186,7 +186,8 @@ public class ScriptDeadLetterReplayRepository {
         .fetch(this::toItem);
   }
 
-  public boolean complete(long requestId, long replayedCount, long rejectedCount, Instant now) {
+  public boolean complete(
+      String tenantId, long requestId, long replayedCount, long rejectedCount, Instant now) {
     return dsl.update(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS)
             .set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.STATUS, "COMPLETED")
             .set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.REPLAYED_COUNT, replayedCount)
@@ -200,6 +201,7 @@ public class ScriptDeadLetterReplayRepository {
                 SCRIPT_DEAD_LETTER_REPLAY_REQUESTS
                     .ID
                     .eq(requestId)
+                    .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID.eq(tenantId))
                     .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.STATUS.eq("RUNNING")))
             .execute()
         == 1;

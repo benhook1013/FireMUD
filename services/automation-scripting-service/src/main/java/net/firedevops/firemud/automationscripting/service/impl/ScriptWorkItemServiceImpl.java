@@ -943,7 +943,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     ReplayCounts counts = replayCounts(results);
     if (durableRequest != null) {
       boolean completionWon =
-          replayRepository.complete(durableRequest.id(), counts.replayed(), counts.rejected(), now);
+          replayRepository.complete(
+              normalizedTenantId, durableRequest.id(), counts.replayed(), counts.rejected(), now);
       if (!completionWon) {
         Optional<ScriptDeadLetterReplayRepository.ReplayRequest> completedRequest =
             replayRepository.findRequest(
