@@ -5,6 +5,7 @@ import io.micrometer.core.annotation.Timed;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -93,6 +94,14 @@ public class ScriptPatchVersionCommandService {
       throw new IllegalArgumentException("script_patch_base_version_mismatch");
     }
     defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();
+    Optional<Long> retainedBaseVersionId =
+        repository.findScriptPatchBaseVersionId(tenantId, scriptPatchVersion);
+    if (retainedBaseVersionId.isEmpty()) {
+      throw new IllegalArgumentException("script_patch_base_version_unavailable");
+    }
+    if (retainedBaseVersionId.get() != baseVersionId) {
+      throw new IllegalArgumentException("script_patch_base_version_mismatch");
+    }
     readinessProjectionService.beginPatchReadiness(
         tenantId, baseVersionId, scriptPatchVersion, canonicalScriptNames);
     List<ScriptDefinition> canonicalDefinitions = defs;

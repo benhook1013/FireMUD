@@ -122,6 +122,19 @@ public class DeploymentRolloutService {
           .put(
               HostedIdentityContract.GRPC_REVISION_ANNOTATION,
               combinedGrpcWorkloadRevision(grpcRevision, gameSessionRevision, "game-session-leaf"));
+      String socialGroupsRevision =
+          grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+      if (socialGroupsRevision == null) {
+        throw new IllegalArgumentException(
+            "Social Groups gRPC workload identity revision is required");
+      }
+      revisionsByDeployment
+          .computeIfAbsent(
+              HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD, ignored -> new LinkedHashMap<>())
+          .put(
+              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+              combinedGrpcWorkloadRevision(
+                  grpcRevision, socialGroupsRevision, "social-groups-leaf"));
     }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
     for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
@@ -140,6 +153,7 @@ public class DeploymentRolloutService {
       requiredGrpcConsumers.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
       requiredGrpcConsumers.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
       requiredGrpcConsumers.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
+      requiredGrpcConsumers.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     }
     boolean grpcReady =
         requiredGrpcConsumers.stream()

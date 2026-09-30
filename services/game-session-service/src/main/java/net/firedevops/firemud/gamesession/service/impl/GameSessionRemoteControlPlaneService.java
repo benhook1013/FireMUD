@@ -111,7 +111,6 @@ final class GameSessionRemoteControlPlaneService {
                 followup,
                 latestRemoteResult(coordinator),
                 linkedTargetCommand(tenantId, followup),
-                new HashMap<>(),
                 new HashMap<>()))
         .build();
   }
@@ -130,11 +129,7 @@ final class GameSessionRemoteControlPlaneService {
     return GetRemoteFollowupResponse.newBuilder()
         .setFollowup(
             toRemoteFollowupEntry(
-                followup,
-                linkedTargetCommand(tenantId, followup),
-                coordinator,
-                new HashMap<>(),
-                new HashMap<>()))
+                followup, linkedTargetCommand(tenantId, followup), coordinator, new HashMap<>()))
         .build();
   }
 
@@ -165,7 +160,6 @@ final class GameSessionRemoteControlPlaneService {
                 coordinator,
                 followup,
                 linkedTargetCommand(tenantId, followup),
-                new HashMap<>(),
                 new HashMap<>()))
         .build();
   }
@@ -245,7 +239,6 @@ final class GameSessionRemoteControlPlaneService {
         targetCommandMap(tenantId, followupsById);
     Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache =
         new HashMap<>();
-    Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache = new HashMap<>();
     ListRemoteCommandCoordinatorsResponse.Builder response =
         ListRemoteCommandCoordinatorsResponse.newBuilder();
     coordinators.forEach(
@@ -256,8 +249,7 @@ final class GameSessionRemoteControlPlaneService {
                     followupsById.get(coordinator.getFollowupId()),
                     latestResultsByCoordinatorId.get(coordinator.getCoordinatorId()),
                     targetCommandsByFollowupId.get(coordinator.getFollowupId()),
-                    runtimeBoundaryCache,
-                    gameInstanceCache)));
+                    runtimeBoundaryCache)));
     return response.build();
   }
 
@@ -412,7 +404,6 @@ final class GameSessionRemoteControlPlaneService {
         coordinatorByFollowupMap(tenantId, followups);
     Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache =
         new HashMap<>();
-    Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache = new HashMap<>();
     ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
     followups.forEach(
         followup ->
@@ -421,8 +412,7 @@ final class GameSessionRemoteControlPlaneService {
                     followup,
                     targetCommandsByFollowupId.get(followup.getFollowupId()),
                     coordinatorsByFollowupId.get(followup.getFollowupId()),
-                    runtimeBoundaryCache,
-                    gameInstanceCache)));
+                    runtimeBoundaryCache)));
     return response.build();
   }
 
@@ -499,7 +489,6 @@ final class GameSessionRemoteControlPlaneService {
         targetCommandMap(tenantId, followupsById);
     Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache =
         new HashMap<>();
-    Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache = new HashMap<>();
     ListRemoteFollowupResultsResponse.Builder response =
         ListRemoteFollowupResultsResponse.newBuilder();
     results.forEach(
@@ -516,12 +505,7 @@ final class GameSessionRemoteControlPlaneService {
               followup == null ? null : targetCommandsByFollowupId.get(followup.getFollowupId());
           response.addResults(
               toRemoteFollowupResultEntry(
-                  result,
-                  coordinator,
-                  followup,
-                  targetCommand,
-                  runtimeBoundaryCache,
-                  gameInstanceCache));
+                  result, coordinator, followup, targetCommand, runtimeBoundaryCache));
         });
     return response.build();
   }
@@ -566,8 +550,7 @@ final class GameSessionRemoteControlPlaneService {
       RemoteFollowup followup,
       RemoteFollowupResult latestResult,
       GameplayCommand targetCommand,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -682,19 +665,16 @@ final class GameSessionRemoteControlPlaneService {
         coordinator.getTenantId(),
         coordinator.getOriginGameInstanceId(),
         true,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     applyCurrentRuntimeScope(
         builder,
         coordinator.getTenantId(),
         coordinator.getTargetGameInstanceId(),
         false,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     builder.setIsOriginRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             coordinator.getTenantId(),
             coordinator.getOriginGameInstanceId(),
             coordinator.getPlayableStateScope(),
@@ -704,7 +684,6 @@ final class GameSessionRemoteControlPlaneService {
     builder.setIsTargetRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             coordinator.getTenantId(),
             coordinator.getTargetGameInstanceId(),
             coordinator.getPlayableStateScope(),
@@ -718,8 +697,7 @@ final class GameSessionRemoteControlPlaneService {
       RemoteFollowup followup,
       GameplayCommand targetCommand,
       RemoteCommandCoordinator coordinator,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -808,19 +786,16 @@ final class GameSessionRemoteControlPlaneService {
         followup.getTenantId(),
         followup.getOriginGameInstanceId(),
         true,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     applyCurrentRuntimeScope(
         builder,
         followup.getTenantId(),
         followup.getTargetGameInstanceId(),
         false,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     builder.setIsOriginRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             followup.getTenantId(),
             followup.getOriginGameInstanceId(),
             followup.getPlayableStateScope(),
@@ -830,7 +805,6 @@ final class GameSessionRemoteControlPlaneService {
     builder.setIsTargetRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             followup.getTenantId(),
             followup.getTargetGameInstanceId(),
             followup.getPlayableStateScope(),
@@ -845,8 +819,7 @@ final class GameSessionRemoteControlPlaneService {
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
       GameplayCommand targetCommand,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -934,19 +907,16 @@ final class GameSessionRemoteControlPlaneService {
         result.getTenantId(),
         result.getOriginGameInstanceId(),
         true,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     applyCurrentRuntimeScope(
         builder,
         result.getTenantId(),
         result.getTargetGameInstanceId(),
         false,
-        runtimeBoundaryCache,
-        gameInstanceCache);
+        runtimeBoundaryCache);
     builder.setIsOriginRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             result.getTenantId(),
             result.getOriginGameInstanceId(),
             result.getPlayableStateScope(),
@@ -956,7 +926,6 @@ final class GameSessionRemoteControlPlaneService {
     builder.setIsTargetRoutingBundleStale(
         isCurrentRoutingBundleStale(
             runtimeBoundaryCache,
-            gameInstanceCache,
             result.getTenantId(),
             result.getTargetGameInstanceId(),
             result.getPlayableStateScope(),
@@ -971,9 +940,8 @@ final class GameSessionRemoteControlPlaneService {
       long tenantId,
       long gameInstanceId,
       boolean originScope,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
-    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, gameInstanceCache, tenantId, gameInstanceId)
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
+    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
               CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
@@ -994,9 +962,8 @@ final class GameSessionRemoteControlPlaneService {
       long tenantId,
       long gameInstanceId,
       boolean originScope,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
-    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, gameInstanceCache, tenantId, gameInstanceId)
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
+    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
               CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
@@ -1017,9 +984,8 @@ final class GameSessionRemoteControlPlaneService {
       long tenantId,
       long gameInstanceId,
       boolean originScope,
-      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
-    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, gameInstanceCache, tenantId, gameInstanceId)
+      Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache) {
+    cachedCurrentRuntimeBoundary(runtimeBoundaryCache, tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
               CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
@@ -1036,15 +1002,14 @@ final class GameSessionRemoteControlPlaneService {
   }
 
   private Optional<CurrentRuntimeBoundary> currentRuntimeBoundary(
-      long tenantId,
-      long gameInstanceId,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache) {
+      long tenantId, long gameInstanceId) {
     return currentRuntimeOwnership(tenantId, gameInstanceId)
         .map(
             ownership -> {
-              GameInstance instance =
-                  cachedGameInstance(gameInstanceCache, tenantId, ownership.getGameInstanceId())
-                      .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
+              GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
+              if (!Objects.equals(instance.getTenantId(), tenantId)) {
+                throw new IllegalArgumentException("Game instance not found");
+              }
               CurrentRoutingAuthority authority = resolveCurrentRoutingAuthority(instance);
               GameplayRoutingBundle routingBundle = authority.routingBundle();
               RoutingBundle normalizedRoutingBundle =
@@ -1070,15 +1035,13 @@ final class GameSessionRemoteControlPlaneService {
 
   private boolean isCurrentRoutingBundleStale(
       Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache,
       long tenantId,
       long gameInstanceId,
       String persistedPlayableStateScope,
       String persistedWorldSlug,
       String persistedRealmSlug,
       Long persistedPointerVersion) {
-    return cachedCurrentRuntimeBoundary(
-            runtimeBoundaryCache, gameInstanceCache, tenantId, gameInstanceId)
+    return cachedCurrentRuntimeBoundary(runtimeBoundaryCache, tenantId, gameInstanceId)
         .map(
             currentBoundary -> {
               if (!currentBoundary.singularRoutingAuthority()) {
@@ -1106,26 +1069,11 @@ final class GameSessionRemoteControlPlaneService {
 
   private Optional<CurrentRuntimeBoundary> cachedCurrentRuntimeBoundary(
       Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache,
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache,
       long tenantId,
       long gameInstanceId) {
     return runtimeBoundaryCache.computeIfAbsent(
         new RuntimeBoundaryKey(tenantId, gameInstanceId),
-        key -> currentRuntimeBoundary(key.tenantId(), key.gameInstanceId(), gameInstanceCache));
-  }
-
-  private Optional<GameInstance> cachedGameInstance(
-      Map<RuntimeBoundaryKey, Optional<GameInstance>> gameInstanceCache,
-      long tenantId,
-      long gameInstanceId) {
-    return gameInstanceCache.computeIfAbsent(
-        new RuntimeBoundaryKey(tenantId, gameInstanceId),
-        key ->
-            gameInstanceRepository == null
-                ? Optional.empty()
-                : gameInstanceRepository
-                    .findById(key.gameInstanceId())
-                    .filter(instance -> Objects.equals(instance.getTenantId(), key.tenantId())));
+        key -> currentRuntimeBoundary(key.tenantId(), key.gameInstanceId()));
   }
 
   private static boolean hasPersistedRoutingBundleClaim(
@@ -1835,6 +1783,12 @@ final class GameSessionRemoteControlPlaneService {
     } catch (IOException ignored) {
       return new ResultSummary(null, null, null);
     }
+  }
+
+  private GameInstance getInstanceOrThrow(long gameInstanceId) {
+    return gameInstanceRepository
+        .findById(gameInstanceId)
+        .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
   private CurrentRoutingAuthority resolveCurrentRoutingAuthority(GameInstance instance) {

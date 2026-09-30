@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
@@ -84,6 +85,7 @@ class ScriptPatchVersionCommandServiceTest {
     when(repository.findByTenantIdAndScriptVersionAndNameIn(
             1L, "v1-script.1", List.of("npc-barkeep", "npc-guard")))
         .thenReturn(List.of(guard, barkeep));
+    stubPatchBaseBinding();
 
     assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-guard", "npc-barkeep")))
         .isTrue();
@@ -164,6 +166,38 @@ class ScriptPatchVersionCommandServiceTest {
     assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly one definition per unique requested name");
+
+    verifyNoInteractions(
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateRejectsMissingPatchBaseBindingBeforeReadinessAdmission() {
+    stubDefinitions(definition("npc-barkeep"));
+    when(repository.findScriptPatchBaseVersionId("1", "v1-script.1")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_unavailable");
+
+    verifyNoInteractions(
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateRejectsMismatchedPatchBaseBindingBeforeReadinessAdmission() {
+    stubDefinitions(definition("npc-barkeep"));
+    when(repository.findScriptPatchBaseVersionId("1", "v1-script.1")).thenReturn(Optional.of(2L));
+
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_mismatch");
 
     verifyNoInteractions(
         scheduleDefinitionService,
@@ -273,6 +307,11 @@ class ScriptPatchVersionCommandServiceTest {
     when(repository.findByTenantIdAndScriptVersionAndNameIn(
             1L, "v1-script.1", List.of(definition.getName())))
         .thenReturn(List.of(definition));
+    stubPatchBaseBinding();
+  }
+
+  private void stubPatchBaseBinding() {
+    when(repository.findScriptPatchBaseVersionId("1", "v1-script.1")).thenReturn(Optional.of(1L));
   }
 
   private static ScriptDefinition definition(String name) {

@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -49,7 +50,14 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
   @Override
   @Timed(value = "loggingadmin.admissionPointer.list")
   public List<AdmissionPointerDto> listPointers() {
-    ListAdmissionPointersResponse response = gameSessionControlPlaneClient.listAdmissionPointers();
+    boolean globalRead = SessionContext.hasGlobalPrivilegedRole();
+    List<Long> tenantIds = globalRead ? List.of() : accessibleTenantIds();
+    if (!globalRead && tenantIds.isEmpty()) {
+      return List.of();
+    }
+
+    ListAdmissionPointersResponse response =
+        gameSessionControlPlaneClient.listAdmissionPointers(tenantIds);
     requireNoError(response.getError());
     return response.getPointersList().stream()
         .filter(this::hasTenantAccess)
@@ -240,6 +248,25 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
 
   private boolean hasTenantAccess(AdmissionPointerControlPlaneEntry entry) {
     return SessionContext.hasTenantAccess(parseLong(entry.getTenantId(), "tenant_id"));
+  }
+
+  private List<Long> accessibleTenantIds() {
+    return SessionContext.getScopedRolesMap().keySet().stream()
+        .map(this::parsePositiveCanonicalTenantId)
+        .filter(Objects::nonNull)
+        .filter(SessionContext::hasTenantAccess)
+        .distinct()
+        .sorted()
+        .toList();
+  }
+
+  private Long parsePositiveCanonicalTenantId(String value) {
+    try {
+      long tenantId = Long.parseLong(value);
+      return tenantId > 0L && Long.toString(tenantId).equals(value) ? tenantId : null;
+    } catch (NumberFormatException ex) {
+      return null;
+    }
   }
 
   private AdmissionPointerDto toDto(AdmissionPointerControlPlaneEntry entry) {

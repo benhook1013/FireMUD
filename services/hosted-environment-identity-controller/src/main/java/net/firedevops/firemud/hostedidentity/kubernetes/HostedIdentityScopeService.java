@@ -182,6 +182,8 @@ public class HostedIdentityScopeService {
     names.add(plan.grpcAccountSourceSecretName() + "-previous");
     names.add(plan.grpcGameSessionSourceSecretName());
     names.add(plan.grpcGameSessionSourceSecretName() + "-previous");
+    names.add(plan.grpcSocialGroupsSourceSecretName());
+    names.add(plan.grpcSocialGroupsSourceSecretName() + "-previous");
     return List.copyOf(names);
   }
 
@@ -222,6 +224,7 @@ public class HostedIdentityScopeService {
     names.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
     names.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     names.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
+    names.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     names.addAll(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     return List.copyOf(names);
   }
@@ -240,6 +243,7 @@ public class HostedIdentityScopeService {
             .toList());
     names.add(plan.grpcAccountCertificateName());
     names.add(plan.grpcGameSessionCertificateName());
+    names.add(plan.grpcSocialGroupsCertificateName());
     return List.copyOf(names);
   }
 
@@ -258,6 +262,7 @@ public class HostedIdentityScopeService {
             .toList());
     names.add(plan.grpcAccountSecretName());
     names.add(plan.grpcGameSessionSecretName());
+    names.add(plan.grpcSocialGroupsSecretName());
     return List.copyOf(names);
   }
 

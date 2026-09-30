@@ -68,8 +68,12 @@ PUBLICATION_GRPC_WORKLOADS = {
 }
 ACCOUNT_GRPC_WORKLOADS = {"account-service"}
 GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
+SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
-    PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS
+    PUBLICATION_GRPC_WORKLOADS
+    | ACCOUNT_GRPC_WORKLOADS
+    | GAME_SESSION_GRPC_WORKLOADS
+    | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
@@ -84,6 +88,7 @@ EXPECTED_NAMES = {
         "internal-services-egress",
         "account-service-controller-ingress",
         "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
@@ -235,6 +240,7 @@ def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[st
             {
                 "account-service-controller-ingress",
                 "game-session-service-controller-ingress",
+                "social-groups-service-controller-ingress",
             }
         )
     return expected_names
@@ -1830,7 +1836,11 @@ def validate_network_policies(
         },
     }
     if certificate_identity_mode == "hosted-controller":
-        for workload in ("account-service", "game-session-service"):
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
             policy_name = f"{workload}-controller-ingress"
             spec = _require_mapping(
                 policies[policy_name].get("spec"),

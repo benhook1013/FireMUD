@@ -743,6 +743,52 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void browseCharactersDoesNotRevealDeniedPrivateRealmInPublicWorld() {
+    GameplayCatalogProperties properties = publicWorldWithPrivateRealm();
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            publicMembership(false, false, 0L, 0L, "MISSING"),
+            publicMembership(true, false, 1L, 1L, "INACTIVE"),
+            activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("playtest"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "playtest", false));
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    WorldsCommandHandler.CharacterBrowseResult unknownRealm =
+        localHandler.browseCharacters(authenticatedSession(), "demo", "guessed");
+    assertThat(unknownRealm)
+        .isEqualTo(new WorldsCommandHandler.CharacterBrowseResult.InvalidRealm("demo"));
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "playtest"))
+        .isEqualTo(unknownRealm);
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "playtest"))
+        .isEqualTo(unknownRealm);
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "playtest"))
+        .isEqualTo(unknownRealm);
+
+    Mockito.verify(accountClient, Mockito.times(3))
+        .getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(accountClient, Mockito.times(1))
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("demo"),
+            Mockito.eq("playtest"),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
   void browseCharactersDeniesPrivateRealmWithoutExactGrantBeforeReadingEntityRoster() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
@@ -1848,6 +1894,20 @@ class WorldsCommandHandlerTest {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("demo", 22L, 1L, false)));
     properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
+    return properties;
+  }
+
+  private GameplayCatalogProperties publicWorldWithPrivateRealm() {
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    GameplayCatalogProperties.World world = world("demo", 22L, 1L, false);
+    GameplayCatalogProperties.Realm production = world.getRealms().getFirst();
+    production.setPublicProductionRealm(true);
+    GameplayCatalogProperties.Realm playtest = world("demo", 22L, 2L, false).getRealms().getFirst();
+    playtest.setSlug("playtest");
+    playtest.setDisplayName("Playtest Realm");
+    playtest.setPublicProductionRealm(false);
+    world.setRealms(List.of(production, playtest));
+    properties.setWorlds(List.of(world));
     return properties;
   }
 

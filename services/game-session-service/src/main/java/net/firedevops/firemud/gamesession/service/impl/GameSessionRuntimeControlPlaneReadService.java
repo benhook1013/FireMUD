@@ -97,54 +97,58 @@ final class GameSessionRuntimeControlPlaneReadService {
     }
     validateWorldLifecycle(instance);
     CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);
-    return GameInstanceRuntimeState.newBuilder()
-        .setTenantId(Long.toString(instance.getTenantId()))
-        .setGameInstanceId(Long.toString(instance.getId()))
-        .setRuntimeVersionId(instance.getRuntimeVersion())
-        .setPinnedScriptPatchVersion(
-            pinnedScriptPatchVersion == null ? "" : pinnedScriptPatchVersion)
-        .setScriptPinEpoch(scriptPinEpoch)
-        .setLaunchDescriptorId(
-            instance.getLaunchDescriptorId() == null ? "" : instance.getLaunchDescriptorId())
-        .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
-        .setVersionId(instance.getVersionId() == null ? "" : Long.toString(instance.getVersionId()))
-        .setReleaseBundleId(
-            instance.getReleaseBundleId() == null
-                ? ""
-                : Long.toString(instance.getReleaseBundleId()))
-        .setVersionStateEpoch(
-            instance.getVersionStateEpoch() == null ? 0L : instance.getVersionStateEpoch())
-        .setScriptPatchPinnedAtMs(
-            instance.getScriptPatchPinnedAt() == null
-                ? 0L
-                : instance.getScriptPatchPinnedAt().toEpochMilli())
-        .setScriptPatchPinnedBy(
-            instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
-        .setScriptPatchPinnedReason(
-            instance.getScriptPatchPinnedReason() == null
-                ? ""
-                : instance.getScriptPatchPinnedReason())
-        .setScriptPatchPinnedControlPlaneRequestId(
-            instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                ? ""
-                : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setPlayableStateScope(routingProjection.routingBundle().playableStateScope())
-        .setWorldSlug(routingProjection.routingBundle().worldSlug())
-        .setRealmSlug(routingProjection.routingBundle().realmSlug())
-        .setPointerVersion(routingProjection.routingBundle().pointerVersion())
-        .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
-        .setRegionEpoch(runtimeStatus.getRegionEpoch())
-        .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
-        .setPinnedScriptPatchBaseVersionId(
-            instance.getScriptPatchBaseVersionId() == null
-                ? 0L
-                : instance.getScriptPatchBaseVersionId())
-        .setPublication(
-            scriptPatchPublicationLink(
-                instance.getTenantId(),
-                instance.getScriptPatchVersion(),
-                instance.getScriptPatchBaseVersionId()))
-        .build();
+    var response =
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId(Long.toString(instance.getTenantId()))
+            .setGameInstanceId(Long.toString(instance.getId()))
+            .setRuntimeVersionId(instance.getRuntimeVersion())
+            .setPinnedScriptPatchVersion(
+                pinnedScriptPatchVersion == null ? "" : pinnedScriptPatchVersion)
+            .setScriptPinEpoch(scriptPinEpoch)
+            .setLaunchDescriptorId(
+                instance.getLaunchDescriptorId() == null ? "" : instance.getLaunchDescriptorId())
+            .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
+            .setVersionId(
+                instance.getVersionId() == null ? "" : Long.toString(instance.getVersionId()))
+            .setReleaseBundleId(
+                instance.getReleaseBundleId() == null
+                    ? ""
+                    : Long.toString(instance.getReleaseBundleId()))
+            .setVersionStateEpoch(
+                instance.getVersionStateEpoch() == null ? 0L : instance.getVersionStateEpoch())
+            .setScriptPatchPinnedAtMs(
+                instance.getScriptPatchPinnedAt() == null
+                    ? 0L
+                    : instance.getScriptPatchPinnedAt().toEpochMilli())
+            .setScriptPatchPinnedBy(
+                instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
+            .setScriptPatchPinnedReason(
+                instance.getScriptPatchPinnedReason() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedReason())
+            .setScriptPatchPinnedControlPlaneRequestId(
+                instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedControlPlaneRequestId())
+            .setPlayableStateScope(routingProjection.routingBundle().playableStateScope())
+            .setWorldSlug(routingProjection.routingBundle().worldSlug())
+            .setRealmSlug(routingProjection.routingBundle().realmSlug())
+            .setPointerVersion(routingProjection.routingBundle().pointerVersion())
+            .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
+            .setRegionEpoch(runtimeStatus.getRegionEpoch())
+            .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
+            .setPinnedScriptPatchBaseVersionId(
+                instance.getScriptPatchBaseVersionId() == null
+                    ? 0L
+                    : instance.getScriptPatchBaseVersionId());
+    if (pinnedScriptPatchVersion != null && !pinnedScriptPatchVersion.isBlank()) {
+      response.setPublication(
+          scriptPatchPublicationLink(
+              instance.getTenantId(),
+              pinnedScriptPatchVersion,
+              instance.getScriptPatchBaseVersionId()));
+    }
+    return response.build();
   }
 
   /** Persisted runtime state that cannot satisfy the control-plane read contract. */

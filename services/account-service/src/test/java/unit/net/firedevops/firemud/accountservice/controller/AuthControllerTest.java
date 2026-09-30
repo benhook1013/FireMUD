@@ -3,6 +3,8 @@ package net.firedevops.firemud.accountservice.controller;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
@@ -36,6 +39,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.yaml.snakeyaml.Yaml;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AuthController.class)
@@ -46,6 +50,22 @@ class AuthControllerTest {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @MockitoBean private AccountService accountService;
+
+  @Test
+  void publicOpenApiOmitsUnavailableBootstrapJoin() throws Exception {
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      Map<String, Object> document = new Yaml().load(input);
+      Map<String, Object> paths = (Map<String, Object>) document.get("paths");
+      Map<String, Object> components = (Map<String, Object>) document.get("components");
+      Map<String, Object> schemas = (Map<String, Object>) components.get("schemas");
+
+      assertFalse(paths.containsKey("/auth/bootstrap/join"));
+      assertTrue(((Map<String, Object>) paths.get("/auth/player-bootstrap")).containsKey("post"));
+      assertTrue(((Map<String, Object>) paths.get("/auth/connect-token")).containsKey("post"));
+      assertFalse(schemas.containsKey("JoinPublicProductionRequest"));
+      assertFalse(schemas.containsKey("JoinPublicProductionResult"));
+    }
+  }
 
   @Test
   void loginReturnsTokenAndAccountId() throws Exception {

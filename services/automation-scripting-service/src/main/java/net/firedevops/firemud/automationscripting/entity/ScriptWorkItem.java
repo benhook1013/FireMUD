@@ -37,7 +37,7 @@ public class ScriptWorkItem {
   private int authorityUnavailableCount;
 
   /** Earliest instant at which the durable scanner may claim this item again. */
-  private Instant nextEligibleAt = Instant.now();
+  private Instant nextEligibleAt;
 
   private String targetScopeType = "";
   private String targetScopeId = "";
