@@ -183,6 +183,29 @@ class GameplayWorldCatalogTest {
         .hasMessageContaining("public-production realm count is invalid");
   }
 
+  @ParameterizedTest(name = "authority selector resolution rejects {0} public realms")
+  @MethodSource("invalidPublicRealmCardinalities")
+  void resolveWorldFromAuthoritySnapshotRejectsInvalidPublicRealmCardinalityBeforeLookup(
+      String cardinality, List<GameplayAdmissionPointerSnapshot> pointers) {
+    when(authorityService.listPointers()).thenReturn(pointers);
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("unknown-world"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasMessageContaining("public-production realm count is invalid");
+    Mockito.verify(authorityService, Mockito.times(1)).listPointers();
+  }
+
+  @Test
+  void resolveWorldFromAuthoritySnapshotKeepsHealthyUnknownSelectorAsEmpty() {
+    when(authorityService.listPointers())
+        .thenReturn(List.of(publicPointer("demo", "Demo World", 1L, 11L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("unknown-world")).isEmpty();
+    Mockito.verify(authorityService, Mockito.times(1)).listPointers();
+  }
+
   @Test
   void authoritySnapshotKeepsPrivateRealmsWhenTenantHasOneVisiblePublicRealm() {
     when(authorityService.listPointers())
@@ -668,6 +691,17 @@ class GameplayWorldCatalogTest {
                 complete.realmId(),
                 complete.playableStateNamespaceId(),
                 "shared")));
+  }
+
+  private static Stream<Arguments> invalidPublicRealmCardinalities() {
+    return Stream.of(
+        Arguments.of(
+            "zero", List.of(pointer("demo", "Demo World", "private", "Private", 1L, 11L, 7L))),
+        Arguments.of(
+            "multiple",
+            List.of(
+                publicPointer("alpha", "Alpha World", 1L, 11L),
+                publicPointer("beta", "Beta World", 1L, 12L))));
   }
 
   private static GameplayAdmissionPointerSnapshot copyAuthorityPointer(

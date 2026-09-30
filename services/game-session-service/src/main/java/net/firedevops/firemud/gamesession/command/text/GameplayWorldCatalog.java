@@ -260,6 +260,7 @@ public final class GameplayWorldCatalog {
             "Authoritative gameplay pointer is incomplete");
       }
     }
+    requireExactlyOneVisiblePublicProductionRealmPerTenant(pointers);
     CatalogState catalogState = catalogStateFromPointers(pointers);
     List<WorldView> visibleWorlds =
         catalogState.worlds().stream().filter(this::hasVisibleRealmEntries).toList();
