@@ -30,7 +30,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
 class AccountAuthorityOutboxRepositoryIntegrationTest {
-  private static final String SCHEMA = "account_authority_outbox_proof";
+  private static final String SCHEMA_PREFIX = "authority_outbox_proof";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -158,6 +158,116 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
     assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream))).isEmpty();
   }
 
+  @Test
+  void exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel() {
+    TestContext context = newTestContext();
+    AccountAuthorityOutboxRepository repository = context.repository();
+    TransactionTemplate transaction = context.transaction();
+    DSLContext dsl = context.dsl();
+    String stream = "account:auth-authority:v1:account/" + UUID.randomUUID();
+    byte[] originalPayload = new byte[] {7, 8, 9};
+    Event originalEvent =
+        new Event(
+            stream,
+            "exhaustion-seed-request",
+            Long.MAX_VALUE,
+            "exhaustion-seed-event",
+            "exhaustion-seed-digest",
+            originalPayload);
+
+    dsl.execute(
+        "CREATE TABLE authority_overflow_sentinel "
+            + "(sentinel_id INTEGER PRIMARY KEY, value INTEGER NOT NULL)");
+    dsl.execute("INSERT INTO authority_overflow_sentinel (sentinel_id, value) VALUES (1, 0)");
+    // Seed a consistent exhausted stream; bypass only its contiguous-insert guard for this setup.
+    inTransaction(
+        transaction,
+        () -> {
+          dsl.execute(
+              "INSERT INTO account_authority_outbox_streams "
+                  + "(outbox_stream_key, last_sequence) VALUES (?, ?)",
+              stream,
+              Long.MAX_VALUE);
+          dsl.execute(
+              "ALTER TABLE account_authority_outbox_events "
+                  + "DISABLE TRIGGER account_authority_outbox_event_insert");
+          try {
+            dsl.execute(
+                "INSERT INTO account_authority_outbox_events "
+                    + "(outbox_stream_key, outbox_sequence, request_id, event_id, "
+                    + "event_digest, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                stream,
+                Long.MAX_VALUE,
+                originalEvent.requestId(),
+                originalEvent.eventId(),
+                originalEvent.eventDigest(),
+                originalPayload);
+          } finally {
+            dsl.execute(
+                "ALTER TABLE account_authority_outbox_events "
+                    + "ENABLE TRIGGER account_authority_outbox_event_insert");
+          }
+          return null;
+        });
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
+        .contains(
+            new Checkpoint(
+                stream, Long.MAX_VALUE, "exhaustion-seed-event", "exhaustion-seed-digest"));
+    assertThat(inTransaction(transaction, () -> repository.findEvent(stream, Long.MAX_VALUE)))
+        .contains(originalEvent);
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    transaction,
+                    () -> {
+                      dsl.execute(
+                          "UPDATE authority_overflow_sentinel SET value = value + 1 "
+                              + "WHERE sentinel_id = 1");
+                      return repository.append(
+                          stream,
+                          "exhaustion-attempt-request",
+                          "exhaustion-attempt-event",
+                          "exhaustion-attempt-digest",
+                          new byte[] {1, 2, 3});
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account authority outbox sequence is exhausted");
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
+        .contains(
+            new Checkpoint(
+                stream, Long.MAX_VALUE, "exhaustion-seed-event", "exhaustion-seed-digest"));
+    assertThat(inTransaction(transaction, () -> repository.findEvent(stream, Long.MAX_VALUE)))
+        .contains(originalEvent);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT last_sequence FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(Long.MAX_VALUE);
+    assertThat(
+            dsl.resultQuery("SELECT value FROM authority_overflow_sentinel WHERE sentinel_id = 1")
+                .fetchOne(0, Integer.class))
+        .isZero();
+  }
+
   private Event concurrentAppend(
       AccountAuthorityOutboxRepository repository,
       TransactionTemplate transaction,
@@ -172,16 +282,17 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
   }
 
   private TestContext newTestContext() {
+    String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + SCHEMA);
+    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     Flyway.configure()
         .dataSource(dataSource)
-        .schemas(SCHEMA)
-        .defaultSchema(SCHEMA)
-        .placeholders(Map.of("serviceSchema", SCHEMA))
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .load()
         .migrate();
@@ -190,7 +301,8 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     return new TestContext(
         new AccountAuthorityOutboxRepository(dsl),
-        new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+        dsl);
   }
 
   private String membershipStream(UUID accountId, UUID tenantId) {
@@ -212,5 +324,7 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
   }
 
   private record TestContext(
-      AccountAuthorityOutboxRepository repository, TransactionTemplate transaction) {}
+      AccountAuthorityOutboxRepository repository,
+      TransactionTemplate transaction,
+      DSLContext dsl) {}
 }
