@@ -49,6 +49,7 @@ class AccountRuntimeStubServerTest {
         Instant activeAfter = Instant.now();
         assertThat(active.getMembershipLifecycleState()).isEqualTo("ACTIVE");
         assertThat(active.getRequestId()).isEqualTo("request-1");
+        assertThat(active.getMembershipAuthorityGeneration()).isEqualTo("1");
         assertMembershipEventMatches(active, "ACTIVE", true);
         assertThat(Instant.parse(active.getEvaluatedAt())).isBetween(activeBefore, activeAfter);
 
