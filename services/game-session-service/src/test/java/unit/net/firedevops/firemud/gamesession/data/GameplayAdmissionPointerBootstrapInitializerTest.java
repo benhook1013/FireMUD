@@ -23,9 +23,9 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
-import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.mock.env.MockEnvironment;
@@ -139,7 +139,8 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
         assertThrows(
             IllegalArgumentException.class,
             () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
-    assertTrue(failure.getMessage().contains("exactly one visible public production realm for tenant 2"));
+    assertTrue(
+        failure.getMessage().contains("exactly one visible public production realm for tenant 2"));
 
     verify(pointerRepository).lockForBootstrap();
     verify(pointerRepository).count();
@@ -273,26 +274,32 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   private static ShippedBootstrapConfiguration loadShippedConfiguration(
       Map<String, Object> environmentOverrides) throws IOException {
     MockEnvironment environment = new MockEnvironment();
-    environment.getPropertySources().addFirst(
-        new MapPropertySource("bootstrap-test-overrides", environmentOverrides));
+    environment
+        .getPropertySources()
+        .addFirst(new MapPropertySource("bootstrap-test-overrides", environmentOverrides));
     YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
-    // Read source YAML directly to avoid test-resource shadowing; this is not packaged or live-boot proof.
-    environment.getPropertySources().addLast(
-        loader
-            .load(
-                "game-session-application",
-                new FileSystemResource(
-                    repositoryFile(
-                        "services/game-session-service/src/main/resources/application.yml")))
-            .get(0));
-    environment.getPropertySources().addLast(
-        loader
-            .load(
-                "world-management-application",
-                new FileSystemResource(
-                    repositoryFile(
-                        "services/world-management-service/src/main/resources/application.yml")))
-            .get(0));
+    // Read source YAML directly to avoid test-resource shadowing; this is not packaged or live-boot
+    // proof.
+    environment
+        .getPropertySources()
+        .addLast(
+            loader
+                .load(
+                    "game-session-application",
+                    new FileSystemResource(
+                        repositoryFile(
+                            "services/game-session-service/src/main/resources/application.yml")))
+                .get(0));
+    environment
+        .getPropertySources()
+        .addLast(
+            loader
+                .load(
+                    "world-management-application",
+                    new FileSystemResource(
+                        repositoryFile(
+                            "services/world-management-service/src/main/resources/application.yml")))
+                .get(0));
 
     Binder binder = Binder.get(environment);
     GameplayAdmissionPointerBootstrapProperties gameSession =
@@ -300,13 +307,13 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
             .bind(
                 "firemud.gameplay.pointer-bootstrap",
                 Bindable.of(GameplayAdmissionPointerBootstrapProperties.class))
-            .orElseThrow();
+            .orElseThrow(() -> new IllegalStateException("Missing Game Session bootstrap YAML"));
     List<SmokeRuntimeTarget> worldManagementTargets =
         binder
             .bind(
                 "firemud.smoke.seed-demo-runtime.targets",
                 Bindable.listOf(SmokeRuntimeTarget.class))
-            .orElseThrow();
+            .orElseThrow(() -> new IllegalStateException("Missing World runtime-target YAML"));
     return new ShippedBootstrapConfiguration(gameSession, worldManagementTargets);
   }
 
