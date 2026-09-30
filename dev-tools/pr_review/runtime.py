@@ -1540,27 +1540,38 @@ class LiveEvidence:
             # or fabricated completed checkpoint is needed.
             cli_root = cli_common / "firemud" / "pr-review"
             if self._request_lock_is_held(cli_root / "cli.lock"):
-                metadata_paths = list((cli_root / "runs").glob("*/metadata.json"))
-                if metadata_paths:
-                    newest = max(metadata_paths, key=lambda path: path.stat().st_mtime_ns)
-                    try:
-                        active_metadata = json.loads(newest.read_text(encoding="utf-8"))
-                    except (OSError, ValueError):
-                        active_metadata = {}
-                    if active_metadata.get("pull_request") == pr and not any(
-                        (newest.parent / name).exists() for name in ("capture-complete", "error", "exit-status")
+                for metadata_path in (cli_root / "runs").glob("*/metadata.json"):
+                    if any(
+                        (metadata_path.parent / name).exists()
+                        for name in ("capture-complete", "error", "exit-status")
                     ):
-                        values.append(
-                            {
-                                "pr": pr,
-                                "head": active_metadata.get("candidate_sha", ""),
-                                "checkpoint": f"active-cli:{active_metadata.get('run_id', newest.parent.name)}",
-                                "active_review": True,
-                                "held": True,
-                                "reason": "CLI review is running; its eventual findings still require adjudication",
-                                **self._anchor(active_metadata),
-                            }
-                        )
+                        continue
+                    try:
+                        active_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+                    if not isinstance(active_metadata, Mapping) or active_metadata.get("pull_request") != pr:
+                        continue
+                    anchor_metadata = {
+                        key: value
+                        for key, value in active_metadata.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+                    run_id = active_metadata.get("run_id")
+                    if not isinstance(run_id, str) or not run_id:
+                        run_id = metadata_path.parent.name
+                    candidate_sha = active_metadata.get("candidate_sha")
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": candidate_sha if isinstance(candidate_sha, str) else "",
+                            "checkpoint": f"active-cli:{run_id}",
+                            "active_review": True,
+                            "held": True,
+                            "reason": "CLI review is running; its eventual findings still require adjudication",
+                            **self._anchor(anchor_metadata),
+                        }
+                    )
             for capture in evidence.discover_cli_captures(self.repo, pr, cli_common, records=cli_records):
                 run_id = capture.metadata.get("run_id", "")
                 if run_id in public_cli_run_ids:

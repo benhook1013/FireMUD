@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -1907,36 +1908,61 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(records.attempt_history(42)), 1)
             self.assertEqual(records.attempt_history(42)[0]["state"], "failed")
 
-    def test_cli_activity_uses_existing_capture_and_excludes_terminal_files(self) -> None:
+    def test_cli_activity_scans_all_captures_and_excludes_terminal_files(self) -> None:
         import fcntl
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             root = common / "firemud" / "pr-review"
-            capture = root / "runs" / "run.active"
-            capture.mkdir(parents=True)
-            metadata = {
-                "run_id": "run.active",
-                "pull_request": 42,
-                "candidate_sha": HEAD,
-                "parent_ref": "develop",
-                "parent_sha": BASE,
-                "merge_base": BASE,
-                "patch_identity": PATCH,
-            }
-            (capture / "metadata.json").write_text(json.dumps(metadata))
+            captures = root / "runs"
+
+            def create_capture(run_id: str, metadata: dict[str, Any], modified_ns: int) -> Path:
+                capture = captures / run_id
+                capture.mkdir(parents=True)
+                metadata_path = capture / "metadata.json"
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                os.utime(metadata_path, ns=(modified_ns, modified_ns))
+                return capture
+
+            create_capture(
+                "run.active",
+                {
+                    "run_id": "run.active",
+                    "pull_request": 42,
+                    "candidate_sha": HEAD,
+                    "parent_ref": "develop",
+                    "parent_sha": BASE,
+                    "merge_base": BASE,
+                    "patch_identity": PATCH,
+                },
+                1_000_000_000,
+            )
+            completed = create_capture(
+                "run.completed",
+                {"run_id": "run.completed", "pull_request": 42, "candidate_sha": HEAD},
+                2_000_000_000,
+            )
+            create_capture(
+                "run.other-pr",
+                {"run_id": "run.other-pr", "pull_request": 43, "candidate_sha": HEAD},
+                3_000_000_000,
+            )
+            malformed = captures / "run.malformed"
+            malformed.mkdir(parents=True)
+            malformed_metadata = malformed / "metadata.json"
+            malformed_metadata.write_text("{not-json", encoding="utf-8")
+            os.utime(malformed_metadata, ns=(4_000_000_000, 4_000_000_000))
             with (root / "cli.lock").open("a+") as handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                history = self._history(common, self._payload(), "cli")
-                self.assertEqual(
-                    [item["checkpoint"] for item in history if item.get("active_review")], ["active-cli:run.active"]
-                )
                 for terminal_file in ("error", "exit-status", "capture-complete"):
                     with self.subTest(terminal_file=terminal_file):
-                        path = capture / terminal_file
+                        path = completed / terminal_file
                         path.write_text("0")
                         history = self._history(common, self._payload(), "cli")
-                        self.assertFalse(any(item.get("active_review") for item in history))
+                        self.assertEqual(
+                            [item["checkpoint"] for item in history if item.get("active_review")],
+                            ["active-cli:run.active"],
+                        )
                         path.unlink()
 
     def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:

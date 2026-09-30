@@ -5550,16 +5550,12 @@ class ReviewController:
         retained_fingerprint_values = tuple(retain_ambiguous_fingerprints)
         if bool(retained_fingerprint_values) != (ambiguity_reason is not None):
             raise ControllerError("terminal ambiguity retention requires exact fingerprints and a reason")
+        # Stop recording changes future eligibility only. Provider execution
+        # and capture retain their own locks; store.update serializes this decision.
         state = self._state()
         if pr not in state.ordered_prs:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
         identity = f"{pr}:{selected.value}"
-        previous = state.allocations.get(identity)
-        # A stop changes future eligibility only. Provider execution and capture
-        # retain their own locks; the decision is serialized by store.update.
-        state = self._state()
-        if pr not in state.ordered_prs:
-            raise ControllerError(f"PR #{pr} is not in the configured review stack")
         previous = state.allocations.get(identity)
         if acknowledge_over_ceiling and previous is not None:
             raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")

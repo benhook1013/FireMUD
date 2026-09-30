@@ -2173,7 +2173,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(granted["allocation"]["baseline_checkpoints"], [])
         self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
 
-    def test_direct_human_stop_is_a_distinct_review_status_and_needs_no_ci_evidence(self):
+    def test_direct_human_stop_has_a_distinct_status_without_ci_as_a_stop_precondition(self):
         hosted = self.allocation_evidence(checkpoint="latest-hosted")
         controller = self.make(
             {1: pr(1, HEAD_1)},
@@ -2193,7 +2193,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["stop_head"], HEAD_1)
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
-    def test_direct_human_stop_ignores_only_audit_proven_terminal_rate_limit(self):
+    def test_direct_human_stop_records_after_an_audit_proven_terminal_rate_limit(self):
         old_head = "7" * 40
         cooldown_until = "2999-01-01T00:00:00Z"
         latest = self.allocation_evidence(checkpoint="latest-hosted")
@@ -2239,7 +2239,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(stopped["stop_basis"], "direct_human")
 
-    def test_direct_human_stop_does_not_ignore_unproven_rate_limit_history(self):
+    def test_direct_human_stop_records_override_with_unproven_rate_limit_history(self):
         old_head = "7" * 40
         provider = AuditedEvidence(
             {
@@ -2272,9 +2272,9 @@ class ControllerTests(unittest.TestCase):
         stopped = controller.decide_stop(
             pr=1,
             channel="hosted",
-            reason="a rate-limit flag without audit identity must still block",
+            reason="stop further discovery despite unproven rate-limit history",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
 
     def test_direct_human_stop_can_acknowledge_only_current_head_over_ceiling_notice(self):
         marker = {
@@ -2392,15 +2392,22 @@ class ControllerTests(unittest.TestCase):
                 acknowledge_over_ceiling=True,
             )
 
-    def test_over_ceiling_acknowledgment_does_not_ignore_other_stop_blockers(self):
+    def test_over_ceiling_acknowledgment_does_not_waive_other_review_obligations(self):
         marker = {
             "pr": 1,
             "head": HEAD_1,
             "checkpoint": "over-ceiling:5748509184",
             "over_ceiling": True,
         }
+        unresolved_thread = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "review-threads:42",
+            "held": True,
+            "reason": "one unresolved current review thread",
+        }
         provider = AuditedEvidence(
-            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker]},
+            {(1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted"), marker, unresolved_thread]},
             audit={
                 "complete": True,
                 "active_reservations": [],
@@ -2419,7 +2426,12 @@ class ControllerTests(unittest.TestCase):
             reason="human stop",
             acknowledge_over_ceiling=True,
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(
+            row["review_obligations"]["hosted"], ["one unresolved current review thread"]
+        )
 
     def test_hosted_stop_preserves_current_head_cli_accepted_finding(self):
         controller = self.make(
@@ -2437,7 +2449,10 @@ class ControllerTests(unittest.TestCase):
             channel="hosted",
             reason="CLI findings on the live head have no published correction",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(row["review_obligations"]["cli"], ["cli-findings"])
 
     def test_stop_keeps_unexplained_older_accepted_findings_as_an_independent_obligation(self):
         older = self.allocation_evidence(head=HEAD_1, checkpoint="accepted-old", accepted=1)
@@ -2533,7 +2548,10 @@ class ControllerTests(unittest.TestCase):
             channel="hosted",
             reason="a provisional result on the current head is unresolved",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(row["review_obligations"]["cli"], ["cli-current-provisional"])
 
     def test_stale_later_cli_provisional_does_not_replace_latest_attributable_checkpoint(self):
         stale_head = "7" * 40
@@ -2798,7 +2816,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(evidence.stop_audit_calls[-1][1], (latest_fingerprint,))
 
-    def test_direct_hosted_stop_does_not_waive_live_or_unknown_ambiguity(self):
+    def test_direct_hosted_stop_preserves_live_and_unknown_ambiguity_obligations(self):
         latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
         live_evidence = AuditedEvidence(
             {
@@ -2835,7 +2853,10 @@ class ControllerTests(unittest.TestCase):
         controller = self.make({1: pr(1, HEAD_1)}, live_evidence, heads={"feature-1": HEAD_1})
         controller.set_stack([1])
         stopped = controller.decide_stop(pr=1, channel="hosted", reason="live ambiguity is unpinned")
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(row["review_obligations"]["hosted"], ["trigger:123"])
 
         old_fingerprint = "d" * 64
         unknown_head_evidence = AuditedEvidence(
@@ -3058,7 +3079,10 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         stopped = controller.decide_stop(pr=1, channel="cli", reason="current Hosted ambiguity is unpinned")
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["cli"], "HUMAN_STOPPED")
+        self.assertEqual(row["review_obligations"]["hosted"], ["trigger:5826936635"])
 
     def test_direct_cli_stop_keeps_current_unmatched_response(self):
         evidence = AuditedEvidence(
@@ -3076,7 +3100,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         stopped = controller.decide_stop(pr=1, channel="cli", reason="current unmatched response remains")
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
 
     def test_direct_hosted_stop_preserves_old_unanchored_checkpoint_without_reauthorizing_history(self):
         old_head = "7" * 40
@@ -3141,7 +3165,7 @@ class ControllerTests(unittest.TestCase):
             channel="hosted",
             reason="allocated result cannot waive unrelated held evidence",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "allocated")
 
     def test_direct_stop_preserves_unresolved_threads_and_unpublished_old_findings(self):
         latest = self.allocation_evidence(checkpoint="latest-hosted")
@@ -3159,7 +3183,10 @@ class ControllerTests(unittest.TestCase):
         )
         controller.set_stack([1])
         stopped = controller.decide_stop(pr=1, channel="hosted", reason="thread is still actionable")
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        row = controller.status()["prs"][0]
+        self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(row["review_obligations"]["hosted"], ["one unresolved outdated thread"])
 
         old_head = "7" * 40
         old_finding = self.allocation_evidence(
@@ -3177,7 +3204,8 @@ class ControllerTests(unittest.TestCase):
         controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (old_head, HEAD_1)
         controller.set_stack([1])
         stopped = controller.decide_stop(pr=1, channel="hosted", reason="accepted old findings remain unpublished")
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(controller.status()["prs"][0]["review_obligations"]["hosted"], ["legacy-hosted-4-4"])
 
     def test_direct_stop_rejects_changed_head_and_wrong_terminal_fingerprint(self):
         provider = AuditedEvidence(
@@ -3246,7 +3274,10 @@ class ControllerTests(unittest.TestCase):
             checkpoint="allocated-dry",
             reason="accepted findings are not yet published",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "allocated")
+        self.assertIn(
+            "allocated-dry", controller.status()["prs"][0]["review_obligations"]["hosted"]
+        )
 
     def test_ineligible_completed_observation_does_not_invalidate_one_valid_allocation_result(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
@@ -3414,7 +3445,10 @@ class ControllerTests(unittest.TestCase):
             checkpoint="allocated-findings",
             reason="findings remain on the promised head",
         )
-        self.assertIn(stopped["stop_basis"], {"direct_human", "allocated"})
+        self.assertEqual(stopped["stop_basis"], "allocated")
+        self.assertIn(
+            "allocated-findings", controller.status()["prs"][0]["review_obligations"]["hosted"]
+        )
 
     def test_accepted_fix_head_can_be_stopped_after_publication(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
