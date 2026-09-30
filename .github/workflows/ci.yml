@@ -944,7 +944,7 @@ jobs:
         run: |
           echo "::group::Run Module Validation"
           if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" ]]; then
-            ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache
+            ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache --no-configuration-cache
           else
             ./gradlew :${{ matrix.module }}:check -PfullCheck
           fi
@@ -959,6 +959,7 @@ jobs:
             --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
