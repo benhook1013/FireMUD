@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -35,9 +37,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
     this.versionUpgradePreparationService = versionUpgradePreparationService;
   }
 
-  ListAdmissionPointersResponse listAdmissionPointers() {
-    java.util.List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
-        pointers = gameplayAdmissionPointerAuthorityService.listPointers();
+  ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
+    Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
+    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listPointers().stream()
+            .filter(pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
+            .toList();
     java.util.List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(

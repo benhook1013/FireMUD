@@ -8090,6 +8090,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_ids | [int64](#int64) | repeated | Empty requires a global privileged caller for the all-tenant read. Non-empty IDs must be positive and individually authorized by the forwarded caller context. |
+
+
 
 
 

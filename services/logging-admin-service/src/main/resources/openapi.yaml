@@ -1671,10 +1671,12 @@ paths:
       summary: List visible gameplay admission pointers
       operationId: listAdmissionPointers
       description: >-
-        The list is available only when every current pointer has a latest audit
-        row matching its catalog revision, realm ID, and playable-state namespace.
-        Missing or incomplete current authority returns 503. Historical audit reads
-        preserve unknown legacy identity fields.
+        Tenant-scoped callers receive pointers only for their authorized tenant
+        scopes. Global platform administrators and moderators receive the
+        all-tenant list. Each current pointer in the selected scope must have a
+        latest audit row matching its catalog revision, realm ID, and playable-state
+        namespace. Missing or incomplete current authority in that scope returns
+        503. Historical audit reads preserve unknown legacy identity fields.
       responses:
         '200':
           description: Admission pointer list

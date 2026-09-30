@@ -60,8 +60,15 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void listPointersFiltersToAccessibleTenant() {
-    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
-    when(gameSessionControlPlaneClient.listAdmissionPointers())
+    SessionContext.setContext(
+        "7",
+        List.of(),
+        Map.of(
+            "2", List.of("tenantAdmin"),
+            "02", List.of("tenantAdmin"),
+            "0", List.of("tenantAdmin"),
+            "-3", List.of("moderator")));
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of(2L)))
         .thenReturn(
             ListAdmissionPointersResponse.newBuilder()
                 .addPointers(pointerEntry("demo", "production", 2L, 7L, 3L))
@@ -73,11 +80,37 @@ class AdmissionPointerServiceImplTest {
     assertEquals(1, result.size());
     assertEquals("demo", result.get(0).worldSlug());
     assertEquals(2L, result.get(0).tenantId());
+    verify(gameSessionControlPlaneClient).listAdmissionPointers(List.of(2L));
+  }
+
+  @Test
+  void listPointersReturnsEmptyWithoutDispatchWhenNoAccessibleTenantScopeExists() {
+    List<AdmissionPointerDto> result = service.listPointers();
+
+    assertEquals(List.of(), result);
+    verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
+  void globalListPointersUsesAllTenantRequest() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(
+            ListAdmissionPointersResponse.newBuilder()
+                .addPointers(pointerEntry("demo", "production", 2L, 7L, 3L))
+                .addPointers(pointerEntry("sandbox", "preview", 8L, 11L, 1L))
+                .build());
+
+    List<AdmissionPointerDto> result = service.listPointers();
+
+    assertEquals(2, result.size());
+    verify(gameSessionControlPlaneClient).listAdmissionPointers(List.of());
   }
 
   @Test
   void listPointersMapsUnavailableAuthorityToServiceUnavailable() {
-    when(gameSessionControlPlaneClient.listAdmissionPointers())
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
         .thenReturn(
             ListAdmissionPointersResponse.newBuilder()
                 .setError(

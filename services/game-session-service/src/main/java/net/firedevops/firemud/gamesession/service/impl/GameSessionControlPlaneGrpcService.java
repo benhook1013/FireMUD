@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -162,13 +163,20 @@ public final class GameSessionControlPlaneGrpcService
       ListAdmissionPointersRequest request,
       StreamObserver<ListAdmissionPointersResponse> responseObserver) {
     try {
-      requireAdminRole();
-      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers());
+      List<Long> tenantIds = validateAdmissionPointerListScope(request.getTenantIdsList());
+      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers(tenantIds));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
               .setError(authorizationError("ListAdmissionPointers", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(invalidArgumentError("ListAdmissionPointers", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -195,6 +203,24 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private List<Long> validateAdmissionPointerListScope(List<Long> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      requireAdminRole();
+      return List.of();
+    }
+
+    List<Long> validatedTenantIds =
+        tenantIds.stream()
+            .map(tenantId -> ControlPlaneRequestParser.requirePositive(tenantId, "tenant_ids"))
+            .toList();
+    for (long tenantId : validatedTenantIds) {
+      if (!SessionContext.hasTenantAccess(tenantId)) {
+        throw new AdminAuthorizationException("Tenant access required for admission pointer list");
+      }
+    }
+    return validatedTenantIds;
   }
 
   @Override
