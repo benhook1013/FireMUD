@@ -187,6 +187,30 @@ class RuntimeTest(unittest.TestCase):
         ):
             provider.request_history(42, "hosted")
 
+    def test_stopped_current_hosted_identity_requires_an_exact_live_head(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        valid_identity = self._payload()["data"]["repository"]["pullRequest"]
+        invalid_heads = (("missing", None), ("nonstr", 42), ("malformed", "not-a-full-sha"))
+        for label, head in invalid_heads:
+            with self.subTest(head=label):
+                identity = dict(valid_identity)
+                if label == "missing":
+                    identity.pop("headRefOid")
+                else:
+                    identity["headRefOid"] = head
+                with (
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+                    patch.object(provider, "_request_lock_is_held", return_value=False),
+                    patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+                    patch.object(provider, "_current_hosted_history") as current_hosted_history,
+                    self.assertRaisesRegex(
+                        ControllerError,
+                        "current Hosted admission state cannot be verified",
+                    ),
+                ):
+                    provider.request_history(42, "hosted")
+                current_hosted_history.assert_not_called()
+
     def test_cli_terminal_error_cleanup_is_not_reported_as_an_active_review(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
         with tempfile.TemporaryDirectory() as directory:

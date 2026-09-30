@@ -651,6 +651,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n<!-- fingerprinting:phantom:medusa:pangolin -->\n<!-- cr-indicator-types:potential_issue -->",
             "\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
         )
         for tail in valid_tails:
             with self.subTest(tail=tail):
@@ -662,6 +663,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\nAn unmarked substantive finding.",
             "\n```text\nFenced substantive detail.\n```",
             "\n<!-- unknown auxiliary: preserve this finding -->",
+            "\n_Source: Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
         )
         for tail in invalid_tails:
             with (
