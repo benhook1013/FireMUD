@@ -647,22 +647,21 @@ public final class GameSessionGrpcService
         throw new CatalogRevisionUnavailableException(
             "Authoritative gameplay pointer identity is missing or invalid");
       }
-      if (realm.publicProductionRealm()) {
-        List<GameplayAdmissionPointerSnapshot> visiblePublicProductionRealms =
-            snapshot.stream()
-                .filter(Objects::nonNull)
-                .filter(pointer -> pointer.tenantId() == tenantId)
-                .filter(GameplayAdmissionPointerSnapshot::visible)
-                .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
-                .toList();
-        if (visiblePublicProductionRealms.size() != 1
-            || !visiblePublicProductionRealms.getFirst().equals(realm)) {
-          throw new CatalogRevisionUnavailableException(
-              "Expected exactly one visible public-production realm for tenant "
-                  + tenantId
-                  + " but found "
-                  + visiblePublicProductionRealms.size());
-        }
+      List<GameplayAdmissionPointerSnapshot> visiblePublicProductionRealms =
+          snapshot.stream()
+              .filter(Objects::nonNull)
+              .filter(pointer -> pointer.tenantId() == tenantId)
+              .filter(GameplayAdmissionPointerSnapshot::visible)
+              .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+              .toList();
+      if (visiblePublicProductionRealms.size() != 1
+          || (realm.publicProductionRealm()
+              && !visiblePublicProductionRealms.getFirst().equals(realm))) {
+        throw new CatalogRevisionUnavailableException(
+            "Expected exactly one visible public-production realm for tenant "
+                + tenantId
+                + " but found "
+                + visiblePublicProductionRealms.size());
       }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
