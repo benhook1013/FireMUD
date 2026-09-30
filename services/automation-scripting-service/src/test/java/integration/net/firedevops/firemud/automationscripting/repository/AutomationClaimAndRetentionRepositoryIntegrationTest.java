@@ -1319,6 +1319,40 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void retainedReplayReceiptIsCountedAndContinuesToBlockAgedParentDeletion() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptDeadLetterReplayRepository.ReplayRequest request =
+        replayRepository.insertOrGet(
+            "tenant-1", "retained-parent-replay", REQUEST_DIGEST, "operator", "retry", OLD);
+    replayRepository.saveResult(
+        "tenant-1",
+        request.id(),
+        parent.getId(),
+        parent.getId(),
+        "rejected",
+        "retained-result",
+        "",
+        2L,
+        0L,
+        0L,
+        1L,
+        OLD);
+
+    assertThat(
+            workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                "HANDED_OFF", Instant.now()))
+        .isEqualTo(1L);
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))).isTrue();
+    assertThat(
+            dsl.fetchCount(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(parent.getId())))
+        .isEqualTo(1);
+  }
+
+  @Test
   void deadLetterRowCapLeavesParentWhenChildOutcomeIsIncomplete() {
     ScriptWorkItem parent = workItemRepository.save(deadLetteredWorkItem("dead-letter-cap"));
     ScriptHandoffEvent handoff = retainedHandoff(parent.getId());

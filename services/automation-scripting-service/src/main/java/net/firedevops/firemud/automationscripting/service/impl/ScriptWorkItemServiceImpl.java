@@ -81,6 +81,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final int REPLAY_REASON_MAX_LENGTH = 256;
   private final AtomicLong retentionBlockedRows = new AtomicLong();
   private final AtomicLong retentionDeadLetterBlockedRows = new AtomicLong();
+  private final AtomicLong retentionReplayReceiptBlockedRows = new AtomicLong();
   private final MeterRegistry meterRegistry;
 
   private final ScriptWorkItemRepository workItemRepository;
@@ -139,6 +140,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     Gauge.builder(
             "automation_retention_dead_letter_blocked_rows",
             retentionDeadLetterBlockedRows,
+            AtomicLong::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "automation_retention_replay_receipt_blocked_rows",
+            retentionReplayReceiptBlockedRows,
             AtomicLong::get)
         .register(meterRegistry);
     this.scriptDefinitionRepository = scriptDefinitionRepository;
@@ -362,8 +368,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 STATUS_CANCELED,
                 now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS))
             + deadLetteredBlocked;
+    long replayReceiptBlocked =
+        workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                STATUS_HANDED_OFF,
+                now.minus(outboxProperties.getHandedOffRetentionDays(), ChronoUnit.DAYS))
+            + workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                STATUS_CANCELED,
+                now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS))
+            + workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                STATUS_DEAD_LETTERED,
+                now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
     retentionDeadLetterBlockedRows.set(deadLetteredBlocked);
     retentionBlockedRows.set(blocked);
+    retentionReplayReceiptBlockedRows.set(replayReceiptBlocked);
     return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
   }
 

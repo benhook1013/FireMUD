@@ -1547,9 +1547,11 @@ let availableRuns = [];
 let requestedCommitRefs = [];
 let forbiddenCurrentBaseLookups = 0;
 let fakeNow = 1000;
+let onSmokeSleep = null;
 Date.now = () => fakeNow;
 global.setTimeout = (callback, milliseconds, ...args) => {
   fakeNow += Number(milliseconds);
+  onSmokeSleep?.(Number(milliseconds));
   queueMicrotask(() => callback(...args));
   return 0;
 };
@@ -1750,6 +1752,41 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
       }
       if (fakeNow - startedAt >= 25 * 60 * 1000) {
         throw new Error("a cancelled exact event run without replacement must fail before the generic smoke deadline");
+      }
+    });
+  })
+  .then(() => {
+    const eventRun = {
+      ...runtimeRun(605, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed",
+      conclusion: "cancelled",
+    };
+    const startedAt = fakeNow;
+    let cancellationWaits = 0;
+    availableRuns = [eventRun];
+    onSmokeSleep = () => {
+      cancellationWaits += 1;
+      if (cancellationWaits === 20) {
+        eventRun.status = "in_progress";
+        eventRun.conclusion = null;
+      } else if (cancellationWaits === 21) {
+        eventRun.status = "completed";
+        eventRun.conclusion = "cancelled";
+      }
+    };
+    return check(
+      "success",
+      true,
+      "Cancelled runtime-images run 605 has no exact repository_dispatch replacement"
+    ).then(() => {
+      onSmokeSleep = null;
+      if (cancellationWaits < 40 || fakeNow - startedAt < 10 * 60 * 1000) {
+        throw new Error(
+          "a cancelled run that becomes active and is cancelled again must receive a fresh five-minute replacement window"
+        );
+      }
+      if (eventRun.id !== 605 || eventRun.status !== "completed" || eventRun.conclusion !== "cancelled") {
+        throw new Error("the cancellation-window regression must reuse the same run ID");
       }
     });
   })

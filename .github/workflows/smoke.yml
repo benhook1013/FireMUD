@@ -737,6 +737,16 @@ jobs:
               );
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
+                cancelledRunId !== null &&
+                (matching?.id !== cancelledRunId ||
+                  matching.status !== "completed" ||
+                  matching.conclusion !== "cancelled")
+              ) {
+                cancelledRunId = null;
+                cancelledRunObservedAt = null;
+              }
+              if (
+                currentIdentity.sourceEvent === "pull_request" &&
                 matching?.status === "completed" &&
                 matching.conclusion === "cancelled"
               ) {

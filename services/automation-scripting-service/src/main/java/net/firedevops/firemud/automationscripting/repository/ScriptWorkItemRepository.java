@@ -494,6 +494,28 @@ public class ScriptWorkItemRepository {
             SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence(safeWatermark).not()));
   }
 
+  /** Counts aged terminal parents retained by a replay result; this is an observability signal. */
+  public long countTerminalRowsBlockedByReplayReceipts(String status, Instant safeWatermark) {
+    Condition agedRows =
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(safeWatermark)));
+    Condition hasReplayResult =
+        notExists(
+                selectOne()
+                    .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
+                    .where(
+                        SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                            .TENANT_ID
+                            .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                            .and(
+                                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
+                                    SCRIPT_WORK_ITEMS.ID))))
+            .not();
+    return dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows.and(hasReplayResult));
+  }
+
   /**
    * Parent-cleanup proof for the current schema. Any retained replay result always blocks its
    * parent, regardless of age, until a receipt-retention horizon exists; handoff rows may be

@@ -991,6 +991,35 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void replayReceiptBlockedMetricCountsOnlyAgedRowsWithRetainedReplayResults() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Integer> countField = DSL.field("count", Integer.class);
+          Result<Record1<Integer>> result = resultDsl.newResult(countField);
+          Record1<Integer> countRow = resultDsl.newRecord(countField);
+          countRow.set(countField, 0);
+          result.add(countRow);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.countTerminalRowsBlockedByReplayReceipts("HANDED_OFF", Instant.EPOCH))
+        .isZero();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "script_work_items", "status", "updated_at", "script_dead_letter_replay_results")
+                    .contains("work_item_id")
+                    .doesNotContain("script_handoff_events"));
+  }
+
+  @Test
   void deadLetterListingAppliesOptionalFiltersBeforeLimit() {
     AtomicReference<String> sql = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
