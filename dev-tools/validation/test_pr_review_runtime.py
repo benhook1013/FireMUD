@@ -2924,7 +2924,8 @@ class RuntimeTest(unittest.TestCase):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
         response_at = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
-        cooldown_until = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        audit_after = now + timedelta(seconds=2)
+        cooldown_until = (now + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
         trigger = {
             "databaseId": 10,
             "author": {"login": "maintainer"},
@@ -2978,14 +2979,29 @@ class RuntimeTest(unittest.TestCase):
             "unresolved_findings": [],
         }
 
+        class SteppedDateTime:
+            @classmethod
+            def now(cls, _timezone):
+                return next(cls.samples)
+
+        SteppedDateTime.samples = iter((now, audit_after))
+
+        def legacy_audit_at_sample(*_args, **kwargs):
+            self.assertIn("now", kwargs)
+            audit_time = kwargs["now"]
+            self.assertEqual(audit_time, now)
+            active = ["rate_limited"] if hosted.parse_timestamp(cooldown_until) > audit_time else []
+            return {**generic_audit, "active_reservations": [*active, "review active"]}
+
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
-            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+            patch.object(observer, "legacy_transition_reauthorization_audit", side_effect=legacy_audit_at_sample),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "load_trigger_record", return_value=record),
             patch.object(hosted, "trigger_state", return_value=state),
             patch.object(observer, "history", return_value=[]),
+            patch("pr_review.runtime.datetime", SteppedDateTime),
         ):
             audit = observer.review_stop_audit(42, anchor)
 
@@ -3026,13 +3042,19 @@ class RuntimeTest(unittest.TestCase):
         )
 
         mismatched_audit = {**generic_audit, "active_reservations": ["review active"]}
+        mismatched_state = SimpleNamespace(
+            **{
+                **vars(state),
+                "cooldown_until": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            }
+        )
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "load_trigger_record", return_value=record),
-            patch.object(hosted, "trigger_state", return_value=state),
+            patch.object(hosted, "trigger_state", return_value=mismatched_state),
             patch.object(observer, "history", return_value=[]),
             self.assertRaisesRegex(ControllerError, "cannot be isolated from other reservations"),
         ):
@@ -3810,12 +3832,10 @@ class RuntimeTest(unittest.TestCase):
                     "live_base_ref": "develop",
                     "live_base_tip": BASE,
                 }
-                audit.assert_called_once_with(
-                    42,
-                    (),
-                    expected_anchor,
-                    allow_historical_unmatched=True,
-                )
+                audit.assert_called_once()
+                self.assertEqual(audit.call_args.args, (42, (), expected_anchor))
+                self.assertEqual(audit.call_args.kwargs["allow_historical_unmatched"], True)
+                self.assertIsInstance(audit.call_args.kwargs["now"], datetime)
                 return result
 
         observed = run_review_stop()

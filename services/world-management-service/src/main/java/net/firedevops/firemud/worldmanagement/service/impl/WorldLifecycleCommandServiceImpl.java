@@ -347,7 +347,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       worldInstance.setTerminationRequestId(terminationRequestId);
       worldInstance.setFailureReason(normalizeBlank(reason));
       worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
-      worldInstance = worldInstanceRepository.save(worldInstance);
+      worldInstanceRepository.save(worldInstance);
     } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(

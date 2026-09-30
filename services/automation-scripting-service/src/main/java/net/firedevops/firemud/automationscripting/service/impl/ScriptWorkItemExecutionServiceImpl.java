@@ -62,6 +62,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
@@ -606,7 +607,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private void markPostEvaluationReconciliationRequired(
       ScriptWorkItem workItem, String reason, Instant now) {
-    if (!"EVALUATING".equals(workItem.getStatus())) {
+    if (!"EVALUATING".equals(workItem.getStatus())
+        && !STATUS_HANDOFF_IN_FLIGHT.equals(workItem.getStatus())) {
       return;
     }
     workItem.setCancelReason("post_evaluation_reconciliation_required:" + reason);
