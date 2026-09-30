@@ -34,6 +34,119 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_stopped_request_projection_never_reads_idle_historical_evidence(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "resolve_cli_capture_context", return_value=(Path(directory), None)),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider, "_payload", side_effect=RuntimeError("broken archived history")) as full,
+            patch.object(evidence, "discover_cli_captures", side_effect=AssertionError("archive read")),
+        ):
+            self.assertEqual(provider.request_history(42, "cli"), [])
+            self.assertEqual(provider.request_history(42, "hosted"), [])
+            full.assert_not_called()
+
+    def test_stopped_terminal_noncounting_reply_needs_no_historical_attribution(self) -> None:
+        record = self._trigger_record()
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "reviewer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": record["trigger"]["created_at"],
+            "url": record["trigger"]["url"],
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/11",
+        }
+        identity = self._payload([trigger, reply])["data"]["repository"]["pullRequest"]
+        identity.pop("reviewThreads")  # Activity proof does not provide complete finding evidence.
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+            patch.object(provider, "_payload", side_effect=RuntimeError("broken old checkpoint")) as full,
+        ):
+            rows = provider.request_history(42, "hosted")
+            self.assertFalse(any(row.get("active_reservation") for row in rows))
+            self.assertFalse(any(row.get("completed") for row in rows))
+            full.assert_not_called()
+
+    def test_stopped_current_unknown_activity_remains_fail_closed(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "resolve_cli_capture_context", return_value=(Path(directory), None)),
+            patch.object(provider, "_request_lock_is_held", return_value=True),
+        ):
+            self.assertTrue(provider.request_history(42, "cli")[0]["active_review"])
+            self.assertTrue(provider.request_history(42, "hosted")[0]["active_reservation"])
+        identity = self._payload()["data"]["repository"]["pullRequest"]
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=self._trigger_record()),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+            patch.object(provider, "_payload", side_effect=ControllerError("current request unverified")),
+            self.assertRaisesRegex(ControllerError, "current request unverified"),
+        ):
+            provider.request_history(42, "hosted")
+
+    def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:
+        now = datetime.now(timezone.utc)
+        record = self._trigger_record(created=(now - timedelta(minutes=2)).isoformat())
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "reviewer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": record["trigger"]["created_at"],
+            "url": record["trigger"]["url"],
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": (now - timedelta(minutes=1)).isoformat(),
+        }
+        identity = self._payload([trigger, reply])["data"]["repository"]["pullRequest"]
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+        ):
+            self.assertTrue(provider.request_history(42, "hosted")[0]["rate_limited"])
+
+    def test_hosted_admission_keeps_other_pr_cooldown_and_releases_expired_quota(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        for reset in (
+            None,
+            datetime.now(timezone.utc) + timedelta(minutes=10),
+            datetime.now(timezone.utc) - timedelta(minutes=1),
+        ):
+            with self.subTest(reset=reset), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                state = SimpleNamespace(state="rate_limited", cooldown_until=reset.isoformat() if reset else None)
+                with (
+                    patch.object(runner, "_repository_current_trigger_paths", return_value={43: [path]}),
+                    patch.object(hosted, "load_trigger_reservation", return_value={"status": "posted"}),
+                    patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                    patch.object(hosted, "trigger_state", return_value=state),
+                ):
+                    if reset is None or reset > datetime.now(timezone.utc):
+                        with self.assertRaisesRegex(ControllerError, "repository cooldown"):
+                            runner._assert_no_other_active_reservations(42, Path(directory))
+                    else:
+                        runner._assert_no_other_active_reservations(42, Path(directory))
+
     def setUp(self) -> None:
         def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":

@@ -291,6 +291,107 @@ def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BAS
 
 
 class ControllerTests(unittest.TestCase):
+    def test_admission_reselects_after_stack_reorder_or_earlier_reopen(self):
+        for channel in ("cli", "hosted"):
+            for mutation in ("reorder", "reopen"):
+                with self.subTest(channel=channel, mutation=mutation):
+                    controller = self.make(
+                        {
+                            1: pr(1, HEAD_1),
+                            2: pr(2, HEAD_2, "feature-1", HEAD_1) if mutation == "reopen" else pr(2, HEAD_2),
+                        },
+                        heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+                    )
+                    controller.set_stack([1, 2])
+                    if mutation == "reopen":
+                        controller.decide_stop(pr=1, channel=channel, reason="no further discovery")
+                    attempted, admitted = [], []
+
+                    def adapter(
+                        target,
+                        *,
+                        admit,
+                        attempted=attempted,
+                        admitted=admitted,
+                        mutation=mutation,
+                        controller=controller,
+                        **kwargs,
+                    ):
+                        attempted.append(target.snapshot.number)
+                        if len(attempted) == 1:
+                            if mutation == "reorder":
+                                controller.set_stack([2, 1])
+                            else:
+                                controller.store.update(lambda state: dataclasses.replace(state, allocations={}))
+                        admit(lambda: admitted.append(target.snapshot.number))
+                        return target.snapshot.number
+
+                    setattr(controller, f"{channel}_adapter", adapter)
+                    result = getattr(controller, f"run_{channel}")()
+                    self.assertEqual(attempted, [1, 2] if mutation == "reorder" else [2, 1])
+                    self.assertEqual(admitted, [result])
+
+    def test_admission_ignores_later_pr_policy_metadata(self):
+        controller = self.make({1: pr(1, HEAD_1), 2: pr(2, HEAD_2)}, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.set_stack([1, 2])
+        selected = controller._target("cli")
+        controller.store.update(
+            lambda state: dataclasses.replace(
+                state, judgments=(Judgment(2, "cli", "reopen", HEAD_2, "later", "later bookkeeping", "patch"),)
+            )
+        )
+        admitted = []
+        controller._admit_review(1, "cli", lambda: admitted.append(1), selection_inputs=selected.selection_inputs)
+        self.assertEqual(admitted, [1])
+
+    def test_stopped_history_is_not_read_for_requests_but_is_retained_for_status(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}, heads={"feature-1": HEAD_1, "feature-2": HEAD_2}
+        )
+        controller.set_stack([1, 2])
+        controller.decide_stop(pr=1, channel="cli", reason="no further discovery")
+        controller.decide_stop(pr=1, channel="hosted", reason="no further discovery")
+        reads = []
+
+        class Provider:
+            def history(self, pr, channel):
+                reads.append((pr, channel))
+                if pr == 1:
+                    raise ControllerError("broken archived checkpoint")
+                return []
+
+            def request_history(self, pr, channel):
+                return []
+
+        controller._evidence_provider = Provider()
+        for channel in ("cli", "hosted"):
+            self.assertEqual(controller._target(channel).pr, 2)
+        self.assertTrue(reads)
+        self.assertTrue(all(number == 2 for number, _ in reads))
+        with self.assertRaisesRegex(ControllerError, "broken archived checkpoint"):
+            controller.status()
+
+    def test_stopped_current_activity_and_hosted_cooldown_still_control_requests(self):
+        for channel, signal, expected in (
+            ("cli", {"active_review": True}, ReviewStatus.HELD),
+            ("hosted", {"active_reservation": True}, ReviewStatus.HELD),
+            ("hosted", {"rate_limited": True}, ReviewStatus.RATE_LIMITED),
+        ):
+            with self.subTest(channel=channel, signal=signal):
+                controller = self.make(
+                    {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+                    heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+                )
+                controller.set_stack([1, 2])
+                controller.decide_stop(pr=1, channel=channel, reason="no more discovery")
+                controller._evidence_provider.backing[(1, channel)] = [
+                    {"pr": 1, "head": HEAD_1, "checkpoint": "current", **signal}
+                ]
+                target = controller._target(channel)
+                self.assertEqual((target.pr, target.status), (1, expected))
+                if "rate_limited" in signal:
+                    self.assertNotEqual(controller._target("cli").status, ReviewStatus.RATE_LIMITED)
+
     def make(self, values, evidence=None, *, heads=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -2429,9 +2530,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["stop_basis"], "direct_human")
         row = controller.status()["prs"][0]
         self.assertEqual(row["channels"]["hosted"], "HUMAN_STOPPED")
-        self.assertEqual(
-            row["review_obligations"]["hosted"], ["one unresolved current review thread"]
-        )
+        self.assertEqual(row["review_obligations"]["hosted"], ["one unresolved current review thread"])
 
     def test_hosted_stop_preserves_current_head_cli_accepted_finding(self):
         controller = self.make(
@@ -3275,9 +3374,7 @@ class ControllerTests(unittest.TestCase):
             reason="accepted findings are not yet published",
         )
         self.assertEqual(stopped["stop_basis"], "allocated")
-        self.assertIn(
-            "allocated-dry", controller.status()["prs"][0]["review_obligations"]["hosted"]
-        )
+        self.assertIn("allocated-dry", controller.status()["prs"][0]["review_obligations"]["hosted"])
 
     def test_ineligible_completed_observation_does_not_invalidate_one_valid_allocation_result(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
@@ -3446,9 +3543,7 @@ class ControllerTests(unittest.TestCase):
             reason="findings remain on the promised head",
         )
         self.assertEqual(stopped["stop_basis"], "allocated")
-        self.assertIn(
-            "allocated-findings", controller.status()["prs"][0]["review_obligations"]["hosted"]
-        )
+        self.assertIn("allocated-findings", controller.status()["prs"][0]["review_obligations"]["hosted"])
 
     def test_accepted_fix_head_can_be_stopped_after_publication(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}

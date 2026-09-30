@@ -62,6 +62,10 @@ class StaleReviewTarget(ControllerError):
     """A direct-to-default target's base advanced before review could begin."""
 
 
+class _SelectionChanged(ControllerError):
+    """Durable selection inputs changed before provider admission."""
+
+
 GIT_TIMEOUT_SECONDS = 30
 MAX_BASE_RESELECTIONS = 2
 LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
@@ -300,6 +304,7 @@ class Target:
     target: ReviewTarget
     anchor: AnchorFacts
     provisional: bool = False
+    selection_inputs: tuple[Any, ...] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -4006,6 +4011,25 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
+        for allocation in state.allocations.values():
+            if allocation.pr not in state.ordered_prs or allocation.stop_basis is None:
+                continue
+            request_history = getattr(self._evidence_provider, "request_history", None)
+            if callable(request_history):
+                values = list(request_history(allocation.pr, allocation.channel))
+            else:
+                values = [
+                    value
+                    for value in _history(self._evidence_provider, allocation.pr, policy.Channel(allocation.channel))
+                    if _field(value, "active_review") is True
+                    or _field(value, "active_reservation") is True
+                    or _field(value, "rate_limited") is True
+                    or (
+                        str(_field(value, "checkpoint") or "").startswith("trigger:")
+                        and _field(value, "terminal") is not True
+                    )
+                ]
+            history_cache[(allocation.pr, allocation.channel)] = values
         live, reconciliation = self._reconciliation(state, history_cache=history_cache)
         for pr in state.ordered_prs:
             problem = self._head_repository_problem(live[pr])
@@ -4074,6 +4098,16 @@ class ReviewController:
             stop_audit_cache=stop_audit_cache,
             history_cache=history_cache,
         )
+        if selected == policy.Channel.HOSTED:
+            for number, values in history.items():
+                if any(_field(value, "rate_limited") is True for value in values):
+                    decision = policy.ChannelDecision(
+                        selected,
+                        number,
+                        policy.ReviewStatus.RATE_LIMITED,
+                        f"Hosted repository cooldown remains active on PR #{number}",
+                    )
+                    break
         completed_allocation_override = False
         if decision.target is None:
             if not (
@@ -4137,6 +4171,7 @@ class ReviewController:
             selected_target,
             anchor,
             decision.provisional,
+            self._selection_inputs(state, pr, selected.value),
         )
 
     @staticmethod
@@ -5063,13 +5098,37 @@ class ReviewController:
     def select_target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> dict[str, Any]:
         return self._target(channel, expected_pr).as_dict()
 
-    def _admit_review(self, pr: int, channel: str, reserve: Callable[[], None]) -> None:
+    @staticmethod
+    def _selection_inputs(state: ReviewState, pr: int, channel: str) -> tuple[Any, ...]:
+        """Snapshot only durable selection inputs through the chosen PR.
+
+        Later PR bookkeeping cannot change which earlier PR should be admitted.
+        Both channels' allocations affect the cross-channel evidence projection.
+        This snapshot is ephemeral; the existing state remains the only authority.
+        """
+
+        prefix = state.ordered_prs[: state.ordered_prs.index(pr) + 1] if pr in state.ordered_prs else ()
+        numbers = set(prefix)
+        return (
+            prefix,
+            {key: value for key, value in state.allocations.items() if value.pr in numbers},
+            {key: value for key, value in state.policy_overrides.items() if key in {f"{n}:{channel}" for n in numbers}},
+            tuple(item for item in state.judgments if item.pr in numbers),
+            tuple(item for item in state.reconciliations if item.pr in numbers),
+            tuple(item for item in state.legacy_transitions if item.pr in numbers),
+        )
+
+    def _admit_review(
+        self, pr: int, channel: str, reserve: Callable[[], None], *, selection_inputs: tuple[Any, ...] | None = None
+    ) -> None:
         """Serialize admission with human decisions, releasing before execution."""
 
         def admit(state: ReviewState) -> ReviewState:
             allocation = state.allocations.get(f"{pr}:{channel}")
             if pr not in state.ordered_prs or (allocation is not None and allocation.stop_basis is not None):
                 raise ControllerError(f"{channel} review discovery is stopped for PR #{pr}")
+            if selection_inputs is not None and self._selection_inputs(state, pr, channel) != selection_inputs:
+                raise _SelectionChanged("review selection changed before admission")
             reserve()
             return state
 
@@ -5087,9 +5146,16 @@ class ReviewController:
                 return self.hosted_adapter(
                     selected.target,
                     expect_pr=expected_pr,
-                    admit=lambda reserve, pr=selected.pr: self._admit_review(pr, "hosted", reserve),
+                    admit=lambda reserve, selected=selected: self._admit_review(
+                        selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
+                    ),
                     **kwargs,
                 )
+            except _SelectionChanged:
+                if attempt == MAX_BASE_RESELECTIONS:
+                    raise
+                selected = self._target(policy.Channel.HOSTED, expected_pr)
+                self._ensure_runnable(selected)
             except StaleReviewTarget:
                 if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                     raise
@@ -5141,9 +5207,15 @@ class ReviewController:
                     selected.target,
                     allow_unreconciled=allow_unreconciled,
                     reason=reason,
-                    admit=lambda reserve, pr=selected.pr: self._admit_review(pr, "cli", reserve),
+                    admit=lambda reserve, selected=selected: self._admit_review(
+                        selected.pr, "cli", reserve, selection_inputs=selected.selection_inputs
+                    ),
                     **kwargs,
                 )
+            except _SelectionChanged:
+                if attempt == MAX_BASE_RESELECTIONS:
+                    raise
+                selected = self._target(policy.Channel.CLI, expected_pr)
             except StaleReviewTargetError as error:
                 if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                     raise ControllerError(str(error)) from error
