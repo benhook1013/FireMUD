@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -38,13 +37,13 @@ import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandServi
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification =
-        "Spring-managed collaborators are stored internally for world lifecycle commands.")
 public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandService {
   private static final Logger logger =
       LoggingUtil.getLogger(WorldLifecycleCommandServiceImpl.class);
@@ -69,6 +68,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   private final GameDesignClient gameDesignClient;
   private final EntityManagementClient entityManagementClient;
   private final MeterRegistry meterRegistry;
+  private final TransactionOperations transactionOperations;
 
   private Counter prepareCounter;
   private Counter activateCounter;
@@ -88,7 +88,40 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       WorldProperties worldProperties,
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      PlatformTransactionManager transactionManager) {
+    this(
+        worldInstanceRepository,
+        regionInstanceRepository,
+        zoneRepository,
+        zoneInstanceRepository,
+        roomRepository,
+        roomExitRepository,
+        roomInstanceRepository,
+        roomInstanceExitRepository,
+        worldEventRepository,
+        worldProperties,
+        gameDesignClient,
+        entityManagementClient,
+        meterRegistry,
+        transactionTemplate(transactionManager));
+  }
+
+  WorldLifecycleCommandServiceImpl(
+      WorldInstanceRepository worldInstanceRepository,
+      RegionInstanceRepository regionInstanceRepository,
+      ZoneRepository zoneRepository,
+      ZoneInstanceRepository zoneInstanceRepository,
+      RoomRepository roomRepository,
+      RoomExitRepository roomExitRepository,
+      RoomInstanceRepository roomInstanceRepository,
+      RoomInstanceExitRepository roomInstanceExitRepository,
+      WorldEventRepository worldEventRepository,
+      WorldProperties worldProperties,
+      GameDesignClient gameDesignClient,
+      EntityManagementClient entityManagementClient,
+      MeterRegistry meterRegistry,
+      TransactionOperations transactionOperations) {
     this.worldInstanceRepository = worldInstanceRepository;
     this.regionInstanceRepository = regionInstanceRepository;
     this.zoneRepository = zoneRepository;
@@ -102,6 +135,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     this.gameDesignClient = gameDesignClient;
     this.entityManagementClient = entityManagementClient;
     this.meterRegistry = meterRegistry;
+    this.transactionOperations = transactionOperations;
   }
 
   WorldLifecycleCommandServiceImpl(
@@ -130,7 +164,15 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         worldProperties,
         gameDesignClient,
         null,
-        meterRegistry);
+        meterRegistry,
+        (TransactionOperations) null);
+  }
+
+  private static TransactionTemplate transactionTemplate(
+      PlatformTransactionManager transactionManager) {
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return transactionTemplate;
   }
 
   @PostConstruct
@@ -284,6 +326,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   }
 
   @Override
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
   @Timed(value = "world.terminateInstance")
   public WorldInstanceLifecycleSnapshotDto terminateWorldInstance(
       long tenantId,
@@ -304,7 +347,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       worldInstance.setTerminationRequestId(terminationRequestId);
       worldInstance.setFailureReason(normalizeBlank(reason));
       worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
-      worldInstance = worldInstanceRepository.save(worldInstance);
+      worldInstanceRepository.save(worldInstance);
     } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(
@@ -323,17 +366,41 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw new IllegalArgumentException(
           cleanupResponse.getError().getCode() + ": " + cleanupResponse.getError().getMessage());
     }
-    cleanupWorldRuntimeState(tenantId, gameInstanceId);
-    worldInstance.setStatus(STATUS_TERMINATED);
-    worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
-    worldInstance.setTerminatedAt(Instant.now());
-    WorldInstance saved = worldInstanceRepository.save(worldInstance);
+    WorldInstanceLifecycleSnapshotDto terminatedSnapshot =
+        executeLocalTermination(
+            () -> {
+              WorldInstance finalWorldInstance = requireWorldInstance(tenantId, gameInstanceId);
+              if (!terminationRequestId.equals(finalWorldInstance.getTerminationRequestId())) {
+                throw new IllegalArgumentException(
+                    "INVALID_WORLD_INSTANCE_STATE: world instance termination request changed before finalization");
+              }
+              if (STATUS_TERMINATED.equals(finalWorldInstance.getStatus())) {
+                return snapshot(finalWorldInstance);
+              }
+              if (!STATUS_TERMINATING.equals(finalWorldInstance.getStatus())) {
+                throw new IllegalArgumentException(
+                    "INVALID_WORLD_INSTANCE_STATE: world instance is not terminating during finalization");
+              }
+              cleanupWorldRuntimeState(tenantId, gameInstanceId);
+              finalWorldInstance.setStatus(STATUS_TERMINATED);
+              finalWorldInstance.setLifecycleEpoch(finalWorldInstance.getLifecycleEpoch() + 1L);
+              finalWorldInstance.setTerminatedAt(Instant.now());
+              return snapshot(worldInstanceRepository.save(finalWorldInstance));
+            });
     logger.info(
         "Terminated world instance tenant={} gameInstanceId={} terminationRequestId={}",
         tenantId,
         gameInstanceId,
         terminationRequestId);
-    return snapshot(saved);
+    return terminatedSnapshot;
+  }
+
+  private WorldInstanceLifecycleSnapshotDto executeLocalTermination(
+      java.util.function.Supplier<WorldInstanceLifecycleSnapshotDto> termination) {
+    if (transactionOperations == null) {
+      return termination.get();
+    }
+    return transactionOperations.execute(status -> termination.get());
   }
 
   private void cleanupWorldRuntimeState(long tenantId, long gameInstanceId) {

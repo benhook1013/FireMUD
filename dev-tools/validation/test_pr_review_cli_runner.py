@@ -254,7 +254,7 @@ class FakeCommands:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial git\n", stderr=b"timed out\n")
             directory_index = args.index("-C")
             command_root = Path(args[directory_index + 1])
-            git_args = args[directory_index + 2:]
+            git_args = args[directory_index + 2 :]
             if git_args[:2] == ["merge-tree", "--write-tree"]:
                 return CompletedProcess(args, 0, f"{self.merge_tree}\n", "")
             if command_root == self.root and git_args[:2] == ["worktree", "add"]:
@@ -281,9 +281,7 @@ class FakeCommands:
             published_patch_args = tuple(patch_diff_args(PARENT, HEAD))
             if patch_args in {candidate_patch_args, published_patch_args}:
                 patch_bytes = (
-                    self.patch_bytes
-                    if patch_args == candidate_patch_args
-                    else f"candidate patch {HEAD}\n".encode()
+                    self.patch_bytes if patch_args == candidate_patch_args else f"candidate patch {HEAD}\n".encode()
                 )
                 output = patch_bytes if not text else patch_bytes.decode("utf-8")
                 return CompletedProcess(args, 0, output, b"" if not text else "")
@@ -412,6 +410,38 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_admission_callback_must_reserve_before_attempt_or_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            commands.records = records
+            callback_calls = []
+
+            def admit_without_reserving(reserve):
+                callback_calls.append(reserve)
+
+            with self.assertRaisesRegex(ReviewRunnerError, "without reserving"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                    admit=admit_without_reserving,
+                )
+
+            self.assertEqual(len(callback_calls), 1)
+            self.assertEqual(records.attempt_history(42), [])
+            self.assertEqual(
+                [call for call in commands.calls if call[0][0] == "coderabbit"],
+                [],
+            )
+
     def test_sqlite_attempt_is_written_before_provider_and_completed_with_json_events(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -428,7 +458,11 @@ class CliReviewRunnerTests(unittest.TestCase):
             commands = FakeCommands(root, review_output=output)
             commands.records = records
             result = run_cli_review(
-                target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                records=records,
             )
             attempts = records.attempt_history(result.pull_request)
             self.assertEqual(len(attempts), 1)
@@ -442,9 +476,12 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(attempts[0]["duration_seconds"], result.duration_seconds)
             self.assertEqual(attempt["metadata"]["candidate_sha"], result.candidate_sha)
             with sqlite3.connect(database) as connection:
-                kinds = {row[0] for row in connection.execute(
-                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)
-                )}
+                kinds = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (result.run_id,)
+                    )
+                }
             self.assertEqual(kinds, {"cli_events", "cli_diagnostic", "metadata"})
 
     def test_runner_accepts_unicode_line_separators_inside_json_finding(self):
@@ -489,17 +526,21 @@ class CliReviewRunnerTests(unittest.TestCase):
 
     def test_successful_capture_recovers_the_original_started_attempt_after_sql_failure(self):
         output = (
-            json.dumps({
-                "type": "finding",
-                "codegenInstructions": "Review comment at @src/Representative.java:1\nUse the safer path.",
-            })
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": "Review comment at @src/Representative.java:1\nUse the safer path.",
+                }
+            )
             + "\n"
-            + json.dumps({
-                "type": "complete",
-                "status": "review_completed",
-                "findings": 1,
-                "reviewedFiles": ["src/Representative.java"],
-            })
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                }
+            )
             + "\n"
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -530,7 +571,11 @@ class CliReviewRunnerTests(unittest.TestCase):
                 patch("pr_review.cli_runner._atomic_json", side_effect=migrate_before_final_metadata),
             ):
                 result = run_cli_review(
-                    target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
                 )
 
             self.assertIn("was not saved", result.warning)
@@ -577,8 +622,11 @@ class CliReviewRunnerTests(unittest.TestCase):
 
                 with patch.object(records, "start_attempt", side_effect=failure):
                     result = run_cli_review(
-                        target(), github=FakeGitHub(), source_root=root,
-                        runner=commands, records=records,
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=commands,
+                        records=records,
                     )
 
                 self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
@@ -614,8 +662,11 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertRaisesRegex(ReviewRunnerError, "target changed during setup"),
             ):
                 run_cli_review(
-                    target(), github=FakeGitHub(), source_root=root,
-                    runner=commands, records=records,
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
                 )
 
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
@@ -658,8 +709,11 @@ class CliReviewRunnerTests(unittest.TestCase):
                     else:
                         stack.enter_context(patch.object(records, "finish_attempt", side_effect=failure))
                     result = run_cli_review(
-                        target(), github=FakeGitHub(), source_root=root,
-                        runner=commands, records=records,
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=commands,
+                        records=records,
                     )
 
                 self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
@@ -693,8 +747,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 0,
             )
             attempt = next(
-                item for item in records.attempt_history(result.pull_request)
-                if item["attempt_id"] == result.run_id
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
             )
             self.assertEqual(attempt["state"], "failed")
             self.assertEqual(attempt["exit_status"], 0)
@@ -707,17 +760,21 @@ class CliReviewRunnerTests(unittest.TestCase):
     def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
         long_headline = " ".join(["Bearer x"] * 40)
         output = (
-            json.dumps({
-                "type": "finding",
-                "codegenInstructions": long_headline,
-            })
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": long_headline,
+                }
+            )
             + "\n"
-            + json.dumps({
-                "type": "complete",
-                "status": "review_completed",
-                "findings": 1,
-                "reviewedFiles": ["src/Representative.java"],
-            })
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                }
+            )
             + "\n"
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -748,20 +805,23 @@ class CliReviewRunnerTests(unittest.TestCase):
 
     def test_control_characters_in_cli_headline_are_normalized_before_recording(self):
         output = (
-            json.dumps({
-                "type": "finding",
-                "codegenInstructions": (
-                    "Review comment at @src/Representative.java:1\n"
-                    "Keep\u0000 the \u001b[31msafer\u001b[0m path."
-                ),
-            })
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": (
+                        "Review comment at @src/Representative.java:1\nKeep\u0000 the \u001b[31msafer\u001b[0m path."
+                    ),
+                }
+            )
             + "\n"
-            + json.dumps({
-                "type": "complete",
-                "status": "review_completed",
-                "findings": 1,
-                "reviewedFiles": ["src/Representative.java"],
-            })
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                }
+            )
             + "\n"
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -773,8 +833,11 @@ class CliReviewRunnerTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             result = run_cli_review(
-                target(), github=FakeGitHub(), source_root=root,
-                runner=FakeCommands(root, review_output=output), records=records,
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output),
+                records=records,
             )
 
             with sqlite3.connect(database) as connection:
@@ -786,8 +849,7 @@ class CliReviewRunnerTests(unittest.TestCase):
 
     def test_unrecordable_success_capture_is_terminally_non_counting(self):
         output = (
-            '{"type":"complete","status":"review_completed","findings":0,'
-            '"reviewedFiles":["src/Representative.java"]}\n'
+            '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/Representative.java"]}\n'
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -804,7 +866,11 @@ class CliReviewRunnerTests(unittest.TestCase):
                 side_effect=ReviewRecordsError("simulated archive failure"),
             ):
                 result = run_cli_review(
-                    target(), github=FakeGitHub(), source_root=root, runner=commands, records=records,
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
                 )
             self.assertIn("was not saved", result.warning)
             capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
@@ -813,9 +879,7 @@ class CliReviewRunnerTests(unittest.TestCase):
 
             report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
             self.assertEqual(report["recovered"], [])
-            self.assertEqual(
-                report["terminally_classified"], [{"run_id": run_id, "pr": "42"}]
-            )
+            self.assertEqual(report["terminally_classified"], [{"run_id": run_id, "pr": "42"}])
             self.assertEqual(records.attempt(run_id)["state"], "failed")
             self.assertEqual(records.history(42)["runs"], [])
 
@@ -828,7 +892,9 @@ class CliReviewRunnerTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             result = run_cli_review(
-                target(), github=FakeGitHub(), source_root=root,
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
                 runner=FakeCommands(
                     root,
                     review_output="provider interrupted\n",
@@ -909,16 +975,15 @@ class CliReviewRunnerTests(unittest.TestCase):
             records.bootstrap()
 
             with (
-                patch.object(
-                    records, "finish_attempt", side_effect=ReviewRecordsError("SQLite finish failed")
-                ),
-                self.assertRaisesRegex(
-                    ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"
-                ),
+                patch.object(records, "finish_attempt", side_effect=ReviewRecordsError("SQLite finish failed")),
+                self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"),
             ):
                 run_cli_review(
-                    target(), github=FakeGitHub(), source_root=root,
-                    runner=FakeCommands(root, timeout_review=True), records=records,
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_review=True),
+                    records=records,
                     review_timeout_seconds=13,
                 )
 
@@ -1334,6 +1399,74 @@ class CliReviewRunnerTests(unittest.TestCase):
             capture = evidence.load_cli_capture(checkpoint, "owner/repo", 42, root / ".git")
             self.assertEqual(capture.metadata["review_duration_seconds"], "2")
 
+    def test_human_stop_preserves_running_cli_capture_and_rejects_next_admission(self):
+        import test_pr_review_controller as controller_fixtures
+        from pr_review.controller import ControllerError, ReviewController
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common = root / ".git"
+            common.mkdir()
+            controller = ReviewController(
+                store=SqliteStateStore(common / "firemud" / "pr-review-stack.sqlite3"),
+                repository="owner/repo",
+                github=controller_fixtures.FakeGitHub({42: controller_fixtures.pr(42, HEAD)}),
+                git=controller_fixtures.FakeGit({"feature-42": HEAD}),
+                evidence={},
+            )
+            controller.set_stack([42])
+            started, finish = threading.Event(), threading.Event()
+            commands = FakeCommands(
+                root,
+                review_started=started,
+                allow_review_finish=finish,
+                review_output="review output retained after human stop\n",
+            )
+            results, errors = [], []
+
+            def run():
+                try:
+                    results.append(
+                        run_cli_review(
+                            target(),
+                            github=FakeGitHub(),
+                            source_root=root,
+                            runner=commands,
+                            admit=lambda reserve: controller._admit_review(42, "cli", reserve),
+                        )
+                    )
+                except (ControllerError, ReviewRunnerError, OSError) as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            try:
+                self.assertTrue(started.wait(timeout=3))
+                stopped = controller.decide_stop(pr=42, channel="cli", reason="human overrides unfinished taper")
+                self.assertIsNone(stopped["reviewed_head"])
+                self.assertTrue(thread.is_alive())
+                with self.assertRaisesRegex(ReviewRunnerError, "already running"):
+                    run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            finally:
+                finish.set()
+                thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 1)
+            self.assertEqual((results[0].capture_dir / "exit-status").read_text().strip(), "0")
+            self.assertTrue((results[0].capture_dir / "capture-complete").exists())
+            self.assertIn("retained after human stop", (results[0].capture_dir / "stdout").read_text())
+            self.assertEqual(controller.store.load().allocations["42:cli"].stop_basis, "direct_human")
+            with self.assertRaisesRegex(ControllerError, "discovery is stopped"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    admit=lambda reserve: controller._admit_review(42, "cli", reserve),
+                )
+            self.assertEqual(sum(call[0][0] == "coderabbit" for call in commands.calls), 1)
+
     def test_repository_lock_rejects_a_concurrent_cli_process(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1368,6 +1501,121 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("already running", errors[0])
             self.assertFalse(commands.overlap)
+
+    def test_cli_lock_owner_marker_matches_active_provider_and_replaces_stale_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(f"run_id=run.{'0' * 32}\n", encoding="utf-8")
+            commands = FakeCommands(root)
+            observed_markers = []
+            original_run = commands.run
+
+            def observe_provider(args, **kwargs):
+                if args[0] == "coderabbit":
+                    observed_markers.append(lock_path.read_text(encoding="utf-8"))
+                return original_run(args, **kwargs)
+
+            commands.run = observe_provider
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+            )
+
+            self.assertEqual(observed_markers, [f"run_id={result.run_id}\n"])
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
+
+    def test_cli_lock_owner_marker_clears_after_failed_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(f"run_id=run.{'1' * 32}\n", encoding="utf-8")
+            github = FakeGitHub()
+            github.mergeable = "CONFLICTING"
+            observed_markers = []
+            original_pull_request = github.pull_request
+
+            def observe_preflight(number):
+                observed_markers.append(lock_path.read_text(encoding="utf-8"))
+                return original_pull_request(number)
+
+            github.pull_request = observe_preflight
+            commands = FakeCommands(root)
+            with self.assertRaisesRegex(ReviewRunnerError, "not mergeable"):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            self.assertTrue(observed_markers)
+            self.assertTrue(
+                all(
+                    marker.startswith("run_id=run.")
+                    and len(marker) == len("run_id=run.") + 32 + 1
+                    and marker.endswith("\n")
+                    for marker in observed_markers
+                )
+            )
+            self.assertEqual(len(set(observed_markers)), 1)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_owner_cleanup_failure_preserves_success_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")):
+                result = run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(result.pull_request, 42)
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def test_cli_owner_cleanup_failure_preserves_primary_error_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            github.mergeable = "CONFLICTING"
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with (
+                patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")),
+                self.assertRaisesRegex(ReviewRunnerError, "not mergeable"),
+            ):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_lock_owner_marker_write_failure_prevents_preflight_and_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            with (
+                patch("pr_review.cli_runner._write_cli_lock_owner", side_effect=OSError("disk unavailable")),
+                patch.object(github, "pull_request", wraps=github.pull_request) as pull_request,
+                self.assertRaisesRegex(ReviewRunnerError, "could not persist active CLI run owner"),
+            ):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            pull_request.assert_not_called()
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
 
     def test_cli_holds_hosted_lock_during_preflight_and_releases_it_for_provider(self):
         with tempfile.TemporaryDirectory() as directory:

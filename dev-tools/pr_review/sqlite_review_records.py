@@ -106,7 +106,10 @@ class FindingObservation:
         _bounded_text(self.title, "title", maximum=300)
         _bounded_text(self.detail, "detail", maximum=1000, allow_empty=True)
         if not isinstance(self.disposition, str) or self.disposition not in {
-            "accepted", "routed", "rejected", "unresolved"
+            "accepted",
+            "routed",
+            "rejected",
+            "unresolved",
         }:
             raise ReviewRecordsError("finding disposition is invalid")
         if self.target_pr is not None:
@@ -124,10 +127,28 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 )
 _SECRET_FIELD_SUFFIXES = (
-    "password", "passwd", "secret", "token", "credential", "credentials",
-    "apikey", "accesskey", "secretkey", "privatekey", "signingkey", "encryptionkey",
-    "accesstoken", "refreshtoken", "authtoken", "oauthtoken", "clientsecret",
-    "clienttoken", "githubtoken", "bearertoken", "sessiontoken", "idtoken",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "apikey",
+    "accesskey",
+    "secretkey",
+    "privatekey",
+    "signingkey",
+    "encryptionkey",
+    "accesstoken",
+    "refreshtoken",
+    "authtoken",
+    "oauthtoken",
+    "clientsecret",
+    "clienttoken",
+    "githubtoken",
+    "bearertoken",
+    "sessiontoken",
+    "idtoken",
 )
 _SECRET_FIELD_TRAILING_QUALIFIERS = ("value", "material", "hash", "raw", "plaintext", "encoded", "encrypted")
 _REDACTED_CREDENTIAL = "[redacted credential]"
@@ -148,6 +169,24 @@ def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = F
     return value
 
 
+def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> tuple[str, ...]:
+    """Validate coverage text while retaining bounded exact historical notes."""
+
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
+    if len(values) > 20:
+        raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+    matches_retained = tuple(values) == tuple(retained)
+    return tuple(
+        _bounded_text(
+            item,
+            "coverage limit",
+            maximum=1000 if matches_retained else 200,
+        )
+        for item in values
+    )
+
+
 def _is_secret_field(key: str) -> bool:
     """Return whether a JSON field name semantically identifies secret material."""
 
@@ -159,7 +198,7 @@ def _is_secret_field(key: str) -> bool:
         )
         if qualifier is None:
             break
-        normalized = normalized[:-len(qualifier)]
+        normalized = normalized[: -len(qualifier)]
     return any(normalized.endswith(suffix) for suffix in _SECRET_FIELD_SUFFIXES)
 
 
@@ -380,11 +419,24 @@ class SqliteReviewRecords:
                 if row[0] not in {4, 5}:
                     raise ReviewRecordsError(f"unsupported review-records schema version {row[0]}")
                 existing = self._table_names(connection)
-                added = ({"review_attempts", "review_artifacts", "source_decision_corrections",
-                          "provider_origins", "imported_artifacts", "historical_provider_gaps",
-                          "historical_gap_artifacts"}
-                         if row[0] == 4 else {"provider_origins", "imported_artifacts",
-                                               "historical_provider_gaps", "historical_gap_artifacts"})
+                added = (
+                    {
+                        "review_attempts",
+                        "review_artifacts",
+                        "source_decision_corrections",
+                        "provider_origins",
+                        "imported_artifacts",
+                        "historical_provider_gaps",
+                        "historical_gap_artifacts",
+                    }
+                    if row[0] == 4
+                    else {
+                        "provider_origins",
+                        "imported_artifacts",
+                        "historical_provider_gaps",
+                        "historical_gap_artifacts",
+                    }
+                )
                 required = _RECORDS_TABLES - added
                 if not required <= existing or added & existing:
                     raise ReviewRecordsError("review-records schema is incomplete or partially upgraded")
@@ -424,6 +476,8 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("attempt channel is invalid")
         if candidate_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha):
             raise ReviewRecordsError("attempt candidate SHA is invalid")
+        if channel == "subagent" and metadata is not None and "coverage_limits" in metadata:
+            _coverage_limits(metadata["coverage_limits"])
         started_at_was_supplied = started_at is not None
         started_at = _timestamp(started_at, "attempt start")
         try:
@@ -484,17 +538,16 @@ class SqliteReviewRecords:
         if exit_status is not None and type(exit_status) is not int:
             raise ReviewRecordsError("attempt exit status is invalid")
         identifiers = []
-        for label, value in (("trigger ID", trigger_id), ("provider review ID", provider_review_id),
-                             ("checkpoint ID", checkpoint_id)):
+        for label, value in (
+            ("trigger ID", trigger_id),
+            ("provider review ID", provider_review_id),
+            ("checkpoint ID", checkpoint_id),
+        ):
             identifiers.append(None if value is None else _safe_identifier(value, label, maximum=100))
         trigger_id, provider_review_id, checkpoint_id = identifiers
         diagnostic = _bounded_text(diagnostic, "attempt diagnostic", maximum=1000, allow_empty=True)
-        archived = {
-            kind: _archive_artifact(kind, content)
-            for kind, content in (artifacts or {}).items()
-        }
-        with (self._write_connection() if _connection is None
-              else contextlib.nullcontext(_connection)) as connection:
+        archived = {kind: _archive_artifact(kind, content) for kind, content in (artifacts or {}).items()}
+        with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
             existing = connection.execute(
                 "SELECT state, finished_at, duration_seconds, exit_status, trigger_id, provider_review_id, "
                 "checkpoint_id, diagnostic FROM review_attempts WHERE attempt_id = ?",
@@ -502,13 +555,22 @@ class SqliteReviewRecords:
             ).fetchone()
             if existing is None:
                 raise ReviewRecordsError("attempt ID is not registered")
-            expected = (state, finished_at, duration_seconds, exit_status, trigger_id,
-                        provider_review_id, checkpoint_id, diagnostic)
+            expected = (
+                state,
+                finished_at,
+                duration_seconds,
+                exit_status,
+                trigger_id,
+                provider_review_id,
+                checkpoint_id,
+                diagnostic,
+            )
             if existing[0] != "started":
                 stored = {
-                    row[0]: (row[1], row[2], row[3]) for row in connection.execute(
-                        "SELECT kind, content, source_sha256, redactions FROM review_artifacts "
-                        "WHERE attempt_id = ?", (attempt_id,)
+                    row[0]: (row[1], row[2], row[3])
+                    for row in connection.execute(
+                        "SELECT kind, content, source_sha256, redactions FROM review_artifacts WHERE attempt_id = ?",
+                        (attempt_id,),
                     )
                 }
                 existing_content = tuple(existing)
@@ -547,10 +609,21 @@ class SqliteReviewRecords:
                 (pr,),
             ).fetchall()
         return [
-            {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2], "state": row[3],
-             "started_at": row[4], "finished_at": row[5], "duration_seconds": row[6],
-             "exit_status": row[7], "trigger_id": row[8], "provider_review_id": row[9],
-             "checkpoint_id": row[10], "run_id": row[11], "diagnostic": row[12]}
+            {
+                "attempt_id": row[0],
+                "channel": row[1],
+                "candidate_sha": row[2],
+                "state": row[3],
+                "started_at": row[4],
+                "finished_at": row[5],
+                "duration_seconds": row[6],
+                "exit_status": row[7],
+                "trigger_id": row[8],
+                "provider_review_id": row[9],
+                "checkpoint_id": row[10],
+                "run_id": row[11],
+                "diagnostic": row[12],
+            }
             for row in rows
         ]
 
@@ -602,15 +675,12 @@ class SqliteReviewRecords:
         return {kind: content for kind, content in rows}
 
     @_translate_database_errors
-    def link_attempt_run(
-        self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None
-    ) -> None:
+    def link_attempt_run(self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None) -> None:
         """Bind one completed, attributable source run to its exact attempt."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
-        with (self._write_connection() if _connection is None
-              else contextlib.nullcontext(_connection)) as connection:
+        with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
             attempt = connection.execute(
                 "SELECT source_pr, channel, state, run_id FROM review_attempts WHERE attempt_id = ?",
                 (attempt_id,),
@@ -622,9 +692,7 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("attempt and completed source run do not match")
             if attempt[3] not in (None, run_id):
                 raise ReviewRecordsError("attempt is already linked to a different run")
-            connection.execute(
-                "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id)
-            )
+            connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id))
 
     @_translate_database_errors
     def complete_attempt_run(
@@ -655,9 +723,7 @@ class SqliteReviewRecords:
             recorded = self.record_run(_connection=connection, **run)
             self.link_attempt_run(attempt_id, attempt_id, _connection=connection)
             if finalize_empty:
-                self.finalize_run(
-                    attempt_id, finalized_at=run.get("finished_at"), _connection=connection
-                )
+                self.finalize_run(attempt_id, finalized_at=run.get("finished_at"), _connection=connection)
         return {"attempt": finished, "run": recorded}
 
     @_translate_database_errors
@@ -681,18 +747,23 @@ class SqliteReviewRecords:
         with self._write_connection() as connection:
             attempt = connection.execute(
                 "SELECT source_pr, channel, candidate_sha, state, run_id, trigger_id, "
-                "provider_review_id FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+                "provider_review_id FROM review_attempts WHERE attempt_id = ?",
+                (attempt_id,),
             ).fetchone()
             if (
-                attempt is None or attempt[1] != "hosted" or attempt[3] != "completed"
-                or attempt[4] is not None or attempt[5] is None or attempt[6] is None
-                or attempt[0] != run.get("source_pr") or attempt[2] != run.get("source_head")
+                attempt is None
+                or attempt[1] != "hosted"
+                or attempt[3] != "completed"
+                or attempt[4] is not None
+                or attempt[5] is None
+                or attempt[6] is None
+                or attempt[0] != run.get("source_pr")
+                or attempt[2] != run.get("source_head")
             ):
                 raise ReviewRecordsError("completed Hosted attempt is not recoverable by this run")
             archived = {
-                row[0] for row in connection.execute(
-                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
-                )
+                row[0]
+                for row in connection.execute("SELECT kind FROM review_artifacts WHERE attempt_id = ?", (attempt_id,))
             }
             if not {"hosted_review", "hosted_comments", "metadata"} <= archived:
                 raise ReviewRecordsError("completed Hosted attempt lacks its archived evidence")
@@ -741,10 +812,7 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if gap is not None and gap != (channel, checkpoint_fingerprint):
                     raise ReviewRecordsError("provider origin conflicts with historical checkpoint evidence")
-                columns = (
-                    "repository, source_pr, channel, provider_id, checkpoint_id, "
-                    "checkpoint_fingerprint, run_id"
-                )
+                columns = "repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id"
                 by_checkpoint = connection.execute(
                     f"SELECT {columns} FROM provider_origins "
                     "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
@@ -767,21 +835,21 @@ class SqliteReviewRecords:
                         )
                     replay = True
                 else:
-                    connection.execute(
-                        "INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected
-                    )
+                    connection.execute("INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected)
                     replay = False
         except ReviewRecordsError:
             raise
         except sqlite3.Error as exc:
             raise ReviewRecordsError("cannot link provider origin") from exc
-        return {"run_id": run_id, "checkpoint_id": checkpoint_id, "provider_id": provider_id,
-                "idempotent_replay": replay}
+        return {
+            "run_id": run_id,
+            "checkpoint_id": checkpoint_id,
+            "provider_id": provider_id,
+            "idempotent_replay": replay,
+        }
 
     @_translate_database_errors
-    def archive_imported_artifacts(
-        self, run_id: str, artifacts: Mapping[str, str]
-    ) -> dict[str, Any]:
+    def archive_imported_artifacts(self, run_id: str, artifacts: Mapping[str, str]) -> dict[str, Any]:
         """Retain historical provider evidence without fabricating a live attempt."""
 
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
@@ -795,7 +863,8 @@ class SqliteReviewRecords:
             if run is None or run[0] not in {"hosted", "cli"} or run[1:] != ("completed", 1):
                 raise ReviewRecordsError("artifacts require a completed attributable provider run")
             existing = {
-                row[0]: (row[1], row[2], row[3]) for row in connection.execute(
+                row[0]: (row[1], row[2], row[3])
+                for row in connection.execute(
                     "SELECT kind, content, source_sha256, redactions FROM imported_artifacts WHERE run_id = ?",
                     (run_id,),
                 )
@@ -845,19 +914,24 @@ class SqliteReviewRecords:
             serialized_checkpoint = _json(dict(checkpoint))
         except (TypeError, ValueError) as exc:
             raise ReviewRecordsError("historical checkpoint metadata must be JSON") from exc
-        checkpoint_json, checkpoint_digest, checkpoint_redactions = _archive_artifact(
-            "metadata", serialized_checkpoint
-        )
+        checkpoint_json, checkpoint_digest, checkpoint_redactions = _archive_artifact("metadata", serialized_checkpoint)
         archived = {kind: _archive_artifact(kind, content) for kind, content in artifacts.items()}
         expected = (
-            repository, source_pr, channel, checkpoint_id, checkpoint_fingerprint,
-            checkpoint_json, checkpoint_digest, checkpoint_redactions, missing_reason,
+            repository,
+            source_pr,
+            channel,
+            checkpoint_id,
+            checkpoint_fingerprint,
+            checkpoint_json,
+            checkpoint_digest,
+            checkpoint_redactions,
+            missing_reason,
         )
         try:
             with self._write_connection() as connection:
                 if connection.execute(
-                    "SELECT 1 FROM provider_origins WHERE repository = ? AND source_pr = ? "
-                    "AND checkpoint_id = ?", (repository, source_pr, checkpoint_id)
+                    "SELECT 1 FROM provider_origins WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
+                    (repository, source_pr, checkpoint_id),
                 ).fetchone():
                     raise ReviewRecordsError("historical gap conflicts with an attributed provider origin")
                 existing = connection.execute(
@@ -878,7 +952,8 @@ class SqliteReviewRecords:
                     replay = False
                 else:
                     existing_artifacts = {
-                        row[0]: (row[1], row[2], row[3]) for row in connection.execute(
+                        row[0]: (row[1], row[2], row[3])
+                        for row in connection.execute(
                             "SELECT kind, content, source_sha256, redactions FROM historical_gap_artifacts "
                             "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
                             (repository, source_pr, checkpoint_id),
@@ -892,8 +967,12 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot record historical provider gap") from exc
         return {
-            "repository": repository, "source_pr": source_pr, "channel": channel,
-            "checkpoint_id": checkpoint_id, "kinds": sorted(archived), "idempotent_replay": replay,
+            "repository": repository,
+            "source_pr": source_pr,
+            "channel": channel,
+            "checkpoint_id": checkpoint_id,
+            "kinds": sorted(archived),
+            "idempotent_replay": replay,
         }
 
     @_translate_database_errors
@@ -923,9 +1002,9 @@ class SqliteReviewRecords:
         result: dict[int, tuple[str, str]] = {}
         prefix = f"cli-run:{attempt_id}:finding:"
         for key, decision, reason in rows:
-            if not key.startswith(prefix) or not key[len(prefix):].isdigit():
+            if not key.startswith(prefix) or not key[len(prefix) :].isdigit():
                 raise ReviewRecordsError("CLI source decision has an invalid finding key")
-            index = int(key[len(prefix):])
+            index = int(key[len(prefix) :])
             if index in result:
                 raise ReviewRecordsError("CLI source decision index is duplicated")
             result[index] = (decision, reason)
@@ -978,7 +1057,8 @@ class SqliteReviewRecords:
                 ).fetchone()
                 latest = connection.execute(
                     "SELECT correction_id FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
-                    "ORDER BY sequence DESC LIMIT 1", (run_id, finding_id),
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (run_id, finding_id),
                 ).fetchone()
                 if initial is None or supersedes_id != (latest or initial)[0]:
                     raise ReviewRecordsError("correction does not name the latest exact decision")
@@ -1008,8 +1088,11 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot record SQLite source decision") from exc
         return {
-            "correction_id": correction_id, "run_id": run_id, "prior_decision_id": supersedes_id,
-            "decision": decision, "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
+            "correction_id": correction_id,
+            "run_id": run_id,
+            "prior_decision_id": supersedes_id,
+            "decision": decision,
+            "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
             "public_checkpoint_correction_required": bool(finalized),
         }
 
@@ -1047,13 +1130,7 @@ class SqliteReviewRecords:
         reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
         if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
             raise ReviewRecordsError("scope must be broad or narrow")
-        if isinstance(coverage_limits, (str, bytes)) or not isinstance(coverage_limits, Sequence):
-            raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
-        coverage = tuple(
-            _bounded_text(item, "coverage limit", maximum=200) for item in coverage_limits
-        )
-        if len(coverage) > 20:
-            raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+        coverage = _coverage_limits(coverage_limits)
         supplied_started_at = started_at
         supplied_finished_at = finished_at
         started_at = _timestamp(started_at, "started_at")
@@ -1104,8 +1181,7 @@ class SqliteReviewRecords:
             "routed_count": sum(item.disposition == "routed" for item in observations),
         }
         try:
-            with (self._write_connection() if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
                 existing = connection.execute(
                     "SELECT source_pr, channel, import_payload_json, found_count, accepted_count, "
                     "routed_count, finalized FROM review_runs WHERE run_id = ?",
@@ -1247,7 +1323,8 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("finalized source-run counts cannot be changed")
                 prior = connection.execute(
                     "SELECT decision_id FROM decisions WHERE decision_scope = 'source' "
-                    "AND run_id = ? AND finding_id = ?", (run_id, finding_id)
+                    "AND run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
                 ).fetchone()
                 if prior is not None:
                     raise ReviewRecordsError("source finding is already decided; use an audited correction")
@@ -1265,8 +1342,7 @@ class SqliteReviewRecords:
                         observed_at=decided_at,
                     )
                 connection.execute(
-                    "UPDATE finding_observations SET disposition = ?, route_id = ? "
-                    "WHERE run_id = ? AND finding_id = ?",
+                    "UPDATE finding_observations SET disposition = ?, route_id = ? WHERE run_id = ? AND finding_id = ?",
                     (decision, route_id, run_id, finding_id),
                 )
                 connection.execute(
@@ -1350,11 +1426,31 @@ class SqliteReviewRecords:
         reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
         if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
             raise ReviewRecordsError("scope must be broad or narrow")
-        if isinstance(coverage_limits, (str, bytes)) or not isinstance(coverage_limits, Sequence):
-            raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
-        coverage = tuple(_bounded_text(item, "coverage limit", maximum=200) for item in coverage_limits)
-        if len(coverage) > 20:
-            raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+        retained_coverage: Sequence[str] = ()
+        if (
+            channel == "subagent"
+            and isinstance(coverage_limits, Sequence)
+            and not isinstance(coverage_limits, (str, bytes))
+            and any(isinstance(item, str) and len(item) > 200 for item in coverage_limits)
+        ):
+            try:
+                attempt = self.attempt(run_id)
+            except AttemptNotFound:
+                pass
+            else:
+                metadata = attempt["metadata"]
+                if (
+                    attempt["source_pr"] == source_pr
+                    and attempt["channel"] == channel
+                    and attempt["candidate_sha"] == source_head
+                    and attempt["started_at"] == started_at
+                    and attempt["state"] in {"started", "completed"}
+                    and metadata.get("reviewer") == reviewer
+                    and metadata.get("scope") == scope
+                    and isinstance(metadata.get("coverage_limits"), list)
+                ):
+                    retained_coverage = metadata["coverage_limits"]
+        coverage = _coverage_limits(coverage_limits, retained=retained_coverage)
         supplied_started_at = started_at
         supplied_finished_at = finished_at
         started_at = _timestamp(started_at, "started_at")
@@ -1383,10 +1479,19 @@ class SqliteReviewRecords:
             if not isinstance(item, Mapping):
                 raise ReviewRecordsError("source decisions must be objects")
             allowed = {
-                "source_finding_key", "decision_id", "decision", "actor", "reason", "target_pr",
-                "decided_at", "route_id", "route_status",
+                "source_finding_key",
+                "decision_id",
+                "decision",
+                "actor",
+                "reason",
+                "target_pr",
+                "decided_at",
+                "route_id",
+                "route_status",
             }
-            if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(item):
+            if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(
+                item
+            ):
                 raise ReviewRecordsError("source decision has missing or unsupported fields")
             source_finding_key = _safe_identifier(item["source_finding_key"], "source_finding_key", maximum=200)
             if source_finding_key not in observation_keys:
@@ -1642,8 +1747,7 @@ class SqliteReviewRecords:
 
                 final_counts = self._current_run_counts(connection, run_id)
                 unresolved = connection.execute(
-                    "SELECT COUNT(*) FROM finding_observations "
-                    "WHERE run_id = ? AND disposition = 'unresolved'",
+                    "SELECT COUNT(*) FROM finding_observations WHERE run_id = ? AND disposition = 'unresolved'",
                     (run_id,),
                 ).fetchone()[0]
                 if unresolved:
@@ -1675,7 +1779,10 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot import completed SQLite review run") from exc
 
     def finalize_run(
-        self, run_id: str, *, finalized_at: str | None = None,
+        self,
+        run_id: str,
+        *,
+        finalized_at: str | None = None,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Freeze the source counts after every finding has a source disposition."""
@@ -1683,8 +1790,7 @@ class SqliteReviewRecords:
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         finalized_at = _timestamp(finalized_at, "finalized_at")
         try:
-            with (self._write_connection() if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
                 run = connection.execute(
                     "SELECT finalized, finalized_at FROM review_runs WHERE run_id = ?", (run_id,)
                 ).fetchone()
@@ -1692,8 +1798,7 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("review run does not exist")
                 counts = self._current_run_counts(connection, run_id)
                 unresolved = connection.execute(
-                    "SELECT COUNT(*) FROM finding_observations "
-                    "WHERE run_id = ? AND disposition = 'unresolved'",
+                    "SELECT COUNT(*) FROM finding_observations WHERE run_id = ? AND disposition = 'unresolved'",
                     (run_id,),
                 ).fetchone()[0]
                 if unresolved:
@@ -1755,7 +1860,10 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("route does not exist")
                 if row[2] != "open":
                     raise ReviewRecordsError("only open routes can be retargeted")
-                connection.execute("UPDATE routes SET target_pr = ?, updated_at = ? WHERE route_id = ?", (target_pr, changed_at, route_id))
+                connection.execute(
+                    "UPDATE routes SET target_pr = ?, updated_at = ? WHERE route_id = ?",
+                    (target_pr, changed_at, route_id),
+                )
                 connection.execute(
                     "INSERT INTO route_target_history (route_id, target_pr, changed_at, actor, reason) "
                     "VALUES (?, ?, ?, ?, ?)",
@@ -1873,10 +1981,18 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("resolution conflicts with existing immutable records") from exc
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot resolve SQLite review route") from exc
-        return {"resolution_id": resolution_id, "route_id": route_id, "resolution_pr": resolution_pr, "outcome": outcome}
+        return {
+            "resolution_id": resolution_id,
+            "route_id": route_id,
+            "resolution_pr": resolution_pr,
+            "outcome": outcome,
+        }
 
     def history(
-        self, pr: int, *, include_legacy_routes: bool = False,
+        self,
+        pr: int,
+        *,
+        include_legacy_routes: bool = False,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Return machine-readable source and incoming route history for one PR.
@@ -1892,8 +2008,11 @@ class SqliteReviewRecords:
         if not isinstance(include_legacy_routes, bool):
             raise ReviewRecordsError("include_legacy_routes must be boolean")
         try:
-            with (contextlib.closing(self._connect(read_only=True)) if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with (
+                contextlib.closing(self._connect(read_only=True))
+                if _connection is None
+                else contextlib.nullcontext(_connection)
+            ) as connection:
                 if _connection is None:
                     connection.execute("BEGIN")
                 self._require_compatible(connection)
@@ -1968,49 +2087,83 @@ class SqliteReviewRecords:
                     if not isinstance(metadata, dict):
                         raise ReviewRecordsError("review attempt metadata is not an object")
                     attempts.append(
-                        {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2],
-                         "state": row[3], "started_at": row[4], "finished_at": row[5],
-                         "duration_seconds": row[6], "exit_status": row[7], "trigger_id": row[8],
-                         "provider_review_id": row[9], "checkpoint_id": row[10], "run_id": row[11],
-                         "diagnostic": row[12], "origin": metadata.get("origin"),
-                         "legacy_outcome": metadata.get("legacy_outcome")}
+                        {
+                            "attempt_id": row[0],
+                            "channel": row[1],
+                            "candidate_sha": row[2],
+                            "state": row[3],
+                            "started_at": row[4],
+                            "finished_at": row[5],
+                            "duration_seconds": row[6],
+                            "exit_status": row[7],
+                            "trigger_id": row[8],
+                            "provider_review_id": row[9],
+                            "checkpoint_id": row[10],
+                            "run_id": row[11],
+                            "diagnostic": row[12],
+                            "origin": metadata.get("origin"),
+                            "legacy_outcome": metadata.get("legacy_outcome"),
+                        }
                     )
                 corrections = [
-                    {"correction_id": row[0], "supersedes_id": row[1], "run_id": row[2],
-                     "finding_id": row[3], "decision": row[4], "target_pr": row[5],
-                     "actor": row[6], "reason": row[7], "decided_at": row[8]}
+                    {
+                        "correction_id": row[0],
+                        "supersedes_id": row[1],
+                        "run_id": row[2],
+                        "finding_id": row[3],
+                        "decision": row[4],
+                        "target_pr": row[5],
+                        "actor": row[6],
+                        "reason": row[7],
+                        "decided_at": row[8],
+                    }
                     for row in connection.execute(
                         "SELECT c.correction_id, c.supersedes_id, c.run_id, c.finding_id, c.decision, "
                         "c.target_pr, c.actor, c.reason, c.decided_at "
                         "FROM source_decision_corrections c JOIN review_runs r USING (run_id) "
-                        "WHERE r.source_pr = ? ORDER BY c.sequence", (pr,)
+                        "WHERE r.source_pr = ? ORDER BY c.sequence",
+                        (pr,),
                     )
                 ]
                 provider_origins = [
-                    {"repository": row[0], "source_pr": row[1], "channel": row[2],
-                     "provider_id": row[3], "checkpoint_id": row[4],
-                     "checkpoint_fingerprint": row[5], "run_id": row[6]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "channel": row[2],
+                        "provider_id": row[3],
+                        "checkpoint_id": row[4],
+                        "checkpoint_fingerprint": row[5],
+                        "run_id": row[6],
+                    }
                     for row in connection.execute(
                         "SELECT repository, source_pr, channel, provider_id, checkpoint_id, "
                         "checkpoint_fingerprint, run_id FROM provider_origins "
-                        "WHERE source_pr = ? ORDER BY checkpoint_id", (pr,)
+                        "WHERE source_pr = ? ORDER BY checkpoint_id",
+                        (pr,),
                     )
                 ]
                 imported_artifacts = [
-                    {"run_id": row[0], "kind": row[1], "source_sha256": row[2],
-                     "redactions": row[3]}
+                    {"run_id": row[0], "kind": row[1], "source_sha256": row[2], "redactions": row[3]}
                     for row in connection.execute(
                         "SELECT a.run_id, a.kind, a.source_sha256, a.redactions "
                         "FROM imported_artifacts a JOIN review_runs r USING (run_id) "
-                        "WHERE r.source_pr = ? ORDER BY a.run_id, a.kind", (pr,)
+                        "WHERE r.source_pr = ? ORDER BY a.run_id, a.kind",
+                        (pr,),
                     )
                 ]
                 historical_gaps = [
-                    {"repository": row[0], "source_pr": row[1], "channel": row[2],
-                     "checkpoint_id": row[3], "checkpoint_fingerprint": row[4],
-                     "checkpoint": json.loads(row[5]), "checkpoint_source_sha256": row[6],
-                     "checkpoint_redactions": row[7], "missing_reason": row[8],
-                     "superseded_by_run_id": row[9]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "channel": row[2],
+                        "checkpoint_id": row[3],
+                        "checkpoint_fingerprint": row[4],
+                        "checkpoint": json.loads(row[5]),
+                        "checkpoint_source_sha256": row[6],
+                        "checkpoint_redactions": row[7],
+                        "missing_reason": row[8],
+                        "superseded_by_run_id": row[9],
+                    }
                     for row in connection.execute(
                         "SELECT g.repository, g.source_pr, g.channel, g.checkpoint_id, "
                         "g.checkpoint_fingerprint, g.checkpoint_json, g.checkpoint_source_sha256, "
@@ -2018,16 +2171,24 @@ class SqliteReviewRecords:
                         "FROM historical_provider_gaps g LEFT JOIN provider_origins o "
                         "ON o.repository = g.repository AND o.source_pr = g.source_pr "
                         "AND o.checkpoint_id = g.checkpoint_id "
-                        "WHERE g.source_pr = ? ORDER BY g.checkpoint_id", (pr,)
+                        "WHERE g.source_pr = ? ORDER BY g.checkpoint_id",
+                        (pr,),
                     )
                 ]
                 historical_gap_artifacts = [
-                    {"repository": row[0], "source_pr": row[1], "checkpoint_id": row[2],
-                     "kind": row[3], "source_sha256": row[4], "redactions": row[5]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "checkpoint_id": row[2],
+                        "kind": row[3],
+                        "source_sha256": row[4],
+                        "redactions": row[5],
+                    }
                     for row in connection.execute(
                         "SELECT repository, source_pr, checkpoint_id, kind, "
                         "source_sha256, redactions FROM historical_gap_artifacts "
-                        "WHERE source_pr = ? ORDER BY checkpoint_id, kind", (pr,)
+                        "WHERE source_pr = ? ORDER BY checkpoint_id, kind",
+                        (pr,),
                     )
                 ]
                 return {
@@ -2048,9 +2209,7 @@ class SqliteReviewRecords:
         except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
             raise ReviewRecordsError("cannot read SQLite review history") from exc
 
-    def history_batch(
-        self, prs: Sequence[int], *, include_legacy_routes: bool = False
-    ) -> dict[int, dict[str, Any]]:
+    def history_batch(self, prs: Sequence[int], *, include_legacy_routes: bool = False) -> dict[int, dict[str, Any]]:
         """Read several PR histories from one SQLite snapshot."""
 
         if isinstance(prs, (str, bytes)) or not isinstance(prs, Sequence) or not 1 <= len(prs) <= 200:
@@ -2064,8 +2223,7 @@ class SqliteReviewRecords:
                 connection.execute("BEGIN")
                 self._require_compatible(connection)
                 return {
-                    pr: self.history(pr, include_legacy_routes=include_legacy_routes,
-                                     _connection=connection)
+                    pr: self.history(pr, include_legacy_routes=include_legacy_routes, _connection=connection)
                     for pr in selected
                 }
         except ReviewRecordsError:
@@ -2124,8 +2282,7 @@ class SqliteReviewRecords:
                     # must see the authoritative legacy record before any
                     # status or assignment filters are applied.
                     rows = connection.execute(
-                        route_select + " ORDER BY COALESCE(routes.target_pr, 0), "
-                        "routes.source_pr, routes.route_id"
+                        route_select + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id"
                     )
                 else:
                     conditions = []
@@ -2144,7 +2301,8 @@ class SqliteReviewRecords:
                         conditions.append("routes.target_pr IS NULL")
                     where = " WHERE " + " AND ".join(conditions) if conditions else ""
                     rows = connection.execute(
-                        route_select + where
+                        route_select
+                        + where
                         + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id",
                         parameters,
                     )
@@ -2225,8 +2383,12 @@ class SqliteReviewRecords:
             ]
             decisions = [
                 {
-                    "decision_id": item[0], "decision_pr": item[1], "decision": item[2],
-                    "actor": item[3], "reason": item[4], "decided_at": item[5],
+                    "decision_id": item[0],
+                    "decision_pr": item[1],
+                    "decision": item[2],
+                    "actor": item[3],
+                    "reason": item[4],
+                    "decided_at": item[5],
                 }
                 for item in connection.execute(
                     "SELECT decision_id, decision_pr, decision, actor, reason, decided_at FROM decisions "
@@ -2236,8 +2398,12 @@ class SqliteReviewRecords:
             ]
             resolutions = [
                 {
-                    "resolution_id": item[0], "resolution_pr": item[1], "outcome": item[2],
-                    "actor": item[3], "proof_or_reason": item[4], "resolved_at": item[5],
+                    "resolution_id": item[0],
+                    "resolution_pr": item[1],
+                    "outcome": item[2],
+                    "actor": item[3],
+                    "proof_or_reason": item[4],
+                    "resolved_at": item[5],
                 }
                 for item in connection.execute(
                     "SELECT resolution_id, resolution_pr, outcome, actor, proof_or_reason, resolved_at "
@@ -2351,18 +2517,33 @@ class SqliteReviewRecords:
         if not isinstance(coverage_limits, list) or any(not isinstance(item, str) for item in coverage_limits):
             raise ReviewRecordsError("stored coverage metadata must be a list of strings")
         return {
-            "run_id": row[0], "source_pr": row[1], "channel": row[2], "source_head": row[3],
-            "reviewer": row[4], "scope": row[5], "coverage_limits": coverage_limits,
-            "outcome": row[7], "attributable": bool(row[8]), "started_at": row[9], "finished_at": row[10],
+            "run_id": row[0],
+            "source_pr": row[1],
+            "channel": row[2],
+            "source_head": row[3],
+            "reviewer": row[4],
+            "scope": row[5],
+            "coverage_limits": coverage_limits,
+            "outcome": row[7],
+            "attributable": bool(row[8]),
+            "started_at": row[9],
+            "finished_at": row[10],
             "counts": {"found": row[11], "accepted": row[12], "routed": row[13]},
-            "finalized": bool(row[14]), "finalized_at": row[15],
+            "finalized": bool(row[14]),
+            "finalized_at": row[15],
         }
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:
         return {
-            "run_id": row[0], "finding_id": row[1], "source_pr": row[2], "source_channel": row[3],
-            "source_finding_key": row[4], "title": row[5], "detail": row[6], "disposition": row[7],
+            "run_id": row[0],
+            "finding_id": row[1],
+            "source_pr": row[2],
+            "source_channel": row[3],
+            "source_finding_key": row[4],
+            "title": row[5],
+            "detail": row[6],
+            "disposition": row[7],
             "route_id": row[8],
         }
 
@@ -2441,10 +2622,7 @@ class SqliteReviewRecords:
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> set[str]:
-        return {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+        return {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
     def _require_controller_compatible(self, connection: sqlite3.Connection) -> None:
         schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -2481,9 +2659,7 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
-            raise RecordsNotBootstrapped(
-                "review-records schema is not bootstrapped; call bootstrap() explicitly"
-            )
+            raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
             row = connection.execute(
                 f"SELECT records_schema_version, controller_schema_version, controller_data_model_version, "
@@ -2585,12 +2761,8 @@ class SqliteReviewRecords:
             "proof_or_reason TEXT NOT NULL, resolved_at TEXT NOT NULL, "
             "FOREIGN KEY (route_id) REFERENCES routes(route_id))"
         )
-        connection.execute(
-            "CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)"
-        )
-        connection.execute(
-            "CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)"
-        )
+        connection.execute("CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)")
+        connection.execute("CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)")
         SqliteReviewRecords._create_attempt_schema(connection)
         SqliteReviewRecords._create_origin_schema(connection)
         SqliteReviewRecords._create_historical_gap_schema(connection)
@@ -2615,9 +2787,7 @@ class SqliteReviewRecords:
             "(state != 'started' AND finished_at IS NOT NULL)), "
             "FOREIGN KEY (run_id) REFERENCES review_runs(run_id))"
         )
-        connection.execute(
-            "CREATE INDEX review_attempts_pr_idx ON review_attempts(source_pr, started_at)"
-        )
+        connection.execute("CREATE INDEX review_attempts_pr_idx ON review_attempts(source_pr, started_at)")
         connection.execute(
             "CREATE TABLE review_artifacts ("
             "attempt_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN "
@@ -2636,8 +2806,7 @@ class SqliteReviewRecords:
             "FOREIGN KEY (run_id, finding_id) REFERENCES finding_observations(run_id, finding_id))"
         )
         connection.execute(
-            "CREATE INDEX source_corrections_finding_idx "
-            "ON source_decision_corrections(run_id, finding_id, sequence)"
+            "CREATE INDEX source_corrections_finding_idx ON source_decision_corrections(run_id, finding_id, sequence)"
         )
 
     @staticmethod
@@ -2652,9 +2821,7 @@ class SqliteReviewRecords:
             "UNIQUE (repository, source_pr, channel, provider_id), "
             "FOREIGN KEY (run_id) REFERENCES review_runs(run_id))"
         )
-        connection.execute(
-            "CREATE INDEX provider_origins_source_idx ON provider_origins(source_pr, checkpoint_id)"
-        )
+        connection.execute("CREATE INDEX provider_origins_source_idx ON provider_origins(source_pr, checkpoint_id)")
         connection.execute(
             "CREATE TABLE imported_artifacts ("
             "run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN "

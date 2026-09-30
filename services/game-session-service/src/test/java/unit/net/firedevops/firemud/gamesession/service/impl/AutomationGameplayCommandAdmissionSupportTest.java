@@ -690,6 +690,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.of(inFlight));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(runtimeOwnership(automationRequest())));
 
     AdmissionResult result =
         AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
@@ -705,6 +707,138 @@ class AutomationGameplayCommandAdmissionSupportTest {
     verify(gameplayCommandRepository, org.mockito.Mockito.never())
         .insertIfAbsentByIdempotencyIdentity(any());
     verify(tickService).enqueueCommand(1L, 2L, "auto-in-flight", "say hello", false);
+  }
+
+  @Test
+  void doesNotRedriveExistingAcceptedCommandWhenRuntimeIsPaused() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    AdmissionRequest request = automationRequest();
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, request);
+    existing.setCommandId("auto-paused");
+    existing.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+
+    RuntimeRegionStatus pausedOwnership = runtimeOwnership(request);
+    pausedOwnership.setPaused(true);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(pausedOwnership));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("RUNTIME_PAUSED", result.admissionOutcome());
+    assertEquals("auto-paused", result.commandId());
+    assertEquals("runtime_paused", result.errorCode());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void keepsExistingAcceptedCommandRetryableWhenOwnershipReadFails() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    AdmissionRequest request = automationRequest();
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, request);
+    existing.setCommandId("auto-owner-read-failed");
+    existing.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenThrow(new IllegalStateException("database connection failed"));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("RETRY_QUEUED", result.admissionOutcome());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("Runtime ownership is temporarily unavailable", result.errorMessage());
+    assertEquals("auto-owner-read-failed", result.commandId());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void doesNotRedriveExistingAcceptedRemoteCommandAfterOwnershipEpochAdvances() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    TickService tickService = mock(TickService.class);
+
+    AdmissionRequest request = remoteFollowupRequest("remote-accepted");
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, request);
+    existing.setCommandId("rfcmd-remote-accepted");
+    existing.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 2L, "region-alpha", 7L, "remote-accepted"))
+        .thenReturn(Optional.of(existing));
+
+    RuntimeRegionStatus advancedOwnership = runtimeOwnership(request);
+    advancedOwnership.setRegionEpoch(8L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(advancedOwnership));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            pointerAuthority,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("STALE_TIMELINE", result.admissionOutcome());
+    assertEquals("rfcmd-remote-accepted", result.commandId());
+    assertEquals("stale_region_epoch", result.errorCode());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
+    verifyNoTickEnqueue(tickService);
+    verify(pointerAuthority, org.mockito.Mockito.never()).listByRuntimeTarget(anyLong(), anyLong());
   }
 
   @Test
