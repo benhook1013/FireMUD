@@ -140,3 +140,8 @@ Entry format:
   - Observation: the failing preservation snapshot and later completed-step API readback disagreed; the precise cause remains unproven. A red preservation gate is not evidence that the underlying product or security checks failed, but it remains a required-check obligation.
   - Expected pattern: inspect the exact run, job, step, base, and head before choosing a bounded rerun; retain fail-closed preservation and do not substitute historical success for current-head merge readiness.
   - Reconsideration trigger: retain this note while the cause or current required-check state remains unresolved; revisit under authorized observation stewardship once exact run/job/step readback resolves both.
+
+- `2026-09-30`: Waiter handoffs must separate terminal outcomes from later eligibility
+  - Context: a #2909 Hosted sentinel withheld an already-terminal rate-limit response until its reset time, delaying publication of prepared fixes by about fifteen minutes. A later CLI sentinel could not access the parent's native tool session and correctly reported `Unknown process id` instead of claiming a review was being observed.
+  - Observation: provider completion and permission to retry are separate events; native tool-session handles are caller-scoped in this harness and cannot be assumed transferable to a subagent.
+  - Expected pattern: deliver terminal response identity, exit status, and any authoritative reset immediately, before a separate cooldown wait. Keep a native process with its owning caller, or bind a read-only sentinel to the verified OS process and exact capture; never launch another review merely to recover observation.

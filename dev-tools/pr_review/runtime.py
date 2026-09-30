@@ -1682,8 +1682,10 @@ class LiveEvidence:
         identity = self.live.batch_pull_requests([pr]).get(pr)
         if not isinstance(identity, Mapping):
             raise ControllerError("current Hosted admission state cannot be verified")
+        head = identity.get("headRefOid")
+        if not isinstance(head, str) or hosted.EXACT_SHA.fullmatch(head) is None:
+            raise ControllerError("current Hosted admission state cannot be verified")
         payload = {"data": {"repository": {"pullRequest": dict(identity)}}}
-        head = identity["headRefOid"]
         values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
         if any(value.get("active_reservation") is True for value in values):
             payload = self._payload(pr)
