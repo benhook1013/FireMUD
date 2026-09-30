@@ -136,3 +136,8 @@ Entry format:
   - Context: #2873 was reconciled in a local preparation branch whose name differed from the PR head branch; an initial push mistakenly named #2880's branch as its destination.
   - Observation: Git rejected that push as non-fast-forward, so no remote branch changed. The local commit was then pushed to #2873's verified `headRefName`.
   - Expected pattern: read the live PR `headRefName` and exact remote head immediately before each push from an isolated branch; use the verified destination, and treat a non-fast-forward rejection as a stop-and-recheck signal rather than forcing it.
+
+- `2026-09-30`: Await publication readback before dispatching exact-head CI
+  - Context: a #2881 push yielded asynchronously and later returned a generic remote rejection. Dependent PR-body and CI operations were issued before consuming that result, so CI run `36703184951` targeted the old published head instead of the prepared correction.
+  - Observation: the rejection's cause was not reported. Fresh remote readback confirmed no head change; a non-force retry then published the correction. The stale-head run was explicitly cancelled and excluded from proof.
+  - Expected pattern: finish the push, verify the exact published SHA, and only then describe it as published or dispatch its CI. Independent operations may run concurrently; operations depending on publication must remain ordered even when tool calls yield.
