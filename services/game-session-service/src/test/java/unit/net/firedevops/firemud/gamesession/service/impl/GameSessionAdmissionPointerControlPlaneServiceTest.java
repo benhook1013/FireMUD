@@ -1,9 +1,13 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -12,10 +16,36 @@ import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import org.junit.jupiter.api.Test;
 
 class GameSessionAdmissionPointerControlPlaneServiceTest {
+  @Test
+  void listFiltersTenantScopeBeforeCheckingAuditHistory() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot tenantA = pointer(1L, "tenant-a");
+    GameplayAdmissionPointerSnapshot tenantB = pointer(2L, "tenant-b");
+    when(authorityService.listPointers()).thenReturn(List.of(tenantA, tenantB));
+    when(authorityService.listPointerAudit(2L, "tenant-b", "production"))
+        .thenReturn(List.of(audit(tenantB)));
+    GameSessionAdmissionPointerControlPlaneService controlPlaneService =
+        new GameSessionAdmissionPointerControlPlaneService(
+            mock(GameInstanceRepository.class),
+            authorityService,
+            mock(VersionUpgradePreparationService.class));
+
+    var response = controlPlaneService.listAdmissionPointers(List.of(2L));
+
+    assertEquals(1, response.getPointersCount());
+    assertEquals("2", response.getPointers(0).getTenantId());
+    verify(authorityService).listPointerAudit(2L, "tenant-b", "production");
+    verify(authorityService, never()).listPointerAudit(1L, "tenant-a", "production");
+  }
+
   @Test
   void listRejectsRetainedPreV7AuditWithUnknownRevisionAndIdentity() {
     GameplayAdmissionPointerRepository pointerRepository =
@@ -77,6 +107,53 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
     assertThrows(
         AdmissionPointerAuditUnavailableException.class,
-        controlPlaneService::listAdmissionPointers);
+        () -> controlPlaneService.listAdmissionPointers(List.of()));
+  }
+
+  private static GameplayAdmissionPointerSnapshot pointer(long tenantId, String worldSlug) {
+    UUID realmId = UUID.nameUUIDFromBytes(("realm-" + tenantId).getBytes(StandardCharsets.UTF_8));
+    UUID namespaceId =
+        UUID.nameUUIDFromBytes(("namespace-" + tenantId).getBytes(StandardCharsets.UTF_8));
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        "Tenant World",
+        "production",
+        "Live Realm",
+        tenantId,
+        tenantId + 10L,
+        3L,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        6L,
+        realmId,
+        namespaceId);
+  }
+
+  private static GameplayAdmissionPointerAuditEntry audit(
+      GameplayAdmissionPointerSnapshot pointer) {
+    return new GameplayAdmissionPointerAuditEntry(
+        pointer.worldSlug(),
+        pointer.realmSlug(),
+        pointer.worldDisplayName(),
+        pointer.realmDisplayName(),
+        pointer.tenantId(),
+        pointer.gameInstanceId(),
+        pointer.pointerVersion(),
+        pointer.catalogRevision(),
+        pointer.realmId(),
+        pointer.playableStateNamespaceId(),
+        pointer.visible(),
+        pointer.publicProductionRealm(),
+        pointer.requiresCharacterSelection(),
+        pointer.stateScope(),
+        pointer.characterCreationPolicy(),
+        "tester",
+        "test audit",
+        "request-" + pointer.tenantId(),
+        null,
+        Instant.parse("2026-09-29T00:00:00Z"));
   }
 }

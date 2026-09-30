@@ -5,7 +5,9 @@ info:
     API for user accounts and authentication. The obsolete caller-asserted
     POST /accounts/{accountId}/external route is removed and denied at the
     public edge; no provider-linking route is available until the
-    server-verified global-account flow and its proof converge.
+    server-verified global-account flow and its proof converge. The public
+    POST /auth/bootstrap/join facade is target-only and denied until Account
+    recovery, PostgreSQL, and direct text-client proof are complete.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
@@ -130,35 +132,6 @@ components:
         requestId:
           type: string
       required: [connectScopeId, requestId]
-    JoinPublicProductionRequest:
-      type: object
-      properties:
-        connectScopeId:
-          type: string
-          description: Account-issued, caller-bound realm discovery scope
-        requestId:
-          type: string
-          description: Stable ID for this explicit join attempt; use a new ID for a new attempt
-      required: [connectScopeId, requestId]
-    JoinPublicProductionResult:
-      type: object
-      properties:
-        success:
-          type: boolean
-        outcomeCode:
-          type: string
-        accountId:
-          type: integer
-        tenantId:
-          type: integer
-        membershipId:
-          type: integer
-        membershipVersion:
-          type: integer
-        membershipAuthorityGeneration:
-          type: integer
-        replayed:
-          type: boolean
     ConnectTokenResponse:
       type: object
       properties:
@@ -482,36 +455,6 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
-  /auth/bootstrap/join:
-    post:
-      summary: Explicitly join the selected public-production realm from a player-bootstrap scope
-      operationId: joinPublicProduction
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JoinPublicProductionRequest'
-      responses:
-        '200':
-          description: Durable membership snapshot after a successful join or exact replay
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/JoinPublicProductionResult'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-        '401':
-          description: Scope, policy, or membership state denied the join
-        '503':
-          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
     post:
       summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token

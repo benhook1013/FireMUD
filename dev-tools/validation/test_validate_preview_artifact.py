@@ -1883,7 +1883,11 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
             for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
         ]
         if mode == "hosted-controller":
-            for workload in ("account-service", "game-session-service"):
+            for workload in (
+                "account-service",
+                "game-session-service",
+                "social-groups-service",
+            ):
                 documents.append(
                     self._policy_document(
                         f"{workload}-controller-ingress",

@@ -9,8 +9,8 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamesession.config.GameplayAdmissionPointerBootstrapProperties;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -18,8 +18,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Bootstraps the persisted gameplay admission-pointer authority from configuration only when the
- * authority store is empty and full pointer audit identity is available.
+ * Validates configured admission-pointer seeds while keeping an empty authority store closed until
+ * owner-validated World lifecycle proof is available.
  */
 @Component
 @RequiredArgsConstructor
@@ -29,8 +29,10 @@ import org.springframework.transaction.annotation.Transactional;
     havingValue = "true",
     matchIfMissing = true)
 public class GameplayAdmissionPointerBootstrapInitializer implements ApplicationRunner {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(GameplayAdmissionPointerBootstrapInitializer.class);
+
   private final GameplayAdmissionPointerRepository pointerRepository;
-  private final GameplayAdmissionPointerAuthorityService authorityService;
   private final GameplayAdmissionPointerBootstrapProperties bootstrapProperties;
 
   @Override
@@ -43,34 +45,9 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
     List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
         bootstrapProperties.getPointers();
     validateSeeds(pointers);
-    for (GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer : pointers) {
-      authorityService.upsertPointer(
-          new GameplayAdmissionPointerMutation(
-              pointer.getWorldSlug(),
-              pointer.getWorldDisplayName(),
-              pointer.getRealmSlug(),
-              pointer.getRealmDisplayName(),
-              pointer.getTenantId(),
-              pointer.getGameInstanceId(),
-              pointer.isVisible(),
-              pointer.isPublicProductionRealm(),
-              pointer.isRequiresCharacterSelection(),
-              stateScopeName(pointer),
-              characterCreationPolicyName(pointer),
-              "system/bootstrap",
-              "Initial gameplay pointer bootstrap",
-              "bootstrap:"
-                  + pointer.getTenantId()
-                  + ":"
-                  + pointer.getGameInstanceId()
-                  + ":"
-                  + pointer.getWorldSlug()
-                  + ":"
-                  + pointer.getRealmSlug(),
-              0L,
-              0L,
-              null));
-    }
+    LOGGER.warn(
+        "Skipping configured gameplay admission pointer bootstrap because owner-validated "
+            + "World ACTIVE lifecycle and epoch proof is unavailable; admission remains closed");
   }
 
   private static void validateSeeds(
@@ -137,24 +114,5 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
   private static IllegalArgumentException invalidSeed(int index, String reason) {
     return new IllegalArgumentException(
         "Invalid gameplay admission pointer bootstrap seed at index " + index + ": " + reason);
-  }
-
-  private static String stateScopeName(
-      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
-    GameplayAdmissionPointerBootstrapProperties.StateScope stateScope = pointer.getStateScope();
-    return (stateScope != null
-            ? stateScope
-            : GameplayAdmissionPointerBootstrapProperties.StateScope.SHARED)
-        .name();
-  }
-
-  private static String characterCreationPolicyName(
-      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
-    GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy policy =
-        pointer.getCharacterCreationPolicy();
-    return (policy != null
-            ? policy
-            : GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy.ALLOW_NEW)
-        .name();
   }
 }

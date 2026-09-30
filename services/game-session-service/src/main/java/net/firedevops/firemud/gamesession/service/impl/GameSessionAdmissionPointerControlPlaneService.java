@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -35,9 +37,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
     this.versionUpgradePreparationService = versionUpgradePreparationService;
   }
 
-  ListAdmissionPointersResponse listAdmissionPointers() {
-    java.util.List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
-        pointers = gameplayAdmissionPointerAuthorityService.listPointers();
+  ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
+    Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
+    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listPointers().stream()
+            .filter(pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
+            .toList();
     java.util.List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
@@ -88,30 +93,18 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
-    rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported();
-    validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
-    gameplayAdmissionPointerAuthorityService.upsertPointer(
-        new GameplayAdmissionPointerMutation(
-            request.getWorldSlug(),
-            request.getWorldDisplayName(),
-            request.getRealmSlug(),
-            request.getRealmDisplayName(),
-            tenantId,
-            targetGameInstanceId,
-            request.getVisible(),
-            request.getPublicProductionRealm(),
-            request.getRequiresCharacterSelection(),
-            request.getStateScope(),
-            request.getCharacterCreationPolicy(),
-            request.getActorPrincipal(),
-            request.getReason(),
-            request.getControlPlaneRequestId(),
-            request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-            request.hasExpectedCatalogRevision() ? request.getExpectedCatalogRevision() : null,
-            normalizeBlank(request.getPreparedVersionUpgradeId())));
-    return SetAdmissionPointerResponse.newBuilder()
-        .setPointer(latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug()))
-        .build();
+    GameplayAdmissionPointerSnapshot currentPointer =
+        gameplayAdmissionPointerAuthorityService
+            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
+            .orElse(null);
+    if (currentPointer != null) {
+      throw new AdmissionPointerVersionMismatchException(
+          "admission-pointer updates are temporarily disabled until catalog revision "
+              + "preconditions are supported");
+    }
+    throw new AdmissionPointerVersionMismatchException(
+        "admission-pointer creation is temporarily disabled until catalog revision and "
+            + "stable realm/namespace identity preconditions are supported");
   }
 
   ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
@@ -245,21 +238,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
         && pointer.requiresCharacterSelection() == audit.requiresCharacterSelection()
         && Objects.equals(pointer.stateScope(), audit.stateScope())
         && Objects.equals(pointer.characterCreationPolicy(), audit.characterCreationPolicy());
-  }
-
-  private void validatePreparedUpgradeForPointerChange(
-      SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
   }
 
   private void validatePreparedUpgradeForPointerChange(
