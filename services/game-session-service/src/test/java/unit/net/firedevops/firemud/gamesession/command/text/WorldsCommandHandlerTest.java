@@ -1771,7 +1771,12 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersFailsClosedForValidSelectorBeforeEntityRosterRead() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
-    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
@@ -1782,5 +1787,4 @@ class WorldsCommandHandlerTest {
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
-
 }

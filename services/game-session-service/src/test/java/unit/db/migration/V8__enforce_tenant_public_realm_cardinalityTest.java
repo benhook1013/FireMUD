@@ -22,11 +22,12 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
   @Test
   void keepsNormalizedVersionsUniqueAndCardinalityGuardAfterTheV7AuditMigration()
       throws IOException, URISyntaxException {
-    var migrationDirectoryUrl = getClass().getClassLoader().getResource("db/migration");
-    assertThat(migrationDirectoryUrl).isNotNull();
+    var auditMigrationUrl =
+        getClass().getClassLoader().getResource("db/migration/V7__audit_gameplay_catalog_revision.sql");
+    assertThat(auditMigrationUrl).isNotNull();
 
     Map<MigrationVersion, List<String>> namesByVersion = new TreeMap<>();
-    try (var migrationFiles = Files.list(Path.of(migrationDirectoryUrl.toURI()))) {
+    try (var migrationFiles = Files.list(Path.of(auditMigrationUrl.toURI()).getParent())) {
       migrationFiles
           .filter(path -> path.getFileName().toString().endsWith(".sql"))
           .forEach(
