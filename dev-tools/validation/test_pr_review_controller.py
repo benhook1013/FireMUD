@@ -245,7 +245,7 @@ def _batch_identity(item):
     return {
         "number": item.number,
         "state": item.state,
-        "isDraft": False,
+        "isDraft": item.is_draft,
         "mergedAt": "2026-09-26T00:00:00Z" if item.merged else None,
         "baseRefName": item.base_ref,
         "baseRefOid": item.base_tip,
@@ -1717,6 +1717,176 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(tapered["status"], "CAP_TAPERED")
         self.assertEqual(tapered["completed_count"], 3)
         self.assertTrue(tapered["taper_complete"])
+
+    def test_fresh_cli_taper_reopens_after_nonancestor_historical_accepted_capture(self):
+        historical_head = "3f" * 20
+        historical = self.allocation_evidence(
+            head=historical_head,
+            checkpoint="wrong-worktree-cli-capture",
+            channel="cli",
+            accepted=1,
+        )
+        corrected = self.allocation_evidence(
+            head=HEAD_1,
+            checkpoint="published-corrected-candidate",
+            channel="cli",
+        )
+        history = [
+            historical,
+            corrected,
+            self.scope_timeline_evidence(1, "cli", HEAD_1),
+        ]
+        evidence = AuditedEvidence({(1, "cli"): history})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+
+        def is_ancestor_unless_wrong_worktree(ancestor, descendant):
+            return (ancestor, descendant) != (historical_head, HEAD_1)
+
+        controller.git.is_ancestor = is_ancestor_unless_wrong_worktree
+
+        with patch.object(controller, "_check_stop_evidence", wraps=controller._check_stop_evidence) as check_stop:
+            granted = controller.decide_allocation(
+                action="grant",
+                pr=1,
+                channel="cli",
+                head=HEAD_1,
+                reason="restart CLI taper for newly published fixes",
+                min_additional_completed=1,
+                fresh_taper=True,
+            )
+
+        allocation = granted["allocation"]
+        self.assertEqual(granted["progress"]["status"], "CAP_ACTIVE")
+        self.assertTrue(allocation["reopens_taper"])
+        self.assertEqual(granted["progress"]["completed_count"], 0)
+        self.assertIn("wrong-worktree-cli-capture", allocation["baseline_checkpoints"])
+        self.assertIn("published-corrected-candidate", allocation["baseline_checkpoints"])
+        self.assertTrue(check_stop.call_args_list)
+        self.assertTrue(
+            all(call.kwargs.get("require_checkpoint_ancestry") is False for call in check_stop.call_args_list)
+        )
+
+        non_fresh = self.make(
+            {1: pr(1, HEAD_1)},
+            AuditedEvidence({(1, "cli"): list(history)}),
+            heads={"feature-1": HEAD_1},
+        )
+        non_fresh.set_stack([1])
+        non_fresh.git.is_ancestor = is_ancestor_unless_wrong_worktree
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            non_fresh.decide_allocation(
+                action="grant",
+                pr=1,
+                channel="cli",
+                head=HEAD_1,
+                reason="ordinary allocation retains ancestry protection",
+                min_additional_completed=1,
+            )
+
+    def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
+        historical_head = "3f" * 20
+        cases = (
+            (
+                "same-head accepted finding",
+                [
+                    self.allocation_evidence(
+                        head=HEAD_1,
+                        checkpoint="current-head-accepted",
+                        channel="cli",
+                        accepted=1,
+                    )
+                ],
+                None,
+                "accepted findings need a published corrected head",
+            ),
+            (
+                "unresolved accepted finding",
+                [
+                    self.allocation_evidence(
+                        head=historical_head,
+                        checkpoint="historical-accepted",
+                        channel="cli",
+                        accepted=1,
+                    )
+                ],
+                {"unresolved_findings": ["accepted finding still needs a published fix"]},
+                "unresolved actionable finding or thread",
+            ),
+            (
+                "active request",
+                [
+                    self.allocation_evidence(
+                        head=historical_head,
+                        checkpoint="historical-accepted",
+                        channel="cli",
+                        accepted=1,
+                    ),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "active_reservation": True,
+                        "reason": "provider request is still active",
+                    },
+                ],
+                {"active_reservations": ["provider request is still active"]},
+                "active review or reservation",
+            ),
+            (
+                "pending capture",
+                [
+                    self.allocation_evidence(
+                        head=historical_head,
+                        checkpoint="historical-accepted",
+                        channel="cli",
+                        accepted=1,
+                    ),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "pending-capture:run-1",
+                        "held": True,
+                        "reason": "capture requires adjudication",
+                    },
+                ],
+                None,
+                "cli channel has unresolved review evidence",
+            ),
+        )
+
+        for name, rows, audit, expected in cases:
+            with self.subTest(name=name):
+                if audit is not None:
+                    complete_audit = {
+                        "complete": True,
+                        "active_reservations": [],
+                        "unmatched_responses": [],
+                        "ambiguous_responses": [],
+                        "unresolved_findings": [],
+                        **audit,
+                    }
+                    provider = AuditedEvidence({(1, "cli"): rows}, audit=complete_audit)
+                else:
+                    provider = AuditedEvidence({(1, "cli"): rows})
+                provider[(1, "cli")].append(self.scope_timeline_evidence(1, "cli", historical_head))
+                controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                controller.git.is_ancestor = lambda ancestor, descendant: (
+                    ancestor != historical_head or descendant != HEAD_1
+                )
+
+                with self.assertRaisesRegex(ControllerError, expected):
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="cli",
+                        head=HEAD_1,
+                        reason="fresh taper never waives current obligations",
+                        min_additional_completed=1,
+                        fresh_taper=True,
+                    )
 
     def test_maximum_only_after_taper_reopens_fresh_cli_streak(self):
         pre_taper_evidence = {(1, "cli"): [self.allocation_evidence(checkpoint="cli-first", channel="cli")]}
@@ -3950,6 +4120,49 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(after_report["detail_window"]["deep_prs"], [2, 3, 4, 5])
         self.assertEqual(after_report["prs"][5]["evidence_status"], "unknown")
         self.assertTrue(all(pr_number <= 5 for pr_number, _ in after_evidence.history_reads))
+
+    def test_draft_notice_is_informational_in_full_windowed_and_selected_status(self):
+        values, heads = _stacked_prs(6)
+        values[1] = dataclasses.replace(values[1], is_draft=True)
+        values[5] = dataclasses.replace(values[5], is_draft=True)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+
+        full = controller.status()
+        full_draft, full_ready = full["prs"][:2]
+        self.assertTrue(full_draft["is_draft"])
+        self.assertEqual(
+            full_draft["draft_notice"],
+            "Draft PR — mark ready for review if preparation is complete.",
+        )
+        self.assertFalse(full_ready["is_draft"])
+        self.assertIsNone(full_ready["draft_notice"])
+        self.assertEqual(full["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(full["review_targets"]["hosted"]["draft_notice"], full_draft["draft_notice"])
+        self.assertNotEqual(full["review_targets"]["hosted"]["status"], "HELD")
+
+        selected = controller.status_for_pr(1)
+        self.assertTrue(selected["prs"][0]["is_draft"])
+        self.assertEqual(selected["prs"][0]["draft_notice"], full_draft["draft_notice"])
+        selected_target = controller.select_target("hosted")
+        self.assertEqual(selected_target["pr"], 1)
+        self.assertTrue(selected_target["is_draft"])
+        self.assertEqual(selected_target["draft_notice"], full_draft["draft_notice"])
+
+        self._enable_batch_status(controller, values)
+        windowed = controller.status_overview()
+        windowed_by_pr = {row["pr"]: row for row in windowed["prs"]}
+        self.assertTrue(windowed_by_pr[1]["is_draft"])
+        self.assertEqual(windowed_by_pr[1]["draft_notice"], full_draft["draft_notice"])
+        self.assertTrue(windowed_by_pr[5]["is_draft"])
+        self.assertEqual(windowed_by_pr[5]["draft_notice"], full_draft["draft_notice"])
+        self.assertEqual(windowed["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(windowed["review_targets"]["hosted"]["draft_notice"], full_draft["draft_notice"])
+        self.assertNotEqual(windowed["review_targets"]["hosted"]["status"], "HELD")
+
+        controller.github.values[1] = _batch_identity(values[1])
+        mapped = controller.status()
+        self.assertTrue(mapped["prs"][0]["is_draft"])
 
     def test_status_overview_rechecks_remote_heads_after_deep_reconciliation(self):
         values, heads = _stacked_prs(6)
