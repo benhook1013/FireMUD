@@ -1552,10 +1552,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (runtimeState.getScriptPinEpoch() <= 0 || instance.getScriptPinEpoch() <= 0) {
       return MaterializationEligibility.authorityUnavailable();
     }
-    if (runtimeState.getPinnedScriptPatchBaseVersionId() <= 0L
-        || instance.getScriptPatchBaseVersionId() == null
-        || runtimeState.getPinnedScriptPatchBaseVersionId()
-            != instance.getScriptPatchBaseVersionId()) {
+    long runtimeBaseVersionId = runtimeState.getPinnedScriptPatchBaseVersionId();
+    Long instanceBaseVersionId = instance.getScriptPatchBaseVersionId();
+    if (runtimeBaseVersionId <= 0L
+        || instanceBaseVersionId == null
+        || instanceBaseVersionId <= 0L) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (runtimeBaseVersionId != instanceBaseVersionId) {
       return MaterializationEligibility.proven("script_patch_base_version_mismatch");
     }
     String runtimeRequestId =
@@ -1976,8 +1980,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (baseVersionId <= 0L) {
       return unavailableScriptPatchPublication(
           scriptPatchVersion,
-          "INVALID_ARGUMENT",
-          "base_version_id is required for exact script-patch publication lookup");
+          "PUBLICATION_SCOPE_UNAVAILABLE",
+          "base_version_id is unavailable for exact script-patch publication lookup");
     }
     GetPublishedScriptPatchVersionResponse response;
     try {

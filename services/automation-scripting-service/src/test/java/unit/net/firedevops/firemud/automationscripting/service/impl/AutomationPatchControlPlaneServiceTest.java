@@ -468,6 +468,7 @@ class AutomationPatchControlPlaneServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
+                    9L,
                     3L,
                     "pin-request-3",
                     "event-1",

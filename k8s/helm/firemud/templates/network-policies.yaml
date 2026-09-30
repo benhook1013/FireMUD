@@ -121,7 +121,7 @@ spec:
         - protocol: TCP
           port: 9000
 {{- if eq $certificateIdentityMode "hosted-controller" }}
-{{- range $workload := list "account-service" "game-session-service" }}
+{{- range $workload := list "account-service" "game-session-service" "social-groups-service" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

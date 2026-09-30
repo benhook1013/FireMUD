@@ -392,6 +392,70 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void credentialLoginAsDifferentAccountInvalidatesFirstPartyContextBeforeBareLogin() {
+    TextCommand bareLogin = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    FirstPartyConnectContext accountAContext =
+        new FirstPartyConnectContext(
+            99L, 22L, "demo", "production", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.of(accountAContext), Optional.of(accountAContext), Optional.empty());
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult firstPartyResult = handler.handle("1", bareLogin, false);
+    LoginCommandHandlingResult credentialResult = handler.handle("1", credentialLogin, false);
+    LoginCommandHandlingResult subsequentBareResult = handler.handle("1", bareLogin, false);
+
+    assertTrue(firstPartyResult.commandResult().accepted());
+    assertTrue(credentialResult.commandResult().accepted());
+    assertFalse(subsequentBareResult.commandResult().accepted());
+    assertEquals(
+        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+        subsequentBareResult.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService, times(3)).save(captor.capture());
+    assertEquals(99L, captor.getAllValues().get(0).accountId());
+    assertEquals(77L, captor.getAllValues().get(1).accountId());
+    assertEquals(0L, captor.getAllValues().get(2).accountId());
+  }
+
+  @Test
+  void staleFirstPartyRegistryCannotReplacePersistedCredentialIdentity() {
+    SessionContext credentialIdentity =
+        new SessionContext(1L, 22L, 77L, "demo@example.com", 0L, null, 0L, "mock-jwt");
+    stubSessionContext(credentialIdentity);
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    99L,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+
+    LoginCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN"), false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameInstanceRepository, never()).findById(anyLong());
+  }
+
+  @Test
   void bareLoginFallsBackToPersistedFirstPartyContextWhenRegistryEntryIsMissing() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
