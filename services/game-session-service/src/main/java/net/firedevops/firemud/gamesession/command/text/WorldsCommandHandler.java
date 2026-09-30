@@ -698,7 +698,6 @@ public class WorldsCommandHandler {
         ordinal,
         realm.slug(),
         realm.displayName(),
-        realm.gameInstanceId(),
         realm.requiresCharacterSelection(),
         realm.stateScope(),
         realm.characterCreationPolicy());
