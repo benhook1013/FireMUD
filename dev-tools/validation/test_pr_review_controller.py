@@ -47,7 +47,7 @@ from pr_review.policy import (
     select_review_target,
     taper_satisfied,
 )
-from pr_review.runtime import LiveEvidence
+from pr_review.runtime import LiveEvidence, LiveGitHub
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
     Judgment,
@@ -1595,6 +1595,176 @@ class ControllerTests(unittest.TestCase):
                     with self.assertRaises(ControllerError):
                         controller.resolve_hosted_target()
 
+    def test_runtime_stop_audit_allows_only_exact_active_cli_owner_during_hosted_clearance(self):
+        baseline = self.allocation_evidence(checkpoint="hosted-baseline", channel="hosted")
+        scope_timeline = self.scope_timeline_evidence()
+        cases = (
+            ("exact active owner", "active", True),
+            ("missing lock owner", "missing-owner", False),
+            ("mismatched stack anchor", "mismatched-anchor", False),
+            ("duplicate active owners", "duplicate", False),
+            ("real pending capture", "pending", False),
+        )
+        for case, observation_kind, allowed in cases:
+            with self.subTest(case=case):
+                histories = {
+                    (1, "hosted"): [baseline, scope_timeline],
+                    (1, "cli"): [],
+                }
+                provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                controller = self.make(
+                    {1: pr(1, HEAD_1)},
+                    provider,
+                    heads={"feature-1": HEAD_1},
+                )
+                controller.set_stack([1])
+
+                def read_history(pr_number, channel, histories=histories):
+                    return histories.get((pr_number, channel), [])
+
+                def runtime_payload(_repo, pr_number, controller=controller):
+                    live_pr = controller.github.values[pr_number]
+                    return {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "number": pr_number,
+                                    "headRefOid": live_pr.head,
+                                    "baseRefName": live_pr.base_ref,
+                                    "baseRefOid": live_pr.base_tip,
+                                    "comments": {"nodes": []},
+                                    "reviews": {"nodes": []},
+                                    "reviewThreads": {"nodes": []},
+                                }
+                            }
+                        }
+                    }
+
+                def runtime_pull_request(pr_number, controller=controller):
+                    live_pr = controller.github.values[pr_number]
+                    return SimpleNamespace(
+                        number=pr_number,
+                        head_sha=live_pr.head,
+                        base_sha=live_pr.base_tip,
+                        base_ref_name=live_pr.base_ref,
+                    )
+
+                empty_runtime_audit = {
+                    "complete": True,
+                    "active_reservations": [],
+                    "unmatched_responses": [],
+                    "historical_unmatched_responses": [],
+                    "ambiguous_responses": [],
+                    "unresolved_findings": [],
+                }
+                audits = []
+                actual_review_stop_audit = provider.review_stop_audit
+
+                def capture_runtime_audit(
+                    *args,
+                    actual_review_stop_audit=actual_review_stop_audit,
+                    audits=audits,
+                    **kwargs,
+                ):
+                    audit = actual_review_stop_audit(*args, **kwargs)
+                    audits.append(audit)
+                    return audit
+
+                with (
+                    patch.object(provider, "history", side_effect=read_history),
+                    patch.object(
+                        provider,
+                        "legacy_transition_reauthorization_audit",
+                        return_value=empty_runtime_audit,
+                    ),
+                    patch.object(provider, "_complete_trigger_paths", return_value=[]),
+                    patch.object(provider.live, "pull_request", side_effect=runtime_pull_request),
+                    patch("pr_review.runtime.github.fetch_pull_request", side_effect=runtime_payload),
+                    patch.object(provider, "review_stop_audit", side_effect=capture_runtime_audit),
+                ):
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_1,
+                        reason="bounded Hosted review after baseline",
+                        checkpoint="hosted-baseline",
+                        min_additional_completed=1,
+                        max_additional_completed=2,
+                        fresh_taper=True,
+                    )
+                    histories[(1, "hosted")].append(
+                        self.allocation_evidence(
+                            head=HEAD_1,
+                            checkpoint="hosted-accepted-result",
+                            accepted=1,
+                            channel="hosted",
+                        )
+                    )
+                    controller.github.values[1] = pr(1, HEAD_2)
+                    controller.git.heads["feature-1"] = HEAD_2
+                    current_anchor = {
+                        "pr": 1,
+                        "head": HEAD_2,
+                        "checkpoint": f"active-cli:run.{'a' * 32}",
+                        "active_review": True,
+                        "held": True,
+                        "current_lock_owner": True,
+                        "child_head": HEAD_2,
+                        "parent_identity": "develop",
+                        "parent_head": BASE,
+                        "merge_base": BASE,
+                        "patch_id": f"patch-{HEAD_2[:4]}",
+                        "reason": "CLI review is running; its eventual findings still require adjudication",
+                    }
+                    if observation_kind == "active":
+                        histories[(1, "cli")] = [current_anchor]
+                    elif observation_kind == "missing-owner":
+                        histories[(1, "cli")] = [
+                            {key: value for key, value in current_anchor.items() if key != "current_lock_owner"}
+                        ]
+                    elif observation_kind == "mismatched-anchor":
+                        histories[(1, "cli")] = [{**current_anchor, "patch_id": "different-patch"}]
+                    elif observation_kind == "duplicate":
+                        histories[(1, "cli")] = [
+                            current_anchor,
+                            {**current_anchor, "checkpoint": f"active-cli:run.{'b' * 32}"},
+                        ]
+                    else:
+                        histories[(1, "cli")] = [
+                            {
+                                "pr": 1,
+                                "head": HEAD_2,
+                                "checkpoint": "pending-capture:cli-run",
+                                "held": True,
+                                "reason": "private CLI capture remains pending adjudication",
+                            }
+                        ]
+
+                    allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+                    self.assertTrue(audits)
+                    last_audit = audits[-1]
+                    if observation_kind == "active":
+                        self.assertEqual(last_audit["active_cli_reviews"], [current_anchor])
+                        self.assertNotIn("CLI review is running", last_audit["unresolved_findings"])
+                        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+                        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_2)
+                        state = controller._state()
+                        live, reconciliation = controller._reconciliation(state)
+                        anchor = controller._anchor(1, live[1], reconciliation.links[1])
+                        with self.assertRaisesRegex(ControllerError, "active CLI review"):
+                            controller._stop_audit(1, anchor, ())
+                    else:
+                        self.assertEqual(
+                            last_audit["active_cli_reviews"],
+                            histories[(1, "cli")]
+                            if observation_kind in {"missing-owner", "mismatched-anchor", "duplicate"}
+                            else [],
+                        )
+                        self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                        with self.assertRaises(ControllerError):
+                            controller.resolve_hosted_target()
+
     def test_published_cli_correction_ignores_audited_hosted_rate_limit(self):
         rate_limit = {
             "pr": 1,
@@ -2321,6 +2491,58 @@ class ControllerTests(unittest.TestCase):
                 reason="ordinary allocation retains ancestry protection",
                 min_additional_completed=1,
             )
+
+    def test_bounded_progress_requires_ancestry_unless_fresh_taper_is_reopened(self):
+        for fresh_taper in (False, True):
+            with self.subTest(fresh_taper=fresh_taper):
+                history = {
+                    (1, "hosted"): [
+                        self.allocation_evidence(
+                            checkpoint="prior-dry-hosted-review",
+                            channel="hosted",
+                            accepted=0,
+                            raw=0,
+                        )
+                    ]
+                }
+                controller = self.grant_bounded_allocation(
+                    channel="hosted",
+                    checkpoint="prior-dry-hosted-review",
+                    cap=2,
+                    minimum=1,
+                    evidence=history,
+                    fresh_taper=fresh_taper,
+                )
+                history[(1, "hosted")].append(
+                    self.allocation_evidence(
+                        head=HEAD_1,
+                        checkpoint="accepted-result-on-prior-candidate",
+                        channel="hosted",
+                        accepted=1,
+                    )
+                )
+                controller.github.values[1] = pr(1, HEAD_2)
+                controller.git.heads["feature-1"] = HEAD_2
+                controller.git.is_ancestor = lambda ancestor, descendant: False
+
+                allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+                self.assertIn(
+                    "prior-dry-hosted-review",
+                    [item["checkpoint"] for item in controller._evidence_provider[(1, "hosted")]],
+                )
+                self.assertIn(
+                    "prior-dry-hosted-review",
+                    controller.store.load().allocations["1:hosted"].baseline_checkpoints,
+                )
+                if fresh_taper:
+                    self.assertTrue(allocation["reopens_taper"])
+                    self.assertNotEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                    self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_2)
+                else:
+                    self.assertFalse(allocation["reopens_taper"])
+                    self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                    with self.assertRaises(ControllerError):
+                        controller.resolve_hosted_target()
 
     def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
         historical_head = "3f" * 20

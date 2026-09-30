@@ -651,9 +651,12 @@ class LiveEvidence:
             for item in channel_history["cli"]
             if item.get("held") is True or item.get("unstable") is True or item.get("unreconciled") is True
         ]
-        if cli_pending:
+        active_cli_reviews = [item for item in cli_pending if item.get("active_review") is True]
+        unresolved_cli_pending = [item for item in cli_pending if item.get("active_review") is not True]
+        if unresolved_cli_pending:
             unresolved_findings.extend(
-                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence") for item in cli_pending
+                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence")
+                for item in unresolved_cli_pending
             )
         checkpoints = [
             {"channel": channel, **item}
@@ -681,6 +684,7 @@ class LiveEvidence:
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
             "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
+            "active_cli_reviews": list(active_cli_reviews),
             "retained_ambiguous": list(retained_by_fingerprint.values()),
         }
 

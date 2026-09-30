@@ -2259,6 +2259,7 @@ class ReviewController:
         allow_historical_unmatched: bool = False,
         allow_historical_terminal_ambiguity: bool = False,
         allow_cli_hosted_overlap: bool = False,
+        allow_hosted_cli_overlap: bool = False,
         acknowledged_over_ceiling_checkpoints: Sequence[str] = (),
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
@@ -2421,6 +2422,19 @@ class ReviewController:
             ]
             if len(set(active_identities)) != len(active_identities):
                 raise ControllerError("review-stop audit has duplicate active Hosted response identities")
+        active_cli_reviews = audit.get("active_cli_reviews", ())
+        if not isinstance(active_cli_reviews, Sequence) or isinstance(active_cli_reviews, (str, bytes)):
+            raise ControllerError("review-stop audit has malformed active CLI review evidence")
+        allowed_active_cli_reviews: list[Mapping[str, Any]] = []
+        if active_cli_reviews:
+            if not allow_hosted_cli_overlap:
+                raise ControllerError("review stop is blocked by an active CLI review")
+            if len(active_cli_reviews) != 1:
+                raise ControllerError("review-stop audit found multiple active CLI overlap runs")
+            observation = active_cli_reviews[0]
+            if not self._active_cli_review_overlaps_hosted(observation, pr, current):
+                raise ControllerError("review-stop audit has an unverified active CLI overlap run")
+            allowed_active_cli_reviews.append(observation)
         for field, description in (
             ("active_reservations", "active review or reservation"),
             ("unmatched_responses", "unmatched review response"),
@@ -2456,6 +2470,7 @@ class ReviewController:
             if values:
                 raise ControllerError(f"review stop is blocked by an {description}")
         normalized_audit["allowed_active_hosted_reservations"] = tuple(allowed_active_hosted_reservations)
+        normalized_audit["allowed_active_cli_reviews"] = tuple(allowed_active_cli_reviews)
         historical_unmatched = audit.get("historical_unmatched_responses", [])
         if not isinstance(historical_unmatched, Sequence) or isinstance(historical_unmatched, (str, bytes)):
             raise ControllerError("review-stop audit has malformed historical unmatched-response evidence")
@@ -2597,6 +2612,7 @@ class ReviewController:
                 allow_historical_unmatched=allow_historical_unmatched,
                 allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
                 allow_cli_hosted_overlap=allow_exact_hosted_overlap,
+                allow_hosted_cli_overlap=allow_exact_cli_overlap,
                 acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
             )
             if stop_audit_cache is not None:
@@ -3389,7 +3405,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=checkpoint_pin,
-                    require_checkpoint_ancestry=False,
+                    require_checkpoint_ancestry=not allocation.reopens_taper,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
@@ -3428,7 +3444,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=stopping_checkpoint,
-                    require_checkpoint_ancestry=False,
+                    require_checkpoint_ancestry=not allocation.reopens_taper,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
@@ -3471,7 +3487,7 @@ class ReviewController:
                 current,
                 reconciliation_result,
                 checkpoint_pin=latest["checkpoint"],
-                require_checkpoint_ancestry=False,
+                require_checkpoint_ancestry=not allocation.reopens_taper,
                 allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                 allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                 stop_audit_cache=stop_audit_cache,

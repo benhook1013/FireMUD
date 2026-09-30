@@ -3241,6 +3241,71 @@ class RuntimeTest(unittest.TestCase):
         ):
             observer.review_stop_audit(42, anchor)
 
+    def test_review_stop_audit_preserves_active_cli_identity_separately_from_pending_findings(self) -> None:
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        active_cli = {
+            **anchor,
+            "head": HEAD,
+            "checkpoint": f"active-cli:run.{'a' * 32}",
+            "active_review": True,
+            "held": True,
+            "current_lock_owner": True,
+            "reason": "CLI review is running; its eventual findings still require adjudication",
+        }
+        pending_cli = {
+            "pr": 42,
+            "head": HEAD,
+            "checkpoint": "pending-capture:cli-run",
+            "held": True,
+            "reason": "a successful private CLI capture has no public checkpoint and requires adjudication",
+        }
+        empty_audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "historical_unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+
+        def audit_for(cli_history):
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(observer.live, "pull_request", return_value=snapshot),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=empty_audit),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(
+                    observer,
+                    "history",
+                    side_effect=lambda _pr, channel: cli_history if channel == "cli" else [],
+                ),
+            ):
+                return observer.review_stop_audit(42, anchor)
+
+        active_audit = audit_for([active_cli])
+        self.assertEqual(active_audit["active_cli_reviews"], [active_cli])
+        self.assertFalse(any("CLI review is running" in item for item in active_audit["unresolved_findings"]))
+        self.assertFalse(any("CLI review is running" in item for item in active_audit["blockers"]))
+
+        pending_audit = audit_for([pending_cli])
+        self.assertEqual(pending_audit["active_cli_reviews"], [])
+        self.assertEqual(
+            pending_audit["unresolved_findings"],
+            ["a successful private CLI capture has no public checkpoint and requires adjudication"],
+        )
+
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
             f"Hosted: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files · 2m 00s\n"
