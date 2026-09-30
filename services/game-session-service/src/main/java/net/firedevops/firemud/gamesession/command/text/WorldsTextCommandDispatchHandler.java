@@ -192,12 +192,6 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         request.sessionContext().orElseThrow(),
         payload.worldSelector(),
         payload.realmSelector())) {
-      case WorldsCommandHandler.CharacterBrowseResult.Success success ->
-          new TextCommandInterpretationResult(
-              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-              List.of(
-                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                      success.output())));
       case WorldsCommandHandler.CharacterBrowseResult.InvalidWorld ignored ->
           errorResult(
               "INVALID_ARGUMENT", "CHARS requires a valid world selector. Use WORLDS first.");

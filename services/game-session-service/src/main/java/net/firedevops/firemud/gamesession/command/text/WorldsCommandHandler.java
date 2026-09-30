@@ -4,23 +4,19 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -814,6 +810,12 @@ public class WorldsCommandHandler {
     }
 
     GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
+    if (!realm.publicProductionRealm()) {
+      return worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
+          ? CharacterBrowseResult.invalidRealm(world.slug())
+          : CharacterBrowseResult.invalidWorld();
+    }
+
     boolean currentPointerMatches;
     try {
       currentPointerMatches = worldCatalog.matchesCurrentAdmissionPointer(world, realm);
@@ -825,150 +827,7 @@ public class WorldsCommandHandler {
         || !currentPointerMatches) {
       return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
-
-    String requestId = sessionContext.sessionId() + ":" + UUID.randomUUID();
-    CharacterBrowseAuthorization authorization =
-        realm.publicProductionRealm()
-            ? authorizePublicCharacterBrowse(sessionContext, realm, requestId)
-            : mapNonPublicCharacterAuthorization(
-                authorizeNonPublicRealm(sessionContext, world, realm, requestId));
-    if (authorization != CharacterBrowseAuthorization.AUTHORIZED) {
-      if (!realm.publicProductionRealm() && authorization.isDefinitiveAccessDenial()) {
-        return worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
-            ? CharacterBrowseResult.invalidRealm(world.slug())
-            : CharacterBrowseResult.invalidWorld();
-      }
-      return CharacterBrowseResult.failure(authorization.code());
-    }
-
-    ListCharactersByAccountResponse response =
-        entityManagementClient.listCharactersByAccount(
-            Long.toString(realm.tenantId()),
-            Long.toString(sessionContext.accountId()),
-            Long.toString(realm.gameInstanceId()),
-            toPlayableStateScope(realm));
-    if (response.hasError()) {
-      return CharacterBrowseResult.unavailable();
-    }
-    java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
-        new java.util.ArrayList<>(response.getCharactersCount());
-    Set<String> characterIds = new HashSet<>();
-    for (int i = 0; i < response.getCharactersCount(); i++) {
-      net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
-      if (!Long.toString(realm.tenantId()).equals(character.getTenantId())
-          || !Long.toString(sessionContext.accountId()).equals(character.getAccountId())
-          || character.getPlayableStateScope() != toPlayableStateScope(realm)
-          || !StringUtils.hasText(character.getId())
-          || !StringUtils.hasText(character.getName())
-          || !characterIds.add(character.getId())) {
-        return CharacterBrowseResult.unavailable();
-      }
-      entries.add(
-          new CharacterBrowseViewOutput.CharacterEntry(
-              i + 1, character.getId(), character.getName(), character.getLevel()));
-    }
-    return CharacterBrowseResult.success(
-        new CharacterBrowseViewOutput(
-            world.slug(),
-            realm.slug(),
-            realm.stateScope(),
-            realm.characterCreationPolicy(),
-            entries));
-  }
-
-  private CharacterBrowseAuthorization authorizePublicCharacterBrowse(
-      SessionContext sessionContext, GameplayWorldCatalog.RealmView realm, String requestId) {
-    if (accountClient == null) {
-      return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-    }
-    GetTenantMembershipForRuntimeResponse membershipResponse =
-        accountClient.getTenantMembershipForRuntime(
-            Long.toString(sessionContext.accountId()), Long.toString(realm.tenantId()), requestId);
-    if (membershipResponse == null) {
-      return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-    }
-    if (membershipResponse.hasError()) {
-      String errorCode = membershipResponse.getError().getCode();
-      if (!StringUtils.hasText(errorCode)) {
-        return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-      }
-      return isAuthorityUnavailable(errorCode)
-          ? CharacterBrowseAuthorization.AUTH_UNAVAILABLE
-          : CharacterBrowseAuthorization.DENIED;
-    }
-    if (!isValidMembershipAuthoritySnapshot(membershipResponse, sessionContext, realm)) {
-      return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-    }
-
-    PublicEntitlementAuthorization entitlementAuthorization =
-        authorizePublicCharacterEntitlement(realm, requestId);
-    if (entitlementAuthorization.authorization() != CharacterBrowseAuthorization.AUTHORIZED) {
-      return entitlementAuthorization.authorization();
-    }
-    if (!membershipResponse.getMembershipExists()
-        || "INACTIVE".equalsIgnoreCase(membershipResponse.getMembershipLifecycleState())) {
-      return entitlementAuthorization.allowPublicJoin()
-          ? CharacterBrowseAuthorization.JOIN_REQUIRED
-          : CharacterBrowseAuthorization.PUBLIC_PRODUCTION_ADMISSION_DENIED;
-    }
-    if (!membershipResponse.getGameplayAdmissionAllowed()) {
-      return CharacterBrowseAuthorization.PUBLIC_PRODUCTION_ADMISSION_DENIED;
-    }
-    if (!isValidActiveMembership(membershipResponse, sessionContext, realm)) {
-      return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-    }
-    return CharacterBrowseAuthorization.AUTHORIZED;
-  }
-
-  private PublicEntitlementAuthorization authorizePublicCharacterEntitlement(
-      GameplayWorldCatalog.RealmView realm, String requestId) {
-    if (accountClient == null) {
-      return new PublicEntitlementAuthorization(
-          CharacterBrowseAuthorization.AUTH_UNAVAILABLE, false);
-    }
-    GetTenantEntitlementsForRuntimeResponse entitlementResponse =
-        accountClient.getTenantEntitlementsForRuntime(Long.toString(realm.tenantId()), requestId);
-    if (entitlementResponse == null) {
-      return new PublicEntitlementAuthorization(
-          CharacterBrowseAuthorization.AUTH_UNAVAILABLE, false);
-    }
-    if (entitlementResponse.hasError()) {
-      String errorCode = entitlementResponse.getError().getCode();
-      if (!StringUtils.hasText(errorCode)) {
-        return new PublicEntitlementAuthorization(
-            CharacterBrowseAuthorization.AUTH_UNAVAILABLE, false);
-      }
-      if (GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE.equalsIgnoreCase(errorCode)) {
-        return new PublicEntitlementAuthorization(
-            CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE, false);
-      }
-      return new PublicEntitlementAuthorization(
-          isAuthorityUnavailable(errorCode)
-              ? CharacterBrowseAuthorization.AUTH_UNAVAILABLE
-              : CharacterBrowseAuthorization.DENIED,
-          false);
-    }
-    if (!isValidEntitlement(entitlementResponse, realm)) {
-      return new PublicEntitlementAuthorization(
-          CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE, false);
-    }
-    if (!entitlementResponse.getGameplayAvailable()) {
-      return new PublicEntitlementAuthorization(
-          CharacterBrowseAuthorization.TENANT_BILLING_BLOCKED, false);
-    }
-    return new PublicEntitlementAuthorization(
-        CharacterBrowseAuthorization.AUTHORIZED, entitlementResponse.getAllowPublicJoin());
-  }
-
-  private CharacterBrowseAuthorization mapNonPublicCharacterAuthorization(
-      NonPublicRealmAuthorization authorization) {
-    return switch (authorization) {
-      case AUTHORIZED -> CharacterBrowseAuthorization.AUTHORIZED;
-      case DENIED, MEMBERSHIP_DENIED -> CharacterBrowseAuthorization.DENIED;
-      case ENROLLMENT_REQUIRED -> CharacterBrowseAuthorization.NON_PUBLIC_ENROLLMENT_REQUIRED;
-      case AUTHORITY_UNAVAILABLE -> CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
-      case ENTITLEMENT_UNAVAILABLE -> CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE;
-    };
+    return CharacterBrowseResult.unavailable();
   }
 
   private boolean isValidMembershipAuthoritySnapshot(
@@ -1012,47 +871,12 @@ public class WorldsCommandHandler {
         && StringUtils.hasText(realm.slug());
   }
 
-  private enum CharacterBrowseAuthorization {
-    AUTHORIZED(null),
-    JOIN_REQUIRED("JOIN_REQUIRED"),
-    DENIED("WORLD_ACCESS_DENIED"),
-    PUBLIC_PRODUCTION_ADMISSION_DENIED("PUBLIC_PRODUCTION_ADMISSION_DENIED"),
-    NON_PUBLIC_ENROLLMENT_REQUIRED("NON_PUBLIC_ENROLLMENT_REQUIRED"),
-    TENANT_BILLING_BLOCKED("TENANT_BILLING_BLOCKED"),
-    AUTH_UNAVAILABLE("AUTH_UNAVAILABLE"),
-    ENTITLEMENT_UNAVAILABLE("ENTITLEMENT_UNAVAILABLE");
-
-    private final String code;
-
-    CharacterBrowseAuthorization(String code) {
-      this.code = code;
-    }
-
-    private String code() {
-      return code;
-    }
-
-    private boolean isDefinitiveAccessDenial() {
-      return this == DENIED
-          || this == PUBLIC_PRODUCTION_ADMISSION_DENIED
-          || this == NON_PUBLIC_ENROLLMENT_REQUIRED;
-    }
-  }
-
-  private record PublicEntitlementAuthorization(
-      CharacterBrowseAuthorization authorization, boolean allowPublicJoin) {}
-
   public sealed interface CharacterBrowseResult
-      permits CharacterBrowseResult.Success,
-          CharacterBrowseResult.InvalidWorld,
+      permits CharacterBrowseResult.InvalidWorld,
           CharacterBrowseResult.InvalidRealm,
           CharacterBrowseResult.RealmSelectionRequired,
           CharacterBrowseResult.Unavailable,
           CharacterBrowseResult.Failure {
-    static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
-      return new Success(output);
-    }
-
     static CharacterBrowseResult invalidWorld() {
       return new InvalidWorld();
     }
@@ -1072,8 +896,6 @@ public class WorldsCommandHandler {
     static CharacterBrowseResult failure(String code) {
       return new Failure(code);
     }
-
-    record Success(CharacterBrowseViewOutput output) implements CharacterBrowseResult {}
 
     record InvalidWorld() implements CharacterBrowseResult {}
 

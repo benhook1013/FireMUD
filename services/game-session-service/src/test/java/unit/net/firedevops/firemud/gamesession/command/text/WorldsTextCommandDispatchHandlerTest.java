@@ -14,12 +14,9 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -163,7 +160,7 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedCharsBrowse() {
+  void closesPublicCharsBrowseBeforeAuthorityOrRosterReads() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     gameplayCatalogProperties
         .getWorlds()
@@ -172,42 +169,6 @@ class WorldsTextCommandDispatchHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setMembershipLifecycleState("ACTIVE")
-                .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
-    when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("7001")
-                        .setTenantId("22")
-                        .setAccountId("123")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .setName("Emberline")
-                        .setLevel(12)
-                        .build())
-                .build());
     SessionContext context =
         new SessionContext(
             7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -228,18 +189,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(CharacterBrowseViewOutput.class);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "CHARS".equals(gameplayCommand.getCommandName())
-                        && "CHARS demo".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test
@@ -255,52 +207,6 @@ class WorldsTextCommandDispatchHandlerTest {
     gameplayCatalogProperties.setWorlds(List.of(world));
 
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt(Instant.now().toString())
-                .build(),
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(1L)
-                .setMembershipAuthorityGeneration(1L)
-                .setMembershipLifecycleState("INACTIVE")
-                .setEvaluatedAt(Instant.now().toString())
-                .build(),
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setMembershipAuthorityGeneration(1L)
-                .setMembershipLifecycleState("ACTIVE")
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
-    when(accountClient.getRealmAccessGrantForRuntime(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.eq("demo"),
-            Mockito.eq("playtest"),
-            Mockito.anyString()))
-        .thenReturn(
-            GetRealmAccessGrantForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setWorldSlug("demo")
-                .setRealmSlug("playtest")
-                .setGranted(false)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
@@ -331,11 +237,11 @@ class WorldsTextCommandDispatchHandlerTest {
       assertThat(deniedRealm.outputs()).isEqualTo(unknownRealm.outputs());
     }
 
-    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test
-  void routesJoinRequiredCharsFailureWithoutPublishingSuccessEventOrReadingEntity() {
+  void routesExplicitPublicCharsBrowseToUnavailableBeforeAuthorityOrRosterReads() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     gameplayCatalogProperties
         .getWorlds()
@@ -344,29 +250,6 @@ class WorldsTextCommandDispatchHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(0L)
-                .setMembershipAuthorityGeneration(0L)
-                .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setAllowPublicJoin(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
@@ -389,9 +272,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 Optional.of(context)));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("JOIN_REQUIRED");
+    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
     assertThat(result.outputs()).singleElement().extracting(output -> output.payload()).isNotNull();
-    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test
