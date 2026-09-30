@@ -180,18 +180,18 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
             + "(sentinel_id INTEGER PRIMARY KEY, value INTEGER NOT NULL)");
     dsl.execute("INSERT INTO authority_overflow_sentinel (sentinel_id, value) VALUES (1, 0)");
     // Seed a consistent exhausted stream; bypass only its contiguous-insert guard for this setup.
-    inTransaction(
-        transaction,
-        () -> {
-          dsl.execute(
-              "INSERT INTO account_authority_outbox_streams "
-                  + "(outbox_stream_key, last_sequence) VALUES (?, ?)",
-              stream,
-              Long.MAX_VALUE);
-          dsl.execute(
-              "ALTER TABLE account_authority_outbox_events "
-                  + "DISABLE TRIGGER account_authority_outbox_event_insert");
-          try {
+    dsl.execute(
+        "ALTER TABLE account_authority_outbox_events "
+            + "DISABLE TRIGGER account_authority_outbox_event_insert");
+    try {
+      inTransaction(
+          transaction,
+          () -> {
+            dsl.execute(
+                "INSERT INTO account_authority_outbox_streams "
+                    + "(outbox_stream_key, last_sequence) VALUES (?, ?)",
+                stream,
+                Long.MAX_VALUE);
             dsl.execute(
                 "INSERT INTO account_authority_outbox_events "
                     + "(outbox_stream_key, outbox_sequence, request_id, event_id, "
@@ -202,13 +202,13 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
                 originalEvent.eventId(),
                 originalEvent.eventDigest(),
                 originalPayload);
-          } finally {
-            dsl.execute(
-                "ALTER TABLE account_authority_outbox_events "
-                    + "ENABLE TRIGGER account_authority_outbox_event_insert");
-          }
-          return null;
-        });
+            return null;
+          });
+    } finally {
+      dsl.execute(
+          "ALTER TABLE account_authority_outbox_events "
+              + "ENABLE TRIGGER account_authority_outbox_event_insert");
+    }
 
     assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
         .contains(
