@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
@@ -88,6 +89,20 @@ public class ScriptHandoffEventRepository {
                                     AutomationScriptingJooqRepositorySupport
                                         .TERMINAL_WORK_ITEM_STATUSES)
                                 .or(SCRIPT_WORK_ITEMS.STATUS.eq("DEAD_LETTERED")))));
+    Condition noRetainedReplayReceipt =
+        notExists(
+            org.jooq
+                .impl
+                .DSL
+                .selectOne()
+                .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
+                .where(
+                    SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                        .TENANT_ID
+                        .eq(candidates.TENANT_ID)
+                        .and(
+                            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
+                                candidates.WORK_ITEM_ID))));
     Condition candidateEligibility =
         candidates
             .TENANT_ID
@@ -100,7 +115,8 @@ public class ScriptHandoffEventRepository {
                     .or(candidates.RETENTION_HOLD_UNTIL.le(current)))
             .and(nonBlankHandoffOutcome(candidates.HANDOFF_OUTCOME))
             .and(noIneligibleSibling)
-            .and(noIneligibleParent);
+            .and(noIneligibleParent)
+            .and(noRetainedReplayReceipt);
     return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
         .where(
             row(SCRIPT_HANDOFF_EVENTS.ID, SCRIPT_HANDOFF_EVENTS.TENANT_ID)

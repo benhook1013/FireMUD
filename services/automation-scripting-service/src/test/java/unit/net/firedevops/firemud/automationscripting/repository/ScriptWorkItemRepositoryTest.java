@@ -398,6 +398,64 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void pluginCancellationClaimUsesBoundedScopeAndRowLock() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    AtomicReference<Object[]> bindings = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          bindings.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "game-1",
+                    "region-1",
+                    List.of("PENDING_EVALUATION", "EVALUATING")))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("id", "for update", "fetch next")
+                    .satisfies(
+                        scopedSql -> {
+                          int whereIndex = scopedSql.indexOf(" where ");
+                          int fetchIndex = scopedSql.indexOf("fetch next");
+                          assertThat(scopedSql.substring(whereIndex, fetchIndex))
+                              .contains(
+                                  "tenant_id",
+                                  "plugin_id",
+                                  "plugin_version_id",
+                                  "game_instance_id",
+                                  "region_id",
+                                  "status");
+                        }));
+    assertThat(bindings)
+        .hasValueSatisfying(
+            values ->
+                assertThat(values)
+                    .contains(
+                        "tenant-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "game-1",
+                        "region-1",
+                        "PENDING_EVALUATION",
+                        "EVALUATING"));
+  }
+
+  @Test
   void replayClaimFencesStatusRowVersionAndFailureGeneration() {
     AtomicReference<String> sql = new AtomicReference<>();
     AtomicReference<Object[]> bindings = new AtomicReference<>();

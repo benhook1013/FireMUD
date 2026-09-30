@@ -602,6 +602,9 @@ class ScriptHandoffEventRepositoryTest {
             " <= ",
             "status",
             "not in",
+            "script_dead_letter_replay_results",
+            "\"script_dead_letter_replay_results\".\"tenant_id\" = \"retention_candidates\".\"tenant_id\"",
+            "\"script_dead_letter_replay_results\".\"work_item_id\" = \"retention_candidates\".\"work_item_id\"",
             "order by \"retention_candidates\".\"event_id\" asc",
             "fetch next ? rows only");
     assertThat(renderedSql).doesNotContain("select \"retention_candidates\".\"event_id\"");

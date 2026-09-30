@@ -290,7 +290,9 @@ class ScriptWorkItemExecutionServiceImplTest {
             gameSessionClient,
             pluginRuntimeStateRepository);
 
+    Instant startedAt = Instant.now();
     service.processPendingWorkItems(1);
+    Instant completedAt = Instant.now();
 
     assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
     assertThat(item.getCancelReason()).isEqualTo("authority_unavailable");
@@ -298,7 +300,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
     assertThat(item.getNextEligibleAt())
         .isNotNull()
-        .isAfterOrEqualTo(Instant.now().plusSeconds(14));
+        .isBetween(startedAt.plusSeconds(15), completedAt.plusSeconds(15));
     verify(pluginRuntimeStateRepository)
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
   }
