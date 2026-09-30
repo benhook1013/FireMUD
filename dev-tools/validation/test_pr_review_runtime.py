@@ -186,7 +186,7 @@ class RuntimeTest(unittest.TestCase):
             ):
                 self.assertEqual(provider.request_history(42, "cli"), [])
 
-    def test_cli_terminal_error_does_not_hide_another_active_capture_or_pr(self) -> None:
+    def test_recognized_cli_terminal_error_is_scoped_to_lock_owner(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -212,8 +212,8 @@ class RuntimeTest(unittest.TestCase):
                 target_observation = provider.request_history(42, "cli")
                 other_pr_observation = provider.request_history(43, "cli")
 
-            self.assertEqual([item["checkpoint"] for item in target_observation], ["active-cli:unidentified"])
-            self.assertEqual([item["checkpoint"] for item in other_pr_observation], ["active-cli:run.other"])
+            self.assertEqual(target_observation, [])
+            self.assertEqual([item["checkpoint"] for item in other_pr_observation], ["active-cli:unidentified"])
 
     def test_historical_terminal_error_does_not_identify_a_later_lock_owner(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
@@ -258,6 +258,81 @@ class RuntimeTest(unittest.TestCase):
                     ):
                         history = provider.request_history(42, "cli")
                     self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_recognized_cli_lock_owner_reads_only_its_capture_metadata(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = f"run.{'f' * 32}"
+            capture = cli_root / "runs" / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            unrelated = cli_root / "runs" / "run.unrelated"
+            unrelated.mkdir()
+            (unrelated / "metadata.json").write_text(
+                json.dumps({"run_id": "run.unrelated", "pull_request": 43, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                owner_history = provider._active_cli_history(42, common)
+                other_pr_history = provider._active_cli_history(43, common, operational_only=True)
+
+            self.assertEqual([item["checkpoint"] for item in owner_history], [f"active-cli:{run_id}"])
+            self.assertEqual([item["checkpoint"] for item in other_pr_history], ["active-cli:unidentified"])
+
+    def test_recognized_cli_lock_owner_with_missing_metadata_fails_closed(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            runs = cli_root / "runs"
+            runs.mkdir(parents=True)
+            (runs / "run.other").mkdir()
+            (runs / "run.other" / "metadata.json").write_text(
+                json.dumps({"run_id": "run.other", "pull_request": 42, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            owner_run_id = f"run.{'a' * 32}"
+            (cli_root / "cli.lock").write_text(f"run_id={owner_run_id}\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                history = provider._active_cli_history(42, common, operational_only=True)
+
+            self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_unknown_cli_lock_owner_still_scans_active_captures(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = "run.active"
+            capture = cli_root / "runs" / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            (cli_root / "cli.lock").write_text("owner unavailable\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+            ):
+                history = provider.request_history(42, "cli")
+
+            self.assertEqual([item["checkpoint"] for item in history], [f"active-cli:{run_id}"])
 
     def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:
         now = datetime.now(timezone.utc)

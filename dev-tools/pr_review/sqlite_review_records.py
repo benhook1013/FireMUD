@@ -170,7 +170,7 @@ def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = F
 
 
 def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> tuple[str, ...]:
-    """Validate coverage text without losing an exact previously accepted note."""
+    """Validate coverage text while retaining bounded exact historical notes."""
 
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
@@ -179,7 +179,9 @@ def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> 
     matches_retained = tuple(values) == tuple(retained)
     return tuple(
         _bounded_text(
-            item, "coverage limit", maximum=max(200, len(item)) if matches_retained and isinstance(item, str) else 200
+            item,
+            "coverage limit",
+            maximum=min(1000, max(200, len(item))) if matches_retained and isinstance(item, str) else 200,
         )
         for item in values
     )

@@ -4133,14 +4133,13 @@ class ReviewController:
             stop_audit_cache=stop_audit_cache,
             history_cache=history_cache,
         )
-        if selected == policy.Channel.HOSTED:
+        if selected == policy.Channel.HOSTED and not allow_completed_allocation and decision.target is not None:
             for number, values in history.items():
                 if any(_field(value, "rate_limited") is True for value in values):
-                    decision = policy.ChannelDecision(
-                        selected,
-                        number,
-                        policy.ReviewStatus.RATE_LIMITED,
-                        f"Hosted repository cooldown remains active on PR #{number}",
+                    decision = dataclasses.replace(
+                        decision,
+                        status=policy.ReviewStatus.RATE_LIMITED,
+                        reason=f"Hosted repository cooldown remains active on PR #{number}",
                     )
                     break
         completed_allocation_override = False

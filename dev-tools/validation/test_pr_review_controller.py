@@ -458,9 +458,69 @@ class ControllerTests(unittest.TestCase):
                     {"pr": 1, "head": HEAD_1, "checkpoint": "current", **signal}
                 ]
                 target = controller._target(channel)
-                self.assertEqual((target.pr, target.status), (1, expected))
+                expected_pr = 2 if channel == "hosted" and "rate_limited" in signal else 1
+                self.assertEqual((target.pr, target.status), (expected_pr, expected))
+                if channel == "hosted" and "rate_limited" in signal:
+                    self.assertIn("cooldown remains active on PR #1", target.reason)
                 if "rate_limited" in signal:
                     self.assertNotEqual(controller._target("cli").status, ReviewStatus.RATE_LIMITED)
+
+    def test_hosted_cooldown_does_not_replace_completed_allocation_no_target(self):
+        provider = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:1",
+                    "rate_limited": True,
+                }
+            ]
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+            provider,
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        complete = ChannelDecision(Channel.HOSTED, None, ReviewStatus.COMPLETE, "completed allocation selection")
+
+        with patch.object(controller, "_select_review_decision", return_value=complete):
+            target = controller._target("hosted", expected_pr=2, allow_completed_allocation=True)
+
+        self.assertEqual(target.pr, 2)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertEqual(target.reason, "explicit allocation reopens review selection after completion")
+
+    def test_hosted_cooldown_preserves_selected_completed_allocation_decision(self):
+        provider = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:1",
+                    "rate_limited": True,
+                }
+            ]
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+            provider,
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        allocation_decision = ChannelDecision(
+            Channel.HOSTED,
+            2,
+            ReviewStatus.READY,
+            "2 has unused bounded hosted review capacity",
+        )
+
+        with patch.object(controller, "_select_review_decision", return_value=allocation_decision):
+            target = controller._target("hosted", expected_pr=2, allow_completed_allocation=True)
+
+        self.assertEqual(target.pr, 2)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertEqual(target.reason, allocation_decision.reason)
 
     def make(self, values, evidence=None, *, heads=None):
         directory = tempfile.TemporaryDirectory()
