@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -1255,22 +1256,24 @@ class AccountJoinPostgresIntegrationTest {
     JoinFixture fixture = fixture("active");
     CountDownLatch snapshotCaptured = new CountDownLatch(1);
     CountDownLatch releaseSnapshotCommit = new CountDownLatch(1);
-    CountDownLatch joinReachedAccountFence = new CountDownLatch(1);
+    CountDownLatch joinReachedIntentInsert = new CountDownLatch(1);
     AtomicReference<RuntimeMembershipSnapshotDto> capturedSnapshot = new AtomicReference<>();
     AtomicReference<Thread> joinThread = new AtomicReference<>();
     AtomicReference<Integer> snapshotBackendPid = new AtomicReference<>();
     AtomicReference<Integer> joinBackendPid = new AtomicReference<>();
+    // JOIN first inserts its PENDING intent; the account_id FK can block on this row lock before
+    // JOIN reaches its later explicit lockAccount call.
     doAnswer(
             invocation -> {
               if (Thread.currentThread() == joinThread.get()) {
                 joinBackendPid.set(
                     dsl.resultQuery("SELECT pg_backend_pid()").fetchOne(0, Integer.class));
-                joinReachedAccountFence.countDown();
+                joinReachedIntentInsert.countDown();
               }
               return invocation.callRealMethod();
             })
         .when(joinOperationRepository)
-        .lockAccount(fixture.accountId());
+        .insertIntent(anyString(), any(), anyString(), anyString());
 
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
@@ -1299,7 +1302,18 @@ class AccountJoinPostgresIntegrationTest {
                             }
                           }));
 
-      assertThat(snapshotCaptured.await(10, TimeUnit.SECONDS)).isTrue();
+      if (!snapshotCaptured.await(10, TimeUnit.SECONDS)) {
+        if (snapshotAttempt.isDone()) {
+          try {
+            snapshotAttempt.get();
+          } catch (ExecutionException workerFailure) {
+            throw new AssertionError(
+                "runtime snapshot worker failed before capturing its result",
+                workerFailure.getCause());
+          }
+        }
+        throw new AssertionError("runtime snapshot worker did not capture its result in time");
+      }
       Future<JoinPublicProductionResult> joinAttempt =
           executor.submit(
               () -> {
@@ -1307,7 +1321,21 @@ class AccountJoinPostgresIntegrationTest {
                 return join(fixture);
               });
 
-      assertThat(joinReachedAccountFence.await(10, TimeUnit.SECONDS)).isTrue();
+      if (!joinReachedIntentInsert.await(10, TimeUnit.SECONDS)) {
+        if (joinAttempt.isDone()) {
+          try {
+            JoinPublicProductionResult earlyResult = joinAttempt.get();
+            throw new AssertionError(
+                "JOIN completed before its intent-insert instrumentation: "
+                    + earlyResult.outcomeCode());
+          } catch (ExecutionException workerFailure) {
+            throw new AssertionError(
+                "JOIN worker failed before its intent-insert instrumentation",
+                workerFailure.getCause());
+          }
+        }
+        throw new AssertionError("JOIN did not reach its intent insert in time");
+      }
       awaitAccountFenceLockWait(snapshotBackendPid.get(), joinBackendPid.get());
       assertThat(joinAttempt.isDone())
           .as("first JOIN must remain blocked until the snapshot owner transaction commits")
