@@ -129,3 +129,8 @@ Entry format:
   - Context: a Hosted stop on #2893 was refused while an unrelated CLI review ran on #2829.
   - Observation: the stop path acquired the repository-wide CLI runner lock even for a Hosted decision on another PR, delaying the Hosted train without protecting the affected request.
   - Expected pattern: synchronize a stop with the affected channel's request and durable state update; test that an unrelated active review cannot block it while a genuinely concurrent request on the same PR and channel remains protected.
+
+- `2026-09-30`: Review-record upgrades must prove every selected controller entrypoint
+  - Context: #2893's records migration raised SQLite's minimum writer build, leaving the original cutover marker at its earlier build; the state selector refused the valid database, and the backup service still used a separate older checkout.
+  - Observation: the cutover marker records the original selection, while SQLite metadata owns the current writer floor. Requiring those values to stay equal and checking only the interactive entrypoint missed both failures.
+  - Expected pattern: keep the marker's writer floor no greater than SQLite's, let SQLite reject old writers, and prove a schema upgrade through the shared controller, status site, and scheduled backup with exact readback before calling the promotion complete.

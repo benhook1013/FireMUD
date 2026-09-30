@@ -87,7 +87,9 @@ def _parser() -> argparse.ArgumentParser:
     state_migrate = state_commands.add_parser(
         "migrate-sqlite", help="atomically migrate JSON controller state to SQLite"
     )
-    state_migrate.add_argument("--path", metavar="JSON_PATH", help="state file to migrate; defaults to repository state")
+    state_migrate.add_argument(
+        "--path", metavar="JSON_PATH", help="state file to migrate; defaults to repository state"
+    )
     state_migrate.add_argument("--json", action="store_true", dest="as_json")
 
     stack = commands.add_parser("stack", help="configure the one repository review stack")
@@ -140,9 +142,7 @@ def _parser() -> argparse.ArgumentParser:
     history_batch.add_argument("--pr", action="append", required=True, type=_positive_int)
     records_database(history_batch)
 
-    incoming = record_commands.add_parser(
-        "routes", help="list structured and migrated controller routes"
-    )
+    incoming = record_commands.add_parser("routes", help="list structured and migrated controller routes")
     incoming_query = incoming.add_mutually_exclusive_group()
     incoming_query.add_argument("--target-pr", type=_positive_int)
     incoming_query.add_argument("--unassigned", action="store_true")
@@ -153,7 +153,9 @@ def _parser() -> argparse.ArgumentParser:
     import_run = record_commands.add_parser(
         "import-run", help="batch-register a curated manual or subagent run from bounded JSON"
     )
-    import_run.add_argument("--input", required=True, metavar="JSON", help="curated metadata file, not raw capture/stdout")
+    import_run.add_argument(
+        "--input", required=True, metavar="JSON", help="curated metadata file, not raw capture/stdout"
+    )
     records_database(import_run)
 
     provider_import = record_commands.add_parser(
@@ -183,7 +185,8 @@ def _parser() -> argparse.ArgumentParser:
     provider_repair.add_argument("--coverage-limit", action="append", default=[])
     provider_repair.add_argument("--apply", action="store_true", help="write after a full dry-run preflight")
     provider_repair.add_argument(
-        "--continue-on-error", action="store_true",
+        "--continue-on-error",
+        action="store_true",
         help="with --all, report unavailable checkpoints while processing the rest",
     )
     records_database(provider_repair)
@@ -252,7 +255,10 @@ def _parser() -> argparse.ArgumentParser:
     subagent_complete.add_argument("--run-id", required=True)
     subagent_complete.add_argument("--actor", required=True)
     subagent_complete.add_argument(
-        "--finding-json", action="append", default=[], metavar="JSON",
+        "--finding-json",
+        action="append",
+        default=[],
+        metavar="JSON",
         help="one bounded finding object with title, decision, reason and optional detail/target_pr/key",
     )
     records_database(subagent_complete)
@@ -393,9 +399,7 @@ def _parser() -> argparse.ArgumentParser:
         "summary-disposition",
         help="adjudicate one exact CodeRabbit summary-only finding bucket",
     )
-    summary_disposition.add_argument(
-        "decision", choices=("rejected", "accepted-unfixed", "accepted-fixed", "routed")
-    )
+    summary_disposition.add_argument("decision", choices=("rejected", "accepted-unfixed", "accepted-fixed", "routed"))
     summary_disposition.add_argument("--pr", required=True, type=_positive_int)
     summary_disposition.add_argument("--head", required=True, type=_exact_sha)
     summary_disposition.add_argument("--source", required=True, choices=("review", "comment"))
@@ -535,7 +539,9 @@ def _records_database_path(args: argparse.Namespace) -> Path:
             active_store = ControllerStateStore(selected_state)._active_store()
         except StateError as exc:
             raise CliError("selected controller SQLite database is incompatible") from exc
-        selected = active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
+        selected = (
+            active_store.path if isinstance(active_store, SqliteStateStore) else sqlite_state_path(selected_state)
+        )
     if selected.is_symlink():
         raise CliError("review-records database path must not be a symlink")
     return selected
@@ -677,9 +683,7 @@ def _load_records_import(
                 raise CliError("inline source decisions require decision, actor, and reason")
             decision_id = item.get("decision_id")
             if decision_id is None:
-                digest = hashlib.sha256(
-                    f"{run['run_id']}\0{item['source_finding_key']}".encode()
-                ).hexdigest()
+                digest = hashlib.sha256(f"{run['run_id']}\0{item['source_finding_key']}".encode()).hexdigest()
                 decision_id = f"batch-{digest[:16]}-{digest[16:32]}"
             decision = {
                 "source_finding_key": item["source_finding_key"],
@@ -709,9 +713,7 @@ def _load_records_import(
                 raise CliError("source decision has missing or unsupported fields")
             decision = dict(item)
             if "decision_id" not in decision:
-                digest = hashlib.sha256(
-                    f"{run['run_id']}\0{decision['source_finding_key']}".encode()
-                ).hexdigest()
+                digest = hashlib.sha256(f"{run['run_id']}\0{decision['source_finding_key']}".encode()).hexdigest()
                 decision["decision_id"] = f"batch-{digest[:16]}-{digest[16:32]}"
             normalized_decisions.append(decision)
         decisions = normalized_decisions
@@ -729,8 +731,7 @@ def _subagent_findings(
         if len(raw.encode("utf-8")) > 4096:
             raise CliError("one subagent finding exceeds 4 KB")
         try:
-            item = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys,
-                              parse_constant=_reject_json_constant)
+            item = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_json_constant)
         except (ValueError, TypeError) as exc:
             raise CliError(f"subagent finding {index} is not valid JSON") from exc
         if not isinstance(item, dict) or not {"title", "decision", "reason"} <= item.keys():
@@ -744,18 +745,20 @@ def _subagent_findings(
         if target is not None and (type(target) is not int or target <= 0 or decision != "routed"):
             raise CliError(f"subagent finding {index} has an invalid target PR")
         key = item.get("key", f"subagent:{run_id}:finding:{index}")
-        observations.append(FindingObservation(
-            source_finding_key=key, title=item["title"], detail=item.get("detail", "")
-        ))
+        observations.append(
+            FindingObservation(source_finding_key=key, title=item["title"], detail=item.get("detail", ""))
+        )
         digest = hashlib.sha256(f"{run_id}\0{key}".encode()).hexdigest()
-        decisions.append({
-            "source_finding_key": key,
-            "decision_id": f"subagent-{digest}",
-            "decision": decision,
-            "actor": actor,
-            "reason": item["reason"],
-            **({"target_pr": target} if target is not None else {}),
-        })
+        decisions.append(
+            {
+                "source_finding_key": key,
+                "decision_id": f"subagent-{digest}",
+                "decision": decision,
+                "actor": actor,
+                "reason": item["reason"],
+                **({"target_pr": target} if target is not None else {}),
+            }
+        )
     return tuple(observations), tuple(decisions)
 
 
@@ -768,10 +771,9 @@ def _failed_cli_attempts_from_history(history: dict[str, Any]) -> dict[str, Any]
         "failed": "provider_failed",
     }
     candidates = [
-        attempt for attempt in history["attempts"]
-        if attempt["channel"] == "cli"
-        and attempt["state"] in outcomes
-        and isinstance(attempt["finished_at"], str)
+        attempt
+        for attempt in history["attempts"]
+        if attempt["channel"] == "cli" and attempt["state"] in outcomes and isinstance(attempt["finished_at"], str)
     ]
     candidates.sort(key=lambda attempt: (attempt["finished_at"], attempt["attempt_id"]), reverse=True)
     attempts = []
@@ -782,12 +784,14 @@ def _failed_cli_attempts_from_history(history: dict[str, Any]) -> dict[str, Any]
         origin = attempt.get("origin")
         if origin not in {"legacy_private_capture", "sqlite_records"}:
             origin = "sqlite_records"
-        attempts.append({
-            "run_id": attempt["attempt_id"],
-            "finished_at": attempt["finished_at"],
-            "outcome": outcome,
-            "origin": origin,
-        })
+        attempts.append(
+            {
+                "run_id": attempt["attempt_id"],
+                "finished_at": attempt["finished_at"],
+                "outcome": outcome,
+                "origin": origin,
+            }
+        )
     return {"available": True, "attempts": attempts[:5]}
 
 
@@ -900,37 +904,65 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             for checkpoint in checkpoints:
                 try:
                     outcome = sqlite_records_repair.repair_provider_checkpoints(
-                        store, repo=repo, pr_number=args.pr, checkpoints=(checkpoint,),
-                        actor=args.actor, scope=args.scope,
-                        coverage_limits=args.coverage_limit, hosted_payload=payload,
+                        store,
+                        repo=repo,
+                        pr_number=args.pr,
+                        checkpoints=(checkpoint,),
+                        actor=args.actor,
+                        scope=args.scope,
+                        coverage_limits=args.coverage_limit,
+                        hosted_payload=payload,
                         dry_run=not args.apply,
                     )
-                    items.append({"checkpoint_id": checkpoint.comment_id, "status": outcome["status"],
-                                  "items": outcome["items"],
-                                  **({"error": outcome["error"]} if outcome.get("error") else {})})
+                    items.append(
+                        {
+                            "checkpoint_id": checkpoint.comment_id,
+                            "status": outcome["status"],
+                            "items": outcome["items"],
+                            **({"error": outcome["error"]} if outcome.get("error") else {}),
+                        }
+                    )
                 except sqlite_records_repair.MissingHistoricalEvidenceError as exc:
                     try:
                         gap = sqlite_records_repair.archive_incomplete_checkpoint(
-                            store, repo=repo, pr_number=args.pr, checkpoint=checkpoint,
-                            missing_reason=str(exc), hosted_payload=payload,
+                            store,
+                            repo=repo,
+                            pr_number=args.pr,
+                            checkpoint=checkpoint,
+                            missing_reason=str(exc),
+                            hosted_payload=payload,
                             dry_run=not args.apply,
                         )
                     except sqlite_records_repair.SqliteRecordsRepairError as gap_error:
-                        items.append({"checkpoint_id": checkpoint.comment_id,
-                                      "status": "unavailable", "error": str(exc),
-                                      "archive_error": str(gap_error)})
+                        items.append(
+                            {
+                                "checkpoint_id": checkpoint.comment_id,
+                                "status": "unavailable",
+                                "error": str(exc),
+                                "archive_error": str(gap_error),
+                            }
+                        )
                     else:
-                        items.append({"checkpoint_id": checkpoint.comment_id,
-                                      "status": "incomplete", "missing_evidence": str(exc),
-                                      "gap": gap})
+                        items.append(
+                            {
+                                "checkpoint_id": checkpoint.comment_id,
+                                "status": "incomplete",
+                                "missing_evidence": str(exc),
+                                "gap": gap,
+                            }
+                        )
                 except sqlite_records_repair.SqliteRecordsRepairError as exc:
-                    items.append({"checkpoint_id": checkpoint.comment_id,
-                                  "status": "unavailable", "error": str(exc)})
+                    items.append({"checkpoint_id": checkpoint.comment_id, "status": "unavailable", "error": str(exc)})
             partial = any(item["status"] in {"unavailable", "incomplete", "partial"} for item in items)
-            return {"api_version": 1, "result": {
-                "status": "partial" if partial else "complete" if args.apply else "preview",
-                "dry_run": not args.apply, "source_pr": args.pr, "items": items,
-            }}, 2 if partial else 0
+            return {
+                "api_version": 1,
+                "result": {
+                    "status": "partial" if partial else "complete" if args.apply else "preview",
+                    "dry_run": not args.apply,
+                    "source_pr": args.pr,
+                    "items": items,
+                },
+            }, 2 if partial else 0
         result = sqlite_records_repair.repair_provider_checkpoints(
             store,
             repo=repo,
@@ -946,7 +978,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "sync-hosted":
         store.history(args.pr or 1)  # Refuse incompatible or unbootstrapped writers before any live read.
         result = sqlite_hosted_capture.sync_hosted_pending(
-            store, repo=github.infer_repo(args.repo), pr_number=args.pr,
+            store,
+            repo=github.infer_repo(args.repo),
+            pr_number=args.pr,
         )
         unresolved = any(result.get(bucket) for bucket in ("pending", "ambiguous", "errors"))
         return {"api_version": 1, "result": result}, 2 if unresolved else 0
@@ -969,16 +1003,24 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         key = f"cli-run:{args.run_id}:finding:{args.finding}"
         digest = hashlib.sha256(f"{args.run_id}\0{key}".encode()).hexdigest()
         result = store.record_source_decision(
-            args.run_id, key,
-            decision_id=f"cli-{digest}", decision=args.decision,
-            actor=args.actor, reason=args.reason, target_pr=args.target_pr,
+            args.run_id,
+            key,
+            decision_id=f"cli-{digest}",
+            decision=args.decision,
+            actor=args.actor,
+            reason=args.reason,
+            target_pr=args.target_pr,
         )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-correct":
         result = store.correct_source_decision(
-            args.run_id, f"cli-run:{args.run_id}:finding:{args.finding}",
-            supersedes_id=args.supersedes_id, correction_id=args.correction_id,
-            decision=args.decision, actor=args.actor, reason=args.reason,
+            args.run_id,
+            f"cli-run:{args.run_id}:finding:{args.finding}",
+            supersedes_id=args.supersedes_id,
+            correction_id=args.correction_id,
+            decision=args.decision,
+            actor=args.actor,
+            reason=args.reason,
         )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "subagent":
@@ -1003,17 +1045,18 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 if attempt["state"] != "started":
                     raise CliError("only a started subagent pass can fail")
                 result = store.finish_attempt(
-                    args.run_id, state="failed", diagnostic=args.reason,
+                    args.run_id,
+                    state="failed",
+                    diagnostic=args.reason,
                 )
             else:
                 if attempt["state"] not in {"started", "completed"}:
                     raise CliError("only a started or completed subagent pass can be recorded")
-                observations, decisions = _subagent_findings(
-                    args.run_id, args.actor, args.finding_json
-                )
+                observations, decisions = _subagent_findings(args.run_id, args.actor, args.finding_json)
                 metadata = attempt["metadata"]
-                prior = next((run for run in store.history(attempt["source_pr"])["runs"]
-                              if run["run_id"] == args.run_id), None)
+                prior = next(
+                    (run for run in store.history(attempt["source_pr"])["runs"] if run["run_id"] == args.run_id), None
+                )
                 finished_at = prior["finished_at"] if prior else attempt["finished_at"]
                 if not isinstance(finished_at, str) or not finished_at:
                     finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1105,8 +1148,7 @@ def _render_selected_pr_status(report: Mapping[str, Any]) -> str:
     route_state = report.get("record_route_store", {})
     record_routes = report.get("incoming_record_routes", [])
     lines.append(
-        f"SQLite review-record routes: {route_state.get('status', 'unavailable')} · "
-        f"incoming-open={len(record_routes)}"
+        f"SQLite review-record routes: {route_state.get('status', 'unavailable')} · incoming-open={len(record_routes)}"
     )
     for route in record_routes:
         lines.append(
@@ -1135,10 +1177,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         if args.acceptance_fixture is not None or args.state_path is not None:
             raise CliError("wait commands do not accept acceptance-fixture options")
         return hosted_wait.wait_for_hosted(
-            github.infer_repo(args.repo), args.pr, args.trigger_id,
+            github.infer_repo(args.repo),
+            args.pr,
+            args.trigger_id,
             poll_seconds=args.poll_seconds,
             max_wait_seconds=args.max_wait_minutes * 60,
-            on_change=lambda state: print(f"Hosted #{args.pr} trigger {args.trigger_id}: {state}", file=sys.stderr, flush=True),
+            on_change=lambda state: print(
+                f"Hosted #{args.pr} trigger {args.trigger_id}: {state}", file=sys.stderr, flush=True
+            ),
         )
 
     controller, fixture = _controller(args)
@@ -1169,7 +1215,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         incoming_routes = (
             stack_item.get("incoming_routes", []) if stack_item is not None else stack_report.get("incoming_routes", [])
         )
-        outgoing_routes = stack_item.get("routes_out", []) if stack_item is not None else stack_report.get("routes_out", [])
+        outgoing_routes = (
+            stack_item.get("routes_out", []) if stack_item is not None else stack_report.get("routes_out", [])
+        )
         report["incoming_routes"] = incoming_routes
         report["routes_out"] = outgoing_routes
         record_routes, record_route_state = _read_record_incoming_routes(args.pr)
@@ -1200,12 +1248,12 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
             for channel, state in stack_item["channels"].items():
-                if state == "HUMAN_STOPPED":
-                    review_reasons.append(
-                        f"{channel} review discovery was explicitly stopped; this is not taper or merge-readiness proof"
-                    )
-                elif state != "COMPLETE":
+                if state not in {"COMPLETE", "HUMAN_STOPPED"}:
                     review_reasons.append(f"{channel} review policy is {state}")
+                if state == "HUMAN_STOPPED":
+                    review_reasons.extend(
+                        f"{channel}: {reason}" for reason in stack_item.get("review_obligations", {}).get(channel, ())
+                    )
             for channel, allocation in stack_item.get("allocations", {}).items():
                 if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
                     review_reasons.append(
@@ -1289,7 +1337,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             routes = []
             if decision == "routed":
                 if len(args.route_finding) != args.count or len(args.route_observation) != args.count:
-                    raise CliError("routed summary disposition requires one stable finding reference and observation per item")
+                    raise CliError(
+                        "routed summary disposition requires one stable finding reference and observation per item"
+                    )
                 if len(set(args.route_finding)) != len(args.route_finding):
                     raise CliError("routed summary finding references must be unique")
                 routes = [
@@ -1358,9 +1408,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             if args.action == "open":
                 required = (args.source_pr, args.channel, args.review, args.finding, args.observation)
                 if any(value is None for value in required) or args.route_id or args.reason or args.proof:
-                    raise CliError(
-                        "route open requires --source-pr, --channel, --review, --finding, and --observation"
-                    )
+                    raise CliError("route open requires --source-pr, --channel, --review, --finding, and --observation")
                 return controller.record_route(
                     source_pr=args.source_pr,
                     source_channel=args.channel,
@@ -1450,7 +1498,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                             f"off-queue manual Hosted adoption requires the live {label} branch tip to match origin"
                         )
                 if not controller.git.is_ancestor(candidate.base_tip, candidate.head):
-                    raise CliError("off-queue manual Hosted adoption requires the live base to be an ancestor of the head")
+                    raise CliError(
+                        "off-queue manual Hosted adoption requires the live base to be an ancestor of the head"
+                    )
                 link = stack.ParentLink(args.pr, None, candidate.base_ref, candidate.base_tip)
                 anchor_data = controller._anchor(args.pr, candidate, link).as_dict()
             return hosted.adopt_manual_completed_trigger(
@@ -1479,9 +1529,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 if type(trigger_id) is int and trigger_id == args.trigger_id:
                     matching_paths.append(path)
             if len(matching_paths) != 1:
-                raise CliError(
-                    f"PR #{args.pr} requires exactly one durable Hosted trigger with ID {args.trigger_id}"
-                )
+                raise CliError(f"PR #{args.pr} requires exactly one durable Hosted trigger with ID {args.trigger_id}")
             return hosted.retire_trigger_record(
                 matching_paths[0],
                 controller.repository,
