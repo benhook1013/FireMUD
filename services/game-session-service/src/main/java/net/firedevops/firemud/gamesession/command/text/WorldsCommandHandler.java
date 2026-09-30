@@ -835,9 +835,10 @@ public class WorldsCommandHandler {
             : mapNonPublicCharacterAuthorization(
                 authorizeNonPublicRealm(sessionContext, world, realm, requestId));
     if (authorization != CharacterBrowseAuthorization.AUTHORIZED) {
-      if (!worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
-          && authorization.isDefinitiveAccessDenial()) {
-        return CharacterBrowseResult.invalidWorld();
+      if (!realm.publicProductionRealm() && authorization.isDefinitiveAccessDenial()) {
+        return worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
+            ? CharacterBrowseResult.invalidRealm(world.slug())
+            : CharacterBrowseResult.invalidWorld();
       }
       return CharacterBrowseResult.failure(authorization.code());
     }

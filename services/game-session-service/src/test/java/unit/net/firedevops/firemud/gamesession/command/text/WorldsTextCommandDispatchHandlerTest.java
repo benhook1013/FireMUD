@@ -238,6 +238,98 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
+  void dispatchDoesNotRevealDeniedPrivateRealmInPublicWorld() {
+    GameplayCatalogProperties.World world = world("demo", 22L, 1L, false);
+    GameplayCatalogProperties.Realm production = world.getRealms().getFirst();
+    production.setPublicProductionRealm(true);
+    GameplayCatalogProperties.Realm playtest = world("demo", 22L, 2L, false).getRealms().getFirst();
+    playtest.setSlug("playtest");
+    playtest.setDisplayName("Playtest Realm");
+    playtest.setPublicProductionRealm(false);
+    world.setRealms(List.of(production, playtest));
+    gameplayCatalogProperties.setWorlds(List.of(world));
+
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setEvaluatedAt(Instant.now().toString())
+                .build(),
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
+                .setMembershipLifecycleState("INACTIVE")
+                .setEvaluatedAt(Instant.now().toString())
+                .build(),
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setEvaluatedAt(Instant.now().toString())
+                .build());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("demo"),
+            Mockito.eq("playtest"),
+            Mockito.anyString()))
+        .thenReturn(
+            GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setWorldSlug("demo")
+                .setRealmSlug("playtest")
+                .setGranted(false)
+                .setEvaluatedAt(Instant.now().toString())
+                .build());
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+                entityManagementClient,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+            scriptEventPublisher);
+    SessionContext context =
+        new SessionContext(
+            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult unknownRealm =
+        scopedHandler.handle(charsRequest("guessed", context));
+    assertThat(unknownRealm.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(unknownRealm.outputs())
+        .singleElement()
+        .extracting(output -> output.payload())
+        .isEqualTo(
+            new net.firedevops.firemud.gamesession.presentation.ErrorOutput(
+                "INVALID_ARGUMENT", "Use REALMS demo to choose a visible realm first."));
+
+    for (int i = 0; i < 3; i++) {
+      TextCommandInterpretationResult deniedRealm =
+          scopedHandler.handle(charsRequest("playtest", context));
+      assertThat(deniedRealm.commandResult().errorCode())
+          .isEqualTo(unknownRealm.commandResult().errorCode());
+      assertThat(deniedRealm.outputs()).isEqualTo(unknownRealm.outputs());
+    }
+
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
   void routesJoinRequiredCharsFailureWithoutPublishingSuccessEventOrReadingEntity() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     gameplayCatalogProperties
@@ -575,5 +667,14 @@ class WorldsTextCommandDispatchHandlerTest {
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     world.setRealms(List.of(realm));
     return world;
+  }
+
+  private TextCommandDispatchRequest charsRequest(String realmSelector, SessionContext context) {
+    return new TextCommandDispatchRequest(
+        "7",
+        new TextCommand(
+            TextCommandType.CHARS, List.of("demo", realmSelector), "CHARS demo " + realmSelector),
+        false,
+        Optional.of(context));
   }
 }
