@@ -270,7 +270,7 @@ spec:
             runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#auditability--metrics
           annotations:
             summary: Automation dead-letter retention is blocked
-            description: One or more dead-letter rows remain blocked from retention cleanup. Investigate the recovery-aware evidence or retention blocker; do not delete dead-letter rows by age or row cap alone.
+            description: One or more dead-letter rows remain blocked from retention cleanup. Because cleanup intentionally fails closed until recovery-aware whole-bundle evidence exists, this is an expected steady-state, non-paging diagnostic; inspect recovery-aware evidence when available and do not delete dead-letter rows by age or row cap alone.
 
     - name: firemud.alerts.observability
       rules:

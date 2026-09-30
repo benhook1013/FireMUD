@@ -902,7 +902,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setScriptPinEpoch(3L);
     item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofSeconds(1)));
     item.setAuthorityUnavailableCount(9);
+    ScriptEventAudit audit = new ScriptEventAudit();
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
     ScriptWorkItemExecutionService service =
@@ -920,7 +922,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getCancelReason()).isEqualTo("authority_unavailable_exhausted");
     assertThat(item.getAuthorityUnavailableCount()).isEqualTo(10);
     assertThat(item.getNextEligibleAt()).isNull();
+    assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
+    assertThat(audit.getFinalOutcome()).isEqualTo("authority_unavailable_exhausted");
+    assertThat(audit.getFinalReason()).isEqualTo("authority_unavailable_exhausted");
     verify(workItemRepository).save(item);
+    verify(auditRepository).save(audit);
   }
 
   @Test
