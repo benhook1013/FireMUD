@@ -1070,8 +1070,12 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
         .isEqualTo(membershipGeneration);
     assertThat(accountIssuanceFence(fixture)).isEqualTo(issuanceFence);
-    assertThat(readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent())
-        .isEqualTo(positive.authorityEvent());
+    var priorEvent = positive.authorityEvent();
+    var readbackEvent = readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent();
+    assertThat(readbackEvent.eventId()).isEqualTo(priorEvent.eventId());
+    assertThat(readbackEvent.eventDigest()).isEqualTo(priorEvent.eventDigest());
+    assertThat(readbackEvent.canonicalJson().getBytes(StandardCharsets.UTF_8))
+        .containsExactly(priorEvent.canonicalJson().getBytes(StandardCharsets.UTF_8));
   }
 
   @Test
