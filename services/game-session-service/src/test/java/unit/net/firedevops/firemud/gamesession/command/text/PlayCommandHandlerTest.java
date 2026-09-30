@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -43,6 +46,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class PlayCommandHandlerTest {
@@ -1975,35 +1979,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void playRequiresExplicitJoinWhenPublicProductionMembershipIsMissing() {
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipLifecycleState("MISSING")
-                .setMembershipVersion(0L)
-                .setMembershipAuthorityGeneration(0L)
-                .setEvaluatedAt(evaluatedAtNow())
-                .build());
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(publicEntitlement(true));
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
-    assertThat(result.commandResult().errorMessage())
-        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_MESSAGE);
-    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
-        .isEqualTo("error.play.join-required");
-    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "join_required");
+    assertPlayJoinRequiredPreservesAuthenticationAndSupportsExplicitJoin(false, "MISSING", 0L, 0L);
   }
 
   @Test
@@ -2073,34 +2049,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void playRequiresExplicitJoinWhenPublicProductionMembershipIsInactive() {
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipLifecycleState("INACTIVE")
-                .setMembershipVersion(4L)
-                .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt(evaluatedAtNow())
-                .build());
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(publicEntitlement(true));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
-    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
-        .isEqualTo("error.play.join-required");
-    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "join_required");
+    assertPlayJoinRequiredPreservesAuthenticationAndSupportsExplicitJoin(true, "INACTIVE", 4L, 1L);
   }
 
   @Test
@@ -2601,6 +2550,159 @@ class PlayCommandHandlerTest {
         TextCommandType.PLAY,
         List.of("sandbox", "preview", "Emberline"),
         "PLAY sandbox preview Emberline");
+  }
+
+  private void assertPlayJoinRequiredPreservesAuthenticationAndSupportsExplicitJoin(
+      boolean membershipExists,
+      String lifecycleState,
+      long membershipVersion,
+      long membershipAuthorityGeneration) {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt-token",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "login-account-scope",
+            "login-account-request");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(membershipExists)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState(lifecycleState)
+                .setMembershipVersion(membershipVersion)
+                .setMembershipAuthorityGeneration(membershipAuthorityGeneration)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_MESSAGE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.join-required");
+    assertThat(
+            meterRegistry
+                .counter("gamesession.session.resume_denied", "reason", "join_required")
+                .count())
+        .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "join_required");
+
+    ArgumentCaptor<SessionContext> savedContextCaptor =
+        ArgumentCaptor.forClass(SessionContext.class);
+    Mockito.verify(sessionContextService).save(savedContextCaptor.capture());
+    SessionContext savedContext = savedContextCaptor.getValue();
+    assertThat(savedContext.accountId()).isEqualTo(context.accountId());
+    assertThat(savedContext.loginName()).isEqualTo(context.loginName());
+    assertThat(savedContext.jwt()).isEqualTo(context.jwt());
+    assertThat(savedContext.connectScopeId()).isEqualTo(context.connectScopeId());
+    assertThat(savedContext.connectRequestId()).isEqualTo(context.connectRequestId());
+    assertThat(savedContext.localeTag()).isEqualTo(context.localeTag());
+    assertThat(savedContext.bootstrapGameInstanceId()).isEqualTo(context.bootstrapGameInstanceId());
+    assertThat(savedContext.characterId()).isZero();
+    assertThat(savedContext.characterName()).isNull();
+    assertThat(savedContext.gameInstanceId()).isZero();
+    assertThat(savedContext.roomInstanceId()).isNull();
+    assertThat(savedContext.playableStateScope()).isNull();
+    assertThat(savedContext.worldSlug()).isEqualTo("demo");
+    assertThat(savedContext.realmSlug()).isEqualTo("production");
+    assertThat(savedContext.pointerVersion()).isEqualTo(1L);
+
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(entityManagementClient, never())
+        .findCharacterByName(
+            Mockito.any(), Mockito.any(PlayableStateScope.class), Mockito.anyString());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(scriptEventPublisher, never())
+        .publishCommandEvent(Mockito.any(), Mockito.any(GameplayCommand.class));
+    Mockito.verify(scriptEventPublisher, never())
+        .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
+    Mockito.verify(accountClient, never())
+        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(savedContext));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(Optional.of(savedContext));
+    SessionRoutingNormalizationService realRoutingNormalizationService =
+        new SessionRoutingNormalizationService(
+            sessionContextService, Mockito.mock(GameplayAdmissionPointerAuthorityService.class));
+    SessionAuthenticationService realSessionAuthenticationService =
+        new SessionAuthenticationService(
+            sessionContextService,
+            new GameSessionProperties(),
+            realRoutingNormalizationService,
+            gameplayPresenceLifecycleService);
+    SessionContext resolvedContext =
+        realSessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    assertThat(resolvedContext).isEqualTo(savedContext);
+    assertThat(resolvedContext.accountId()).isEqualTo(123L);
+    Mockito.verify(sessionContextService, Mockito.times(1)).save(Mockito.any());
+
+    String exactJoinScopeId = "account-issued-join-scope";
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId(exactJoinScopeId)
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    when(accountClient.joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler worldsCommandHandler =
+        new WorldsCommandHandler(
+            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
+    assertThat(worldsCommandHandler.browseRealms(resolvedContext, "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    WorldsTextCommandDispatchHandler worldsDispatchHandler =
+        new WorldsTextCommandDispatchHandler(worldsCommandHandler, scriptEventPublisher);
+    TextCommandInterpretationResult joinResult =
+        worldsDispatchHandler.handle(
+            new TextCommandDispatchRequest(
+                "1",
+                new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"),
+                false,
+                Optional.of(resolvedContext)));
+    assertThat(joinResult.commandResult()).isEqualTo(CommandEnqueueResult.success());
+
+    ArgumentCaptor<net.firedevops.firemud.shared.v1.PlayerExecutionContext> playerContextCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class);
+    ArgumentCaptor<String> scopeIdCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> requestIdCaptor = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            playerContextCaptor.capture(), scopeIdCaptor.capture(), requestIdCaptor.capture());
+    assertThat(scopeIdCaptor.getValue()).isEqualTo(exactJoinScopeId);
+    assertThat(playerContextCaptor.getValue().getAccountId()).isEqualTo("123");
+    assertThat(playerContextCaptor.getValue().getSessionId()).isEqualTo("1");
+    assertThat(playerContextCaptor.getValue().getTenantId()).isEqualTo("22");
+    assertThat(playerContextCaptor.getValue().getRequestId()).isEqualTo(requestIdCaptor.getValue());
   }
 
   private static GameplayCatalogProperties.World world(

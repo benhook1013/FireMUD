@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -490,14 +491,39 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
+    SessionContext authenticatedContextBeforeDeniedPlay =
+        sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
+    assertEquals(77L, authenticatedContextBeforeDeniedPlay.accountId());
+    assertEquals("demo@example.com", authenticatedContextBeforeDeniedPlay.loginName());
+    assertEquals("jwt", authenticatedContextBeforeDeniedPlay.jwt());
+    assertTrue(authenticatedContextBeforeDeniedPlay.hasGameplayRegionBinding());
+
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
     assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
 
+    SessionContext authenticatedLobbyContext =
+        sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    assertEquals(
+        authenticatedContextBeforeDeniedPlay.accountId(), authenticatedLobbyContext.accountId());
+    assertEquals(
+        authenticatedContextBeforeDeniedPlay.loginName(), authenticatedLobbyContext.loginName());
+    assertEquals(authenticatedContextBeforeDeniedPlay.jwt(), authenticatedLobbyContext.jwt());
+    assertEquals(0L, authenticatedLobbyContext.gameInstanceId());
+    assertEquals(0L, authenticatedLobbyContext.characterId());
+    assertNull(authenticatedLobbyContext.characterName());
+    assertNull(authenticatedLobbyContext.roomInstanceId());
+    assertNull(authenticatedLobbyContext.playableStateScope());
+    assertFalse(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .anyMatch(presence -> presence.sessionId() == 1L));
+    Mockito.verify(accountClient, Mockito.never())
+        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertFalse(lookAfterDeniedReconnect.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
   }
 
   @Test
