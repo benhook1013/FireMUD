@@ -110,8 +110,7 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.findByTenantIdAndIdForUpdate("tenant-1", 17L)).isEmpty();
     assertThat(sql)
         .hasValueSatisfying(
-            statement ->
-                assertThat(statement).contains("tenant_id", "id", "for update"));
+            statement -> assertThat(statement).contains("tenant_id", "id", "for update"));
   }
 
   @Test

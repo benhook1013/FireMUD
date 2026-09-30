@@ -45,8 +45,8 @@ public class ScriptHandoffEventRepository {
   }
 
   /**
-   * Disposes one ordered batch of terminal handoff evidence before its parent work item is swept.
-   * Later scheduled cleanup runs continue from the remaining eligible rows.
+   * Disposes one ordered batch of eligible terminal handoff evidence independently of parent
+   * cleanup. A caller can repeat the sweep for remaining eligible rows.
    */
   public long deleteExpiredRetentionEvidence(Instant safeWatermark, Instant now) {
     LocalDateTime cutoff = toLocalDateTime(safeWatermark);

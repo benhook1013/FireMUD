@@ -641,15 +641,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
-    if (authorityUnavailableRetryExpired(workItem, now)) {
-      deadLetter(
-          workItem,
-          STAGE_ADMISSION,
-          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
-          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
-          now);
-      return false;
-    }
     String fenceFailure = validateCurrentExecutionFences(workItem);
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
@@ -997,25 +988,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           || cause instanceof SocketTimeoutException) {
         return true;
       }
-      if (cause instanceof SQLException sqlException) {
-        String sqlState = sqlException.getSQLState();
-        if (sqlState != null
-            && (sqlState.startsWith("08")
-                || sqlState.startsWith("40")
-                || sqlState.equals("57014")
-                || sqlState.equals("55P03"))) {
-          return true;
-        }
+      if (cause instanceof SQLException sqlException
+          && AutomationControlPlaneSupport.isRetryableSqlState(sqlException)) {
+        return true;
       }
       cause = cause.getCause();
     }
     return false;
-  }
-
-  private static boolean authorityUnavailableRetryExpired(ScriptWorkItem workItem, Instant now) {
-    Instant firstUnavailableAt = workItem.getAuthorityUnavailableSince();
-    return firstUnavailableAt != null
-        && !now.isBefore(firstUnavailableAt.plus(AUTHORITY_UNAVAILABLE_MAX_AGE));
   }
 
   private static boolean isTerminalFenceFailure(String reason) {

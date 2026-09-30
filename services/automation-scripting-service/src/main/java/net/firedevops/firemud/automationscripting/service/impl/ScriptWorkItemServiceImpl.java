@@ -763,8 +763,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String currentStatusRejection = replayCurrentStateRejection(item);
       String replayRejection =
           currentStatusRejection == null ? preflight.rejectionReason() : currentStatusRejection;
-      if (replayRejection == null
-          && !preflight.originalFailure().equals(originalFailure)) {
+      if (replayRejection == null && !preflight.originalFailure().equals(originalFailure)) {
         // Audit evidence is mutable independently of the work-item row. Do not accept a successful
         // preflight when the current failure evidence no longer proves the same retryable class.
         replayRejection = "stage_evidence_unavailable";
@@ -772,10 +771,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       if (replayRejection != null && !replayRejection.isBlank()) {
         results.add(
             new ReplayItemResult(
-                requestedId,
-                "rejected",
-                replayRejection,
-                item.getFailureGeneration()));
+                requestedId, "rejected", replayRejection, item.getFailureGeneration()));
         persistReplayResult(
             durableRequest,
             requestedLongId,

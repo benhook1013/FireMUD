@@ -93,7 +93,7 @@ final class AutomationControlPlaneSupport {
     return statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED;
   }
 
-  private static boolean isRetryableSqlState(SQLException sqlException) {
+  static boolean isRetryableSqlState(SQLException sqlException) {
     String sqlState = sqlException.getSQLState();
     return sqlState != null
         && (sqlState.startsWith("08")

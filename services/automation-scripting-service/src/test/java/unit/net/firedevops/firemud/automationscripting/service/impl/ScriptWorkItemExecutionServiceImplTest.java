@@ -90,21 +90,13 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
 
     ScriptWorkItemExecutionService service =
-        new ScriptWorkItemExecutionServiceImpl(
+        fenceExecutionService(
             workItemService,
-            definitionRepository,
-            handoffService,
             workItemRepository,
             auditRepository,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            new ScriptOutputProperties(),
-            allowingTenantBudgetService(),
-            allowingDryRunCapacityService(),
-            new ObjectMapper(),
-            new SimpleMeterRegistry(),
+            definitionRepository,
+            handoffService,
             automationQueueService,
-            null,
-            null,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
 
@@ -157,7 +149,7 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
-  void clearsAuthorityUnavailableRetryStateAfterFenceRecovers() {
+  void processesWorkAndClearsAuthorityUnavailableRetryStateAfterFenceRecoversPastAgeBound() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
         Mockito.mock(ScriptDefinitionRepository.class);
@@ -171,7 +163,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenReturn(runtimeStateResponse());
     ScriptWorkItem item = workItem();
     item.setScriptPinEpoch(3L);
-    item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofSeconds(1)));
+    item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofMinutes(10).plusSeconds(1)));
     item.setAuthorityUnavailableCount(3);
     item.setNextEligibleAt(Instant.now().minus(Duration.ofSeconds(1)));
     ScriptDefinition definition = scriptDefinition();
@@ -183,20 +175,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
     ScriptWorkItemExecutionService service =
-        new ScriptWorkItemExecutionServiceImpl(
+        fenceExecutionService(
             workItemService,
-            definitionRepository,
-            handoffService,
             workItemRepository,
             auditRepository,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            new ScriptOutputProperties(),
-            allowingTenantBudgetService(),
-            allowingDryRunCapacityService(),
-            new ObjectMapper(),
-            new SimpleMeterRegistry(),
-            null,
-            null,
+            definitionRepository,
+            handoffService,
             null,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
@@ -230,20 +214,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
 
     ScriptWorkItemExecutionService service =
-        new ScriptWorkItemExecutionServiceImpl(
+        fenceExecutionService(
             workItemService,
-            definitionRepository,
-            handoffService,
             workItemRepository,
             auditRepository,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            new ScriptOutputProperties(),
-            allowingTenantBudgetService(),
-            allowingDryRunCapacityService(),
-            new ObjectMapper(),
-            new SimpleMeterRegistry(),
-            null,
-            null,
+            definitionRepository,
+            handoffService,
             null,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
@@ -344,7 +320,7 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"57014", "55P03", "40001"})
+  @ValueSource(strings = {"57014", "55P03", "40001", "40P01"})
   void retriesPluginRepositoryTransientSqlStates(String sqlState) {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -379,6 +355,45 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getAuthorityUnavailableRetryCount()).isEqualTo(1);
     verify(pluginRuntimeStateRepository)
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
+  }
+
+  @Test
+  void doesNotRetryUnsupportedTransactionSqlState() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateRepository pluginRuntimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "7", "plugin-1"))
+        .thenThrow(
+            new DataAccessException(
+                "plugin lookup unavailable", new SQLException("unsupported", "40003")));
+    ScriptWorkItem item = replayPluginWorkItem();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptDefinitionRepository.class),
+            Mockito.mock(ScriptGameplayCommandHandoffService.class),
+            null,
+            gameSessionClient,
+            pluginRuntimeStateRepository);
+
+    service.processPendingWorkItems(1);
+
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("plugin_lifecycle_evidence_unavailable");
+    assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
+    assertThat(item.getAuthorityUnavailableCount()).isZero();
   }
 
   @Test
@@ -938,7 +953,13 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").build())
+                .build());
     ScriptWorkItem item = workItem();
+    item.setScriptPinEpoch(3L);
     item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofMinutes(10).plusSeconds(1)));
     item.setAuthorityUnavailableCount(1);
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
@@ -957,8 +978,8 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
     assertThat(item.getCancelReason()).isEqualTo("authority_unavailable_exhausted");
-    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(1);
-    Mockito.verifyNoInteractions(gameSessionClient);
+    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(2);
+    verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
   }
 
   @Test
@@ -5019,10 +5040,30 @@ class ScriptWorkItemExecutionServiceImplTest {
       ScriptEventAuditRepository auditRepository,
       GameSessionControlPlaneClient gameSessionClient,
       PluginRuntimeStateRepository pluginRuntimeStateRepository) {
-    return new ScriptWorkItemExecutionServiceImpl(
+    return fenceExecutionService(
         workItemService,
+        workItemRepository,
+        auditRepository,
         Mockito.mock(ScriptDefinitionRepository.class),
         Mockito.mock(ScriptGameplayCommandHandoffService.class),
+        null,
+        gameSessionClient,
+        pluginRuntimeStateRepository);
+  }
+
+  private static ScriptWorkItemExecutionService fenceExecutionService(
+      ScriptWorkItemService workItemService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptDefinitionRepository definitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      AutomationQueueService automationQueueService,
+      GameSessionControlPlaneClient gameSessionClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+    return new ScriptWorkItemExecutionServiceImpl(
+        workItemService,
+        definitionRepository,
+        handoffService,
         workItemRepository,
         auditRepository,
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
@@ -5031,7 +5072,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         allowingDryRunCapacityService(),
         new ObjectMapper(),
         new SimpleMeterRegistry(),
-        null,
+        automationQueueService,
         null,
         null,
         gameSessionClient,
