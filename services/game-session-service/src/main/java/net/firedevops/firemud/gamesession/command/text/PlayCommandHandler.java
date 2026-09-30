@@ -335,8 +335,15 @@ public class PlayCommandHandler {
         currentPointerMatches =
             gameplayWorldCatalog.matchesCurrentAdmissionPointer(selectedWorld, selectedRealm);
       } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
-        return admissionPointerUnavailableFailure(
-            selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
+        return failure(
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+            "error.play.authority-unavailable",
+            Map.of(),
+            selectedTenantTag,
+            Long.toString(selectedRealm.gameInstanceId()),
+            null,
+            ex);
       }
       if (!currentPointerMatches) {
         return admissionPointerUnavailableFailure(
