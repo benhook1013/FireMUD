@@ -2,6 +2,8 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionRequestHistory.AUTOMATION_ADMISSION_REQUEST_HISTORY;
 import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionStates.AUTOMATION_ADMISSION_STATES;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayRequests.SCRIPT_DEAD_LETTER_REPLAY_REQUESTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
@@ -65,6 +67,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
   private DSLContext dsl;
   private ScriptEventIngressAuditRepository ingressRepository;
+  private ScriptDeadLetterReplayRepository replayRepository;
   private ScriptWorkItemRepository workItemRepository;
   private ScriptEventAuditRepository eventAuditRepository;
   private ScriptHandoffEventRepository handoffRepository;
@@ -84,6 +87,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     ingressRepository = new ScriptEventIngressAuditRepository(dsl);
+    replayRepository = new ScriptDeadLetterReplayRepository(dsl);
     workItemRepository = new ScriptWorkItemRepository(dsl);
     eventAuditRepository = new ScriptEventAuditRepository(dsl);
     handoffRepository = new ScriptHandoffEventRepository(dsl);
@@ -94,7 +98,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE automation_admission_request_history, automation_admission_states,"
+        "TRUNCATE TABLE script_dead_letter_replay_results, script_dead_letter_replay_requests,"
+            + " automation_admission_request_history, automation_admission_states,"
             + " script_patch_pin_projections, script_schedule_instances, script_event_audit, script_handoff_events,"
             + " script_work_items,"
             + " script_event_ingress_audit RESTART IDENTITY CASCADE");
@@ -318,6 +323,141 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
               assertThat(item.getPluginId()).isEmpty();
               assertThat(item.getPluginVersionId()).isEmpty();
             });
+  }
+
+  @Test
+  void replayRequestsRoundTripPerTenantAndResultsHydrateRetainedFailureEvidence() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantA =
+        replayRepository.insertOrGet(
+            "tenant-replay-a",
+            "replay-request-shared",
+            REQUEST_DIGEST,
+            "operator-a",
+            "retry-evaluation",
+            now);
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantB =
+        replayRepository.insertOrGet(
+            "tenant-replay-b",
+            "replay-request-shared",
+            "b".repeat(64),
+            "operator-b",
+            "retry-evaluation",
+            now);
+
+    assertThat(tenantA.id()).isNotEqualTo(tenantB.id());
+    assertThat(replayRepository.findRequest("tenant-replay-a", "replay-request-shared"))
+        .contains(tenantA);
+    assertThat(replayRepository.findRequest("tenant-replay-b", "replay-request-shared"))
+        .contains(tenantB);
+    assertThat(replayRepository.findRequest("tenant-replay-other", "replay-request-shared"))
+        .isEmpty();
+
+    replayRepository.saveResult(
+        tenantA.id(),
+        9001L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        2L,
+        4L,
+        5L,
+        3L,
+        "DSL_EVAL",
+        "sandbox_error",
+        now);
+
+    assertThat(replayRepository.findResults(tenantA.id()))
+        .singleElement()
+        .satisfies(
+            result -> {
+              assertThat(result.requestedWorkItemId()).isEqualTo(9001L);
+              assertThat(result.workItemId()).isNull();
+              assertThat(result.outcome()).isEqualTo("rejected");
+              assertThat(result.rejectionReason()).isEqualTo("not_found_or_not_owned");
+              assertThat(result.failureReason()).isEmpty();
+              assertThat(result.scriptPinEpoch()).isEqualTo(2L);
+              assertThat(result.pluginActivationEpoch()).isEqualTo(4L);
+              assertThat(result.lifecycleRevision()).isEqualTo(5L);
+              assertThat(result.failureGeneration()).isEqualTo(3L);
+              assertThat(result.originalFailureStage()).isEqualTo("DSL_EVAL");
+              assertThat(result.originalFailureReason()).isEqualTo("sandbox_error");
+            });
+    assertThat(replayRepository.findResults(tenantB.id())).isEmpty();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.TENANT_ID,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantA.id())))
+        .isEqualTo("tenant-replay-a");
+  }
+
+  @Test
+  void replayRequestAndResultRetentionHoldsRequireTheOwningTenant() {
+    Instant holdUntil = Instant.parse("2026-09-01T00:00:00Z");
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantA =
+        replayRepository.insertOrGet(
+            "tenant-hold-a",
+            "replay-request-shared",
+            REQUEST_DIGEST,
+            "operator-a",
+            "retention-review",
+            now);
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantB =
+        replayRepository.insertOrGet(
+            "tenant-hold-b",
+            "replay-request-shared",
+            "b".repeat(64),
+            "operator-b",
+            "retention-review",
+            now);
+
+    replayRepository.saveResult(
+        tenantA.id(), 9101L, null, "rejected", "not_found_or_not_owned", "", 0L, 0L, 0L, 1L, now);
+    replayRepository.saveResult(
+        tenantB.id(), 9102L, null, "rejected", "not_found_or_not_owned", "", 0L, 0L, 0L, 1L, now);
+    long resultAId =
+        dsl.fetchValue(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID,
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantA.id()));
+    long resultBId =
+        dsl.fetchValue(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID,
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantB.id()));
+
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-a", tenantA.id(), holdUntil))
+        .isTrue();
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-b", tenantA.id(), holdUntil))
+        .isFalse();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID.eq(tenantA.id())))
+        .isEqualTo(holdUntil.atOffset(ZoneOffset.UTC));
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID.eq(tenantB.id())))
+        .isNull();
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-a", tenantA.id(), null))
+        .isTrue();
+
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-a", resultAId, holdUntil))
+        .isTrue();
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-b", resultAId, holdUntil))
+        .isFalse();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.eq(resultAId)))
+        .isEqualTo(holdUntil.atOffset(ZoneOffset.UTC));
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.eq(resultBId)))
+        .isNull();
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-a", resultAId, null)).isTrue();
   }
 
   @Test

@@ -3403,6 +3403,73 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void returnsDurableReplayResultWhenCompletionRaceIsLost() {
+    long workItemId = 108L;
+    PluginReplayFixture fixture = pluginReplayFixture(workItemId);
+    when(fixture.pluginRuntimeStateService().getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(pluginRuntimeStatus(PluginState.PLUGIN_STATE_ENABLED)));
+    when(fixture
+            .workItemRepository()
+            .claimDeadLetterForReplay(
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyInt(),
+                Mockito.anyLong(),
+                Mockito.any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              fixture.workItem().setStatus("PENDING_EVALUATION");
+              return Optional.of(fixture.workItem());
+            });
+
+    ScriptWorkItemService.ReplayDeadLettersCommand command =
+        new ScriptWorkItemService.ReplayDeadLettersCommand(
+            "1",
+            "",
+            "",
+            List.of(Long.toString(workItemId)),
+            "",
+            0L,
+            0L,
+            0,
+            "req-replay-" + workItemId,
+            "admin",
+            "retry");
+    String fingerprint = replayFingerprint(command);
+    ScriptDeadLetterReplayRepository.ReplayItem durableResult =
+        new ScriptDeadLetterReplayRepository.ReplayItem(
+            workItemId, "rejected", "recovery_in_progress", 9L, 8L, 7L, 6L);
+    when(fixture.replayRepository().findResults(1L)).thenReturn(List.of(), List.of(durableResult));
+    when(fixture
+            .replayRepository()
+            .complete(Mockito.eq(1L), Mockito.eq(1L), Mockito.eq(0L), Mockito.any(Instant.class)))
+        .thenReturn(false);
+    when(fixture.replayRepository().findRequest("1", "req-replay-" + workItemId))
+        .thenReturn(
+            Optional.of(
+                new ScriptDeadLetterReplayRepository.ReplayRequest(
+                    1L, fingerprint, "COMPLETED", 0L, 1L)));
+
+    ScriptWorkItemService.ReplayResult result = fixture.service().replayDeadLetters(command);
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.requestFingerprint()).isEqualTo(fingerprint);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> {
+              assertThat(replay.outcome()).isEqualTo("rejected");
+              assertThat(replay.rejectionReason()).isEqualTo("recovery_in_progress");
+              assertThat(replay.failureGeneration()).isEqualTo(6L);
+            });
+    verify(fixture.replayRepository())
+        .complete(Mockito.eq(1L), Mockito.eq(1L), Mockito.eq(0L), Mockito.any(Instant.class));
+    verify(fixture.replayRepository()).findRequest("1", "req-replay-" + workItemId);
+    verify(fixture.replayRepository(), times(2)).findResults(1L);
+  }
+
+  @Test
   void rejectsReplayWhenPinnedPatchDoesNotMatch() {
     ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     item.setId(77L);

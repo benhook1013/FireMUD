@@ -2119,13 +2119,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @ParameterizedTest
-  @CsvSource({
-    "40001,UNAVAILABLE",
-    "40P01,UNAVAILABLE",
-    "40002,INTERNAL"
-  })
-  void mapsOnlyKnownRetryableSerializationSqlStates(
-      String sqlState, String expectedErrorCode) {
+  @CsvSource({"40001,UNAVAILABLE", "40P01,UNAVAILABLE", "40002,INTERNAL"})
+  void mapsOnlyKnownRetryableSerializationSqlStates(String sqlState, String expectedErrorCode) {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     Mockito.when(workItemService.replayDeadLetters(Mockito.any()))

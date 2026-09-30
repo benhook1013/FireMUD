@@ -113,4 +113,32 @@ class ScriptDeadLetterReplayRepositoryTest {
     assertThat(whereClause.replaceAll("\\s+", " ")).contains("\"status\" = ?");
     assertThat(bindingsRef.get()).contains("RUNNING");
   }
+
+  @Test
+  void retentionHoldUpdatesAreTenantQualifiedAndAllowClearing() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptDeadLetterReplayRepository repository =
+        new ScriptDeadLetterReplayRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    Instant holdUntil = Instant.parse("2026-08-03T00:00:00Z");
+
+    assertThat(repository.setRequestRetentionHold("tenant-1", 41L, holdUntil)).isTrue();
+    String requestSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(requestSql).contains("retention_hold_until", "tenant_id", "id");
+    assertThat(bindingsRef.get()).contains("tenant-1", "2026-08-03 00:00:00+00:00");
+
+    assertThat(repository.setRequestRetentionHold("tenant-1", 41L, null)).isTrue();
+    assertThat(bindingsRef.get()).contains("tenant-1", (Object) null);
+
+    assertThat(repository.setResultRetentionHold("tenant-1", 42L, holdUntil)).isTrue();
+    String resultSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(resultSql).contains("retention_hold_until", "tenant_id", "id");
+  }
 }
