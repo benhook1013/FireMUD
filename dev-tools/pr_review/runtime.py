@@ -2333,6 +2333,8 @@ class HostedRunner:
             for path in paths:
                 try:
                     record = hosted.load_trigger_reservation(path, self.repo, closed_pr)
+                    if record.get("status") == "retired":
+                        continue
                     payload = github.fetch_pull_request(self.repo, closed_pr)
                     state = hosted.trigger_state(self.repo, closed_pr, payload, record, path)
                     reset = hosted.parse_timestamp(state.cooldown_until) if state.state == "rate_limited" else None

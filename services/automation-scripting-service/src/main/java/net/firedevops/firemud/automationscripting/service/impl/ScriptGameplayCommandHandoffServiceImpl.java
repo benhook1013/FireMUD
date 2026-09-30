@@ -38,6 +38,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class ScriptGameplayCommandHandoffServiceImpl
     implements ScriptGameplayCommandHandoffService {
+  private static final String RECEIVER_FENCE_UNAVAILABLE_CODE = "FAILED_PRECONDITION";
+  private static final String RECEIVER_FENCE_UNAVAILABLE_MESSAGE =
+      "automation_admission_receiver_fence_unavailable";
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptGameplayCommandHandoffServiceImpl.class);
   private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
@@ -735,6 +738,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
       EnqueueAutomationCommandIfAbsentResponse response) {
     if (!response.getAccepted()) {
       String errorCode = response.hasError() ? normalize(response.getError().getCode()) : "";
+      String errorMessage = response.hasError() ? normalize(response.getError().getMessage()) : "";
+      if (isReceiverFenceUnavailable(errorCode, errorMessage)) {
+        return reconciliationRequiredResult(errorMessage);
+      }
       return new HandoffResult(
           false,
           response.getAdmissionOutcome(),
@@ -768,6 +775,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
     String remoteFollowupId = remoteResponse.getFollowupId();
     if (remoteResponse.hasError()) {
       String errorCode = normalize(remoteResponse.getError().getCode());
+      String errorMessage = normalize(remoteResponse.getError().getMessage());
+      if (isReceiverFenceUnavailable(errorCode, errorMessage)) {
+        return reconciliationRequiredResult(errorMessage);
+      }
       return new HandoffResult(
           false,
           ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
@@ -804,6 +815,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
         "",
         OUTCOME_HANDOFF_IN_FLIGHT,
         message == null ? "" : message);
+  }
+
+  private static boolean isReceiverFenceUnavailable(String errorCode, String errorMessage) {
+    return RECEIVER_FENCE_UNAVAILABLE_CODE.equals(errorCode)
+        && RECEIVER_FENCE_UNAVAILABLE_MESSAGE.equals(errorMessage);
   }
 
   private static HandoffResult reconciliationRequiredResult(Throwable failure) {

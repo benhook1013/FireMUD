@@ -181,7 +181,7 @@ def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> 
         _bounded_text(
             item,
             "coverage limit",
-            maximum=min(1000, max(200, len(item))) if matches_retained and isinstance(item, str) else 200,
+            maximum=1000 if matches_retained else 200,
         )
         for item in values
     )

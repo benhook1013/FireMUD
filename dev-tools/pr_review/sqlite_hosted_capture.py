@@ -254,6 +254,10 @@ _HOSTED_COMMENT_AUXILIARY_PREFIXES = (
     "cr-indicator-types:",
     "cr-comment:v1:",
 )
+_HOSTED_COMMENT_FOOTER = re.compile(
+    r"\A[ \t\r\n]*(?:_Source: Path instructions_[ \t]*\r?\n[ \t\r\n]*)?"
+    r"<!-- This is an auto-generated comment by CodeRabbit -->[ \t\r\n]*\Z"
+)
 
 
 def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[str, str]]:
@@ -302,6 +306,13 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
                 section = _strip_leading_finding_separator(section)
             sections.append((match.group(1), section))
             previous_end = match.end()
+        trailing = _strip_leading_finding_separator(_strip_hosted_auxiliary_comments(body[previous_end:]))
+        if _HOSTED_COMMENT_FOOTER.fullmatch(trailing):
+            trailing = ""
+        if trailing.strip():
+            raise HostedCaptureError(
+                "Hosted finding comment contains unmarked content after its final cr-comment:v1 marker"
+            )
 
     findings: list[dict[str, str]] = []
     multiple = len(marker_matches) > 1
