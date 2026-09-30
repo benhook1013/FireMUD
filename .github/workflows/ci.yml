@@ -943,7 +943,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          if [[ "${{ matrix.module }}" == "account-service" ]]; then
+          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" ]]; then
             ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache
           else
             ./gradlew :${{ matrix.module }}:check -PfullCheck
@@ -960,6 +960,15 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
             account-service
+
+      - name: 🔎 Verify Game Session PostgreSQL proof case
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest#pinAdmissionBaseMustStillMatchTheRowLockedRuntimeAndIsBoundToTheReceipt()' \
+            game-session-service
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
