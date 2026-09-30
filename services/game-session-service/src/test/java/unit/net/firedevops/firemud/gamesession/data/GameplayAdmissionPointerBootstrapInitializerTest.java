@@ -84,9 +84,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals(2L, pointers.get(1).getGameInstanceId());
     assertFalse(pointers.get(1).isPublicProductionRealm());
     assertTrue(pointers.get(1).isRequiresCharacterSelection());
-    assertEquals(
-        List.of(new SmokeRuntimeTarget(1L, 1L), new SmokeRuntimeTarget(1L, 2L)),
-        shipped.worldManagementTargets());
+    assertSmokeRuntimeTargets(shipped.worldManagementTargets(), 1L, 1L, 1L, 2L);
 
     when(pointerRepository.count()).thenReturn(0L);
     initializer =
@@ -114,9 +112,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals(7L, shipped.gameSession().getPointers().get(1).getTenantId());
     assertEquals(202L, shipped.gameSession().getPointers().get(1).getGameInstanceId());
     assertFalse(shipped.gameSession().getPointers().get(1).isPublicProductionRealm());
-    assertEquals(
-        List.of(new SmokeRuntimeTarget(7L, 101L), new SmokeRuntimeTarget(7L, 202L)),
-        shipped.worldManagementTargets());
+    assertSmokeRuntimeTargets(shipped.worldManagementTargets(), 7L, 101L, 7L, 202L);
 
     when(pointerRepository.count()).thenReturn(0L);
     initializer =
@@ -329,9 +325,39 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     throw new IllegalStateException("Cannot locate repository file " + relativePath);
   }
 
+  private static void assertSmokeRuntimeTargets(
+      List<SmokeRuntimeTarget> actualTargets, long... expectedTenantAndInstanceIds) {
+    assertEquals(expectedTenantAndInstanceIds.length / 2, actualTargets.size());
+    for (int index = 0; index < actualTargets.size(); index++) {
+      assertEquals(expectedTenantAndInstanceIds[index * 2], actualTargets.get(index).getTenantId());
+      assertEquals(
+          expectedTenantAndInstanceIds[index * 2 + 1],
+          actualTargets.get(index).getGameInstanceId());
+    }
+  }
+
   private record ShippedBootstrapConfiguration(
       GameplayAdmissionPointerBootstrapProperties gameSession,
       List<SmokeRuntimeTarget> worldManagementTargets) {}
 
-  private record SmokeRuntimeTarget(long tenantId, long gameInstanceId) {}
+  public static class SmokeRuntimeTarget {
+    private long tenantId;
+    private long gameInstanceId;
+
+    public long getTenantId() {
+      return tenantId;
+    }
+
+    public void setTenantId(long tenantId) {
+      this.tenantId = tenantId;
+    }
+
+    public long getGameInstanceId() {
+      return gameInstanceId;
+    }
+
+    public void setGameInstanceId(long gameInstanceId) {
+      this.gameInstanceId = gameInstanceId;
+    }
+  }
 }
